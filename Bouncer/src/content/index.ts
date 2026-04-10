@@ -2,6 +2,7 @@
 // Entry point: post processing, observers, init, storage/message listeners
 
 import type { PlatformAdapter, PostContent, PipelineResponse, BackgroundToContentMessage, DescriptionKey } from '../types';
+import { DEFAULT_MODEL } from '../shared/models';
 import { getStorage, removeStorage, getDescriptions, setDescriptions } from '../shared/storage';
 
 import {
@@ -122,8 +123,7 @@ import { formatPostForEvaluation } from '../shared/utils';
   async function checkLocalModelActive() {
     try {
       const data = await getStorage(['selectedModel']);
-      const defaultModel = process.env.HAS_IMBUE_BACKEND === 'true' ? 'imbue' : '';
-      const model = data.selectedModel || defaultModel;
+      const model = data.selectedModel || DEFAULT_MODEL;
       isLocalModelActive = model.startsWith('local:');
       // Keep latency alert state in sync so the viewport-based latency check
       // knows which model is active before any latencyUpdate message arrives.
@@ -494,8 +494,7 @@ import { formatPostForEvaluation } from '../shared/utils';
         }
       }
       if (changes.selectedModel) {
-        const defaultModel = process.env.HAS_IMBUE_BACKEND === 'true' ? 'imbue' : '';
-        const newModel = (changes.selectedModel.newValue as string) || defaultModel;
+        const newModel = (changes.selectedModel.newValue as string) || DEFAULT_MODEL;
         isLocalModelActive = newModel.startsWith('local:') || false;
         updateAlertState('latency', { isHighLatency: false, medianLatency: 0, selectedModel: newModel, hasAlternativeApis: false });
         updateAlertState('error', { type: null, subType: null, count: 0, apiDisplayName: null, selectedModel: newModel, hasAlternativeApis: false });

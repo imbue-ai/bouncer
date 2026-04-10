@@ -1,7 +1,7 @@
 // Bouncer - Popup Script
 
 import type { ModelDef, LocalModelStatus, StorageSchema } from '../types';
-import { PREDEFINED_MODELS } from '../shared/models';
+import { PREDEFINED_MODELS, DEFAULT_MODEL } from '../shared/models';
 import { escapeHtml } from '../shared/utils';
 import { getStorage, setStorage, removeStorage } from '../shared/storage';
 import { asyncHandler } from '../shared/async';
@@ -9,8 +9,6 @@ import { asyncHandler } from '../shared/async';
 // Storage key for predefined model API kwargs overrides
 // Format: { "api:modelName": { key: value, ... }, ... }
 let predefinedModelKwargs: Record<string, Record<string, unknown>> = {};
-
-const DEFAULT_MODEL = process.env.HAS_IMBUE_BACKEND === 'true' ? 'imbue' : '';
 
 const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
   ...(process.env.HAS_IMBUE_BACKEND === 'true' ? { imbue: 'Imbue (Default)' } : {}),

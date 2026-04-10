@@ -5,7 +5,7 @@ import {
   parseAPIResponse, checkRateLimitError, checkApiError, checkAuthenticationError,
   RATE_LIMIT_TYPE_CONFIG, API_ERROR_TYPE_CONFIG,
 } from '../shared/utils';
-import { PREDEFINED_MODELS, API_DISPLAY_NAMES } from '../shared/models';
+import { PREDEFINED_MODELS, API_DISPLAY_NAMES, DEFAULT_MODEL } from '../shared/models';
 import { buildAPIMessages } from '../shared/prompts';
 import { callDirectAPI, callAnthropicAPI, callImbueAPI } from './providers';
 import { callLocalInference, localEngine } from './local-model';
@@ -18,8 +18,6 @@ import type {
 } from '../types';
 
 // ==================== Constants ====================
-
-export const DEFAULT_MODEL = process.env.HAS_IMBUE_BACKEND === 'true' ? 'imbue' : '';
 
 const CACHE_SIZE = 500; // Increased for persistent storage
 const BATCH_DELAY_MS = 1000; // Wait time to collect posts before sending batch

@@ -2,6 +2,7 @@
 
 import { ALERT_CONFIG } from '../shared/alerts';
 import { asyncHandler } from '../shared/async';
+import { DEFAULT_MODEL } from '../shared/models';
 import { cleanReasoning, escapeHtml, formatPostForEvaluation } from '../shared/utils';
 import type { AlertState, BackgroundToContentMessage, ContentUIDeps, FilteredPost, PostContent, AlertDisplayConfig, LocalModelStatus } from '../types';
 import { getStorage, getDescriptions, setDescriptions } from '../shared/storage';
@@ -49,10 +50,9 @@ let toastContainer: HTMLElement | null = null;
 const annoyingReasonsCache: WeakMap<HTMLElement, Promise<{ reasons: string[]; hadImages?: boolean }>> = new WeakMap();
 
 // Unified alert state
-const defaultModel = process.env.HAS_IMBUE_BACKEND === 'true' ? 'imbue' : '';
 export const alertState: AlertState = {
-  latency: { isHighLatency: false, medianLatency: 0, selectedModel: defaultModel, hasAlternativeApis: false },
-  error: { type: null, subType: null, count: 0, apiDisplayName: null, selectedModel: defaultModel, hasAlternativeApis: false },
+  latency: { isHighLatency: false, medianLatency: 0, selectedModel: DEFAULT_MODEL, hasAlternativeApis: false },
+  error: { type: null, subType: null, count: 0, apiDisplayName: null, selectedModel: DEFAULT_MODEL, hasAlternativeApis: false },
   queue_backlog: { pendingCount: 0, isLocalModel: false, modelInitializing: false }
 };
 

@@ -74,6 +74,10 @@ export const PREDEFINED_MODELS: PredefinedModelsMap = {
   ]
 };
 
+// Default model: 'imbue' when the Imbue backend is configured, empty string otherwise.
+// Imported by background, popup, and content scripts to avoid repeating the conditional.
+export const DEFAULT_MODEL = process.env.HAS_IMBUE_BACKEND === 'true' ? 'imbue' : '';
+
 export const API_DISPLAY_NAMES: Record<string, string> = {
   openai: 'OpenAI',
   gemini: 'Gemini',
