@@ -46,7 +46,6 @@ Local models are downloaded once and cached in the browser's Cache Storage.
 
 ```bash
 cd Bouncer
-cp .env.example .env.prod   # then fill in your Firebase/API credentials
 npm install
 npm run build
 ```
@@ -55,6 +54,7 @@ npm run build
 2. Enable **Developer mode**
 3. Click **Load unpacked** and select the `Bouncer/` folder
 4. Navigate to twitter.com / x.com
+5. Click "Settings" in the Bouncer element and add your preferred provider API key (or enable local models) and select your preferred model from the dropdown.
 
 ### iOS
 
