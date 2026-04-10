@@ -1,7 +1,7 @@
 # Bouncer
 
 <p align="center">
-  <img src="appstore_assets/logo.png" alt="Bouncer" width="200" />
+  <img src="Bouncer/icons/b-bouncer-2x_big.png" alt="Bouncer" width="200" />
 </p>
 
 **Heal your feed.** Bouncer is a browser extension that uses AI to filter unwanted posts from your Twitter/X feed. Define filter topics in plain language — "crypto", "engagement bait", "rage politics" — and Bouncer classifies and hides matching posts in real time.
