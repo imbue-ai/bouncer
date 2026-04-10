@@ -14,6 +14,9 @@ const ENV_KEYS = [
   'GOOGLE_CLIENT_ID', 'IMBUE_WS_URL',
 ];
 
+// Keys required for the Imbue backend (all env keys except BOUNCER_ENV)
+const IMBUE_KEYS = ENV_KEYS.filter(k => k !== 'BOUNCER_ENV');
+
 function loadEnvFile(envName) {
   const envPath = path.join(__dirname, `.env.${envName}`);
   const result = { BOUNCER_ENV: envName };
@@ -28,8 +31,6 @@ function loadEnvFile(envName) {
       if (eqIndex === -1) continue;
       result[trimmed.slice(0, eqIndex).trim()] = trimmed.slice(eqIndex + 1).trim();
     }
-  } else {
-    console.warn(`Warning: ${envPath} not found. Copy .env.example to .env.${envName} and fill in your values.`);
   }
 
   // Allow process.env overrides (for CI or Docker)
@@ -41,20 +42,50 @@ function loadEnvFile(envName) {
   return result;
 }
 
+// Check if all Imbue-specific env vars have non-empty values
+function checkImbueConfigured(config) {
+  return IMBUE_KEYS.every(key => config[key] && config[key].length > 0);
+}
+
 const config = loadEnvFile(env);
+const hasImbue = checkImbueConfigured(config);
 
 // Build esbuild define map — replaces process.env.X with literal strings
 const define = {
   'process.env.NODE_ENV': '"production"',
+  'process.env.HAS_IMBUE_BACKEND': JSON.stringify(String(hasImbue)),
 };
 for (const [key, value] of Object.entries(config)) {
   define[`process.env.${key}`] = JSON.stringify(value);
 }
 
+// When Imbue is not configured, swap auth.ts and ws-manager.ts with no-op stubs
+// so the Firebase SDK and WebSocket code are completely excluded from the bundle.
+const imbueStubPlugin = {
+  name: 'imbue-stub',
+  setup(build) {
+    // Match relative imports of ./auth and ./ws-manager from background/
+    build.onResolve({ filter: /^\.\/auth$/ }, (args) => {
+      if (args.importer.includes(path.join('src', 'background'))) {
+        return { path: path.join(__dirname, 'src', 'background', 'auth.stub.ts') };
+      }
+    });
+    build.onResolve({ filter: /^\.\/ws-manager$/ }, (args) => {
+      if (args.importer.includes(path.join('src', 'background'))) {
+        return { path: path.join(__dirname, 'src', 'background', 'ws-manager.stub.ts') };
+      }
+    });
+  },
+};
+
 const adapterTsPath = path.join(__dirname, 'adapters/twitter/TwitterAdapter.ts');
 const hasAdapterTs = fs.existsSync(adapterTsPath);
 
 async function build() {
+  console.log(hasImbue
+    ? `Building with Imbue backend (env: ${env})`
+    : `Building without Imbue backend (no .env.${env} configured with Imbue keys)`);
+
   // Bundle main entry points (background, popup, content)
   const ctx = await esbuild.context({
     entryPoints: [
@@ -71,6 +102,7 @@ async function build() {
     sourcemap: false,
     external: ['url'],
     define,
+    plugins: hasImbue ? [] : [imbueStubPlugin],
   });
 
   const contexts = [ctx];

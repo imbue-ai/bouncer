@@ -286,3 +286,8 @@ describe('processBatch re-queue on inference queue cleared', () => {
     expect(isKeyPending(TAB_ID, 'new_key')).toBe(true);
   });
 });
+
+// Note: The no-model-configured path (empty selectedModel -> no_api_key error) is only
+// reachable in no-Imbue builds where DEFAULT_MODEL is ''. Since DEFAULT_MODEL is computed
+// at module load time from the build-time constant HAS_IMBUE_BACKEND, it can't be varied
+// per test. Testing that path would require a separate build/test configuration.

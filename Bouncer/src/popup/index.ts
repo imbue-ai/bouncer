@@ -1,7 +1,7 @@
 // Bouncer - Popup Script
 
 import type { ModelDef, LocalModelStatus, StorageSchema } from '../types';
-import { PREDEFINED_MODELS } from '../shared/models';
+import { PREDEFINED_MODELS, DEFAULT_MODEL } from '../shared/models';
 import { escapeHtml } from '../shared/utils';
 import { getStorage, setStorage, removeStorage } from '../shared/storage';
 import { asyncHandler } from '../shared/async';
@@ -11,7 +11,7 @@ import { asyncHandler } from '../shared/async';
 let predefinedModelKwargs: Record<string, Record<string, unknown>> = {};
 
 const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
-  imbue: 'Imbue (Default)',
+  ...(process.env.HAS_IMBUE_BACKEND === 'true' ? { imbue: 'Imbue (Default)' } : {}),
   local: 'Local',
   openrouter: 'OpenRouter',
   openai: 'OpenAI',
@@ -125,36 +125,38 @@ async function init() {
     sendSize();
   }
 
-  // Check auth status and show appropriate screen
-  const signinContainer = document.getElementById('signinContainer');
-  const mainContainer = document.getElementById('mainContainer');
-  const popupGoogleSignIn = document.getElementById('popupGoogleSignIn');
-  try {
-    const authResponse: { authenticated?: boolean } = await chrome.runtime.sendMessage({ type: 'getAuthStatus' });
-    if (!authResponse?.authenticated) {
-      if (signinContainer) signinContainer.style.display = '';
-      if (mainContainer) mainContainer.style.display = 'none';
+  // Check auth status and show appropriate screen (only when Imbue backend is configured)
+  if (process.env.HAS_IMBUE_BACKEND === 'true') {
+    const signinContainer = document.getElementById('signinContainer');
+    const mainContainer = document.getElementById('mainContainer');
+    const popupGoogleSignIn = document.getElementById('popupGoogleSignIn');
+    try {
+      const authResponse: { authenticated?: boolean } = await chrome.runtime.sendMessage({ type: 'getAuthStatus' });
+      if (!authResponse?.authenticated) {
+        if (signinContainer) signinContainer.style.display = '';
+        if (mainContainer) mainContainer.style.display = 'none';
 
-      // Wire up sign-in button
-      popupGoogleSignIn?.addEventListener('click', () => { (async () => {
-        const result: { success?: boolean } = await chrome.runtime.sendMessage({ type: 'launchGoogleAuth' });
-        if (result?.success) {
-          if (signinContainer) signinContainer.style.display = 'none';
-          if (mainContainer) mainContainer.style.display = '';
-          // Continue with normal init
-          await loadSettings();
-          setupEventListeners();
-          await updateOpenRouterStatus();
-          await updateRateLimitAlert();
-          await updateLocalModelStatus();
-          setupLocalModelListeners();
-          setupStorageListener();
-        }
-      })().catch(err => console.error('[Popup] Google sign-in failed:', err)); });
-      return;
+        // Wire up sign-in button
+        popupGoogleSignIn?.addEventListener('click', () => { (async () => {
+          const result: { success?: boolean } = await chrome.runtime.sendMessage({ type: 'launchGoogleAuth' });
+          if (result?.success) {
+            if (signinContainer) signinContainer.style.display = 'none';
+            if (mainContainer) mainContainer.style.display = '';
+            // Continue with normal init
+            await loadSettings();
+            setupEventListeners();
+            await updateOpenRouterStatus();
+            await updateRateLimitAlert();
+            await updateLocalModelStatus();
+            setupLocalModelListeners();
+            setupStorageListener();
+          }
+        })().catch(err => console.error('[Popup] Google sign-in failed:', err)); });
+        return;
+      }
+    } catch {
+      // If we can't check auth, show main UI anyway
     }
-  } catch {
-    // If we can't check auth, show main UI anyway
   }
 
   await loadSettings();
@@ -218,7 +220,7 @@ async function loadSettings() {
   updateApiProviderStates(data);
 
   // Model selection
-  renderModelDropdown(data.customModels || [], data.selectedModel || 'imbue');
+  renderModelDropdown(data.customModels || [], data.selectedModel || DEFAULT_MODEL);
 
   // Update local model section visibility
   updateLocalModelSectionVisibility();
@@ -305,11 +307,11 @@ function updateApiProviderStates(data: Partial<StorageSchema>) {
     // For local models, check if local models are enabled
     if (api === 'local') {
       if (!dropdownState.localModelsEnabled) {
-        selectModel('imbue').catch(err => console.error('[Popup] selectModel failed:', err));
+        selectModel(DEFAULT_MODEL).catch(err => console.error('[Popup] selectModel failed:', err));
       }
     } else if (!dropdownState.authenticatedApis[api]) {
-      // Provider no longer authenticated, reset to Imbue
-      selectModel('imbue').catch(err => console.error('[Popup] selectModel failed:', err));
+      // Provider no longer authenticated, reset to default
+      selectModel(DEFAULT_MODEL).catch(err => console.error('[Popup] selectModel failed:', err));
     }
   }
 }
@@ -333,7 +335,7 @@ function setupEventListeners() {
     await setStorage({ openaiApiKey: key });
     const data = await getStorage(['openrouterApiKey', 'openaiApiKey', 'openaiApiBase', 'geminiApiKey', 'anthropicApiKey', 'customModels', 'selectedModel', 'authErrorApis']);
     updateApiProviderStates(data);
-    renderModelDropdown(data.customModels || [], data.selectedModel || 'imbue');
+    renderModelDropdown(data.customModels || [], data.selectedModel || DEFAULT_MODEL);
   })().catch(err => console.error('[Popup] openaiApiKey change failed:', err)); });
 
   // OpenAI API base URL
@@ -405,7 +407,7 @@ function setupEventListeners() {
           const data = await getStorage(['openrouterApiKey', 'openaiApiKey', 'geminiApiKey', 'anthropicApiKey', 'customModels', 'selectedModel', 'authErrorApis']);
           updateApiProviderStates(data);
           updateAnthropicEnabledUI(true);
-          renderModelDropdown(data.customModels || [], data.selectedModel || 'imbue');
+          renderModelDropdown(data.customModels || [], data.selectedModel || DEFAULT_MODEL);
         } else {
           errorEl.textContent = msg;
           errorEl.style.display = 'block';
@@ -423,7 +425,7 @@ function setupEventListeners() {
         const data = await getStorage(['openrouterApiKey', 'openaiApiKey', 'geminiApiKey', 'anthropicApiKey', 'customModels', 'selectedModel', 'authErrorApis']);
         updateApiProviderStates(data);
         updateAnthropicEnabledUI(true);
-        renderModelDropdown(data.customModels || [], data.selectedModel || 'imbue');
+        renderModelDropdown(data.customModels || [], data.selectedModel || DEFAULT_MODEL);
       }
     } catch (err) {
       console.error('[Anthropic] Network error during verification:', err);
@@ -443,7 +445,7 @@ function setupEventListeners() {
     updateAnthropicEnabledUI(false);
     const data = await getStorage(['openrouterApiKey', 'openaiApiKey', 'geminiApiKey', 'anthropicApiKey', 'customModels', 'selectedModel', 'authErrorApis']);
     updateApiProviderStates(data);
-    renderModelDropdown(data.customModels || [], data.selectedModel || 'imbue');
+    renderModelDropdown(data.customModels || [], data.selectedModel || DEFAULT_MODEL);
   })().catch(err => console.error('[Popup] Anthropic disable failed:', err)); });
 
   // Gemini API key
@@ -452,7 +454,7 @@ function setupEventListeners() {
     await setStorage({ geminiApiKey: key });
     const data = await getStorage(['openrouterApiKey', 'openaiApiKey', 'geminiApiKey', 'anthropicApiKey', 'customModels', 'selectedModel', 'authErrorApis']);
     updateApiProviderStates(data);
-    renderModelDropdown(data.customModels || [], data.selectedModel || 'imbue');
+    renderModelDropdown(data.customModels || [], data.selectedModel || DEFAULT_MODEL);
   })().catch(err => console.error('[Popup] geminiApiKey change failed:', err)); });
 
   // OpenRouter sign in
@@ -474,7 +476,7 @@ function setupEventListeners() {
 
     // Re-render dropdown to show/hide local models
     const data = await getStorage(['customModels', 'selectedModel']);
-    renderModelDropdown(data.customModels || [], data.selectedModel || 'imbue');
+    renderModelDropdown(data.customModels || [], data.selectedModel || DEFAULT_MODEL);
 
     // Update local model section visibility
     updateLocalModelSectionVisibility();
@@ -495,7 +497,7 @@ interface DropdownState {
 const dropdownState: DropdownState = {
   isOpen: false,
   customModels: [],
-  selectedModel: 'imbue',
+  selectedModel: DEFAULT_MODEL,
   localModelsEnabled: false,
   authenticatedApis: {
     openrouter: false,
@@ -585,10 +587,10 @@ async function removeModel(modelKey: string, e: Event) {
   );
   dropdownState.customModels = newModels;
 
-  // If we're removing the currently selected model, switch to imbue
+  // If we're removing the currently selected model, switch to default
   if (dropdownState.selectedModel === modelKey) {
-    dropdownState.selectedModel = 'imbue';
-    await setStorage({ customModels: newModels, selectedModel: 'imbue' });
+    dropdownState.selectedModel = DEFAULT_MODEL;
+    await setStorage({ customModels: newModels, selectedModel: DEFAULT_MODEL });
     // Clear cache since model changed
     await chrome.runtime.sendMessage({ type: 'clearCache' });
   } else {
@@ -615,7 +617,9 @@ function renderModelDropdown(customModels: ModelDef[], selectedModel: string) {
 
   // Update selected display text
   const selectedText = document.querySelector('.model-dropdown-text')!;
-  if (selectedModel === 'imbue') {
+  if (!selectedModel) {
+    selectedText.textContent = 'Select a model';
+  } else if (selectedModel === 'imbue') {
     selectedText.textContent = 'Imbue (Default)';
   } else {
     // Parse model key (format: api:modelName)
@@ -641,12 +645,14 @@ function renderModelDropdown(customModels: ModelDef[], selectedModel: string) {
   const menu = document.getElementById('modelDropdownMenu')!;
   menu.innerHTML = '';
 
-  // Add Imbue option (direct select, no submenu)
-  const imbueItem = document.createElement('div');
-  imbueItem.className = 'model-dropdown-item' + (selectedModel === 'imbue' ? ' selected' : '');
-  imbueItem.innerHTML = '<span class="model-dropdown-item-text">Imbue (Default) <span class="free-badge">free</span></span>';
-  imbueItem.addEventListener('click', asyncHandler(() => selectModel('imbue')));
-  menu.appendChild(imbueItem);
+  // Add Imbue option (direct select, no submenu) — only when Imbue backend is configured
+  if (process.env.HAS_IMBUE_BACKEND === 'true') {
+    const imbueItem = document.createElement('div');
+    imbueItem.className = 'model-dropdown-item' + (selectedModel === 'imbue' ? ' selected' : '');
+    imbueItem.innerHTML = '<span class="model-dropdown-item-text">Imbue (Default) <span class="free-badge">free</span></span>';
+    imbueItem.addEventListener('click', asyncHandler(() => selectModel('imbue')));
+    menu.appendChild(imbueItem);
+  }
 
   // Add local models (only show if enabled and WebGPU supported)
   if (dropdownState.localModelsEnabled && webgpuSupported && !isIOSDevice && PREDEFINED_MODELS.local) {
@@ -1108,13 +1114,13 @@ async function exchangeCodeForKey(code: string, codeVerifier: string) {
   // Check if this is the first time authenticating OpenRouter
   const storageData = await getStorage(['openrouterApiKey', 'selectedModel']);
   const isFirstAuth = !storageData.openrouterApiKey;
-  const currentModel = storageData.selectedModel || 'imbue';
+  const currentModel = storageData.selectedModel || DEFAULT_MODEL;
 
   // Store the API key
   await setStorage({ openrouterApiKey: data.key });
 
-  // If first authentication and user is on default Imbue model, auto-switch to Nemotron
-  if (isFirstAuth && currentModel === 'imbue') {
+  // If first authentication and user is on default/no model, auto-switch to Nemotron
+  if (isFirstAuth && (currentModel === 'imbue' || !currentModel)) {
     await setStorage({ selectedModel: 'openrouter:nvidia/nemotron-nano-12b-v2-vl:free' });
   }
 }
@@ -1137,7 +1143,7 @@ async function updateOpenRouterStatus() {
 
   // Update all API provider states
   updateApiProviderStates(data);
-  renderModelDropdown(data.customModels || [], data.selectedModel || 'imbue');
+  renderModelDropdown(data.customModels || [], data.selectedModel || DEFAULT_MODEL);
 }
 
 // Sign out from OpenRouter
@@ -1475,5 +1481,5 @@ function setupLocalModelListeners() {
 // Refresh model dropdown with current local model statuses
 async function refreshModelDropdownWithLocal() {
   const data = await getStorage(['customModels', 'selectedModel']);
-  renderModelDropdown(data.customModels || [], data.selectedModel || 'imbue');
+  renderModelDropdown(data.customModels || [], data.selectedModel || DEFAULT_MODEL);
 }
