@@ -19,6 +19,8 @@ import type {
 
 // ==================== Constants ====================
 
+export const DEFAULT_MODEL = process.env.HAS_IMBUE_BACKEND === 'true' ? 'imbue' : '';
+
 const CACHE_SIZE = 500; // Increased for persistent storage
 const BATCH_DELAY_MS = 1000; // Wait time to collect posts before sending batch
 const MAX_CONCURRENT_BATCHES = 100; // Allow parallel batch processing
@@ -185,7 +187,7 @@ export async function getSettings(siteId?: SiteId): Promise<Settings> {
     enabled: data.enabled !== false,
     descriptions,
     useEmbeddings: data.useEmbeddings || false,
-    selectedModel: data.selectedModel || 'imbue',
+    selectedModel: data.selectedModel || DEFAULT_MODEL,
     customModels: data.customModels || [],
     predefinedModelKwargs: data.predefinedModelKwargs || {}
   };
@@ -509,6 +511,14 @@ async function processBatch(): Promise<void> {
     return;
   }
 
+  // Check if a model is configured
+  if (!settings.selectedModel) {
+    const noModelError: PipelineError = { error: 'no_api_key', reasoning: 'No model configured. Open Bouncer settings to choose a model.' };
+    resolveWithDuplicates(batchTabId, item, noModelError);
+    inFlightBatches--;
+    return;
+  }
+
   // Check cache
   const imageUrls = item.imageUrls || [];
   const cacheKey = generateCacheKey(item.post, imageUrls);
@@ -526,7 +536,7 @@ async function processBatch(): Promise<void> {
   // Build API config
   let apiConfig: APIConfig;
 
-  if (settings.selectedModel === 'imbue') {
+  if (process.env.HAS_IMBUE_BACKEND === 'true' && settings.selectedModel === 'imbue') {
     apiConfig = { modelName: 'imbue', apiName: 'imbue', apiKey: null };
   } else if (isLocalModel) {
     const modelName = settings.selectedModel.split(':')[1];
@@ -781,7 +791,7 @@ async function validateFilterPhrase(postText: string, imageUrls: string[], phras
   const postData = { text: postText, imageUrls: imageUrls || [] };
   const isLocalModel = settings.selectedModel?.startsWith('local:');
 
-  if (settings.selectedModel === 'imbue') {
+  if (process.env.HAS_IMBUE_BACKEND === 'true' && settings.selectedModel === 'imbue') {
     const authToken = await getAuthToken();
     const imbueResponse = await callImbueAPI(postData, [phrase], 'validatePhrase', authToken);
     return imbueResponse.shouldHide === true;
@@ -819,7 +829,7 @@ async function generateCandidatePhrases(postText: string, imageUrls: string[], c
   const simpleSystemPrompt = `Given a social media post, suggest exactly ${count} broad content category labels (1-3 words each) that someone might want to filter out because the post is annoying, obnoxious, or unpleasant. Each label must be a general topic or content type such that if another model were asked "does this post relate to [label]?", it would say yes. Focus on what makes the post grating or unwelcome. At least one of the ${count} labels MUST describe a negative emotional tone or off-putting quality of the post. ${imageNote}${rejected} Output ONLY the ${count} category labels, one per line, nothing else.`;
   let result: string[];
 
-  if (settings.selectedModel === 'imbue') {
+  if (process.env.HAS_IMBUE_BACKEND === 'true' && settings.selectedModel === 'imbue') {
     const postData = { text: postText, imageUrls: imageUrls || [] };
     const authToken = await getAuthToken();
     const imbueResponse = await callImbueAPI(postData, undefined, 'suggestAnnoying', authToken);

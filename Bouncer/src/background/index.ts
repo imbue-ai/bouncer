@@ -84,7 +84,9 @@ if (chrome.runtime.setUninstallURL) {
 (async () => {
   try {
     await loadCache();
-    await refreshAuthToken();
+    if (process.env.HAS_IMBUE_BACKEND === 'true') {
+      await refreshAuthToken();
+    }
     // Wire up pipeline with shared state
     initPipeline(activeContentTabs);
     await localEngine.syncAllStatuses();
@@ -326,11 +328,17 @@ async function handleMessage(
     }
 
     case 'getAuthStatus': {
+      if (process.env.HAS_IMBUE_BACKEND !== 'true') {
+        return { authenticated: true };
+      }
       const token = await getAuthToken();
       return { authenticated: !!token };
     }
 
     case 'launchGoogleAuth': {
+      if (process.env.HAS_IMBUE_BACKEND !== 'true') {
+        return { success: false, error: 'Not available' };
+      }
       try {
         const token = await launchAuthFlow();
         if (token) {

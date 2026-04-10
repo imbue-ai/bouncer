@@ -12,15 +12,17 @@ let _deps: ContentUIDeps;
 export function initUI(deps: ContentUIDeps) {
   _deps = deps;
 
-  // Listen for auth state changes from background
-  chrome.runtime.onMessage.addListener((message: BackgroundToContentMessage) => {
-    if (message.type === 'authStateChanged') {
-      isAuthenticated = message.authenticated;
-      if (isAuthenticated) {
-        refreshAllFilterBoxes();
+  // Listen for auth state changes from background (only when Imbue backend is configured)
+  if (process.env.HAS_IMBUE_BACKEND === 'true') {
+    chrome.runtime.onMessage.addListener((message: BackgroundToContentMessage) => {
+      if (message.type === 'authStateChanged') {
+        isAuthenticated = message.authenticated;
+        if (isAuthenticated) {
+          refreshAllFilterBoxes();
+        }
       }
-    }
-  });
+    });
+  }
 }
 
 // Must be called before injecting filter boxes
@@ -47,9 +49,10 @@ let toastContainer: HTMLElement | null = null;
 const annoyingReasonsCache: WeakMap<HTMLElement, Promise<{ reasons: string[]; hadImages?: boolean }>> = new WeakMap();
 
 // Unified alert state
+const defaultModel = process.env.HAS_IMBUE_BACKEND === 'true' ? 'imbue' : '';
 export const alertState: AlertState = {
-  latency: { isHighLatency: false, medianLatency: 0, selectedModel: 'imbue', hasAlternativeApis: false },
-  error: { type: null, subType: null, count: 0, apiDisplayName: null, selectedModel: 'imbue', hasAlternativeApis: false },
+  latency: { isHighLatency: false, medianLatency: 0, selectedModel: defaultModel, hasAlternativeApis: false },
+  error: { type: null, subType: null, count: 0, apiDisplayName: null, selectedModel: defaultModel, hasAlternativeApis: false },
   queue_backlog: { pendingCount: 0, isLocalModel: false, modelInitializing: false }
 };
 
@@ -63,10 +66,15 @@ let apiKeyWarningShown = false;
 
 // ==================== Auth State ====================
 
-let isAuthenticated = false;
+// When no Imbue backend, skip auth entirely — users are always "authenticated"
+let isAuthenticated = process.env.HAS_IMBUE_BACKEND !== 'true';
 
 // Check auth status from background and cache it
 async function checkAuthStatus() {
+  if (process.env.HAS_IMBUE_BACKEND !== 'true') {
+    isAuthenticated = true;
+    return true;
+  }
   try {
     const response: { authenticated?: boolean } = await chrome.runtime.sendMessage({ type: 'getAuthStatus' });
     isAuthenticated = response?.authenticated ?? false;
@@ -1602,7 +1610,7 @@ export function showApiKeyWarning() {
       <span class="toast-title">Feed Filter</span>
       <button class="toast-close">&times;</button>
     </div>
-    <div class="toast-content">No API key configured. Click the extension icon to add your Claude API key.</div>
+    <div class="toast-content">No model configured. Open Bouncer settings to choose a model.</div>
   `;
   container.appendChild(toast);
   requestAnimationFrame(() => toast.classList.add('toast-visible'));

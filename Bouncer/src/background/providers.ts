@@ -176,6 +176,9 @@ export async function callImbueAPI(
   reason: string,
   authToken?: string | null
 ): Promise<ImbueFilterResponse | ImbueSuggestResponse> {
+  if (process.env.HAS_IMBUE_BACKEND !== 'true') {
+    throw new Error('Imbue backend not configured');
+  }
   const message: Record<string, unknown> = {
     action: "tweetFilter",
     tweetData: tweetData,
@@ -204,6 +207,7 @@ interface FeedbackMessage {
 
 // Send feedback (false_positive / false_negative) to Imbue via persistent WebSocket
 export async function sendFeedback(feedbackMessage: FeedbackMessage, authToken?: string | null): Promise<void> {
+  if (process.env.HAS_IMBUE_BACKEND !== 'true') return;
   if (authToken) {
     feedbackMessage.authToken = authToken;
   }
