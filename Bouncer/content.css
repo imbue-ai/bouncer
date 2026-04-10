@@ -1,0 +1,2469 @@
+/* Bouncer - Content Styles */
+
+:root {
+  --green-border-width: 2px;
+}
+
+/* Base font for all Bouncer UI — applies directly to every child element
+   rather than relying on inheritance, to prevent intermittent font fallback. */
+.filter-phrases-sidebar,
+.filter-phrases-sidebar *,
+.filter-phrases-bottom,
+.filter-phrases-bottom *,
+.filter-phrases-mobile,
+.filter-phrases-mobile *,
+.filtered-view-container,
+.filtered-view-container *,
+.post-verification-bar,
+.post-verification-bar *,
+.ff-missed-link,
+.ff-why-annoying-btn,
+.ff-reasoning-popup,
+.ff-reasoning-popup *,
+.ff-ios-page,
+.ff-ios-page *,
+.ff-ios-filtered-modal,
+.ff-ios-filtered-modal *,
+.filter-signin-prompt,
+.filter-signin-prompt * {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+/* Reasoning Popup */
+.post-filter-reasoning-popup {
+  position: fixed;
+  z-index: 999999;
+  background: #15202b;
+  border: 1px solid #38444d;
+  border-radius: 12px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  max-width: 320px;
+  min-width: 240px;
+  padding-bottom: 12px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 14px;
+  color: #ffffff;
+  overflow: hidden;
+  animation: popup-fade-in 0.15s ease-out;
+}
+
+@keyframes popup-fade-in {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.reasoning-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  border-bottom: 1px solid #38444d;
+  background: #192734;
+}
+
+.reasoning-status {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 4px 8px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.status-show {
+  background: #00ba7c;
+  color: #fff;
+}
+
+.status-hide {
+  background: #f4212e;
+  color: #fff;
+}
+
+.status-pending {
+  background: #536471;
+  color: #fff;
+}
+
+.status-error {
+  background: #f44336;
+  color: #fff;
+}
+
+.reasoning-close {
+  background: none;
+  border: none;
+  color: #8899a6;
+  font-size: 20px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+
+.reasoning-close:hover {
+  color: #fff;
+}
+
+.reasoning-text {
+  padding: 12px;
+  line-height: 1.5;
+  color: #e7e9ea;
+}
+
+.reasoning-post {
+  padding: 10px 12px;
+  font-size: 12px;
+  color: #8899a6;
+  background: #192734;
+  border-top: 1px solid #38444d;
+  font-style: italic;
+}
+
+.reasoning-debug {
+  padding: 8px 12px;
+  border-top: 1px solid #38444d;
+  font-size: 11px;
+}
+
+.reasoning-debug summary {
+  cursor: pointer;
+  color: #8899a6;
+  user-select: none;
+}
+
+.reasoning-debug summary:hover {
+  color: #1d9bf0;
+}
+
+.reasoning-debug-html {
+  margin-top: 8px;
+  padding: 8px;
+  background: #0d1117;
+  border-radius: 4px;
+  font-family: monospace;
+  font-size: 10px;
+  color: #7ee787;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+/* Toast Notifications */
+.post-filter-toast-container {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  z-index: 999998;
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 10px;
+  pointer-events: none;
+}
+
+.post-filter-toast {
+  background: #15202b;
+  border: 1px solid #38444d;
+  border-left: 4px solid #f4212e;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  width: 320px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 13px;
+  color: #e7e9ea;
+  overflow: hidden;
+  pointer-events: auto;
+  opacity: 0;
+  transform: translateX(100%);
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+.post-filter-toast.toast-visible {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.post-filter-toast.toast-hiding {
+  opacity: 0;
+  transform: translateX(100%);
+}
+
+.toast-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  background: #192734;
+  border-bottom: 1px solid #38444d;
+}
+
+.toast-title {
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #f4212e;
+}
+
+.toast-close {
+  background: none;
+  border: none;
+  color: #8899a6;
+  font-size: 18px;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+}
+
+.toast-close:hover {
+  color: #fff;
+}
+
+.toast-content {
+  padding: 10px 12px;
+  line-height: 1.4;
+  color: #e7e9ea;
+  word-break: break-word;
+}
+
+.toast-reason {
+  padding: 8px 12px;
+  font-size: 11px;
+  color: #8899a6;
+  background: #192734;
+  border-top: 1px solid #38444d;
+  font-style: italic;
+}
+
+/* Warning toast (e.g., missing API key) */
+.post-filter-toast.post-filter-warning {
+  border-left-color: #ffad1f;
+}
+
+.post-filter-toast.post-filter-warning .toast-title {
+  color: #ffad1f;
+}
+
+/* Slop Tab Styles */
+.slop-posts-container {
+  display: flex;
+  flex-direction: column;
+}
+
+.slop-post-wrapper {
+  border-bottom: 1px solid rgb(47, 51, 54);
+  position: relative;
+  overflow: hidden;
+}
+
+
+.slop-post-link {
+  display: block;
+  color: inherit;
+  text-decoration: none;
+}
+
+.slop-post-link:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.slop-post {
+  display: flex;
+  gap: 12px;
+  padding: 14px 16px 0;
+}
+
+.slop-post-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: #333;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.slop-post-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.slop-avatar-initial {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  font-size: 18px;
+  font-weight: 700;
+  color: #8899a6;
+}
+
+.slop-post-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.slop-post-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.slop-post-meta {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.slop-post-name {
+  font-size: 15px;
+  font-weight: 700;
+  color: #e7e9ea;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.slop-post-handle {
+  font-size: 15px;
+  color: #71767b;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.slop-category-tag {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+  color: #8b5cf6;
+  background: rgba(139, 92, 246, 0.12);
+  flex-shrink: 0;
+  margin-left: 8px;
+}
+
+.slop-post-text {
+  font-size: 15px;
+  color: #e7e9ea;
+  line-height: 1.4;
+  word-wrap: break-word;
+  margin-bottom: 4px;
+}
+
+.slop-quote-box {
+  border: 1px solid rgb(47, 51, 54);
+  border-radius: 12px;
+  padding: 10px 12px;
+  margin: 8px 0;
+  cursor: pointer;
+}
+
+.slop-quote-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+
+.slop-quote-avatar {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.slop-quote-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: #e7e9ea;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.slop-quote-handle {
+  font-size: 13px;
+  color: #71767b;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.slop-quote-text {
+  font-size: 14px;
+  color: #e7e9ea;
+  line-height: 1.4;
+}
+
+.slop-quote-text a {
+  color: rgb(29, 155, 240);
+  text-decoration: none;
+}
+
+.slop-post-text a {
+  color: rgb(29, 155, 240);
+  text-decoration: none;
+}
+
+.slop-post-reasoning {
+  margin-top: 8px;
+  padding: 6px 10px;
+  font-size: 13px;
+  color: #8899a6;
+  line-height: 1.4;
+  font-style: italic;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 8px;
+  border-left: 3px solid rgba(255, 255, 255, 0.1);
+}
+
+.slop-post-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 4px 0 10px;
+}
+
+.slop-restore {
+  font-size: 13px;
+  font-weight: 500;
+  color: #71767b;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 2px 0;
+}
+.slop-restore:hover {
+  color: #e7e9ea;
+}
+
+/* Media container for filtered posts */
+.slop-media-container {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  margin: 12px 0;
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+.slop-media-image {
+  width: 100%;
+  max-height: 500px;
+  object-fit: cover;
+  background: rgb(32, 35, 39);
+}
+
+/* Grid layout for multiple images */
+.slop-media-container:has(.slop-media-image:nth-child(2)) {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+.slop-media-container:has(.slop-media-image:nth-child(2)) .slop-media-image {
+  max-height: 300px;
+}
+
+/* Verification bar styles */
+@keyframes pulse-pending {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
+.post-verification-bar {
+  position: absolute;
+  left: 0;
+  top: -1px;
+  bottom: -1px;
+  width: var(--green-border-width);
+  pointer-events: none;
+  z-index: 9999;
+  transition: background-color 0.3s ease;
+}
+
+/* Ensure verification bar isn't clipped */
+/*article:has(.post-verification-bar) {*/
+/*  overflow: visible;*/
+/*}*/
+
+.post-verification-bar.pending {
+  background-color: #888;
+  animation: pulse-pending 1.5s ease-in-out infinite;
+}
+
+/* Dim posts while they're being processed (but not the verification bar).
+   Exclude the filtered tab where posts are displayed after being removed. */
+[data-ff-pending]:not(.slop-post-wrapper [data-ff-pending]) > *:not(.post-verification-bar) {
+  opacity: 0.25;
+}
+
+.post-verification-bar.verified {
+  display: none;
+}
+
+.post-verification-bar.surprise-hide {
+  display: none;
+}
+
+/* API error state - red bar, no pulsing, stays visible */
+.post-verification-bar.api-error {
+  background-color: #f44336;
+  animation: none;
+}
+
+/* Keep post content slightly dimmed for error state to indicate something is wrong */
+.ff-error > *:not(.post-verification-bar) {
+  opacity: 0.7;
+}
+
+.reasoning-reeval-btn {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  padding: 8px 12px;
+  background: #1d9bf0;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.reasoning-reeval-btn:hover {
+  background: #1a8cd8;
+}
+
+.reasoning-reeval-btn:disabled {
+  background: #9ec2e0;
+  cursor: not-allowed;
+}
+
+.reasoning-suggest-btn {
+  display: block;
+  width: calc(100% - 24px);
+  margin: 6px 12px 0;
+  padding: 8px 12px;
+  background: transparent;
+  color: #8899a6;
+  border: 1px solid #38444d;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.reasoning-suggest-btn:hover {
+  color: #e7e9ea;
+  border-color: #8899a6;
+}
+
+.reasoning-suggest-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+.reasoning-suggestions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 6px 12px 0;
+}
+
+.reasoning-suggestion-chip {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  background: #192734;
+  color: #e7e9ea;
+  border: 1px solid #38444d;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.15s;
+}
+
+.reasoning-suggestion-chip:hover {
+  background: #1d9bf0;
+  border-color: #1d9bf0;
+  color: #fff;
+}
+
+.reasoning-suggestion-chip.suggestion-added {
+  background: #00ba7c;
+  border-color: #00ba7c;
+  color: #fff;
+  cursor: default;
+}
+
+/* Inline "why annoying" button */
+.ff-why-annoying-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: none;
+  background: transparent;
+  color: rgb(234, 133, 84);
+  border-radius: 50%;
+  cursor: pointer;
+  padding: 0;
+  margin-left: 4px;
+  transition: background 0.2s;
+  position: relative;
+  vertical-align: middle;
+}
+
+.ff-why-annoying-btn.ff-unfilter-btn {
+  width: unset;
+  background-color: rgb(27 147 228);
+  color: white;
+  border-radius: 4px;
+  padding: 5px 10px;
+}
+
+.ff-why-annoying-btn.ff-unfilter-btn:hover {
+  background: rgba(234, 133, 84, 0.1);
+}
+
+.ff-why-annoying-btn svg {
+  pointer-events: none;
+}
+
+/* Tooltip for annoying reasons — fixed positioning set inline by JS */
+.ff-annoying-tooltip {
+  min-width: 220px;
+  max-width: 300px;
+  background: rgb(0, 0, 0);
+  border: 1px solid rgb(47, 51, 54);
+  border-radius: 12px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  padding: 10px;
+  z-index: 999999;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  animation: popup-fade-in 0.15s ease-out;
+}
+
+/* Tooltip arrow (default: pointing down, tooltip above button) */
+.ff-annoying-tooltip::after {
+  content: '';
+  position: absolute;
+  bottom: -6px;
+  right: 12px;
+  width: 10px;
+  height: 10px;
+  background: rgb(0, 0, 0);
+  border-right: 1px solid rgb(47, 51, 54);
+  border-bottom: 1px solid rgb(47, 51, 54);
+  transform: rotate(45deg);
+}
+
+/* Flipped arrow (pointing up, tooltip below button) */
+.ff-annoying-tooltip--flipped::after {
+  bottom: auto;
+  top: -6px;
+  border-right: none;
+  border-bottom: none;
+  border-left: 1px solid rgb(47, 51, 54);
+  border-top: 1px solid rgb(47, 51, 54);
+}
+
+/* Spinner */
+.ff-annoying-spinner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 6px 0;
+}
+
+.ff-spinner-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgb(234, 133, 84);
+  animation: ff-bounce 1.2s infinite ease-in-out;
+}
+
+.ff-spinner-dot:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.ff-spinner-dot:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@keyframes ff-bounce {
+  0%, 60%, 100% { transform: scale(0.6); opacity: 0.4; }
+  30% { transform: scale(1); opacity: 1; }
+}
+
+.ff-annoying-thinking {
+  display: block;
+  text-align: center;
+  color: #8899a6;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.ff-progress-bar {
+  padding: 8px 12px 4px;
+}
+
+.ff-progress-track {
+  width: 100%;
+  height: 4px;
+  background: #38444d;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.ff-progress-fill {
+  height: 100%;
+  width: 5%;
+  background: rgb(234, 133, 84);
+  border-radius: 2px;
+  transition: width 0.4s ease;
+}
+
+.twitter-light .ff-progress-track {
+  background: #cfd9de;
+}
+
+
+.ff-annoying-label {
+  padding-left: 3px;
+  display: block;
+  font-size: 12px;
+  color: #8b98a5;
+  margin-bottom: 6px;
+}
+
+/* Suggestion chips in tooltip */
+.ff-annoying-chip {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  background: rgb(22, 24, 28);
+  color: #e7e9ea;
+  border: 1px solid #38444d;
+  border-radius: 8px;
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.15s;
+}
+
+.ff-annoying-chip:hover {
+  background: #1d9bf0;
+  border-color: #1d9bf0;
+  color: #fff;
+}
+
+.ff-annoying-chip.ff-chip-added {
+  background: #00ba7c;
+  border-color: #00ba7c;
+  color: #fff;
+  cursor: default;
+}
+
+.ff-img-badge {
+  margin-left: 6px;
+  font-size: 10px;
+  opacity: 0.55;
+  font-style: italic;
+}
+
+.ff-missed-link {
+  display: none; /* originally block */
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #38444d;
+  font-size: 12px;
+  color: #1d9bf0;
+  text-decoration: none;
+  cursor: pointer;
+  text-align: center;
+}
+
+.ff-missed-link:hover {
+  text-decoration: underline;
+}
+
+.twitter-light .ff-missed-link {
+  border-top-color: #cfd9de;
+}
+
+.ff-annoying-empty {
+  color: #8899a6;
+  font-size: 13px;
+  text-align: center;
+  padding: 4px 0;
+}
+
+/* Theme-aware tooltip colors */
+.twitter-light .ff-annoying-tooltip {
+  background: #ffffff;
+  border-color: #cfd9de;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+.twitter-light .ff-annoying-tooltip::after {
+  background: #ffffff;
+  border-right-color: #cfd9de;
+  border-bottom-color: #cfd9de;
+}
+.twitter-light .ff-annoying-tooltip--flipped::after {
+  border-right-color: transparent;
+  border-bottom-color: transparent;
+  border-left-color: #cfd9de;
+  border-top-color: #cfd9de;
+}
+.twitter-light .ff-annoying-chip {
+  background: #eff3f4;
+  color: #0f1419;
+  border-color: #cfd9de;
+}
+.twitter-light .ff-annoying-chip:hover {
+  background: #1d9bf0;
+  color: #fff;
+  border-color: #1d9bf0;
+}
+.twitter-light .ff-annoying-thinking {
+  color: #536471;
+}
+.twitter-light .ff-annoying-empty {
+  color: #536471;
+}
+.twitter-light .ff-annoying-label {
+  color: #536471;
+}
+
+/* Filtered posts view */
+.filtered-posts-container {
+  padding: 0;
+}
+
+.filtered-post-item {
+  padding: 12px 16px;
+  border-bottom: 1px solid rgb(47, 51, 54);
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.filtered-post-item:hover {
+  background-color: rgba(255, 255, 255, 0.03);
+}
+
+.filtered-post-header {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.filtered-post-reason {
+  font-size: 13px;
+  color: rgb(249, 24, 128);
+  font-weight: 500;
+}
+
+.filtered-post-time {
+  font-size: 13px;
+  color: rgb(113, 118, 123);
+}
+
+.filtered-post-content {
+  font-size: 15px;
+  color: rgb(231, 233, 234);
+  line-height: 1.4;
+  word-wrap: break-word;
+}
+
+.filtered-posts-empty {
+  padding: 32px 16px;
+  text-align: center;
+  color: rgb(113, 118, 123);
+  font-size: 15px;
+}
+
+/* Filtered modal backdrop */
+.filtered-modal-backdrop {
+  display: flex;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(91, 112, 131, 0.4);
+  z-index: 10000;
+  justify-content: center;
+  align-items: center;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.2s ease, visibility 0.2s ease;
+}
+
+.filtered-modal-backdrop.visible {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* Filtered modal container */
+.filtered-view-container {
+  position: relative;
+  width: 600px;
+  max-width: 90vw;
+  max-height: 80vh;
+  background-color: rgb(0, 0, 0);
+  border-radius: 16px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  transform: scale(0.95);
+  transition: transform 0.2s ease;
+}
+
+.filtered-modal-backdrop.visible .filtered-view-container {
+  transform: scale(1);
+}
+
+/* Modal header */
+.filtered-modal-header {
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  height: 53px;
+  border-bottom: 1px solid rgb(47, 51, 54);
+  flex-shrink: 0;
+}
+
+.filtered-modal-close {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 16px;
+  color: rgb(239, 243, 244);
+}
+
+.filtered-modal-close:hover {
+  background-color: rgba(239, 243, 244, 0.1);
+}
+
+.filtered-modal-close svg {
+  width: 20px;
+  height: 20px;
+  fill: currentColor;
+}
+
+.filtered-modal-title {
+  font-size: 20px;
+  font-weight: 700;
+  color: rgb(231, 233, 234);
+}
+
+/* Modal content area */
+.filtered-modal-content {
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.filter-phrases-box-name {
+  padding-bottom: 10px;
+  font-weight: 800;
+  font-size: 20px;
+}
+
+.filter-phrases-sidebar {
+  margin-top: 70px;
+  position: sticky;
+  top: 70px;
+  z-index: 100;
+  /* position:relative for ::before pseudo-element positioning (sticky provides this) */
+}
+
+/* Background fill above the filter box to cover scrolling content (e.g., "Subscribe to Premium") */
+.filter-phrases-sidebar::before {
+  content: '';
+  position: absolute;
+  top: -20px;
+  left: 0;
+  right: 0;
+  height: 40px;
+  background-color: rgb(0, 0, 0);
+  z-index: -1;
+}
+
+/* Theme-specific backgrounds for the gap cover */
+.light-mode.filter-phrases-sidebar::before {
+  background-color: rgb(255, 255, 255);
+}
+
+.dark-mode.filter-phrases-sidebar::before {
+  background-color: rgb(0, 0, 0);
+}
+
+.filter-phrases-container {
+  padding: 12px 16px;
+  background-color: rgb(0, 0, 0);
+  border: var(--green-border-width) solid rgb(234, 133, 84);
+  border-radius: 16px;
+  display: flex;
+  flex-direction: column
+}
+
+/* ==================== Sign-in prompt ==================== */
+
+.filter-signin-prompt {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 8px 0 4px;
+}
+
+.ff-signin-explanation {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.5);
+  text-align: center;
+  line-height: 1.4;
+}
+
+.light-mode .ff-signin-explanation {
+  color: rgba(0, 0, 0, 0.45);
+}
+
+.google-signin-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 20px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  color: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+  width: 100%;
+  justify-content: center;
+}
+
+.google-signin-btn:hover {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.35);
+}
+
+.google-signin-btn .google-icon {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
+.light-mode .google-signin-btn {
+  border-color: rgba(0, 0, 0, 0.15);
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.light-mode .google-signin-btn:hover {
+  background: rgba(0, 0, 0, 0.08);
+  border-color: rgba(0, 0, 0, 0.25);
+}
+
+.filter-phrases-header {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  column-gap: 4px;
+}
+
+.filter-phrases-label {
+  font-size: 15px;
+  font-weight: 400;
+  color: rgb(231, 233, 234);
+  white-space: nowrap;
+}
+
+.filter-phrases-and-input {
+  display: flex;
+  align-items: baseline;
+  flex: 1;
+  min-width: 80px;
+  gap: 4px;
+}
+
+.filter-phrases-and {
+  font-size: 15px;
+  font-weight: 400;
+  color: rgb(231, 233, 234);
+  white-space: nowrap;
+}
+
+/* Hide "and" when there are no phrases */
+.filter-phrases-list:empty ~ .filter-phrases-and-input .filter-phrases-and {
+  display: none;
+}
+
+.filter-input-wrapper {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+.filter-phrases-container .filter-phrases-input {
+  width: 100%;
+  padding: 0 4px 2px 4px !important;
+  background: transparent !important;
+  border: none !important;
+  border-bottom: 2px solid rgb(113, 118, 123) !important;
+  border-radius: 0 !important;
+  color: rgb(231, 233, 234);
+  font-size: 15px;
+  font-weight: 600;
+  outline: none !important;
+  appearance: none;
+  -webkit-appearance: none;
+  box-shadow: none !important;
+  transition: border-color 0.2s;
+}
+
+.filter-phrases-container .filter-phrases-input:focus {
+  border-bottom-color: rgb(234, 133, 84) !important;
+  box-shadow: none !important;
+}
+
+/* Animated cycling placeholder */
+.filter-placeholder-cycle {
+  position: absolute;
+  top: 2px;
+  left: 4px;
+  right: 4px;
+  height: 1.2em;
+  overflow: hidden;
+  pointer-events: none;
+  transition: opacity 0.15s;
+}
+
+.filter-placeholder-cycle.hidden {
+  opacity: 0;
+}
+
+.filter-placeholder-track {
+  display: flex;
+  flex-direction: column;
+  animation: ff-placeholder-scroll 10s ease-in-out infinite; /* duration overridden by content.js */
+}
+
+.filter-placeholder-track > span {
+  display: block;
+  height: 1.2em;
+  line-height: 1.2em;
+  color: rgb(80, 85, 90);
+  font-weight: 400;
+  font-size: 15px;
+  white-space: nowrap;
+}
+
+/* @keyframes ff-placeholder-scroll is injected by content.js based on PLACEHOLDER_PHRASES */
+
+.filter-phrases-list {
+  display: contents;
+}
+
+.filter-phrase-inline {
+  font-size: 15px;
+  font-weight: 700;
+  color: rgb(160, 165, 170);
+  cursor: pointer;
+  transition: color 0.2s;
+  hyphens: auto;
+}
+
+.filter-phrase-inline:hover {
+  color: #ef4444;
+  text-decoration: line-through;
+}
+
+.filter-phrase-separator {
+  font-size: 15px;
+  font-weight: 400;
+  color: rgb(231, 233, 234);
+  margin-left: -4px;
+}
+
+/* Model loading progress display */
+.filter-model-loading {
+  padding: 8px 0;
+  margin: 4px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.model-loading-text {
+  font-size: 12px;
+  color: rgb(29, 155, 240);
+  margin-bottom: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.model-loading-progress {
+  height: 4px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.model-loading-progress-fill {
+  height: 100%;
+  background: rgb(29, 155, 240);
+  border-radius: 2px;
+  transition: width 0.3s ease;
+  width: 0%;
+}
+
+/* Light mode model loading */
+.light-mode .filter-model-loading {
+  border-top-color: rgba(0, 0, 0, 0.1);
+  border-bottom-color: rgba(0, 0, 0, 0.1);
+}
+
+.light-mode .model-loading-progress {
+  background: rgba(0, 0, 0, 0.1);
+}
+
+/* Filtered toggle button */
+.filter-phrases-container .filtered-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 9999px;
+  color: rgb(231, 233, 234);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s;
+}
+
+.filtered-toggle-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
+.filtered-toggle-btn.active {
+  background: rgba(29, 155, 240, 0.15);
+  border-color: rgba(29, 155, 240, 0.4);
+  color: rgb(29, 155, 240);
+}
+
+.filtered-toggle-btn.active:hover {
+  background: rgba(29, 155, 240, 0.2);
+}
+
+.filtered-toggle-count {
+  color: rgb(231, 233, 234);
+  font-weight: 600;
+  display: inline-block;
+}
+
+.filtered-toggle-btn.active .filtered-toggle-count {
+  color: rgb(29, 155, 240);
+}
+
+/* Animation for count increment */
+@keyframes count-bump {
+  0% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.3);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+.filtered-toggle-count.bump {
+  animation: count-bump 0.3s ease-out;
+}
+
+/* ==============================================
+   Theme-specific styles for light/dark modes
+   (platform-specific themes like Twitter's dim
+    mode live in adapters/{platform}/{platform}.css)
+   ============================================== */
+
+/* Light mode styles */
+.light-mode .filter-phrases-container {
+  background-color: rgb(255, 255, 255);
+  border-color: rgb(200, 110, 65);
+}
+
+.light-mode .filter-phrases-label,
+.light-mode .filter-phrases-and {
+  color: rgb(15, 20, 25);
+}
+
+.light-mode .filter-phrases-input {
+  color: rgb(15, 20, 25);
+  border-bottom-color: rgb(207, 217, 222);
+}
+
+.light-mode .filter-placeholder-track > span {
+  color: rgb(139, 152, 165);
+}
+
+.light-mode .filter-phrase-inline {
+  color: rgb(83, 100, 113);
+}
+
+.light-mode .filter-phrase-separator {
+  color: rgb(15, 20, 25);
+}
+
+.light-mode .filtered-toggle-btn {
+  background: rgba(0, 0, 0, 0.05);
+  border-color: rgba(0, 0, 0, 0.12);
+  color: rgb(15, 20, 25);
+}
+
+.light-mode .filtered-toggle-btn:hover {
+  background: rgba(0, 0, 0, 0.08);
+  border-color: rgba(0, 0, 0, 0.2);
+}
+
+.light-mode .filtered-toggle-btn.active {
+  background: rgba(29, 155, 240, 0.1);
+  border-color: rgba(29, 155, 240, 0.3);
+  color: rgb(29, 155, 240);
+}
+
+.light-mode .filtered-toggle-btn.active:hover {
+  background: rgba(29, 155, 240, 0.15);
+}
+
+.light-mode .filtered-toggle-count {
+  color: rgb(15, 20, 25);
+}
+
+.light-mode .filtered-toggle-btn.active .filtered-toggle-count {
+  color: rgb(29, 155, 240);
+}
+
+/* Dark mode styles (default, same as current) */
+.dark-mode .filter-phrases-container {
+  background-color: rgb(0, 0, 0);
+}
+
+/* Light mode for filtered modal */
+.filtered-view-container.light-mode {
+  background-color: rgb(255, 255, 255);
+}
+
+.filtered-view-container.light-mode .filtered-modal-header {
+  border-bottom-color: rgb(239, 243, 244);
+}
+
+.filtered-view-container.light-mode .filtered-modal-close {
+  color: rgb(15, 20, 25);
+}
+
+.filtered-view-container.light-mode .filtered-modal-close:hover {
+  background-color: rgba(15, 20, 25, 0.1);
+}
+
+.filtered-view-container.light-mode .filtered-modal-title {
+  color: rgb(15, 20, 25);
+}
+
+/* Light mode overrides for structured post fields */
+.filtered-view-container.light-mode .slop-post-name {
+  color: rgb(15, 20, 25);
+}
+.filtered-view-container.light-mode .slop-post-handle {
+  color: rgb(83, 100, 113);
+}
+.filtered-view-container.light-mode .slop-post-text {
+  color: rgb(15, 20, 25);
+}
+.filtered-view-container.light-mode .slop-post-avatar {
+  background: #cfd9de;
+}
+
+/* Dark mode for filtered modal */
+.filtered-view-container.dark-mode {
+  background-color: rgb(0, 0, 0);
+}
+
+.filtered-view-container.dark-mode .filtered-modal-header {
+  border-bottom-color: rgb(47, 51, 54);
+}
+
+/* Theme-specific post wrapper borders */
+.filtered-view-container.light-mode .slop-post-wrapper {
+  border-bottom-color: rgb(239, 243, 244);
+}
+
+.filtered-view-container.light-mode .slop-post-reasoning {
+  background: rgba(0, 0, 0, 0.03);
+  color: #536471;
+  border-left-color: rgba(0, 0, 0, 0.1);
+}
+
+.filtered-view-container.light-mode .slop-quote-box {
+  border-color: rgb(239, 243, 244);
+}
+
+.filtered-view-container.light-mode .slop-quote-name {
+  color: rgb(15, 20, 25);
+}
+
+.filtered-view-container.light-mode .slop-quote-handle {
+  color: rgb(83, 100, 113);
+}
+
+.filtered-view-container.light-mode .slop-quote-text {
+  color: rgb(15, 20, 25);
+}
+
+.filtered-view-container.light-mode .slop-restore:hover {
+  color: #0f1419;
+}
+
+/* ======================================
+   Responsive styles for narrow windows
+   ====================================== */
+
+/* Bottom-positioned filter box - the pill itself */
+.filter-phrases-bottom {
+  display: none;
+  position: fixed;
+  bottom: 0;
+  z-index: 10000;
+  background-color: rgb(0, 0, 0);
+  border: 2px solid rgb(234, 133, 84);
+  border-bottom: none;
+  border-radius: 16px 16px 0 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+/* Collapse handle - chevron inside the pill */
+.filter-collapse-handle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 16px;
+  cursor: pointer;
+  border-bottom: 1px solid rgb(47, 51, 54);
+}
+
+.filter-collapse-chevron {
+  width: 0;
+  height: 0;
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
+  border-top: 6px solid rgb(234, 133, 84);
+  transition: transform 0.2s;
+}
+
+/* When collapsed, chevron points up */
+.filter-phrases-bottom.collapsed .filter-collapse-chevron {
+  transform: rotate(180deg);
+}
+
+/* Main content container - collapses when minimized */
+.filter-phrases-bottom .filter-phrases-container {
+  padding: 12px 16px 12px 16px;
+  padding-bottom: max(12px, env(safe-area-inset-bottom));
+  overflow: hidden;
+  transition: max-height 0.3s ease, padding 0.3s ease, opacity 0.2s ease;
+  max-height: 200px;
+  opacity: 1;
+  /* Remove the inner border - outer pill already has border */
+  border: none;
+  border-radius: 0;
+}
+
+.filter-phrases-bottom.collapsed .filter-phrases-container {
+  max-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  opacity: 0;
+}
+
+/* Light mode for bottom filter box */
+.filter-phrases-bottom.light-mode {
+  background-color: rgb(255, 255, 255);
+}
+
+.filter-phrases-bottom.light-mode .filter-collapse-handle {
+  border-bottom-color: rgb(239, 243, 244);
+}
+
+/* Dark mode for bottom filter box */
+.filter-phrases-bottom.dark-mode {
+  background-color: rgb(0, 0, 0);
+}
+
+.filter-phrases-bottom.dark-mode .filter-collapse-handle {
+  border-bottom-color: rgb(47, 51, 54);
+}
+
+/* ======================================
+   Mobile filter box (inserted before nav)
+   ====================================== */
+
+.filter-phrases-mobile {
+  display: none;
+  padding: 12px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+.filter-phrases-mobile .filter-phrases-container {
+  background-color: rgb(0, 0, 0);
+  border: 2px solid rgb(234, 133, 84);
+  border-radius: 16px;
+  padding: 12px 16px;
+}
+
+/* Light mode for mobile filter box */
+.filter-phrases-mobile.light-mode .filter-phrases-container {
+  background-color: rgb(255, 255, 255);
+}
+
+/* Dark mode for mobile filter box */
+.filter-phrases-mobile.dark-mode .filter-phrases-container {
+  background-color: rgb(0, 0, 0);
+}
+
+/* ======================================
+   Responsive breakpoints:
+   - > 1024px: sidebar filter only
+   - 500px - 1024px: bottom fixed filter
+   - < 500px: mobile filter (before nav)
+   ====================================== */
+
+/* Wide window (> 1024px) - show sidebar filter only */
+@media (min-width: 1025px) {
+  .filter-phrases-bottom {
+    display: none !important;
+  }
+
+  .filter-phrases-mobile {
+    display: none !important;
+  }
+}
+
+/* Medium window (500px - 1024px) - show bottom fixed filter */
+@media (min-width: 500px) and (max-width: 1024px) {
+  .filter-phrases-sidebar {
+    display: none !important;
+  }
+
+  .filter-phrases-bottom {
+    display: block !important;
+  }
+
+  .filter-phrases-mobile {
+    display: none !important;
+  }
+}
+
+/* Mobile window (< 500px) - show mobile filter before nav */
+@media (max-width: 499px) {
+  .filter-phrases-sidebar {
+    display: none !important;
+  }
+
+  .filter-phrases-bottom {
+    display: none !important;
+  }
+
+  .filter-phrases-mobile {
+    display: block !important;
+  }
+}
+
+/* Filter phrases actions row */
+.ff-category-limit-warning {
+  font-size: 11px;
+  color: #f4212e;
+  padding: 4px 8px;
+  text-align: center;
+}
+
+.filter-phrases-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 8px;
+  gap: 12px;
+}
+
+/* Settings button */
+.filter-phrases-container .filter-settings-btn {
+  display: inline-flex;
+  align-items: center;
+  background: none;
+  border: none;
+  border-radius: 0;
+  color: rgb(113, 118, 123);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+
+.filter-settings-btn:hover {
+  text-decoration: underline;
+  color: rgb(29, 155, 240);
+}
+
+.light-mode .filter-settings-btn {
+  color: rgb(83, 100, 113);
+}
+
+.light-mode .filter-settings-btn:hover {
+  color: rgb(29, 155, 240);
+}
+
+/* ======================================
+   Settings Modal (iframe-based)
+   ====================================== */
+
+.settings-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(91, 112, 131, 0.4);
+  z-index: 100000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.2s ease, visibility 0.2s ease;
+}
+
+.settings-modal-overlay.visible {
+  opacity: 1;
+  visibility: visible;
+}
+
+.settings-modal-iframe {
+  width: 320px;
+  height: 470px;
+  max-width: 90vw;
+  max-height: 85vh;
+  border: none;
+  border-radius: 16px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+  transform: scale(0.95);
+  transition: transform 0.2s ease, height 0.2s ease;
+}
+
+.settings-modal-overlay.visible .settings-modal-iframe {
+  transform: scale(1);
+}
+
+/* ======================================
+   Latency Warning Banner
+   ====================================== */
+
+.latency-warning-banner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  margin-bottom: 8px;
+  background: rgba(255, 173, 31, 0.15);
+  border: 1px solid rgba(255, 173, 31, 0.4);
+  border-radius: 8px;
+  font-size: 13px;
+  gap: 8px;
+}
+
+.latency-warning-text {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #ffad1f;
+  flex: 1;
+}
+
+.latency-warning-actions {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.latency-configure-btn {
+  background: #ffad1f;
+  color: #000;
+  text-align: center;
+  border: none;
+  width: 100%;
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.latency-configure-btn:hover {
+  background: #e69c1a;
+}
+
+
+/* Light mode */
+.light-mode .latency-warning-banner {
+  background: rgba(255, 173, 31, 0.1);
+  border-color: rgba(255, 173, 31, 0.3);
+}
+
+.light-mode .latency-warning-text {
+  color: #b37a00;
+}
+
+.light-mode .latency-configure-btn {
+  background: #e69c1a;
+}
+
+.light-mode .latency-configure-btn:hover {
+  background: #cc8a17;
+}
+
+/* ======================================
+   Error Banner (unified for auth, rate limit, API errors)
+   ====================================== */
+
+.api-error-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  margin-bottom: 8px;
+  background: rgba(244, 67, 54, 0.15);
+  border: 1px solid rgba(244, 67, 54, 0.4);
+  border-radius: 8px;
+  font-size: 13px;
+  gap: 8px;
+}
+
+.api-error-text {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #f44336;
+  flex: 1;
+}
+
+.api-error-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.api-error-configure-btn {
+  background: #f44336;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.api-error-configure-btn:hover {
+  background: #d32f2f;
+}
+
+/* Light mode */
+.light-mode .api-error-banner {
+  background: rgba(244, 67, 54, 0.1);
+  border-color: rgba(244, 67, 54, 0.3);
+}
+
+.light-mode .api-error-text {
+  color: #c62828;
+}
+
+.light-mode .api-error-configure-btn {
+  background: #d32f2f;
+}
+
+.light-mode .api-error-configure-btn:hover {
+  background: #b71c1c;
+}
+
+
+/* ======================================
+   Queue Backlog Banner (Local Models)
+   ====================================== */
+
+.queue-backlog-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  margin-bottom: 8px;
+  background: rgba(29, 161, 242, 0.15);
+  border: 1px solid rgba(29, 161, 242, 0.4);
+  border-radius: 8px;
+  font-size: 13px;
+  gap: 8px;
+}
+
+.queue-backlog-text {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #1da1f2;
+  flex: 1;
+}
+
+.queue-backlog-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.queue-backlog-configure-btn {
+  background: #1da1f2;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.queue-backlog-configure-btn:hover {
+  background: #1a91da;
+}
+
+
+/* Light mode */
+.light-mode .queue-backlog-banner {
+  background: rgba(29, 161, 242, 0.1);
+  border-color: rgba(29, 161, 242, 0.3);
+}
+
+.light-mode .queue-backlog-text {
+  color: #1a8cd8;
+}
+
+.light-mode .queue-backlog-configure-btn {
+  background: #1a91da;
+}
+
+.light-mode .queue-backlog-configure-btn:hover {
+  background: #1681c4;
+}
+
+/* ======================================
+   iOS Safari BottomBar Tab & Full Page Overlay
+   All styles scoped under body.ff-ios
+   ====================================== */
+
+/* On iOS, suppress the desktop sidebar, bottom, and mobile filter boxes */
+body.ff-ios .filter-phrases-sidebar,
+body.ff-ios .filter-phrases-bottom,
+body.ff-ios .filter-phrases-mobile {
+  display: none !important;
+}
+
+/* Bouncer full-screen overlay — true full-screen modal triggered by FAB */
+/* Lock body scroll while iOS overlay is open */
+body.ff-scroll-locked {
+  position: fixed;
+  top: var(--ff-scroll-y, 0px);
+  width: 100%;
+  overscroll-behavior-y: contain;
+}
+
+@keyframes ff-slide-up {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+@keyframes ff-slide-down {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(100%);
+  }
+}
+
+@keyframes ff-row-enter {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+body.ff-ios .ff-ios-page {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  overscroll-behavior: contain;
+  background-color: rgb(0, 0, 0);
+  padding-bottom: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  animation: ff-slide-up 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+body.ff-ios .ff-ios-page.closing {
+  animation: ff-slide-down 0.28s cubic-bezier(0.7, 0, 0.84, 0) both;
+}
+
+/* Page header */
+body.ff-ios .ff-ios-page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 53px;
+  padding: 0 8px;
+  border-bottom: 1px solid rgb(47, 51, 54);
+  background-color: rgb(0, 0, 0);
+  flex-shrink: 0;
+}
+
+/* Close (X) button in header */
+body.ff-ios .ff-ios-close-btn {
+  background: none;
+  border: none;
+  color: rgb(231, 233, 234);
+  padding: 8px;
+  cursor: pointer;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+body.ff-ios .ff-ios-close-btn:hover {
+  background-color: rgba(239, 243, 244, 0.1);
+}
+
+body.ff-ios .ff-ios-page-title {
+  font-size: 20px;
+  font-weight: 700;
+  color: rgb(231, 233, 234);
+}
+
+body.ff-ios .ff-ios-settings-btn {
+  background: none;
+  border: none;
+  color: rgb(113, 118, 123);
+  padding: 8px;
+  cursor: pointer;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+body.ff-ios .ff-ios-settings-btn:hover {
+  background-color: rgba(239, 243, 244, 0.1);
+  color: rgb(231, 233, 234);
+}
+
+/* Subtitle */
+body.ff-ios .ff-ios-subtitle {
+  padding: 16px 16px 10px;
+  font-size: 25px;
+  /*font-style: italic;*/
+  font-weight: 500;
+  /*text-transform: uppercase;*/
+  color: rgb(113, 118, 123);
+}
+
+body.ff-ios .ff-ios-page.entering .ff-ios-subtitle {
+  animation: ff-row-enter 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation-delay: 0.08s;
+}
+
+/* Category list */
+body.ff-ios .ff-ios-categories-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 16px;
+}
+
+body.ff-ios .ff-ios-category-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 0;
+  border-bottom: 3px solid rgb(47, 51, 54);
+}
+
+body.ff-ios .ff-ios-page.entering .ff-ios-category-row {
+  animation: ff-row-enter 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation-delay: calc(var(--row-index, 0) * 0.05s + 0.15s);
+}
+
+body.ff-ios .ff-ios-category-text {
+  font-size: 35px;
+  /*font-weight: 100;*/
+  color: rgb(231, 233, 234);
+  flex: 1;
+  width: 100%;
+  word-wrap: break-word;
+  margin-right: 12px;
+  hyphens: auto;
+}
+
+body.ff-ios .ff-ios-category-remove {
+  background: none;
+  border: none;
+  color: rgb(113, 118, 123);
+  font-size: 22px;
+  cursor: pointer;
+  padding: 4px 8px;
+  line-height: 1;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+body.ff-ios .ff-ios-category-remove:hover {
+  color: rgb(244, 33, 46);
+  background-color: rgba(244, 33, 46, 0.1);
+}
+
+body.ff-ios .ff-ios-categories-empty {
+  padding: 24px 0;
+  text-align: center;
+  color: rgb(113, 118, 123);
+  font-size: 15px;
+}
+
+/* Bottom bar — always pinned at bottom of overlay, right above Twitter BottomBar */
+body.ff-ios .ff-ios-bottom-bar {
+  flex-shrink: 0;
+  border-top: 1px solid rgb(47, 51, 54);
+  background-color: rgb(0, 0, 0);
+}
+
+/* View filtered button */
+body.ff-ios .ff-ios-view-filtered-btn {
+  display: block;
+  width: calc(100% - 32px);
+  margin: 12px 16px;
+  padding: 12px;
+  background-color: rgba(29, 155, 240, 0.1);
+  border: 1px solid rgba(29, 155, 240, 0.3);
+  border-radius: 9999px;
+  color: rgb(29, 155, 240);
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: center;
+}
+
+body.ff-ios .ff-ios-view-filtered-btn:hover {
+  background-color: rgba(29, 155, 240, 0.15);
+}
+
+/* Input bar */
+body.ff-ios .ff-ios-input-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  padding-bottom: max(10px, env(safe-area-inset-bottom, 0px));
+}
+
+body.ff-ios .ff-ios-phrase-input {
+  flex: 1;
+  padding: 10px 14px;
+  background-color: rgb(32, 35, 39);
+  border: 1px solid rgb(47, 51, 54);
+  border-radius: 9999px;
+  color: rgb(231, 233, 234);
+  font-size: 15px;
+  outline: none;
+  -webkit-appearance: none;
+}
+
+body.ff-ios .ff-ios-phrase-input::placeholder {
+  color: rgb(113, 118, 123);
+}
+
+body.ff-ios .ff-ios-phrase-input:focus {
+  border-color: rgb(29, 155, 240);
+}
+
+body.ff-ios .ff-ios-send-btn {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  border: none;
+  background-color: rgb(29, 155, 240);
+  color: white;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+body.ff-ios .ff-ios-send-btn svg {
+  pointer-events: none;
+}
+
+body.ff-ios .ff-ios-send-btn:hover {
+  background-color: rgb(26, 140, 216);
+}
+
+/* FAB button — positioned above Twitter's compose button */
+body.ff-ios .ff-fab-button {
+  position: absolute;
+  bottom: calc(100% + 12px);
+  right: 0;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  border: none;
+  background-color: rgb(0, 186, 124);
+  color: white;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  z-index: 100;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  -webkit-tap-highlight-color: transparent;
+}
+
+body.ff-ios .ff-fab-button:active {
+  background-color: rgb(0, 160, 107);
+  transform: scale(0.95);
+}
+
+.ff-fab-badge {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 11px;
+  font-weight: 700;
+  color: white;
+  line-height: 1;
+  pointer-events: none;
+}
+
+@keyframes ff-fab-bounce {
+  0%   { transform: scale(1); }
+  30%  { transform: scale(1.25); }
+  50%  { transform: scale(0.92); }
+  70%  { transform: scale(1.08); }
+  100% { transform: scale(1); }
+}
+
+body.ff-ios .ff-fab-button.ff-fab-bounce {
+  animation: ff-fab-bounce 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* ======================================
+   iOS Filtered Posts Modal
+   ====================================== */
+
+.ff-ios-filtered-modal-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(91, 112, 131, 0.4);
+  z-index: 10001;
+  display: flex;
+  justify-content: center;
+  align-items: flex-end;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.25s ease, visibility 0.25s ease;
+}
+
+.ff-ios-filtered-modal-backdrop.visible {
+  opacity: 1;
+  visibility: visible;
+}
+
+.ff-ios-filtered-modal {
+  width: 100%;
+  max-height: 85vh;
+  max-height: 85svh;
+  background-color: rgb(0, 0, 0);
+  border-radius: 16px 16px 0 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  transform: translateY(100%);
+  transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.ff-ios-filtered-modal-backdrop.visible .ff-ios-filtered-modal {
+  transform: translateY(0);
+}
+
+.ff-ios-filtered-modal-backdrop.closing {
+  transition: opacity 0.35s cubic-bezier(0.16, 1, 0.3, 1), visibility 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.ff-ios-filtered-modal-backdrop.closing .ff-ios-filtered-modal {
+  transform: translateY(100%);
+  transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.ff-ios-filtered-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px;
+  border-bottom: 1px solid rgb(47, 51, 54);
+  flex-shrink: 0;
+}
+
+.ff-ios-filtered-modal-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: rgb(231, 233, 234);
+}
+
+.ff-ios-filtered-modal-close {
+  background: none;
+  border: none;
+  color: rgb(113, 118, 123);
+  font-size: 24px;
+  cursor: pointer;
+  padding: 4px 8px;
+  line-height: 1;
+  border-radius: 50%;
+}
+
+.ff-ios-filtered-modal-close:hover {
+  color: rgb(231, 233, 234);
+  background-color: rgba(239, 243, 244, 0.1);
+}
+
+.ff-ios-filtered-modal-content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: max(16px, env(safe-area-inset-bottom, 0px));
+}
+
+/* ======================================
+   iOS Page — Light mode overrides
+   ====================================== */
+
+body.ff-ios .ff-ios-page.light-mode {
+  background-color: rgb(255, 255, 255);
+}
+
+body.ff-ios .ff-ios-page.light-mode .ff-ios-page-header {
+  border-bottom-color: rgb(239, 243, 244);
+  background-color: rgb(255, 255, 255);
+}
+
+body.ff-ios .ff-ios-page.light-mode .ff-ios-page-title {
+  color: rgb(15, 20, 25);
+}
+
+body.ff-ios .ff-ios-page.light-mode .ff-ios-close-btn {
+  color: rgb(15, 20, 25);
+}
+
+body.ff-ios .ff-ios-page.light-mode .ff-ios-settings-btn {
+  color: rgb(83, 100, 113);
+}
+
+body.ff-ios .ff-ios-page.light-mode .ff-ios-subtitle {
+  color: rgb(83, 100, 113);
+}
+
+body.ff-ios .ff-ios-page.light-mode .ff-ios-category-row {
+  border-bottom-color: rgb(239, 243, 244);
+}
+
+body.ff-ios .ff-ios-page.light-mode .ff-ios-category-text {
+  color: rgb(15, 20, 25);
+}
+
+body.ff-ios .ff-ios-page.light-mode .ff-ios-category-remove {
+  color: rgb(83, 100, 113);
+}
+
+body.ff-ios .ff-ios-page.light-mode .ff-ios-categories-empty {
+  color: rgb(83, 100, 113);
+}
+
+body.ff-ios .ff-ios-page.light-mode .ff-ios-bottom-bar {
+  border-top-color: rgb(239, 243, 244);
+  background-color: rgb(255, 255, 255);
+}
+
+body.ff-ios .ff-ios-page.light-mode .ff-ios-phrase-input {
+  background-color: rgb(239, 243, 244);
+  border-color: rgb(207, 217, 222);
+  color: rgb(15, 20, 25);
+}
+
+body.ff-ios .ff-ios-page.light-mode .ff-ios-phrase-input::placeholder {
+  color: rgb(83, 100, 113);
+}
+
+/* Light mode for iOS filtered modal */
+.ff-ios-filtered-modal-backdrop.light-mode .ff-ios-filtered-modal {
+  background-color: rgb(255, 255, 255);
+}
+
+.ff-ios-filtered-modal-backdrop.light-mode .ff-ios-filtered-modal-header {
+  border-bottom-color: rgb(239, 243, 244);
+}
+
+.ff-ios-filtered-modal-backdrop.light-mode .ff-ios-filtered-modal-title {
+  color: rgb(15, 20, 25);
+}
+
+.ff-ios-filtered-modal-backdrop.light-mode .ff-ios-filtered-modal-close {
+  color: rgb(83, 100, 113);
+}
+
+/* iOS light mode overrides for structured post fields */
+.ff-ios-filtered-modal-backdrop.light-mode .slop-post-name {
+  color: rgb(15, 20, 25);
+}
+.ff-ios-filtered-modal-backdrop.light-mode .slop-post-handle {
+  color: rgb(83, 100, 113);
+}
+.ff-ios-filtered-modal-backdrop.light-mode .slop-post-text {
+  color: rgb(15, 20, 25);
+}
+.ff-ios-filtered-modal-backdrop.light-mode .slop-post-avatar {
+  background: #cfd9de;
+}
+
+.ff-ios-filtered-modal-backdrop.light-mode .slop-post-wrapper {
+  border-bottom-color: rgb(239, 243, 244);
+}
+
+.ff-ios-filtered-modal-backdrop.light-mode .slop-post-reasoning {
+  background: rgba(0, 0, 0, 0.03);
+  color: #536471;
+  border-left-color: rgba(0, 0, 0, 0.1);
+}
+
+.ff-ios-filtered-modal-backdrop.light-mode .slop-quote-box {
+  border-color: rgb(239, 243, 244);
+}
+
+.ff-ios-filtered-modal-backdrop.light-mode .slop-quote-name {
+  color: rgb(15, 20, 25);
+}
+
+.ff-ios-filtered-modal-backdrop.light-mode .slop-quote-handle {
+  color: rgb(83, 100, 113);
+}
+
+.ff-ios-filtered-modal-backdrop.light-mode .slop-quote-text {
+  color: rgb(15, 20, 25);
+}
+
+.ff-ios-filtered-modal-backdrop.light-mode .slop-restore:hover {
+  color: #0f1419;
+}
+
+/* iOS dark mode - default colors already match, no overrides needed */
+
+.ff-ios-filtered-modal-backdrop.dark-mode .slop-post-wrapper {
+  border-bottom-color: rgb(47, 51, 54);
+}
+
+/* ======================================
+   iOS Page — Dark mode (default/explicit)
+   ====================================== */
+
+body.ff-ios .ff-ios-page.dark-mode {
+  background-color: rgb(0, 0, 0);
+}
+
+body.ff-ios .ff-ios-page.dark-mode .ff-ios-page-header {
+  border-bottom-color: rgb(47, 51, 54);
+  background-color: rgb(0, 0, 0);
+}
+
+.ff-ios-filtered-modal-backdrop.dark-mode .ff-ios-filtered-modal {
+  background-color: rgb(0, 0, 0);
+}
+
+.ff-ios-filtered-modal-backdrop.dark-mode .ff-ios-filtered-modal-header {
+  border-bottom-color: rgb(47, 51, 54);
+}
+

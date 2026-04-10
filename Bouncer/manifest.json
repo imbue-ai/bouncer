@@ -1,0 +1,74 @@
+{
+  "manifest_version": 3,
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvydSISR3pB1UiG8PwpjePWkmagkgQ53FAA+z2apZUnvW3fAm3TV8/BPI/ofPMczU5Vyf70BKARGkpPGIuzGdaYvLqwr+URcESkayTjaSZfNjRtpUuaKy/ZbnYkBAW+RurDVcDq46oRUViDQuPRM7u32IKN+yRNQQMSsllcheUkWBIccAX8bo3UYTw82YoEy5bKtmgMy7Hx/XFWTy95uVC60JnXaopEraLgo6dP8wp2NUSVf8DnkJhS64auso9W//meZeZxIXHKTeM3DK1APu0f0UXTODdkq99yElx8M7iGVFSaA80oHbOSvi6hKh2UhaisfDyuyQboCghHH2uL5AVwIDAQAB",
+  "name": "Bouncer - Heal your feed on X",
+  "version": "1.0.3",
+  "description": "Remove the stuff you don’t want to see in your X feed. Filter by concept, person, emotion — anything.",
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  },
+  "permissions": [
+    "storage",
+    "identity"
+  ],
+  "host_permissions": [
+    "https://twitter.com/*",
+    "https://x.com/*",
+    "https://api.anthropic.com/*",
+    "https://openrouter.ai/*",
+    "https://api.openai.com/*",
+    "https://generativelanguage.googleapis.com/*",
+    "https://huggingface.co/*",
+    "https://raw.githubusercontent.com/*"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "background": {
+    "service_worker": "dist/background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://twitter.com/*",
+        "https://x.com/*"
+      ],
+      "js": [
+        "dompurify.js",
+        "dist/TwitterAdapter.js",
+        "dist/content.js"
+      ],
+      "css": [
+        "content.css",
+        "adapters/twitter/twitter.css"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "popup.html",
+        "popup.css",
+        "dist/popup.js",
+        "browser-polyfill.js",
+        "shared/models.js",
+        "adapters/twitter/fiber-extractor.js"
+      ],
+      "matches": [
+        "https://twitter.com/*",
+        "https://x.com/*"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,1073 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		4EBBC21C2F4FB7AA00ED2EDD /* manifest.json in Resources */ = {isa = PBXBuildFile; fileRef = 4EBBC21B2F4FB7A700ED2EDD /* manifest.json */; };
+		4EBBC21D2F4FB7AA00ED2EDD /* manifest.json in Resources */ = {isa = PBXBuildFile; fileRef = 4EBBC21B2F4FB7A700ED2EDD /* manifest.json */; };
+		97BD3B812F3EB56C00F8BF65 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97BD3B802F3EB56C00F8BF65 /* AppDelegate.swift */; };
+		97BD3B832F3EB56C00F8BF65 /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97BD3B822F3EB56C00F8BF65 /* SceneDelegate.swift */; };
+		97BD3B862F3EB56C00F8BF65 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3B842F3EB56C00F8BF65 /* LaunchScreen.storyboard */; };
+		97BD3B892F3EB56C00F8BF65 /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3B872F3EB56C00F8BF65 /* Main.storyboard */; };
+		97BD3B922F3EB56C00F8BF65 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97BD3B912F3EB56C00F8BF65 /* AppDelegate.swift */; };
+		97BD3B952F3EB56C00F8BF65 /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3B932F3EB56C00F8BF65 /* Main.storyboard */; };
+		97BD3B9C2F3EB56C00F8BF65 /* Bouncer Extension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 97BD3B9B2F3EB56C00F8BF65 /* Bouncer Extension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		97BD3BA62F3EB56C00F8BF65 /* Bouncer Extension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 97BD3BA52F3EB56C00F8BF65 /* Bouncer Extension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		97BD3BAB2F3EB56C00F8BF65 /* Main.html in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3B702F3EB56C00F8BF65 /* Main.html */; };
+		97BD3BAC2F3EB56C00F8BF65 /* Main.html in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3B702F3EB56C00F8BF65 /* Main.html */; };
+		97BD3BAD2F3EB56C00F8BF65 /* Icon.png in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3B722F3EB56C00F8BF65 /* Icon.png */; };
+		97BD3BAE2F3EB56C00F8BF65 /* Icon.png in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3B722F3EB56C00F8BF65 /* Icon.png */; };
+		97BD3BAF2F3EB56C00F8BF65 /* Style.css in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3B732F3EB56C00F8BF65 /* Style.css */; };
+		97BD3BB02F3EB56C00F8BF65 /* Style.css in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3B732F3EB56C00F8BF65 /* Style.css */; };
+		97BD3BB12F3EB56C00F8BF65 /* Script.js in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3B742F3EB56C00F8BF65 /* Script.js */; };
+		97BD3BB22F3EB56C00F8BF65 /* Script.js in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3B742F3EB56C00F8BF65 /* Script.js */; };
+		97BD3BB32F3EB56C00F8BF65 /* ViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97BD3B752F3EB56C00F8BF65 /* ViewController.swift */; };
+		97BD3BB42F3EB56C00F8BF65 /* ViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97BD3B752F3EB56C00F8BF65 /* ViewController.swift */; };
+		97BD3BB52F3EB56C00F8BF65 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3B762F3EB56C00F8BF65 /* Assets.xcassets */; };
+		97BD3BB62F3EB56C00F8BF65 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3B762F3EB56C00F8BF65 /* Assets.xcassets */; };
+		97BD3BB72F3EB56C00F8BF65 /* SafariWebExtensionHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97BD3B782F3EB56C00F8BF65 /* SafariWebExtensionHandler.swift */; };
+		97BD3BB82F3EB56C00F8BF65 /* SafariWebExtensionHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97BD3B782F3EB56C00F8BF65 /* SafariWebExtensionHandler.swift */; };
+		97BD3BE02F3EB56D00F8BF65 /* browser-polyfill.js in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BCB2F3EB56D00F8BF65 /* browser-polyfill.js */; };
+		97BD3BE12F3EB56D00F8BF65 /* popup.js in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BCC2F3EB56D00F8BF65 /* popup.js */; };
+		97BD3BE22F3EB56D00F8BF65 /* content.css in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BCD2F3EB56D00F8BF65 /* content.css */; };
+		97BD3BE32F3EB56D00F8BF65 /* background.js in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BCE2F3EB56D00F8BF65 /* background.js */; };
+		97BD3BE42F3EB56D00F8BF65 /* dist in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BCF2F3EB56D00F8BF65 /* dist */; };
+		97BD3BE52F3EB56D00F8BF65 /* popup.html in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BD02F3EB56D00F8BF65 /* popup.html */; };
+		97BD3BE72F3EB56D00F8BF65 /* build.js in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BD22F3EB56D00F8BF65 /* build.js */; };
+		97BD3BE82F3EB56D00F8BF65 /* manifest.firefox.json in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BD32F3EB56D00F8BF65 /* manifest.firefox.json */; };
+		97BD3BE92F3EB56D00F8BF65 /* manifest.chrome.json in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BD42F3EB56D00F8BF65 /* manifest.chrome.json */; };
+		97BD3BEA2F3EB56D00F8BF65 /* shared in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BD52F3EB56D00F8BF65 /* shared */; };
+		97BD3BEB2F3EB56D00F8BF65 /* adapters in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BD62F3EB56D00F8BF65 /* adapters */; };
+		97BD3BEC2F3EB56D00F8BF65 /* package-lock.json in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BD72F3EB56D00F8BF65 /* package-lock.json */; };
+		97BD3BED2F3EB56D00F8BF65 /* package.json in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BD82F3EB56D00F8BF65 /* package.json */; };
+		97BD3BEE2F3EB56D00F8BF65 /* icons in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BD92F3EB56D00F8BF65 /* icons */; };
+		97BD3BF12F3EB56D00F8BF65 /* popup.css in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BDC2F3EB56D00F8BF65 /* popup.css */; };
+		97BD3BF22F3EB56D00F8BF65 /* content.js in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BDD2F3EB56D00F8BF65 /* content.js */; };
+		97BD3BF32F3EB56D00F8BF65 /* dompurify.js in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BDE2F3EB56D00F8BF65 /* dompurify.js */; };
+		97BD3BF52F3EB56D00F8BF65 /* browser-polyfill.js in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BCB2F3EB56D00F8BF65 /* browser-polyfill.js */; };
+		97BD3BF62F3EB56D00F8BF65 /* popup.js in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BCC2F3EB56D00F8BF65 /* popup.js */; };
+		97BD3BF72F3EB56D00F8BF65 /* content.css in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BCD2F3EB56D00F8BF65 /* content.css */; };
+		97BD3BF82F3EB56D00F8BF65 /* background.js in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BCE2F3EB56D00F8BF65 /* background.js */; };
+		97BD3BF92F3EB56D00F8BF65 /* dist in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BCF2F3EB56D00F8BF65 /* dist */; };
+		97BD3BFA2F3EB56D00F8BF65 /* popup.html in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BD02F3EB56D00F8BF65 /* popup.html */; };
+		97BD3BFC2F3EB56D00F8BF65 /* build.js in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BD22F3EB56D00F8BF65 /* build.js */; };
+		97BD3BFD2F3EB56D00F8BF65 /* manifest.firefox.json in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BD32F3EB56D00F8BF65 /* manifest.firefox.json */; };
+		97BD3BFE2F3EB56D00F8BF65 /* manifest.chrome.json in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BD42F3EB56D00F8BF65 /* manifest.chrome.json */; };
+		97BD3BFF2F3EB56D00F8BF65 /* shared in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BD52F3EB56D00F8BF65 /* shared */; };
+		97BD3C002F3EB56D00F8BF65 /* adapters in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BD62F3EB56D00F8BF65 /* adapters */; };
+		97BD3C012F3EB56D00F8BF65 /* package-lock.json in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BD72F3EB56D00F8BF65 /* package-lock.json */; };
+		97BD3C022F3EB56D00F8BF65 /* package.json in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BD82F3EB56D00F8BF65 /* package.json */; };
+		97BD3C032F3EB56D00F8BF65 /* icons in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BD92F3EB56D00F8BF65 /* icons */; };
+		97BD3C062F3EB56D00F8BF65 /* popup.css in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BDC2F3EB56D00F8BF65 /* popup.css */; };
+		97BD3C072F3EB56D00F8BF65 /* content.js in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BDD2F3EB56D00F8BF65 /* content.js */; };
+		97BD3C082F3EB56D00F8BF65 /* dompurify.js in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BDE2F3EB56D00F8BF65 /* dompurify.js */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		97BD3B9D2F3EB56C00F8BF65 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 97BD3B6A2F3EB56C00F8BF65 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 97BD3B9A2F3EB56C00F8BF65;
+			remoteInfo = "Twitter For You Filter Extension (iOS)";
+		};
+		97BD3BA72F3EB56C00F8BF65 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 97BD3B6A2F3EB56C00F8BF65 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 97BD3BA42F3EB56C00F8BF65;
+			remoteInfo = "Twitter For You Filter Extension (macOS)";
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		97BD3BBE2F3EB56C00F8BF65 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				97BD3B9C2F3EB56C00F8BF65 /* Bouncer Extension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		97BD3BC52F3EB56C00F8BF65 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				97BD3BA62F3EB56C00F8BF65 /* Bouncer Extension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		4EBBC21B2F4FB7A700ED2EDD /* manifest.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = manifest.json; sourceTree = "<group>"; };
+		97BD3B712F3EB56C00F8BF65 /* Base */ = {isa = PBXFileReference; lastKnownFileType = text.html; name = Base; path = Base.lproj/Main.html; sourceTree = "<group>"; };
+		97BD3B722F3EB56C00F8BF65 /* Icon.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = Icon.png; sourceTree = "<group>"; };
+		97BD3B732F3EB56C00F8BF65 /* Style.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; path = Style.css; sourceTree = "<group>"; };
+		97BD3B742F3EB56C00F8BF65 /* Script.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = Script.js; sourceTree = "<group>"; };
+		97BD3B752F3EB56C00F8BF65 /* ViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewController.swift; sourceTree = "<group>"; };
+		97BD3B762F3EB56C00F8BF65 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		97BD3B782F3EB56C00F8BF65 /* SafariWebExtensionHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SafariWebExtensionHandler.swift; sourceTree = "<group>"; };
+		97BD3B7D2F3EB56C00F8BF65 /* Bouncer.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Bouncer.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		97BD3B802F3EB56C00F8BF65 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		97BD3B822F3EB56C00F8BF65 /* SceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneDelegate.swift; sourceTree = "<group>"; };
+		97BD3B852F3EB56C00F8BF65 /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/LaunchScreen.storyboard; sourceTree = "<group>"; };
+		97BD3B882F3EB56C00F8BF65 /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/Main.storyboard; sourceTree = "<group>"; };
+		97BD3B8A2F3EB56C00F8BF65 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		97BD3B8F2F3EB56C00F8BF65 /* Bouncer.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Bouncer.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		97BD3B912F3EB56C00F8BF65 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		97BD3B942F3EB56C00F8BF65 /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/Main.storyboard; sourceTree = "<group>"; };
+		97BD3B962F3EB56C00F8BF65 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		97BD3B9B2F3EB56C00F8BF65 /* Bouncer Extension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = "Bouncer Extension.appex"; sourceTree = BUILT_PRODUCTS_DIR; };
+		97BD3BA02F3EB56C00F8BF65 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		97BD3BA52F3EB56C00F8BF65 /* Bouncer Extension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = "Bouncer Extension.appex"; sourceTree = BUILT_PRODUCTS_DIR; };
+		97BD3BAA2F3EB56C00F8BF65 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		97BD3BCB2F3EB56D00F8BF65 /* browser-polyfill.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = "browser-polyfill.js"; path = "../../Bouncer/browser-polyfill.js"; sourceTree = "<group>"; };
+		97BD3BCC2F3EB56D00F8BF65 /* popup.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = popup.js; path = "../../Bouncer/popup.js"; sourceTree = "<group>"; };
+		97BD3BCD2F3EB56D00F8BF65 /* content.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; name = content.css; path = "../../Bouncer/content.css"; sourceTree = "<group>"; };
+		97BD3BCE2F3EB56D00F8BF65 /* background.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = background.js; path = "../../Bouncer/background.js"; sourceTree = "<group>"; };
+		97BD3BCF2F3EB56D00F8BF65 /* dist */ = {isa = PBXFileReference; lastKnownFileType = folder; name = dist; path = "../../Bouncer/dist"; sourceTree = "<group>"; };
+		97BD3BD02F3EB56D00F8BF65 /* popup.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; name = popup.html; path = "../../Bouncer/popup.html"; sourceTree = "<group>"; };
+		97BD3BD22F3EB56D00F8BF65 /* build.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = build.js; path = "../../Bouncer/build.js"; sourceTree = "<group>"; };
+		97BD3BD32F3EB56D00F8BF65 /* manifest.firefox.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = manifest.firefox.json; path = "../../Bouncer/manifest.firefox.json"; sourceTree = "<group>"; };
+		97BD3BD42F3EB56D00F8BF65 /* manifest.chrome.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = manifest.chrome.json; path = "../../Bouncer/manifest.chrome.json"; sourceTree = "<group>"; };
+		97BD3BD52F3EB56D00F8BF65 /* shared */ = {isa = PBXFileReference; lastKnownFileType = folder; name = shared; path = "../../Bouncer/shared"; sourceTree = "<group>"; };
+		97BD3BD62F3EB56D00F8BF65 /* adapters */ = {isa = PBXFileReference; lastKnownFileType = folder; name = adapters; path = "../../Bouncer/adapters"; sourceTree = "<group>"; };
+		97BD3BD72F3EB56D00F8BF65 /* package-lock.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = "package-lock.json"; path = "../../Bouncer/package-lock.json"; sourceTree = "<group>"; };
+		97BD3BD82F3EB56D00F8BF65 /* package.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = package.json; path = "../../Bouncer/package.json"; sourceTree = "<group>"; };
+		97BD3BD92F3EB56D00F8BF65 /* icons */ = {isa = PBXFileReference; lastKnownFileType = folder; name = icons; path = "../../Bouncer/icons"; sourceTree = "<group>"; };
+		97BD3BDC2F3EB56D00F8BF65 /* popup.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; name = popup.css; path = "../../Bouncer/popup.css"; sourceTree = "<group>"; };
+		97BD3BDD2F3EB56D00F8BF65 /* content.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = content.js; path = "../../Bouncer/content.js"; sourceTree = "<group>"; };
+		97BD3BDE2F3EB56D00F8BF65 /* dompurify.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = dompurify.js; path = "../../Bouncer/dompurify.js"; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		97BD3B7A2F3EB56C00F8BF65 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		97BD3B8C2F3EB56C00F8BF65 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		97BD3B982F3EB56C00F8BF65 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		97BD3BA22F3EB56C00F8BF65 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		97BD3B692F3EB56C00F8BF65 = {
+			isa = PBXGroup;
+			children = (
+				97BD3B6E2F3EB56C00F8BF65 /* Shared (App) */,
+				97BD3B772F3EB56C00F8BF65 /* Shared (Extension) */,
+				97BD3B7F2F3EB56C00F8BF65 /* iOS (App) */,
+				97BD3B902F3EB56C00F8BF65 /* macOS (App) */,
+				97BD3B9F2F3EB56C00F8BF65 /* iOS (Extension) */,
+				97BD3BA92F3EB56C00F8BF65 /* macOS (Extension) */,
+				97BD3B7E2F3EB56C00F8BF65 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		97BD3B6E2F3EB56C00F8BF65 /* Shared (App) */ = {
+			isa = PBXGroup;
+			children = (
+				97BD3B752F3EB56C00F8BF65 /* ViewController.swift */,
+				97BD3B762F3EB56C00F8BF65 /* Assets.xcassets */,
+				97BD3B6F2F3EB56C00F8BF65 /* Resources */,
+			);
+			path = "Shared (App)";
+			sourceTree = "<group>";
+		};
+		97BD3B6F2F3EB56C00F8BF65 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				97BD3B702F3EB56C00F8BF65 /* Main.html */,
+				97BD3B722F3EB56C00F8BF65 /* Icon.png */,
+				97BD3B732F3EB56C00F8BF65 /* Style.css */,
+				97BD3B742F3EB56C00F8BF65 /* Script.js */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		97BD3B772F3EB56C00F8BF65 /* Shared (Extension) */ = {
+			isa = PBXGroup;
+			children = (
+				97BD3BC92F3EB56D00F8BF65 /* Resources */,
+				97BD3B782F3EB56C00F8BF65 /* SafariWebExtensionHandler.swift */,
+			);
+			path = "Shared (Extension)";
+			sourceTree = "<group>";
+		};
+		97BD3B7E2F3EB56C00F8BF65 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				97BD3B7D2F3EB56C00F8BF65 /* Bouncer.app */,
+				97BD3B8F2F3EB56C00F8BF65 /* Bouncer.app */,
+				97BD3B9B2F3EB56C00F8BF65 /* Bouncer Extension.appex */,
+				97BD3BA52F3EB56C00F8BF65 /* Bouncer Extension.appex */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		97BD3B7F2F3EB56C00F8BF65 /* iOS (App) */ = {
+			isa = PBXGroup;
+			children = (
+				97BD3B802F3EB56C00F8BF65 /* AppDelegate.swift */,
+				97BD3B822F3EB56C00F8BF65 /* SceneDelegate.swift */,
+				97BD3B842F3EB56C00F8BF65 /* LaunchScreen.storyboard */,
+				97BD3B872F3EB56C00F8BF65 /* Main.storyboard */,
+				97BD3B8A2F3EB56C00F8BF65 /* Info.plist */,
+			);
+			path = "iOS (App)";
+			sourceTree = "<group>";
+		};
+		97BD3B902F3EB56C00F8BF65 /* macOS (App) */ = {
+			isa = PBXGroup;
+			children = (
+				97BD3B912F3EB56C00F8BF65 /* AppDelegate.swift */,
+				97BD3B932F3EB56C00F8BF65 /* Main.storyboard */,
+				97BD3B962F3EB56C00F8BF65 /* Info.plist */,
+			);
+			path = "macOS (App)";
+			sourceTree = "<group>";
+		};
+		97BD3B9F2F3EB56C00F8BF65 /* iOS (Extension) */ = {
+			isa = PBXGroup;
+			children = (
+				97BD3BA02F3EB56C00F8BF65 /* Info.plist */,
+			);
+			path = "iOS (Extension)";
+			sourceTree = "<group>";
+		};
+		97BD3BA92F3EB56C00F8BF65 /* macOS (Extension) */ = {
+			isa = PBXGroup;
+			children = (
+				97BD3BAA2F3EB56C00F8BF65 /* Info.plist */,
+			);
+			path = "macOS (Extension)";
+			sourceTree = "<group>";
+		};
+		97BD3BC92F3EB56D00F8BF65 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				4EBBC21B2F4FB7A700ED2EDD /* manifest.json */,
+				97BD3BCB2F3EB56D00F8BF65 /* browser-polyfill.js */,
+				97BD3BCC2F3EB56D00F8BF65 /* popup.js */,
+				97BD3BCD2F3EB56D00F8BF65 /* content.css */,
+				97BD3BCE2F3EB56D00F8BF65 /* background.js */,
+				97BD3BCF2F3EB56D00F8BF65 /* dist */,
+				97BD3BD02F3EB56D00F8BF65 /* popup.html */,
+				97BD3BD22F3EB56D00F8BF65 /* build.js */,
+				97BD3BD32F3EB56D00F8BF65 /* manifest.firefox.json */,
+				97BD3BD42F3EB56D00F8BF65 /* manifest.chrome.json */,
+				97BD3BD52F3EB56D00F8BF65 /* shared */,
+				97BD3BD62F3EB56D00F8BF65 /* adapters */,
+				97BD3BD72F3EB56D00F8BF65 /* package-lock.json */,
+				97BD3BD82F3EB56D00F8BF65 /* package.json */,
+				97BD3BD92F3EB56D00F8BF65 /* icons */,
+				97BD3BDC2F3EB56D00F8BF65 /* popup.css */,
+				97BD3BDD2F3EB56D00F8BF65 /* content.js */,
+				97BD3BDE2F3EB56D00F8BF65 /* dompurify.js */,
+			);
+			name = Resources;
+			path = "Shared (Extension)";
+			sourceTree = SOURCE_ROOT;
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		97BD3B7C2F3EB56C00F8BF65 /* Bouncer (iOS) */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 97BD3BBF2F3EB56C00F8BF65 /* Build configuration list for PBXNativeTarget "Bouncer (iOS)" */;
+			buildPhases = (
+				97BD3B792F3EB56C00F8BF65 /* Sources */,
+				97BD3B7A2F3EB56C00F8BF65 /* Frameworks */,
+				97BD3B7B2F3EB56C00F8BF65 /* Resources */,
+				97BD3BBE2F3EB56C00F8BF65 /* Embed Foundation Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				97BD3B9E2F3EB56C00F8BF65 /* PBXTargetDependency */,
+			);
+			name = "Bouncer (iOS)";
+			packageProductDependencies = (
+			);
+			productName = "Twitter For You Filter (iOS)";
+			productReference = 97BD3B7D2F3EB56C00F8BF65 /* Bouncer.app */;
+			productType = "com.apple.product-type.application";
+		};
+		97BD3B8E2F3EB56C00F8BF65 /* Bouncer (macOS) */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 97BD3BC62F3EB56C00F8BF65 /* Build configuration list for PBXNativeTarget "Bouncer (macOS)" */;
+			buildPhases = (
+				97BD3B8B2F3EB56C00F8BF65 /* Sources */,
+				97BD3B8C2F3EB56C00F8BF65 /* Frameworks */,
+				97BD3B8D2F3EB56C00F8BF65 /* Resources */,
+				97BD3BC52F3EB56C00F8BF65 /* Embed Foundation Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				97BD3BA82F3EB56C00F8BF65 /* PBXTargetDependency */,
+			);
+			name = "Bouncer (macOS)";
+			packageProductDependencies = (
+			);
+			productName = "Twitter For You Filter (macOS)";
+			productReference = 97BD3B8F2F3EB56C00F8BF65 /* Bouncer.app */;
+			productType = "com.apple.product-type.application";
+		};
+		97BD3B9A2F3EB56C00F8BF65 /* Bouncer Extension (iOS) */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 97BD3BBB2F3EB56C00F8BF65 /* Build configuration list for PBXNativeTarget "Bouncer Extension (iOS)" */;
+			buildPhases = (
+				97BD3B972F3EB56C00F8BF65 /* Sources */,
+				97BD3B982F3EB56C00F8BF65 /* Frameworks */,
+				97BD3B992F3EB56C00F8BF65 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = "Bouncer Extension (iOS)";
+			packageProductDependencies = (
+			);
+			productName = "Twitter For You Filter Extension (iOS)";
+			productReference = 97BD3B9B2F3EB56C00F8BF65 /* Bouncer Extension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		97BD3BA42F3EB56C00F8BF65 /* Bouncer Extension (macOS) */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 97BD3BC22F3EB56C00F8BF65 /* Build configuration list for PBXNativeTarget "Bouncer Extension (macOS)" */;
+			buildPhases = (
+				97BD3BA12F3EB56C00F8BF65 /* Sources */,
+				97BD3BA22F3EB56C00F8BF65 /* Frameworks */,
+				97BD3BA32F3EB56C00F8BF65 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = "Bouncer Extension (macOS)";
+			packageProductDependencies = (
+			);
+			productName = "Twitter For You Filter Extension (macOS)";
+			productReference = 97BD3BA52F3EB56C00F8BF65 /* Bouncer Extension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		97BD3B6A2F3EB56C00F8BF65 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2620;
+				LastUpgradeCheck = 2620;
+				TargetAttributes = {
+					97BD3B7C2F3EB56C00F8BF65 = {
+						CreatedOnToolsVersion = 26.2;
+					};
+					97BD3B8E2F3EB56C00F8BF65 = {
+						CreatedOnToolsVersion = 26.2;
+					};
+					97BD3B9A2F3EB56C00F8BF65 = {
+						CreatedOnToolsVersion = 26.2;
+					};
+					97BD3BA42F3EB56C00F8BF65 = {
+						CreatedOnToolsVersion = 26.2;
+					};
+				};
+			};
+			buildConfigurationList = 97BD3B6D2F3EB56C00F8BF65 /* Build configuration list for PBXProject "Bouncer" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 97BD3B692F3EB56C00F8BF65;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 97BD3B7E2F3EB56C00F8BF65 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				97BD3B7C2F3EB56C00F8BF65 /* Bouncer (iOS) */,
+				97BD3B8E2F3EB56C00F8BF65 /* Bouncer (macOS) */,
+				97BD3B9A2F3EB56C00F8BF65 /* Bouncer Extension (iOS) */,
+				97BD3BA42F3EB56C00F8BF65 /* Bouncer Extension (macOS) */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		97BD3B7B2F3EB56C00F8BF65 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				97BD3BAD2F3EB56C00F8BF65 /* Icon.png in Resources */,
+				97BD3B862F3EB56C00F8BF65 /* LaunchScreen.storyboard in Resources */,
+				97BD3BAB2F3EB56C00F8BF65 /* Main.html in Resources */,
+				97BD3BB12F3EB56C00F8BF65 /* Script.js in Resources */,
+				97BD3BB52F3EB56C00F8BF65 /* Assets.xcassets in Resources */,
+				97BD3B892F3EB56C00F8BF65 /* Main.storyboard in Resources */,
+				97BD3BAF2F3EB56C00F8BF65 /* Style.css in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		97BD3B8D2F3EB56C00F8BF65 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				97BD3BAE2F3EB56C00F8BF65 /* Icon.png in Resources */,
+				97BD3BB02F3EB56C00F8BF65 /* Style.css in Resources */,
+				97BD3B952F3EB56C00F8BF65 /* Main.storyboard in Resources */,
+				97BD3BB22F3EB56C00F8BF65 /* Script.js in Resources */,
+				97BD3BB62F3EB56C00F8BF65 /* Assets.xcassets in Resources */,
+				97BD3BAC2F3EB56C00F8BF65 /* Main.html in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		97BD3B992F3EB56C00F8BF65 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				97BD3BFA2F3EB56D00F8BF65 /* popup.html in Resources */,
+				97BD3C032F3EB56D00F8BF65 /* icons in Resources */,
+				97BD3BFF2F3EB56D00F8BF65 /* shared in Resources */,
+				97BD3BFC2F3EB56D00F8BF65 /* build.js in Resources */,
+				97BD3C072F3EB56D00F8BF65 /* content.js in Resources */,
+				97BD3C082F3EB56D00F8BF65 /* dompurify.js in Resources */,
+				4EBBC21C2F4FB7AA00ED2EDD /* manifest.json in Resources */,
+				97BD3BF92F3EB56D00F8BF65 /* dist in Resources */,
+				97BD3BFD2F3EB56D00F8BF65 /* manifest.firefox.json in Resources */,
+				97BD3C002F3EB56D00F8BF65 /* adapters in Resources */,
+				97BD3C012F3EB56D00F8BF65 /* package-lock.json in Resources */,
+				97BD3BF52F3EB56D00F8BF65 /* browser-polyfill.js in Resources */,
+				97BD3BFE2F3EB56D00F8BF65 /* manifest.chrome.json in Resources */,
+				97BD3C062F3EB56D00F8BF65 /* popup.css in Resources */,
+				97BD3BF72F3EB56D00F8BF65 /* content.css in Resources */,
+				97BD3BF62F3EB56D00F8BF65 /* popup.js in Resources */,
+				97BD3BF82F3EB56D00F8BF65 /* background.js in Resources */,
+				97BD3C022F3EB56D00F8BF65 /* package.json in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		97BD3BA32F3EB56C00F8BF65 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				97BD3BE52F3EB56D00F8BF65 /* popup.html in Resources */,
+				97BD3BEE2F3EB56D00F8BF65 /* icons in Resources */,
+				97BD3BEA2F3EB56D00F8BF65 /* shared in Resources */,
+				97BD3BE72F3EB56D00F8BF65 /* build.js in Resources */,
+				97BD3BF22F3EB56D00F8BF65 /* content.js in Resources */,
+				97BD3BF32F3EB56D00F8BF65 /* dompurify.js in Resources */,
+				4EBBC21D2F4FB7AA00ED2EDD /* manifest.json in Resources */,
+				97BD3BE42F3EB56D00F8BF65 /* dist in Resources */,
+				97BD3BE82F3EB56D00F8BF65 /* manifest.firefox.json in Resources */,
+				97BD3BEB2F3EB56D00F8BF65 /* adapters in Resources */,
+				97BD3BEC2F3EB56D00F8BF65 /* package-lock.json in Resources */,
+				97BD3BE02F3EB56D00F8BF65 /* browser-polyfill.js in Resources */,
+				97BD3BE92F3EB56D00F8BF65 /* manifest.chrome.json in Resources */,
+				97BD3BF12F3EB56D00F8BF65 /* popup.css in Resources */,
+				97BD3BE22F3EB56D00F8BF65 /* content.css in Resources */,
+				97BD3BE12F3EB56D00F8BF65 /* popup.js in Resources */,
+				97BD3BE32F3EB56D00F8BF65 /* background.js in Resources */,
+				97BD3BED2F3EB56D00F8BF65 /* package.json in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		97BD3B792F3EB56C00F8BF65 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				97BD3BB32F3EB56C00F8BF65 /* ViewController.swift in Sources */,
+				97BD3B812F3EB56C00F8BF65 /* AppDelegate.swift in Sources */,
+				97BD3B832F3EB56C00F8BF65 /* SceneDelegate.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		97BD3B8B2F3EB56C00F8BF65 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				97BD3BB42F3EB56C00F8BF65 /* ViewController.swift in Sources */,
+				97BD3B922F3EB56C00F8BF65 /* AppDelegate.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		97BD3B972F3EB56C00F8BF65 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				97BD3BB72F3EB56C00F8BF65 /* SafariWebExtensionHandler.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		97BD3BA12F3EB56C00F8BF65 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				97BD3BB82F3EB56C00F8BF65 /* SafariWebExtensionHandler.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		97BD3B9E2F3EB56C00F8BF65 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 97BD3B9A2F3EB56C00F8BF65 /* Bouncer Extension (iOS) */;
+			targetProxy = 97BD3B9D2F3EB56C00F8BF65 /* PBXContainerItemProxy */;
+		};
+		97BD3BA82F3EB56C00F8BF65 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 97BD3BA42F3EB56C00F8BF65 /* Bouncer Extension (macOS) */;
+			targetProxy = 97BD3BA72F3EB56C00F8BF65 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin PBXVariantGroup section */
+		97BD3B702F3EB56C00F8BF65 /* Main.html */ = {
+			isa = PBXVariantGroup;
+			children = (
+				97BD3B712F3EB56C00F8BF65 /* Base */,
+			);
+			name = Main.html;
+			sourceTree = "<group>";
+		};
+		97BD3B842F3EB56C00F8BF65 /* LaunchScreen.storyboard */ = {
+			isa = PBXVariantGroup;
+			children = (
+				97BD3B852F3EB56C00F8BF65 /* Base */,
+			);
+			name = LaunchScreen.storyboard;
+			sourceTree = "<group>";
+		};
+		97BD3B872F3EB56C00F8BF65 /* Main.storyboard */ = {
+			isa = PBXVariantGroup;
+			children = (
+				97BD3B882F3EB56C00F8BF65 /* Base */,
+			);
+			name = Main.storyboard;
+			sourceTree = "<group>";
+		};
+		97BD3B932F3EB56C00F8BF65 /* Main.storyboard */ = {
+			isa = PBXVariantGroup;
+			children = (
+				97BD3B942F3EB56C00F8BF65 /* Base */,
+			);
+			name = Main.storyboard;
+			sourceTree = "<group>";
+		};
+/* End PBXVariantGroup section */
+
+/* Begin XCBuildConfiguration section */
+		97BD3BB92F3EB56C00F8BF65 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		97BD3BBA2F3EB56C00F8BF65 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
+			};
+			name = Release;
+		};
+		97BD3BBC2F3EB56C00F8BF65 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = LDDYAR29MP;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "iOS (Extension)/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Twitter For You Filter Extension";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = (
+					"-framework",
+					SafariServices,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.imbue.xbouncer.safariextension;
+				PRODUCT_NAME = "Bouncer Extension";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		97BD3BBD2F3EB56C00F8BF65 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = LDDYAR29MP;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "iOS (Extension)/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Twitter For You Filter Extension";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = (
+					"-framework",
+					SafariServices,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.imbue.xbouncer.safariextension;
+				PRODUCT_NAME = "Bouncer Extension";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		97BD3BC02F3EB56C00F8BF65 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = LDDYAR29MP;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "iOS (App)/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Twitter For You Filter";
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen;
+				INFOPLIST_KEY_UIMainStoryboardFile = "";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = (
+					"-framework",
+					SafariServices,
+					"-framework",
+					WebKit,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.imbue.xbouncer;
+				PRODUCT_NAME = Bouncer;
+				PROVISIONING_PROFILE_SPECIFIER = "";
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		97BD3BC12F3EB56C00F8BF65 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = LDDYAR29MP;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "iOS (App)/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Twitter For You Filter";
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen;
+				INFOPLIST_KEY_UIMainStoryboardFile = "";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = (
+					"-framework",
+					SafariServices,
+					"-framework",
+					WebKit,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.imbue.xbouncer;
+				PRODUCT_NAME = Bouncer;
+				PROVISIONING_PROFILE_SPECIFIER = "";
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		97BD3BC32F3EB56C00F8BF65 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_USER_SELECTED_FILES = readonly;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "macOS (Extension)/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Twitter For You Filter Extension";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 10.14;
+				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = (
+					"-framework",
+					SafariServices,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "com.yourCompany.Twitter-For-You-Filter.Extension";
+				PRODUCT_NAME = "Bouncer Extension";
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		97BD3BC42F3EB56C00F8BF65 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_USER_SELECTED_FILES = readonly;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "macOS (Extension)/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Twitter For You Filter Extension";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 10.14;
+				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = (
+					"-framework",
+					SafariServices,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "com.yourCompany.Twitter-For-You-Filter.Extension";
+				PRODUCT_NAME = "Bouncer Extension";
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		97BD3BC72F3EB56C00F8BF65 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
+				ENABLE_USER_SELECTED_FILES = readonly;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "macOS (App)/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Twitter For You Filter";
+				INFOPLIST_KEY_NSMainStoryboardFile = Main;
+				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 10.14;
+				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = (
+					"-framework",
+					SafariServices,
+					"-framework",
+					WebKit,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "com.yourCompany.Twitter-For-You-Filter";
+				PRODUCT_NAME = Bouncer;
+				REGISTER_APP_GROUPS = YES;
+				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		97BD3BC82F3EB56C00F8BF65 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
+				ENABLE_USER_SELECTED_FILES = readonly;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "macOS (App)/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Twitter For You Filter";
+				INFOPLIST_KEY_NSMainStoryboardFile = Main;
+				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 10.14;
+				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = (
+					"-framework",
+					SafariServices,
+					"-framework",
+					WebKit,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "com.yourCompany.Twitter-For-You-Filter";
+				PRODUCT_NAME = Bouncer;
+				REGISTER_APP_GROUPS = YES;
+				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		97BD3B6D2F3EB56C00F8BF65 /* Build configuration list for PBXProject "Bouncer" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				97BD3BB92F3EB56C00F8BF65 /* Debug */,
+				97BD3BBA2F3EB56C00F8BF65 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		97BD3BBB2F3EB56C00F8BF65 /* Build configuration list for PBXNativeTarget "Bouncer Extension (iOS)" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				97BD3BBC2F3EB56C00F8BF65 /* Debug */,
+				97BD3BBD2F3EB56C00F8BF65 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		97BD3BBF2F3EB56C00F8BF65 /* Build configuration list for PBXNativeTarget "Bouncer (iOS)" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				97BD3BC02F3EB56C00F8BF65 /* Debug */,
+				97BD3BC12F3EB56C00F8BF65 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		97BD3BC22F3EB56C00F8BF65 /* Build configuration list for PBXNativeTarget "Bouncer Extension (macOS)" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				97BD3BC32F3EB56C00F8BF65 /* Debug */,
+				97BD3BC42F3EB56C00F8BF65 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		97BD3BC62F3EB56C00F8BF65 /* Build configuration list for PBXNativeTarget "Bouncer (macOS)" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				97BD3BC72F3EB56C00F8BF65 /* Debug */,
+				97BD3BC82F3EB56C00F8BF65 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 97BD3B6A2F3EB56C00F8BF65 /* Project object */;
+}

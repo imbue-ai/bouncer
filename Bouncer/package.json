@@ -1,0 +1,37 @@
+{
+  "name": "bouncer",
+  "version": "2.0.0",
+  "description": "Bouncer - Filter unwanted posts from social media feeds using AI",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.js",
+    "build:dev": "node build.js --dev",
+    "watch": "node build.js --watch",
+    "watch:dev": "node build.js --watch --dev",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint . && tsc --noEmit",
+    "lint:fix": "eslint . --fix",
+    "cut-chrome": "node cut.js",
+    "update-webllm": "node update-webllm.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/chrome": "^0.1.37",
+    "@types/node": "^25.5.0",
+    "esbuild": "^0.20.0",
+    "eslint": "^10.0.2",
+    "globals": "^17.4.0",
+    "happy-dom": "^20.8.1",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.57.0",
+    "vitest": "^4.0.18"
+  },
+  "dependencies": {
+    "@mlc-ai/web-llm": "file:./vendor/web-llm",
+    "dompurify": "^3.3.1",
+    "firebase": "^12.11.0"
+  }
+}

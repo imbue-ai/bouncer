@@ -1,0 +1,8 @@
+{
+  "name": "@mlc-ai/web-llm",
+  "version": "0.2.82-custom",
+  "description": "Custom build of web-llm with qwen3.5 support",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "type": "module"
+}

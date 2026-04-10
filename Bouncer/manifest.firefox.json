@@ -1,0 +1,47 @@
+{
+  "manifest_version": 3,
+  "name": "Bouncer",
+  "version": "2.0.0",
+  "description": "Filter unwanted posts from social media feeds using AI",
+  "permissions": [
+    "storage",
+    "activeTab",
+    "identity"
+  ],
+  "host_permissions": [
+    "https://twitter.com/*",
+    "https://x.com/*",
+    "https://api.anthropic.com/*",
+    "https://openrouter.ai/*"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "background": {
+    "scripts": ["browser-polyfill.js", "shared/models.js", "dist/background.js"]
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "bouncer@example.com",
+      "strict_min_version": "109.0"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://twitter.com/*", "https://x.com/*"],
+      "js": ["browser-polyfill.js", "dist/TwitterAdapter.js", "dist/content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}
