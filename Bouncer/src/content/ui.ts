@@ -1607,7 +1607,7 @@ export function showApiKeyWarning() {
   toast.className = 'post-filter-toast post-filter-warning';
   toast.innerHTML = `
     <div class="toast-header">
-      <span class="toast-title">Feed Filter</span>
+      <span class="toast-title">Bouncer</span>
       <button class="toast-close">&times;</button>
     </div>
     <div class="toast-content">No model configured. Open Bouncer settings to choose a model.</div>
