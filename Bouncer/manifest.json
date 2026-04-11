@@ -14,6 +14,7 @@
   "host_permissions": [
     "https://twitter.com/*",
     "https://x.com/*",
+    "https://truthsocial.com/*",
     "https://api.anthropic.com/*",
     "https://openrouter.ai/*",
     "https://api.openai.com/*",
@@ -46,6 +47,21 @@
       "css": [
         "content.css",
         "adapters/twitter/twitter.css"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://truthsocial.com/*"
+      ],
+      "js": [
+        "dompurify.js",
+        "dist/TruthSocialAdapter.js",
+        "dist/content.js"
+      ],
+      "css": [
+        "content.css",
+        "adapters/truthsocial/truthsocial.css"
       ],
       "run_at": "document_idle"
     }
