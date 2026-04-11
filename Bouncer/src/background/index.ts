@@ -96,7 +96,7 @@ if (chrome.runtime.setUninstallURL) {
     // Without this, activeTabId stays null until a content script sends a message,
     // leaving the per-tab queue idle even if posts are already queued.
     try {
-      const tabs = await chrome.tabs.query({ url: ['*://twitter.com/*', '*://x.com/*'] });
+      const tabs = await chrome.tabs.query({ url: ['*://twitter.com/*', '*://x.com/*', '*://truthsocial.com/*'] });
       for (const tab of tabs) {
         try {
           await chrome.tabs.sendMessage(tab.id!, { type: 'ping' });
