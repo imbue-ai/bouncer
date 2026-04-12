@@ -522,6 +522,9 @@ async function processBatch(): Promise<void> {
   const cacheKey = generateCacheKey(item.post, imageUrls);
   if (evaluationCache.has(cacheKey)) {
     const cached = evaluationCache.get(cacheKey)!;
+    // LRU: move to end of Map iteration order so it's evicted last
+    evaluationCache.delete(cacheKey);
+    evaluationCache.set(cacheKey, cached);
     resolveWithDuplicates(batchTabId, item, { ...cached, cached: true });
     inFlightBatches--;
     if (pendingEvaluations.length > 0) scheduleBatch();

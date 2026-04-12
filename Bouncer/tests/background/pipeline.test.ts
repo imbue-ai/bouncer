@@ -287,6 +287,54 @@ describe('processBatch re-queue on inference queue cleared', () => {
   });
 });
 
+// ==================== LRU cache eviction ====================
+
+describe('LRU cache eviction', () => {
+  it('recently accessed cache entries survive eviction', async () => {
+    const { evaluationCache } = await import('../../src/background/pipeline.js');
+
+    evaluationCache.clear();
+    for (let i = 0; i < 500; i++) {
+      evaluationCache.set(`post-${i}`, {
+        shouldHide: false,
+        reasoning: 'test',
+        category: null,
+        rawResponse: null,
+        timestamp: Date.now(),
+        model: 'test',
+        cached: false,
+      });
+    }
+    expect(evaluationCache.size).toBe(500);
+
+    // Access post-0 (oldest) to mark it as recently used — simulating the LRU promotion
+    const oldest = evaluationCache.get('post-0')!;
+    evaluationCache.delete('post-0');
+    evaluationCache.set('post-0', oldest);
+
+    // Add a new entry — should evict post-1 (now the LRU), NOT post-0
+    evaluationCache.set('post-new', {
+      shouldHide: false,
+      reasoning: 'new',
+      category: null,
+      rawResponse: null,
+      timestamp: Date.now(),
+      model: 'test',
+      cached: false,
+    });
+
+    // Evict like pipeline does
+    if (evaluationCache.size > 500) {
+      const firstKey = evaluationCache.keys().next().value;
+      if (firstKey !== undefined) evaluationCache.delete(firstKey);
+    }
+
+    expect(evaluationCache.has('post-0')).toBe(true);
+    expect(evaluationCache.has('post-1')).toBe(false);
+    expect(evaluationCache.has('post-new')).toBe(true);
+  });
+});
+
 // Note: The no-model-configured path (empty selectedModel -> no_api_key error) is only
 // reachable in no-Imbue builds where DEFAULT_MODEL is ''. Since DEFAULT_MODEL is computed
 // at module load time from the build-time constant HAS_IMBUE_BACKEND, it can't be varied
