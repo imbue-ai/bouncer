@@ -1,7 +1,7 @@
 // ==================== Site IDs ====================
 
 /** Known platform adapter identifiers. Add new entries when adding adapters. */
-export type SiteId = 'twitter';
+export type SiteId = 'twitter' | 'rumble';
 
 // ==================== Core Evaluation ====================
 
