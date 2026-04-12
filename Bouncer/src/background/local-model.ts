@@ -26,6 +26,19 @@ const DOWNLOAD_RETRY_DELAY_MS = 2000;
 // Keys that belong on the ModelRecord (appConfig), not chatOpts.
 const MODEL_RECORD_KEYS = new Set(['model', 'model_lib', 'model_type']);
 
+/** JSON schema for structured classification output from local models. */
+const CLASSIFICATION_RESPONSE_FORMAT = {
+  type: 'json_object' as const,
+  schema: JSON.stringify({
+    type: 'object',
+    properties: {
+      reasoning: { type: 'string' },
+      match: { type: ['string', 'null'] },
+    },
+    required: ['reasoning', 'match'],
+  }),
+};
+
 // ==================== Pure helpers ====================
 
 // Build both the appConfig (ModelRecord for CreateMLCEngine) and chatOpts
@@ -63,6 +76,22 @@ export function parseLocalModelResponse(rawResponse: string | null): { shouldHid
     return { shouldHide: false, reasoning: 'Empty model response — model returned no output' };
   }
 
+  // Try JSON structured output first
+  try {
+    const parsed = JSON.parse(rawResponse);
+    if (typeof parsed === 'object' && parsed !== null && 'reasoning' in parsed) {
+      const match = parsed.match;
+      const shouldHide = typeof match === 'string' && match.length > 0 && match !== 'null';
+      const reasoning = shouldHide
+        ? `${parsed.reasoning} (Matched: ${match})`
+        : String(parsed.reasoning);
+      return { shouldHide, reasoning };
+    }
+  } catch {
+    // Not JSON — fall through to regex parsing
+  }
+
+  // Fallback: freeform text parsing (backward compatibility)
   let reasoning = rawResponse;
   let shouldHide = false;
 
@@ -324,9 +353,10 @@ export class LocalEngine {
   async generate(
     messages: ChatMessage[],
     maxTokens: number,
-    { priority = 0, temperature, onStart }: { priority?: number; temperature?: number; onStart?: () => void } = {}
+    { priority = 0, temperature, onStart, responseFormat }: { priority?: number; temperature?: number; onStart?: () => void; responseFormat?: Record<string, unknown> } = {}
   ): Promise<string> {
     const requestOpts: Record<string, unknown> = { messages, max_tokens: maxTokens };
+    if (responseFormat) requestOpts.response_format = responseFormat;
     if (temperature !== undefined) requestOpts.temperature = temperature;
     const request = buildInferenceRequest(this._modelConfig || ({} as Record<string, never>), requestOpts);
 
@@ -674,7 +704,7 @@ export async function callLocalInference(
 
   let rawResponse: string;
   try {
-    rawResponse = await localEngine.generate(messages, 40, { priority, onStart });
+    rawResponse = await localEngine.generate(messages, 40, { priority, onStart, responseFormat: CLASSIFICATION_RESPONSE_FORMAT });
   } catch (imgError) {
     if ((imgError as Error).message === 'Inference preempted') throw imgError;
     if (useImages) {
@@ -684,7 +714,7 @@ export async function callLocalInference(
         { role: "system", content: LOCAL_SYSTEM_PROMPT },
         { role: "user", content: textOnlyContent }
       ];
-      rawResponse = await localEngine.generate(textMessages, 40, { priority, onStart });
+      rawResponse = await localEngine.generate(textMessages, 40, { priority, onStart, responseFormat: CLASSIFICATION_RESPONSE_FORMAT });
     } else {
       throw imgError;
     }
