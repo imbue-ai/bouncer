@@ -677,6 +677,41 @@ describe('parseLocalModelResponse', () => {
   });
 });
 
+describe('parseLocalModelResponse — structured JSON output', () => {
+  it('parses a JSON match response', () => {
+    const raw = '{"reasoning":"NBA game results, sports content","match":"sports"}';
+    const result = parseLocalModelResponse(raw);
+    expect(result.shouldHide).toBe(true);
+    expect(result.reasoning).toContain('sports');
+  });
+
+  it('parses a JSON no-match response', () => {
+    const raw = '{"reasoning":"Cooking dinner at home, lifestyle content","match":null}';
+    const result = parseLocalModelResponse(raw);
+    expect(result.shouldHide).toBe(false);
+    expect(result.reasoning).toContain('Cooking');
+  });
+
+  it('parses JSON with match as empty string as no-match', () => {
+    const raw = '{"reasoning":"General lifestyle post","match":""}';
+    const result = parseLocalModelResponse(raw);
+    expect(result.shouldHide).toBe(false);
+  });
+
+  it('falls back to regex parsing for non-JSON freeform output', () => {
+    const raw = 'Post about basketball game results. Matches sports.';
+    const result = parseLocalModelResponse(raw);
+    expect(result.shouldHide).toBe(true);
+    expect(result.reasoning).toContain('sports');
+  });
+
+  it('falls back to regex for malformed JSON', () => {
+    const raw = '{"reasoning": broken json Matches politics.';
+    const result = parseLocalModelResponse(raw);
+    expect(result.shouldHide).toBe(true);
+  });
+});
+
 // ==================== LocalEngine.generate / preempt / ensureLoaded / teardown ====================
 
 describe('LocalEngine generate + preempt + lifecycle', () => {
