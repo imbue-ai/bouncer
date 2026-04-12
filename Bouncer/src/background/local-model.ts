@@ -63,6 +63,22 @@ export function parseLocalModelResponse(rawResponse: string | null): { shouldHid
     return { shouldHide: false, reasoning: 'Empty model response — model returned no output' };
   }
 
+  // Try JSON structured output first
+  try {
+    const parsed = JSON.parse(rawResponse);
+    if (typeof parsed === 'object' && parsed !== null && 'reasoning' in parsed) {
+      const match = parsed.match;
+      const shouldHide = typeof match === 'string' && match.length > 0;
+      const reasoning = shouldHide
+        ? `${parsed.reasoning} (Matched: ${match})`
+        : String(parsed.reasoning);
+      return { shouldHide, reasoning };
+    }
+  } catch {
+    // Not JSON — fall through to regex parsing
+  }
+
+  // Fallback: freeform text parsing (backward compatibility)
   let reasoning = rawResponse;
   let shouldHide = false;
 
