@@ -78,8 +78,10 @@ const imbueStubPlugin = {
   },
 };
 
-const adapterTsPath = path.join(__dirname, 'adapters/twitter/TwitterAdapter.ts');
-const hasAdapterTs = fs.existsSync(adapterTsPath);
+const adapterEntries = [
+  ['adapters/twitter/TwitterAdapter.ts', 'dist/TwitterAdapter.js'],
+  ['adapters/eightchan/EightchanAdapter.ts', 'dist/EightchanAdapter.js'],
+];
 
 async function build() {
   console.log(hasImbue
@@ -107,17 +109,18 @@ async function build() {
 
   const contexts = [ctx];
 
-  // Type-strip the adapter (unbundled, standalone content script)
-  if (hasAdapterTs) {
-    const adapterCtx = await esbuild.context({
-      entryPoints: [adapterTsPath],
-      outfile: path.join(__dirname, 'dist/TwitterAdapter.js'),
-      bundle: false,
-      format: 'iife',
-      platform: 'browser',
-      target: 'es2020',
-    });
-    contexts.push(adapterCtx);
+  for (const [src, out] of adapterEntries) {
+    const tsPath = path.join(__dirname, src);
+    if (fs.existsSync(tsPath)) {
+      contexts.push(await esbuild.context({
+        entryPoints: [tsPath],
+        outfile: path.join(__dirname, out),
+        bundle: false,
+        format: 'iife',
+        platform: 'browser',
+        target: 'es2020',
+      }));
+    }
   }
 
   if (isWatch) {
@@ -126,8 +129,9 @@ async function build() {
   } else {
     await Promise.all(contexts.map(c => c.rebuild()));
     await Promise.all(contexts.map(c => c.dispose()));
+    const builtAdapters = adapterEntries.filter(([src]) => fs.existsSync(path.join(__dirname, src))).map(([, out]) => out);
     console.log(`Build complete (env: ${env}): dist/background.js, dist/popup.js, dist/content.js` +
-      (hasAdapterTs ? ', dist/TwitterAdapter.js' : ''));
+      (builtAdapters.length ? ', ' + builtAdapters.join(', ') : ''));
   }
 }
 
