@@ -26,6 +26,19 @@ const DOWNLOAD_RETRY_DELAY_MS = 2000;
 // Keys that belong on the ModelRecord (appConfig), not chatOpts.
 const MODEL_RECORD_KEYS = new Set(['model', 'model_lib', 'model_type']);
 
+/** JSON schema for structured classification output from local models. */
+const CLASSIFICATION_RESPONSE_FORMAT = {
+  type: 'json_object' as const,
+  schema: JSON.stringify({
+    type: 'object',
+    properties: {
+      reasoning: { type: 'string' },
+      match: { type: ['string', 'null'] },
+    },
+    required: ['reasoning', 'match'],
+  }),
+};
+
 // ==================== Pure helpers ====================
 
 // Build both the appConfig (ModelRecord for CreateMLCEngine) and chatOpts
@@ -342,7 +355,7 @@ export class LocalEngine {
     maxTokens: number,
     { priority = 0, temperature, onStart }: { priority?: number; temperature?: number; onStart?: () => void } = {}
   ): Promise<string> {
-    const requestOpts: Record<string, unknown> = { messages, max_tokens: maxTokens };
+    const requestOpts: Record<string, unknown> = { messages, max_tokens: maxTokens, response_format: CLASSIFICATION_RESPONSE_FORMAT };
     if (temperature !== undefined) requestOpts.temperature = temperature;
     const request = buildInferenceRequest(this._modelConfig || ({} as Record<string, never>), requestOpts);
 
