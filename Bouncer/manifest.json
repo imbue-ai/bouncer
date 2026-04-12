@@ -14,6 +14,7 @@
   "host_permissions": [
     "https://twitter.com/*",
     "https://x.com/*",
+    "https://*.pornhub.com/*",
     "https://api.anthropic.com/*",
     "https://openrouter.ai/*",
     "https://api.openai.com/*",
@@ -46,6 +47,21 @@
       "css": [
         "content.css",
         "adapters/twitter/twitter.css"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://*.pornhub.com/*"
+      ],
+      "js": [
+        "dompurify.js",
+        "dist/PornhubAdapter.js",
+        "dist/content.js"
+      ],
+      "css": [
+        "content.css",
+        "adapters/pornhub/pornhub.css"
       ],
       "run_at": "document_idle"
     }
