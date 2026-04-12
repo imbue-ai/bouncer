@@ -81,7 +81,7 @@ export function parseLocalModelResponse(rawResponse: string | null): { shouldHid
     const parsed = JSON.parse(rawResponse);
     if (typeof parsed === 'object' && parsed !== null && 'reasoning' in parsed) {
       const match = parsed.match;
-      const shouldHide = typeof match === 'string' && match.length > 0;
+      const shouldHide = typeof match === 'string' && match.length > 0 && match !== 'null';
       const reasoning = shouldHide
         ? `${parsed.reasoning} (Matched: ${match})`
         : String(parsed.reasoning);
@@ -353,9 +353,10 @@ export class LocalEngine {
   async generate(
     messages: ChatMessage[],
     maxTokens: number,
-    { priority = 0, temperature, onStart }: { priority?: number; temperature?: number; onStart?: () => void } = {}
+    { priority = 0, temperature, onStart, responseFormat }: { priority?: number; temperature?: number; onStart?: () => void; responseFormat?: Record<string, unknown> } = {}
   ): Promise<string> {
-    const requestOpts: Record<string, unknown> = { messages, max_tokens: maxTokens, response_format: CLASSIFICATION_RESPONSE_FORMAT };
+    const requestOpts: Record<string, unknown> = { messages, max_tokens: maxTokens };
+    if (responseFormat) requestOpts.response_format = responseFormat;
     if (temperature !== undefined) requestOpts.temperature = temperature;
     const request = buildInferenceRequest(this._modelConfig || ({} as Record<string, never>), requestOpts);
 
@@ -703,7 +704,7 @@ export async function callLocalInference(
 
   let rawResponse: string;
   try {
-    rawResponse = await localEngine.generate(messages, 40, { priority, onStart });
+    rawResponse = await localEngine.generate(messages, 40, { priority, onStart, responseFormat: CLASSIFICATION_RESPONSE_FORMAT });
   } catch (imgError) {
     if ((imgError as Error).message === 'Inference preempted') throw imgError;
     if (useImages) {
@@ -713,7 +714,7 @@ export async function callLocalInference(
         { role: "system", content: LOCAL_SYSTEM_PROMPT },
         { role: "user", content: textOnlyContent }
       ];
-      rawResponse = await localEngine.generate(textMessages, 40, { priority, onStart });
+      rawResponse = await localEngine.generate(textMessages, 40, { priority, onStart, responseFormat: CLASSIFICATION_RESPONSE_FORMAT });
     } else {
       throw imgError;
     }

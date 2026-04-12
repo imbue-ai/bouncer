@@ -710,6 +710,12 @@ describe('parseLocalModelResponse — structured JSON output', () => {
     const result = parseLocalModelResponse(raw);
     expect(result.shouldHide).toBe(true);
   });
+
+  it('treats match:"null" string as no-match', () => {
+    const raw = '{"reasoning":"Not related","match":"null"}';
+    const result = parseLocalModelResponse(raw);
+    expect(result.shouldHide).toBe(false);
+  });
 });
 
 // ==================== LocalEngine.generate / preempt / ensureLoaded / teardown ====================
