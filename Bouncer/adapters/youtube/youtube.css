@@ -1,0 +1,66 @@
+/* YouTube-specific styles for Bouncer */
+
+/* Banner placement: full-width strip inserted between the chip rail and the
+   video grid inside `ytd-rich-grid-renderer`. The inner .filter-phrases-
+   container (shared with the Twitter sidebar layout) already paints the
+   orange-bordered card; the wrapper only contributes spacing. */
+.filter-phrases-banner.filter-phrases-banner--youtube {
+  display: block;
+  width: 100%;
+  margin: 8px 0 20px;
+  /* Match YouTube's font stack so chip-derived measurements feel native */
+  font-family: "Roboto", "Arial", sans-serif;
+}
+
+/* YouTube doesn't have a dim mode — only light/dark. The shared CSS keys off
+   `.dark-mode` / `.light-mode` for the inner container, so we only need to
+   tweak surface colors to match YouTube's palette rather than Twitter's. */
+.filter-phrases-banner--youtube.dark-mode .filter-phrases-container {
+  background-color: #0f0f0f;
+  border-color: rgb(234, 133, 84);
+}
+
+.filter-phrases-banner--youtube.light-mode .filter-phrases-container {
+  background-color: #ffffff;
+  border-color: rgb(200, 110, 65);
+}
+
+/* YouTube renders the chip bar with a subtle bottom edge; the banner sits
+   right under it. Keep a small breathing-room on top so the orange border
+   doesn't visually collide with the chip rail. */
+.filter-phrases-banner--youtube .filter-phrases-container {
+  padding: 12px 16px;
+  border-radius: 12px;
+}
+
+/* Filtered-posts panel: 16:9 thumbnail when we replay a hidden lockup. */
+body.site-youtube .slop-media-container {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border-radius: 12px;
+  margin-top: 8px;
+}
+
+body.site-youtube .slop-media-container .slop-media-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* Avatar fallback for Shorts: YouTube's Shorts payload doesn't include channel
+   info, so we render the Shorts glyph on a red square instead of "?". */
+body.site-youtube .slop-post-avatar.slop-avatar-shorts {
+  background-color: #ff0033;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+body.site-youtube .slop-post-avatar.slop-avatar-shorts svg {
+  width: 60%;
+  height: 60%;
+}
+

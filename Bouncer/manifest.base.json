@@ -11,7 +11,8 @@
     "identity"
   ],
   "host_permissions": [
-    "https://x.com/*"
+    "https://x.com/*",
+    "https://www.youtube.com/*"
   ],
   "action": {
     "default_popup": "popup.html",
@@ -41,6 +42,22 @@
         "adapters/twitter/twitter.css"
       ],
       "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://www.youtube.com/*"
+      ],
+      "js": [
+        "browser-polyfill.js",
+        "dompurify.js",
+        "dist/YouTubeAdapter.js",
+        "dist/content.js"
+      ],
+      "css": [
+        "content.css",
+        "adapters/youtube/youtube.css"
+      ],
+      "run_at": "document_idle"
     }
   ],
   "icons": {
@@ -56,10 +73,12 @@
         "dist/popup.js",
         "browser-polyfill.js",
         "adapters/twitter/fiber-extractor.js",
+        "adapters/youtube/lockup-extractor.js",
         "icons/a-bouncer-2x-black.png"
       ],
       "matches": [
-        "https://x.com/*"
+        "https://x.com/*",
+        "https://www.youtube.com/*"
       ]
     }
   ]

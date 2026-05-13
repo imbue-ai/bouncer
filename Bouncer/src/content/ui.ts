@@ -25,7 +25,7 @@ export function initUI(deps: ContentUIDeps) {
   // injection guards think no box exists — resulting in duplicate UI.
   // Proactively remove any leftover boxes from a prior injection.
   const stale = document.querySelectorAll(
-    '.filter-phrases-sidebar, .filter-phrases-bottom, .filter-phrases-mobile'
+    '.filter-phrases-sidebar, .filter-phrases-bottom, .filter-phrases-mobile, .filter-phrases-banner'
   );
   console.log('[Bouncer] initUI: clearing', stale.length, 'stale filter box(es) from prior injection');
   stale.forEach((el) => el.remove());
@@ -145,7 +145,7 @@ async function launchSignIn() {
 // (Safari re-injects when the user changes per-site permissions).
 function refreshAllFilterBoxes() {
   const existing = document.querySelectorAll(
-    '.filter-phrases-sidebar, .filter-phrases-bottom, .filter-phrases-mobile'
+    '.filter-phrases-sidebar, .filter-phrases-bottom, .filter-phrases-mobile, .filter-phrases-banner'
   );
   console.log('[Bouncer] refreshAllFilterBoxes: removing', existing.length, 'existing box(es)');
   existing.forEach((el) => el.remove());
@@ -153,9 +153,13 @@ function refreshAllFilterBoxes() {
   bottomFilterContainer = null;
   mobileFilterContainer = null;
 
-  injectFilterPhrasesInput();
-  injectBottomFilterBox();
-  injectMobileFilterBox();
+  if (_deps.adapter.filterBoxPlacement === 'banner') {
+    injectBannerFilterBox();
+  } else {
+    injectFilterPhrasesInput();
+    injectBottomFilterBox();
+    injectMobileFilterBox();
+  }
 
   // Trigger post processing now that we're authenticated
   if (isAuthenticated && _deps.processExistingPosts) {
@@ -847,6 +851,78 @@ export function injectMobileFilterBox() {
   updateMobileFilterVisibility();
 }
 
+// ==================== Banner Filter ====================
+// Used by platforms whose `filterBoxPlacement === 'banner'` (e.g. YouTube).
+// Reuses the same `filterPhrasesContainer` slot as the Twitter sidebar variant
+// so updateTheme(), syncFilterPhrases(), and refreshAllFilterBoxes() continue
+// to find and update the active filter UI without special-casing each
+// placement. The inserted node carries `.filter-phrases-banner` instead of
+// `.filter-phrases-sidebar` so platform-specific CSS can style it differently.
+
+function updateBannerFilterVisibility() {
+  if (!filterPhrasesContainer || !filterPhrasesContainer.isConnected) return;
+  if (!_deps.adapter.shouldProcessCurrentPage()) {
+    filterPhrasesContainer.remove();
+    filterPhrasesContainer = null;
+  }
+}
+
+export function injectBannerFilterBox() {
+  const adapter = _deps.adapter;
+  if (!adapter.getFilterBoxAnchor) {
+    console.warn('[Bouncer] injectBannerFilterBox: adapter has no getFilterBoxAnchor');
+    return;
+  }
+
+  // Adopt any existing banner from a prior content-script injection
+  if (!filterPhrasesContainer || !filterPhrasesContainer.isConnected) {
+    filterPhrasesContainer = document.querySelector<HTMLElement>('.filter-phrases-banner');
+  }
+  if (filterPhrasesContainer && filterPhrasesContainer.isConnected) {
+    updateBannerFilterVisibility();
+    return;
+  }
+
+  if (!adapter.shouldProcessCurrentPage()) return;
+
+  const anchor = adapter.getFilterBoxAnchor();
+  if (!anchor) return; // page chrome not ready yet — DOM observer will retry
+
+  filterPhrasesContainer = document.createElement('div');
+  filterPhrasesContainer.className = `filter-phrases-banner filter-phrases-banner--${adapter.siteId}`;
+
+  if (!isAuthenticated) {
+    filterPhrasesContainer.replaceChildren(parseHTML(getSignInHTML()));
+    anchor.parent.insertBefore(filterPhrasesContainer, anchor.insertBefore);
+    updateTheme();
+    setupSignInButton(filterPhrasesContainer);
+    updateBannerFilterVisibility();
+    return;
+  }
+
+  const showSignOut = IS_DEV_BUILD && !_deps.IS_IOS;
+  filterPhrasesContainer.replaceChildren(parseHTML(buildFilterContainerHTML(showSignOut)));
+  anchor.parent.insertBefore(filterPhrasesContainer, anchor.insertBefore);
+
+  updateTheme();
+  updateFilteredTabCount();
+
+  setupFilterBoxEventHandlers(filterPhrasesContainer);
+  maybeRenderUpdateBanner(filterPhrasesContainer).catch(err =>
+    console.error('[UI] maybeRenderUpdateBanner failed (banner):', err));
+
+  const signOutBtn = filterPhrasesContainer.querySelector('.filter-signout-btn');
+  if (signOutBtn) {
+    signOutBtn.addEventListener('click', asyncHandler(async () => {
+      await chrome.runtime.sendMessage({ type: 'signOut' });
+      isAuthenticated = false;
+      refreshAllFilterBoxes();
+    }));
+  }
+
+  updateBannerFilterVisibility();
+}
+
 // ==================== Filter Phrases ====================
 
 export function syncFilterPhrases() {
@@ -1261,7 +1337,7 @@ function buildImportButton(phrases: string[]): HTMLElement {
 // gating relies on.
 function pickVisibleBouncerLayout(): HTMLElement | null {
   const layouts = document.querySelectorAll<HTMLElement>(
-    '.filter-phrases-sidebar, .filter-phrases-bottom, .filter-phrases-mobile',
+    '.filter-phrases-sidebar, .filter-phrases-bottom, .filter-phrases-mobile, .filter-phrases-banner',
   );
   for (const layout of layouts) {
     if (layout.offsetParent !== null) return layout;
@@ -1877,10 +1953,20 @@ export function renderFilteredPostsView(container: Element) {
     // Avatar — show image if available, otherwise show initial as fallback
     const avatar = document.createElement('div');
     avatar.className = 'slop-post-avatar';
+    const isShort = !!postContent.postUrl?.includes('/shorts/');
     if (postContent.avatarUrl) {
       const img = document.createElement('img');
       img.src = postContent.avatarUrl;
       avatar.appendChild(img);
+    } else if (isShort) {
+      // Shorts don't expose channel info in the lockup payload, so an avatar
+      // initial would just be "?". Render the Shorts glyph instead.
+      avatar.classList.add('slop-avatar-shorts');
+      avatar.replaceChildren(parseHTML(
+        '<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
+        '<path d="M17.77 10.32l-1.2-.5L18 9.06a3.74 3.74 0 0 0-3.5-6.62L6.18 6.83a3.74 3.74 0 0 0 .04 6.62l1.2.5L6 14.94a3.74 3.74 0 0 0 3.5 6.62l8.32-4.39a3.74 3.74 0 0 0-.04-6.85zM10 15.5v-7l6 3.5-6 3.5z" fill="currentColor"/>' +
+        '</svg>'
+      ));
     } else {
       // Fallback: show first letter of display name or handle
       const initial = (postContent.author?.[0] || postContent.handle?.[1] || '?').toUpperCase();
@@ -1914,7 +2000,9 @@ export function renderFilteredPostsView(container: Element) {
       nameSpan.textContent = displayName;
       meta.appendChild(nameSpan);
     }
-    if (postContent.handle || postContent.timeText) {
+    // YouTube's `handle` (e.g. "/@channel") and `timeText` (e.g. "1.2M views • 3 months ago")
+    // aren't meaningful identity in the filtered card the way Twitter's `@handle` / "2h" are.
+    if ((postContent.handle || postContent.timeText) && _deps.adapter.siteId !== 'youtube') {
       const handleSpan = document.createElement('span');
       handleSpan.className = 'slop-post-handle';
       const parts = [postContent.handle, postContent.timeText].filter(Boolean);
@@ -3020,6 +3108,14 @@ export function handleDOMMutation() {
   }
   if (mobileFilterContainer && !mobileFilterContainer.isConnected) {
     mobileFilterContainer = null;
+  }
+  if (_deps.adapter.filterBoxPlacement === 'banner') {
+    if (!filterPhrasesContainer) {
+      injectBannerFilterBox();
+    } else {
+      updateBannerFilterVisibility();
+    }
+    return;
   }
   // Inject filter phrases input if not present
   if (!filterPhrasesContainer && document.querySelector(_deps.adapter.selectors.sidebar)) {
