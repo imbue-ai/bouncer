@@ -60,6 +60,144 @@ window.BouncerAdapter = class YouTubeAdapter implements PlatformAdapter {
   constructor() {
     this._initLockupExtractor();
     this._initFilteredPostObserver();
+    this._initChipAndPopover();
+  }
+
+  // Inject a Bouncer-branded chip into YT's chip rail (sibling of the
+  // "All / Music / Gaming" chips). Clicking the chip toggles a popover
+  // anchored just below it — that's where the existing filter UI lives.
+  // Footprint matches a normal YT chip; the heavy editor only appears when
+  // the user wants it.
+  private _initChipAndPopover() {
+    const banner = () => document.querySelector<HTMLElement>('.filter-phrases-banner--youtube');
+
+    const ensureChip = (): HTMLElement | null => {
+      let chip = document.querySelector<HTMLElement>('.bouncer-chip');
+      if (chip) return chip;
+
+      // Insert into `iron-selector#chips` (the actual scrollable chip list)
+      // so that horizontal scrolling moves the Bouncer chip along with the
+      // other category chips. Inserting one level up (chips-content) places
+      // the chip outside the scroll viewport and freezes it in place.
+      const chipBar = document.querySelector<HTMLElement>('ytd-feed-filter-chip-bar-renderer');
+      if (!chipBar) return null;
+      const chipList = chipBar.querySelector<HTMLElement>('iron-selector#chips');
+      if (!chipList) return null;
+
+      const logoUrl = chrome.runtime.getURL('icons/icon48.png');
+      chip = document.createElement('button');
+      chip.className = 'bouncer-chip';
+      (chip as HTMLButtonElement).type = 'button';
+      chip.setAttribute('aria-label', 'Open Bouncer filters');
+      chip.setAttribute('aria-haspopup', 'dialog');
+      chip.setAttribute('aria-expanded', 'false');
+      chip.innerHTML = `
+        <img class="bouncer-chip__logo" src="${logoUrl}" alt="" aria-hidden="true">
+        <span class="bouncer-chip__label">Bouncer</span>
+        <span class="bouncer-chip__count" aria-hidden="true">0</span>
+      `;
+      chip.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this._togglePopover();
+      });
+
+      // First child so it sits left of "All".
+      chipList.insertBefore(chip, chipList.firstChild);
+      return chip;
+    };
+
+    // Mirror the filtered-post count into the chip's badge. The shared UI
+    // already maintains `.filtered-toggle-count` inside the banner-now-
+    // popover; watching its mutations is simpler than plumbing through a
+    // new hook from `updateFilteredTabCount()`.
+    const wireCountMirror = () => {
+      const popover = banner();
+      if (!popover) return false;
+      const source = popover.querySelector('.filtered-toggle-count');
+      if (!source) return false;
+      const update = () => {
+        const chip = document.querySelector<HTMLElement>('.bouncer-chip__count');
+        if (!chip) return;
+        // Source text is "(N)" — strip parens for the chip badge.
+        const raw = source.textContent || '';
+        const n = raw.replace(/[^\d]/g, '') || '0';
+        chip.textContent = n;
+        chip.classList.toggle('bouncer-chip__count--nonzero', n !== '0');
+      };
+      update();
+      new MutationObserver(update).observe(source, { characterData: true, childList: true, subtree: true });
+      return true;
+    };
+
+    const positionPopover = () => {
+      const b = banner();
+      const chip = document.querySelector<HTMLElement>('.bouncer-chip');
+      if (!b || !chip) return;
+      const rect = chip.getBoundingClientRect();
+      b.style.setProperty('--ff-banner-left', `${rect.left}px`);
+      b.style.setProperty('--ff-banner-top', `${rect.bottom + 8}px`);
+    };
+
+    // Close popover when clicking outside it or pressing Escape.
+    document.addEventListener('click', (e) => {
+      const b = banner();
+      if (!b || !b.classList.contains('bouncer-popover-open')) return;
+      const target = e.target as Node;
+      const chip = document.querySelector('.bouncer-chip');
+      if (b.contains(target) || chip?.contains(target)) return;
+      this._closePopover();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') this._closePopover();
+    });
+
+    // Reposition on resize/scroll (popover top tracks the chip).
+    window.addEventListener('resize', positionPopover, { passive: true });
+    window.addEventListener('scroll', positionPopover, { passive: true });
+
+    let countMirrorWired = false;
+    const trySetup = () => {
+      const chip = ensureChip();
+      const b = banner();
+      if (chip && b) {
+        b.classList.remove('bouncer-popover-open');
+        chip.setAttribute('aria-expanded', 'false');
+        positionPopover();
+        if (!countMirrorWired) countMirrorWired = wireCountMirror();
+        return countMirrorWired;
+      }
+      return false;
+    };
+
+    if (!trySetup()) {
+      const mo = new MutationObserver(() => { if (trySetup()) mo.disconnect(); });
+      mo.observe(document.body, { childList: true, subtree: true });
+    }
+  }
+
+  private _togglePopover() {
+    const b = document.querySelector<HTMLElement>('.filter-phrases-banner--youtube');
+    const chip = document.querySelector<HTMLElement>('.bouncer-chip');
+    if (!b) return;
+    const open = b.classList.toggle('bouncer-popover-open');
+    chip?.setAttribute('aria-expanded', open ? 'true' : 'false');
+    if (open) {
+      // Anchor under the chip every time we open (chip might've moved).
+      const rect = chip?.getBoundingClientRect();
+      if (rect) {
+        b.style.setProperty('--ff-banner-left', `${rect.left}px`);
+        b.style.setProperty('--ff-banner-top', `${rect.bottom + 8}px`);
+      }
+    }
+  }
+
+  private _closePopover() {
+    const b = document.querySelector<HTMLElement>('.filter-phrases-banner--youtube');
+    const chip = document.querySelector<HTMLElement>('.bouncer-chip');
+    if (!b) return;
+    b.classList.remove('bouncer-popover-open');
+    chip?.setAttribute('aria-expanded', 'false');
   }
 
   shouldProcessCurrentPage(): boolean {
@@ -69,12 +207,15 @@ window.BouncerAdapter = class YouTubeAdapter implements PlatformAdapter {
   }
 
   getFilterBoxAnchor(): FilterBoxAnchor | null {
+    // Place the banner inside `#header` as a sibling of the chip rail. YT's
+    // chip rail (`ytd-feed-filter-chip-bar-renderer`) uses position: sticky
+    // here successfully, so the same DOM context works for our banner —
+    // avoiding whatever overflow/transform on `ytd-rich-grid-renderer`
+    // blocks sticky from propagating to direct children.
     const grid = document.querySelector<HTMLElement>('ytd-rich-grid-renderer');
     if (!grid) return null;
-    const contents = grid.querySelector<HTMLElement>('#contents');
-    if (contents && contents.parentElement === grid) {
-      return { parent: grid, insertBefore: contents };
-    }
+    const header = grid.querySelector<HTMLElement>('#header');
+    if (header) return { parent: header, insertBefore: null };
     return { parent: grid, insertBefore: null };
   }
 

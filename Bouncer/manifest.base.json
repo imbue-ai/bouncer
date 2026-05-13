@@ -74,7 +74,8 @@
         "browser-polyfill.js",
         "adapters/twitter/fiber-extractor.js",
         "adapters/youtube/lockup-extractor.js",
-        "icons/a-bouncer-2x-black.png"
+        "icons/a-bouncer-2x-black.png",
+        "icons/icon48.png"
       ],
       "matches": [
         "https://x.com/*",
