@@ -18,6 +18,7 @@ declare global {
 // ==================== Constants ====================
 
 const KEEP_ALIVE_INTERVAL_MS = 5000;
+const DOWNLOAD_KEEP_ALIVE_MS = 20000;  // Firefox suspends event pages after 30 s idle
 const IDLE_TIMEOUT_MS = 60000;
 const INFERENCE_TIMEOUT_MS = 30000;
 const DOWNLOAD_MAX_RETRIES = 3;
@@ -102,6 +103,7 @@ export class LocalEngine {
 
   // Keep-alive and idle timeout
   _keepAliveInterval: ReturnType<typeof setInterval> | null;
+  _downloadKeepAliveInterval: ReturnType<typeof setInterval> | null;
   _idleTimeoutId: ReturnType<typeof setTimeout> | null;
 
   // Preemption state
@@ -119,6 +121,7 @@ export class LocalEngine {
     this._initAbortController = null;
 
     this._keepAliveInterval = null;
+    this._downloadKeepAliveInterval = null;
     this._idleTimeoutId = null;
 
     this._preempted = false;
@@ -166,6 +169,7 @@ export class LocalEngine {
     // see isInitializingModel() and wait on _initPromise.
     void this._startInit(modelId);
     const abortSignal = this._initAbortController!.signal;
+    this._startDownloadKeepAlive();
 
     // If a different model is loaded, unload it first to free GPU memory.
     // Drain the inference queue so any in-flight task finishes before we dispose the engine.
@@ -292,6 +296,7 @@ export class LocalEngine {
   teardown(): void {
     this._stopIdleTimeout();
     this._stopKeepAlive();
+    this._stopDownloadKeepAlive();
     this.engine = null;
     this.loadedModel = null;
     this._modelConfig = null;
@@ -456,6 +461,15 @@ export class LocalEngine {
       needsUpdate = true;
     }
 
+    // After a background restart, a stale 'error' status no longer reflects
+    // reality — the engine isn't running.  Re-check the cache so the UI shows
+    // an actionable state instead of a stale error.
+    if (storedStatus.state === 'error' && !this.isInitializing()) {
+      const cached = await hasModelInCache(modelId, appConfig);
+      statuses[modelId] = { state: cached ? 'cached' : 'not_downloaded' };
+      needsUpdate = true;
+    }
+
     if (needsUpdate) {
       await setStorage({ localModelStatuses: statuses });
     }
@@ -471,7 +485,7 @@ export class LocalEngine {
 
   async autoInitSelected(): Promise<void> {
     try {
-      const data = await getStorage(['selectedModel']);
+      const data = await getStorage(['selectedModel', 'localModelStatuses']);
       const selectedModel = data.selectedModel;
 
       if (!selectedModel || !selectedModel.startsWith('local:')) return;
@@ -479,6 +493,13 @@ export class LocalEngine {
       const modelId = selectedModel.split(':')[1];
 
       if (this.isModelLoaded(modelId)) return;
+
+      // Don't auto-init a model that previously errored — the user must
+      // manually retry from the popup.  Without this guard, a partially-
+      // cached model that fails to download loops: error → restart →
+      // hasModelInCache(true) → auto-init → error → …
+      const statuses: Record<string, LocalModelStatus> = data.localModelStatuses ?? {};
+      if (statuses[modelId]?.state === 'error') return;
 
       const cached = await this.checkCached(modelId);
       if (!cached) return;
@@ -505,6 +526,7 @@ export class LocalEngine {
   _completeInit(engine: MLCEngine | null): void {
     this._initializingModel = null;
     this._initAbortController = null;
+    this._stopDownloadKeepAlive();
     if (this._initPromiseResolve) {
       this._initPromiseResolve(engine);
       this._initPromiseResolve = null;
@@ -526,6 +548,23 @@ export class LocalEngine {
     if (this._keepAliveInterval) {
       clearInterval(this._keepAliveInterval);
       this._keepAliveInterval = null;
+    }
+  }
+
+  // Prevent Firefox from suspending the event page during long model downloads.
+  // Firefox kills event pages after 30 s of no extension-API activity; plain
+  // fetch() doesn't count.  A periodic chrome.storage read resets the timer.
+  _startDownloadKeepAlive(): void {
+    if (this._downloadKeepAliveInterval) return;
+    this._downloadKeepAliveInterval = setInterval(() => {
+      void chrome.storage.local.get('_keepAlive');
+    }, DOWNLOAD_KEEP_ALIVE_MS);
+  }
+
+  _stopDownloadKeepAlive(): void {
+    if (this._downloadKeepAliveInterval) {
+      clearInterval(this._downloadKeepAliveInterval);
+      this._downloadKeepAliveInterval = null;
     }
   }
 

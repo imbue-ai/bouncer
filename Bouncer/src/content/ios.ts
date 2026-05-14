@@ -1,8 +1,30 @@
-// iOS overlay, FAB, scroll lock
+// iOS FAB, filtered modal, native sheet bridge
 
 import type { IOSDeps } from '../types';
-import { getDescriptions } from '../shared/storage';
-import { escapeHtml } from '../shared/utils';
+import { clampThreshold } from '../shared/storage';
+import { parseHTML } from '../shared/utils';
+import { shareFilterPackForIOS } from './ui';
+
+// Bridge globals exposed to native Swift (added to window) and WebKit message
+// handler injected by WKWebView. Declaring them here gives ESLint/TS proper
+// types and removes the need for `as any` casts throughout this file.
+interface FFWindow {
+  __ff_addPhrase?: (text: string) => Promise<boolean>;
+  __ff_removePhrase?: (phrase: string) => Promise<void>;
+  __ff_showFilteredModal?: () => void;
+  __ff_getAiTextFilterEnabled?: () => Promise<boolean>;
+  __ff_setAiTextFilterEnabled?: (enabled: boolean) => Promise<void>;
+  __ff_getAiTextDetectionThreshold?: () => Promise<number>;
+  __ff_setAiTextDetectionThreshold?: (value: number) => Promise<void>;
+  __ff_shareFilterPack?: () => Promise<{ ok: boolean; error?: string }>;
+}
+interface WebkitMessageHandlers {
+  feedfilterPhrasesUpdated?: { postMessage: (msg: string) => void };
+}
+interface WebkitBridge {
+  messageHandlers: WebkitMessageHandlers;
+}
+declare const webkit: WebkitBridge;
 
 // Dependencies (set by initIOS from index.ts)
 let _deps: IOSDeps;
@@ -10,271 +32,90 @@ let _deps: IOSDeps;
 // iOS Safari detection (for Safari Web Extension on iOS)
 export function isIOSSafari() {
   const ua = navigator.userAgent;
-  const isIOS = /iPad|iPhone|iPod/.test(ua) ||
-                (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  // Exclude iPad — it uses desktop Twitter and should get the desktop UI
+  const isIPhone = /iPhone|iPod/.test(ua);
   const isSafari = /Safari/.test(ua) && !/Chrome|CriOS|FxiOS/.test(ua);
-  return isIOS && isSafari;
+  return isIPhone && isSafari;
 }
 
 export const IS_IOS = isIOSSafari();
 
-// State
-let ffPageActive = false;
-let iosPageContainer: HTMLElement | null = null;
-let ffFabButton: HTMLElement | null = null;
-
 export function initIOS(deps: IOSDeps) {
+  console.log('[Bouncer][iOS] initIOS called');
   _deps = deps;
+
+  // Bridge functions for native Swift sheet to call back into JS
+  const w = window as Window & FFWindow;
+  w.__ff_addPhrase = async (text: string): Promise<boolean> => {
+    console.log('[Bouncer][iOS] __ff_addPhrase called with:', text);
+    const added = await _deps.addFilterPhrase(text);
+    console.log('[Bouncer][iOS] addFilterPhrase returned:', added);
+    updateIOSFilteredCount();
+    return added;
+  };
+  w.__ff_removePhrase = async (phrase: string): Promise<void> => {
+    console.log('[Bouncer][iOS] __ff_removePhrase called with:', phrase);
+    await _deps.removeFilterPhrase(phrase);
+    updateIOSFilteredCount();
+  };
+
+  const _showFilteredModal = showIOSFilteredModal;
+  w.__ff_showFilteredModal = () => _showFilteredModal();
+
+  // AI-text-detection toggle bridge. The native settings page reads/writes
+  // chrome.storage.local through these; the storage-change listener in
+  // content/index.ts then re-evaluates posts (cache is invalidated by
+  // background/index.ts's settings-change handler).
+  w.__ff_getAiTextFilterEnabled = async (): Promise<boolean> => {
+    const data = await chrome.storage.local.get(['aiTextFilterEnabled']);
+    return data.aiTextFilterEnabled === true;
+  };
+  w.__ff_setAiTextFilterEnabled = async (enabled: boolean): Promise<void> => {
+    console.log('[Bouncer][iOS] __ff_setAiTextFilterEnabled:', enabled);
+    await chrome.storage.local.set({ aiTextFilterEnabled: enabled === true });
+  };
+  w.__ff_getAiTextDetectionThreshold = async (): Promise<number> => {
+    const data = await chrome.storage.local.get(['aiTextDetectionThreshold']);
+    return clampThreshold(data.aiTextDetectionThreshold);
+  };
+  w.__ff_setAiTextDetectionThreshold = async (value: number): Promise<void> => {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return;
+    const clamped = clampThreshold(n);
+    console.log('[Bouncer][iOS] __ff_setAiTextDetectionThreshold:', clamped);
+    await chrome.storage.local.set({ aiTextDetectionThreshold: clamped });
+  };
+
+  // Native "Share filters" button drives the same composer-paste flow the
+  // desktop "Share filters" button uses: render a screenshot of the desktop
+  // filter card, encode the bncr2_ share code, click X's compose link, and
+  // paste image + caption into the resulting modal. Requires the WebView to
+  // be on x.com (the Swift side navigates there before calling).
+  w.__ff_shareFilterPack = async (): Promise<{ ok: boolean; error?: string }> => {
+    if (!/^https?:\/\/(www\.)?(x|twitter)\.com(\/|$)/.test(location.href)) {
+      return { ok: false, error: 'not_on_x' };
+    }
+    try {
+      await shareFilterPackForIOS();
+      return { ok: true };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { ok: false, error: msg };
+    }
+  };
+
+  // Send initial phrases to native Swift UI so the sheet isn't empty on first open
+  console.log('[Bouncer][iOS] Sending initial phrases update');
+  updateIOSFilteredCount();
 }
 
 // State accessors
-export function getFFPageActive() { return ffPageActive; }
-export function getIOSPageContainer() { return iosPageContainer; }
-export function getFFFabButton() { return ffFabButton; }
+export function getFFPageActive() { return false; }
+export function getIOSPageContainer(): HTMLElement | null { return null; }
+export function getFFFabButton(): HTMLElement | null { return null; }
 
-// Inject a Bouncer FAB button on iOS, inside the compose button's container
-// so it moves with the compose button automatically (no scroll/resize listeners needed)
-export function injectBouncerFAB() {
-  // Don't duplicate
-  if (document.querySelector('.ff-fab-button')) return;
-
-  // Only show on pages where filtering is active
-  if (!_deps.adapter.shouldProcessCurrentPage()) return;
-
-  // Find the FloatingActionButtonBase container that holds the compose <a>
-  const fabBase = document.querySelector<HTMLElement>('div[data-testid="FloatingActionButtonBase"]');
-  if (!fabBase) return;
-
-  const fab = document.createElement('button');
-  fab.className = 'ff-fab-button';
-  fab.setAttribute('aria-label', 'Bouncer');
-  fab.innerHTML = `
-    <svg viewBox="17 25 166 166" width="20" height="20">
-      <ellipse cx="45" cy="178" rx="26" ry="8" fill="white"/>
-      <rect x="19" y="170" width="52" height="8" rx="3" fill="white"/>
-      <rect x="38" y="48" width="14" height="122" fill="white" rx="3"/>
-      <circle cx="45" cy="43" r="13" fill="white"/>
-      <ellipse cx="155" cy="178" rx="26" ry="8" fill="white"/>
-      <rect x="129" y="170" width="52" height="8" rx="3" fill="white"/>
-      <rect x="148" y="48" width="14" height="122" fill="white" rx="3"/>
-      <circle cx="155" cy="43" r="13" fill="white"/>
-      <rect x="52" y="60" width="8" height="6" rx="2" fill="white"/>
-      <rect x="140" y="60" width="8" height="6" rx="2" fill="white"/>
-      <path d="M 58 63 Q 100 128 142 63" stroke="white" stroke-width="9" fill="none" stroke-linecap="round"/>
-      <circle cx="58" cy="63" r="6" fill="white"/>
-      <circle cx="142" cy="63" r="6" fill="white"/>
-    </svg>
-    <span class="ff-fab-badge" style="display: none;">0</span>
-  `;
-
-  fab.addEventListener('click', (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (ffPageActive) {
-      hideBouncerPage();
-    } else {
-      showBouncerPage();
-    }
-  });
-
-  // Make the container a positioning context and insert the FAB
-  fabBase.style.position = 'relative';
-  fabBase.appendChild(fab);
-  ffFabButton = fab;
-}
-
-// Show the full-page Bouncer view as a fixed overlay on document.body
-export function showBouncerPage() {
-  // Create the Bouncer overlay if it doesn't already exist
-  if (!iosPageContainer || !iosPageContainer.isConnected) {
-    iosPageContainer = document.createElement('div');
-    iosPageContainer.className = 'ff-ios-page';
-    iosPageContainer.innerHTML = `
-      <div class="ff-ios-page-header">
-        <button class="ff-ios-settings-btn" aria-label="Settings">
-          <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor">
-            <path d="M10.54 1.75h2.92l1.57 2.36c.11.17.32.25.53.21l2.53-.59 2.17 2.17-.58 2.54c-.05.2.04.41.21.53l2.36 1.57v2.92l-2.36 1.57c-.17.12-.26.33-.21.53l.58 2.54-2.17 2.17-2.53-.59c-.21-.04-.42.04-.53.21l-1.57 2.36h-2.92l-1.58-2.36c-.11-.17-.32-.25-.52-.21l-2.54.59-2.17-2.17.58-2.54c.05-.2-.03-.41-.21-.53l-2.35-1.57v-2.92L4.1 8.97c.18-.12.26-.33.21-.53L3.73 5.9 5.9 3.73l2.54.59c.2.04.41-.04.52-.21l1.58-2.36zm1.07 2l-.98 1.47C10.05 6.08 9 6.5 7.99 6.27l-1.46-.34-.6.6.33 1.46c.24 1.01-.18 2.07-1.05 2.64l-1.46.98v.78l1.46.98c.87.57 1.29 1.63 1.05 2.64l-.33 1.46.6.6 1.46-.34c1.01-.23 2.06.19 2.64 1.05l.98 1.47h.78l.97-1.47c.58-.86 1.63-1.28 2.65-1.05l1.45.34.61-.6-.34-1.46c-.23-1.01.18-2.07 1.05-2.64l1.47-.98v-.78l-1.47-.98c-.87-.57-1.28-1.63-1.05-2.64l.34-1.46-.61-.6-1.45.34c-1.02.23-2.07-.19-2.65-1.05l-.97-1.47h-.78zM12 10.5c-.83 0-1.5.67-1.5 1.5s.67 1.5 1.5 1.5c.82 0 1.5-.67 1.5-1.5s-.68-1.5-1.5-1.5zM8.5 12c0-1.93 1.56-3.5 3.5-3.5 1.93 0 3.5 1.57 3.5 3.5s-1.57 3.5-3.5 3.5c-1.94 0-3.5-1.57-3.5-3.5z"/>
-          </svg>
-        </button>
-        <span class="ff-ios-page-title">Bouncer</span>
-        <button class="ff-ios-close-btn" aria-label="Close">
-          <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor">
-            <path d="M10.59 12L4.54 5.96l1.42-1.42L12 10.59l6.04-6.05 1.42 1.42L13.41 12l6.05 6.04-1.42 1.42L12 13.41l-6.04 6.05-1.42-1.42L10.59 12z"/>
-          </svg>
-        </button>
-      </div>
-      <div class="ff-ios-subtitle">Filter out these terms:</div>
-      <div class="ff-ios-categories-list"></div>
-      <div class="ff-ios-bottom-bar">
-        <button class="ff-ios-view-filtered-btn">View filtered (0)</button>
-        <div class="ff-ios-input-bar">
-          <input type="text" class="ff-ios-phrase-input" placeholder="Add a topic to filter...">
-          <button class="ff-ios-send-btn" aria-label="Add">
-            <svg viewBox="0 0 24 24" width="20" height="20" fill="white">
-              <path d="M3.478 2.405a.75.75 0 0 0-.926.94l2.432 7.905H13.5a.75.75 0 0 1 0 1.5H4.984l-2.432 7.905a.75.75 0 0 0 .926.94l18-8a.75.75 0 0 0 0-1.38l-18-8z"/>
-            </svg>
-          </button>
-        </div>
-      </div>
-    `;
-
-    // Append to body so position:fixed works relative to viewport
-    // (BottomBar ancestors have transforms that break fixed positioning)
-    document.body.appendChild(iosPageContainer);
-    setupIOSPageEventHandlers(iosPageContainer);
-  }
-
-  // Lock body scroll to prevent bleed-through on iOS
-  document.body.style.setProperty('--ff-scroll-y', `-${window.scrollY}px`);
-  document.body.classList.add('ff-scroll-locked');
-
-  // Play entrance animations (keep class until staggered row animations finish)
-  iosPageContainer.classList.add('entering');
-  setTimeout(() => {
-    if (iosPageContainer) iosPageContainer.classList.remove('entering');
-  }, 1500);
-
-  // Render categories from storage
-  renderIOSCategories(iosPageContainer);
-
-  // Update theme, count
-  _deps.updateTheme();
-  updateIOSFilteredCount();
-
-  ffPageActive = true;
-}
-
-// Render category rows from storage into the iOS page
-export function renderIOSCategories(page: HTMLElement) {
-  const list = page.querySelector('.ff-ios-categories-list');
-  if (!list) return;
-
-  getDescriptions(_deps.descriptionsKey).then((descriptions) => {
-    // Clear inside the callback to prevent race condition duplicates
-    list.innerHTML = '';
-    const subtitle = page.querySelector<HTMLElement>('.ff-ios-subtitle');
-    if (descriptions.length === 0) {
-      if (subtitle) subtitle.style.display = 'none';
-      list.innerHTML = '<div class="ff-ios-categories-empty">No topics added yet. Use the input below to add topics you want to filter out.</div>';
-      return;
-    }
-    if (subtitle) subtitle.style.display = '';
-    descriptions.forEach((phrase, index) => {
-      const row = document.createElement('div');
-      row.className = 'ff-ios-category-row';
-      row.style.setProperty('--row-index', String(index));
-      row.innerHTML = `
-        <span class="ff-ios-category-text">${escapeHtml(phrase)}</span>
-        <button class="ff-ios-category-remove" aria-label="Remove ${escapeHtml(phrase)}">&times;</button>
-      `;
-      row.querySelector('.ff-ios-category-remove')!.addEventListener('click', () => {
-        _deps.removeFilterPhrase(phrase).catch(err => console.error('[iOS] removeFilterPhrase failed:', err));
-        // Re-render after removal
-        renderIOSCategories(page);
-      });
-      list.appendChild(row);
-    });
-  }).catch(err => console.error('[iOS] Failed to load descriptions:', err));
-}
-
-// Update the "View filtered (N)" button count on iOS page
-export function updateIOSFilteredCount() {
-  if (!iosPageContainer || !iosPageContainer.isConnected) return;
-  const btn = iosPageContainer.querySelector('.ff-ios-view-filtered-btn');
-  if (btn) {
-    btn.textContent = `View filtered (${_deps.getFilteredPosts().length})`;
-  }
-}
-
-// Wire up event handlers for the iOS overlay page
-function setupIOSPageEventHandlers(page: HTMLElement) {
-  // Close (X) button
-  const closeBtn = page.querySelector('.ff-ios-close-btn');
-  if (closeBtn) {
-    closeBtn.addEventListener('click', () => hideBouncerPage());
-  }
-
-  // Settings gear button
-  const settingsBtn = page.querySelector('.ff-ios-settings-btn');
-  if (settingsBtn) {
-    settingsBtn.addEventListener('click', () => _deps.showSettingsModal());
-  }
-
-  // "View filtered" button opens modal
-  const viewFilteredBtn = page.querySelector('.ff-ios-view-filtered-btn');
-  if (viewFilteredBtn) {
-    viewFilteredBtn.addEventListener('click', () => showIOSFilteredModal());
-  }
-
-  // Input + send button
-  const input = page.querySelector<HTMLInputElement>('.ff-ios-phrase-input');
-  const sendBtn = page.querySelector('.ff-ios-send-btn');
-
-  // Dismiss keyboard on scroll and fix iOS Safari viewport desync
-  if (input) {
-    page.addEventListener('touchmove', () => {
-      if (document.activeElement === input) {
-        input.blur();
-      }
-    });
-    input.addEventListener('blur', () => {
-      window.scrollTo(0, 0);
-      page.style.transform = 'translateZ(1px)';
-      void page.offsetHeight;
-      page.style.transform = '';
-    });
-  }
-
-  if (sendBtn && input) {
-    const handleSend = async () => {
-      const text = input.value.trim();
-      if (text) {
-        try {
-          const added = await _deps.addFilterPhrase(text);
-          if (added) {
-            input.value = '';
-            input.blur();
-            renderIOSCategories(page);
-            updateIOSFilteredCount();
-          }
-        } catch (err) {
-          console.error('[Bouncer] addFilterPhrase threw:', err);
-        }
-      }
-    };
-    sendBtn.addEventListener('touchend', (e) => {
-      e.preventDefault();
-      handleSend().catch(err => console.error('[iOS] handleSend failed:', err));
-    });
-    sendBtn.addEventListener('click', () => { handleSend().catch(err => console.error('[iOS] handleSend failed:', err)); });
-  } else {
-    console.warn('[Bouncer] sendBtn or input NOT found. sendBtn:', sendBtn, 'input:', input);
-  }
-
-  if (input) {
-    input.addEventListener('keypress', (e) => {
-      (async () => {
-        if (e.key === 'Enter') {
-          e.preventDefault();
-          const text = input.value.trim();
-          if (text) {
-            try {
-              const added = await _deps.addFilterPhrase(text);
-              if (added) {
-                input.value = '';
-                input.blur();
-                renderIOSCategories(page);
-                updateIOSFilteredCount();
-              }
-            } catch (err) {
-              console.error('[Bouncer] addFilterPhrase threw:', err);
-            }
-          }
-        }
-      })().catch(err => console.error('[iOS] keypress handler failed:', err));
-    });
-  }
-}
+// FAB is now in the native Swift NavBarView — no JS injection needed
+export function injectBouncerFAB() {}
 
 // Show iOS filtered posts modal
 export function showIOSFilteredModal() {
@@ -283,7 +124,7 @@ export function showIOSFilteredModal() {
 
   const backdrop = document.createElement('div');
   backdrop.className = 'ff-ios-filtered-modal-backdrop';
-  backdrop.innerHTML = `
+  backdrop.replaceChildren(parseHTML(`
     <div class="ff-ios-filtered-modal">
       <div class="ff-ios-filtered-modal-header">
         <span class="ff-ios-filtered-modal-title">Filtered posts</span>
@@ -291,7 +132,7 @@ export function showIOSFilteredModal() {
       </div>
       <div class="ff-ios-filtered-modal-content"></div>
     </div>
-  `;
+  `));
 
   document.body.appendChild(backdrop);
 
@@ -335,48 +176,349 @@ export function hideIOSFilteredModal() {
   }
 }
 
-// Hide the Bouncer page overlay
-export function hideBouncerPage() {
-  if (!ffPageActive) return;
-  ffPageActive = false;
-
-  // Also dismiss any open filtered modal
-  hideIOSFilteredModal();
-
-  // Unlock body scroll and restore position
-  const scrollY = parseInt(document.body.style.getPropertyValue('--ff-scroll-y') || '0');
-  document.body.classList.remove('ff-scroll-locked');
-  document.body.style.removeProperty('--ff-scroll-y');
-  window.scrollTo(0, -scrollY);
-
-  // Play close animation, then remove
-  if (iosPageContainer && iosPageContainer.isConnected) {
-    iosPageContainer.classList.add('closing');
-    iosPageContainer.addEventListener('animationend', () => {
-      if (iosPageContainer && iosPageContainer.isConnected) {
-        iosPageContainer.remove();
-      }
-      iosPageContainer = null;
-    }, { once: true });
-  } else {
-    iosPageContainer = null;
+// Push updated filtered count to native Swift UI
+export function updateIOSFilteredCount() {
+  if (typeof webkit !== 'undefined' && webkit.messageHandlers?.feedfilterPhrasesUpdated) {
+    const count = _deps.getFilteredPosts().length;
+    chrome.storage.local.get([_deps.descriptionsKey], (data) => {
+      const phrases = (data[_deps.descriptionsKey] as string[] | undefined) || [];
+      webkit.messageHandlers.feedfilterPhrasesUpdated?.postMessage(
+        JSON.stringify({ phrases, filteredCount: count })
+      );
+    });
   }
 }
 
-// Handle DOM mutations related to iOS elements (called from index.ts uiObserver)
-export function handleDOMMutationIOS() {
-  if (!IS_IOS) return;
+// Stub for renderIOSCategories — no longer needed with native sheet
+export function renderIOSCategories(_page: HTMLElement) {}
 
-  if (ffFabButton && ffFabButton.isConnected && !_deps.adapter.shouldProcessCurrentPage()) {
-    ffFabButton.remove();
-    ffFabButton = null;
-  } else if (!ffFabButton || !ffFabButton.isConnected) {
-    ffFabButton = null;
-    injectBouncerFAB();
+// Handle DOM mutations related to iOS elements (called from index.ts uiObserver)
+export function handleDOMMutationIOS() {}
+
+// ==================== Import-Pack Genie Animation ====================
+
+/**
+ * iOS counterpart to the desktop "fly the tweet image into the Bouncer box"
+ * animation. The native Bouncer FAB sits in a UIKit toolbar below the
+ * WebView, so we can't actually deliver pixels into it from JS — instead we
+ * genie the tweet's photo down off the bottom of the viewport, where the
+ * native FAB visually sits just below.
+ *
+ * If the tweet has no photo (text-only) we just run the import without
+ * animation — there's no "screenshot" to genie.
+ */
+export async function runIOSImportAnimation(
+  article: HTMLElement | null,
+  doImport: () => Promise<void>,
+): Promise<void> {
+  // Same selectors the desktop animation uses.
+  const tweetImg =
+    article?.querySelector<HTMLImageElement>('[data-testid="tweetPhoto"] img') ??
+    article?.querySelector<HTMLImageElement>('img[src*="pbs.twimg.com/media"]') ??
+    null;
+
+  if (!tweetImg || !tweetImg.complete || tweetImg.naturalWidth === 0) {
+    await doImport();
+    return;
   }
-  // Detect if ff-ios-page was disconnected (SPA navigation replaced primaryColumn)
-  if (ffPageActive && iosPageContainer && !iosPageContainer.isConnected) {
-    iosPageContainer = null;
-    ffPageActive = false;
+
+  const sourceRect = tweetImg.getBoundingClientRect();
+  if (sourceRect.width < 4 || sourceRect.height < 4) {
+    await doImport();
+    return;
+  }
+
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  // Cap dpr at 2 — three or four physical pixels per CSS pixel doesn't help
+  // a brief motion-blurred animation and wastes fill rate.
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(vw * dpr);
+  canvas.height = Math.round(vh * dpr);
+  Object.assign(canvas.style, {
+    position: 'fixed',
+    left: '0',
+    top: '0',
+    width: `${vw}px`,
+    height: `${vh}px`,
+    pointerEvents: 'none',
+    zIndex: '2147483646',
+  } satisfies Partial<CSSStyleDeclaration>);
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    await doImport();
+    return;
+  }
+  ctx.scale(dpr, dpr);
+  document.body.appendChild(canvas);
+
+  const originalVis = tweetImg.style.visibility;
+  tweetImg.style.visibility = 'hidden';
+
+  // Aim at the center of the native Bouncer button (rightmost of four
+  // equally-spaced toolbar buttons), and have the funnel taper to roughly
+  // the button's visible width (~56pt) rather than a single point. targetY
+  // exits the viewport so the funnel's tip drains *off* the bottom — the
+  // tweet image flows out of the WebView into where the native FAB sits.
+  const BUTTON_WIDTH = 56;
+  const targetX = vw * 7 / 8;
+  const targetY = vh + 24;
+
+  const genie = new GenieEffect({
+    canvas,
+    image: tweetImg,
+    source: { x: sourceRect.left, y: sourceRect.top, w: sourceRect.width, h: sourceRect.height },
+    target: { x: targetX, y: targetY },
+    funnel: { endWidth: BUTTON_WIDTH, phaseSplit: 0.25 },
+    duration: 450,
+  });
+
+  // Kick the storage write off in parallel — by the time the funnel's
+  // tip leaves the viewport, the native sheet's phrase list is already
+  // updated (confirmAndImportPack calls updateIOSFilteredCount on iOS).
+  const importPromise = doImport();
+
+  await new Promise<void>((resolve) => {
+    genie.minimize(() => resolve());
+  });
+
+  canvas.remove();
+  tweetImg.style.visibility = originalVis;
+  await importPromise;
+}
+
+
+/**
+ * macOS-style Genie effect.
+ * Animates a source image into a target point using a two-phase
+ * canvas-warp: horizontal squeeze, then vertical slide down a funnel.
+ */
+
+export type GenieImage = CanvasImageSource;
+
+export interface SourceRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export interface TargetPoint {
+  x: number;
+  y: number;
+}
+
+export interface FunnelConfig {
+  /** Width at the dock end (pixels). Default: 36 */
+  endWidth?: number;
+  /** Exponent on the width taper. 1 = linear, 2 = macOS look, 3 = sharper pinch. Default: 2 */
+  curve?: number;
+  /** Fraction of progress spent on squeeze vs slide. Default: 0.45 */
+  phaseSplit?: number;
+}
+
+export interface GenieEffectOptions {
+  canvas: HTMLCanvasElement;
+  image: GenieImage;
+  source: SourceRect;
+  target: TargetPoint;
+  /**
+   * Natural pixel dimensions of `image`. Auto-detected from HTMLImageElement
+   * via naturalWidth/naturalHeight; required for any other CanvasImageSource
+   * (offscreen canvas, ImageBitmap, etc.).
+   */
+  imageSize?: { w: number; h: number };
+  funnel?: FunnelConfig;
+  /** Full minimize duration in ms. Default: 700 */
+  duration?: number;
+}
+
+interface ResolvedFunnel {
+  endWidth: number;
+  curve: number;
+  phaseSplit: number;
+}
+
+type CompleteCallback = () => void;
+type Direction = -1 | 0 | 1;
+
+export class GenieEffect {
+  private readonly canvas: HTMLCanvasElement;
+  private readonly ctx: CanvasRenderingContext2D;
+  private readonly image: GenieImage;
+  private readonly src: SourceRect;
+  private readonly target: TargetPoint;
+  private readonly funnel: ResolvedFunnel;
+  // Natural pixel dimensions of `image` — distinct from src.w/src.h, which are
+  // CSS-pixel placement coords. On Retina an `<img>` typically has a natural
+  // size ~2× its displayed size, and source-rect args to drawImage are
+  // interpreted in this natural space.
+  private readonly imgW: number;
+  private readonly imgH: number;
+
+  duration: number;
+  progress = 0;
+
+  private direction: Direction = 0;
+  private rafId: number | null = null;
+  private lastTime = 0;
+  private onComplete: CompleteCallback | null = null;
+
+  constructor(options: GenieEffectOptions) {
+    const ctx = options.canvas.getContext('2d');
+    if (!ctx) {
+      throw new Error('GenieEffect: failed to get 2D rendering context');
+    }
+
+    this.canvas = options.canvas;
+    this.ctx = ctx;
+    this.image = options.image;
+    this.src = { ...options.source };
+    this.target = { ...options.target };
+    this.duration = options.duration ?? 700;
+
+    const explicitSize = options.imageSize;
+    if (explicitSize) {
+      this.imgW = explicitSize.w;
+      this.imgH = explicitSize.h;
+    } else if (options.image instanceof HTMLImageElement) {
+      this.imgW = options.image.naturalWidth;
+      this.imgH = options.image.naturalHeight;
+    } else {
+      throw new Error('GenieEffect: imageSize is required when image is not an HTMLImageElement');
+    }
+
+    const f = options.funnel ?? {};
+    this.funnel = {
+      endWidth: f.endWidth ?? 36,
+      curve: f.curve ?? 2,
+      phaseSplit: f.phaseSplit ?? 0.45,
+    };
+  }
+
+  // --- Easing ---
+  // Quadratic rather than cubic: cubic has zero slope at t=0/t=1, which makes
+  // the squeeze→slide handoff feel like a noticeable pause. Quadratic still
+  // eases nicely but the boundary slope is steeper, so the two phases blend.
+  private static easeOut(t: number): number {
+    return 1 - (1 - t) * (1 - t);
+  }
+  private static easeIn(t: number): number {
+    return t * t;
+  }
+
+  // --- Funnel geometry (ny is normalized y from 0 at top to 1 at bottom) ---
+  private funnelWidthAt(ny: number): number {
+    const t = Math.pow(ny, this.funnel.curve);
+    return this.src.w + (this.funnel.endWidth - this.src.w) * t;
+  }
+  private funnelCenterAt(ny: number): number {
+    const srcCenter = this.src.x + this.src.w / 2;
+    const t = Math.pow(ny, this.funnel.curve);
+    return srcCenter + (this.target.x - srcCenter) * t;
+  }
+
+  // --- Core draw routine ---
+  draw(p: number): void {
+    const { ctx, canvas, image, src, target } = this;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    if (p <= 0) {
+      ctx.drawImage(image, src.x, src.y, src.w, src.h);
+      return;
+    }
+    if (p >= 1) return;
+
+    const funnelTop = src.y;
+    const funnelBottom = target.y;
+    const funnelHeight = funnelBottom - funnelTop;
+    const split = this.funnel.phaseSplit;
+
+    // Split progress into squeeze (p1) and slide (p2). easeOut on the
+    // squeeze and easeIn on the slide keep the start of phase 1 snappy and
+    // the tail of phase 2 punchy.
+    let p1: number;
+    let p2: number;
+    if (p < split) {
+      p1 = GenieEffect.easeOut(p / split);
+      p2 = 0;
+    } else {
+      p1 = 1;
+      p2 = GenieEffect.easeIn((p - split) / (1 - split));
+    }
+
+    const slide = p2 * funnelHeight;
+    const srcCenter = src.x + src.w / 2;
+    // Each output row is one CSS pixel tall; source slices are taken in the
+    // image's natural pixel space, so each slice covers (imgH/src.h) source
+    // rows.
+    const sliceH = this.imgH / src.h;
+
+    for (let row = 0; row < src.h; row++) {
+      const screenY = src.y + row + slide;
+      if (screenY < funnelTop || screenY > funnelBottom) continue;
+
+      const ny = (screenY - funnelTop) / funnelHeight;
+      const fw = this.funnelWidthAt(ny);
+      const fc = this.funnelCenterAt(ny);
+
+      // Phase 1 lerps the row from rectangular to funnel-shaped
+      const w = src.w * (1 - p1) + fw * p1;
+      const cx = srcCenter * (1 - p1) + fc * p1;
+
+      if (w < 0.5) continue;
+      ctx.drawImage(image, 0, row * sliceH, this.imgW, sliceH, cx - w / 2, screenY, w, 1);
+    }
+  }
+
+  // --- Animation control ---
+  minimize(onComplete?: CompleteCallback): void {
+    this.start(1, onComplete);
+  }
+  restore(onComplete?: CompleteCallback): void {
+    this.start(-1, onComplete);
+  }
+  toggle(onComplete?: CompleteCallback): void {
+    this.start(this.progress >= 1 ? -1 : 1, onComplete);
+  }
+
+  private start(direction: Exclude<Direction, 0>, onComplete?: CompleteCallback): void {
+    if (this.rafId !== null) cancelAnimationFrame(this.rafId);
+    this.direction = direction;
+    this.onComplete = onComplete ?? null;
+    this.lastTime = performance.now();
+    this.tick();
+  }
+
+  private tick = (): void => {
+    const now = performance.now();
+    const dt = now - this.lastTime;
+    this.lastTime = now;
+
+    this.progress += this.direction * (dt / this.duration);
+    this.progress = Math.max(0, Math.min(1, this.progress));
+
+    this.draw(this.progress);
+
+    if (
+      (this.direction > 0 && this.progress >= 1) ||
+      (this.direction < 0 && this.progress <= 0)
+    ) {
+      this.rafId = null;
+      const cb = this.onComplete;
+      this.onComplete = null;
+      if (cb) cb();
+      return;
+    }
+    this.rafId = requestAnimationFrame(this.tick);
+  };
+
+  destroy(): void {
+    if (this.rafId !== null) {
+      cancelAnimationFrame(this.rafId);
+      this.rafId = null;
+    }
   }
 }

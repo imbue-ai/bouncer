@@ -4,8 +4,10 @@ import { createInterface } from 'readline';
 import { resolve, dirname, basename } from 'path';
 
 const ROOT = dirname(new URL(import.meta.url).pathname);
-const MANIFEST_PATH = resolve(ROOT, 'manifest.json');
-const BOUNCER_MANIFEST_PATH = resolve(ROOT, '..', 'Bouncer_xcode', 'Shared (Extension)', 'manifest.json');
+// Version lives in manifest.base.json (source of truth for the generator).
+// manifest.json at the root is a generated artifact and shouldn't be edited
+// directly — cut.js writes to base.json then re-runs the generator.
+const BASE_MANIFEST_PATH = resolve(ROOT, 'manifest.base.json');
 
 function readManifestVersion(path) {
   const manifest = JSON.parse(readFileSync(path, 'utf8'));
@@ -17,6 +19,7 @@ function writeManifestVersion(path, version) {
   manifest.version = version;
   writeFileSync(path, JSON.stringify(manifest, null, 2) + '\n');
 }
+
 
 function compareVersions(a, b) {
   const partsA = a.split('.').map(Number);
@@ -49,33 +52,31 @@ function prompt(question) {
 
 async function main() {
   const sameVersion = process.argv.includes('--same-version');
+  const firefox = process.argv.includes('--firefox');
+  const target = firefox ? 'firefox' : 'chrome';
 
-  // Build
+  // Build (build.js regenerates manifest.json from base + target overrides)
   console.log('Running npm install...');
   execSync('npm install', { cwd: ROOT, stdio: 'inherit' });
 
-  console.log('Running node build.js...');
-  execSync('node build.js', { cwd: ROOT, stdio: 'inherit' });
+  console.log(`Running node build.js --target=${target}...`);
+  execSync(`node build.js --target=${target}`, { cwd: ROOT, stdio: 'inherit' });
 
   console.log('Removing node_modules...');
   execSync('rm -rf node_modules', { cwd: ROOT, stdio: 'inherit' });
 
-  // Read current versions
-  const currentVersion = readManifestVersion(MANIFEST_PATH);
-  const bouncerVersion = readManifestVersion(BOUNCER_MANIFEST_PATH);
-  const maxCurrent = compareVersions(currentVersion, bouncerVersion) >= 0 ? currentVersion : bouncerVersion;
-
-  console.log(`\nCurrent version (manifest.json): ${currentVersion}`);
-  console.log(`Current version (Bouncer manifest.json): ${bouncerVersion}`);
+  // Read current version from base (source of truth)
+  const currentVersion = readManifestVersion(BASE_MANIFEST_PATH);
+  console.log(`\nCurrent version (manifest.base.json): ${currentVersion}`);
 
   let newVersion;
   if (sameVersion) {
-    newVersion = maxCurrent;
+    newVersion = currentVersion;
     console.log(`Keeping version at ${newVersion}`);
   } else {
     // Prompt for new version
-    const defaultVersion = incrementPatch(maxCurrent);
-    const input = await prompt(`Enter new version number (must be > ${maxCurrent}) [${defaultVersion}]: `);
+    const defaultVersion = incrementPatch(currentVersion);
+    const input = await prompt(`Enter new version number (must be > ${currentVersion}) [${defaultVersion}]: `);
     newVersion = input || defaultVersion;
 
     // Validate format
@@ -85,17 +86,16 @@ async function main() {
     }
 
     // Validate it increased
-    if (compareVersions(newVersion, maxCurrent) <= 0) {
-      console.error(`Error: New version ${newVersion} must be greater than ${maxCurrent}`);
+    if (compareVersions(newVersion, currentVersion) <= 0) {
+      console.error(`Error: New version ${newVersion} must be greater than ${currentVersion}`);
       process.exit(1);
     }
 
-    // Update both manifests
-    writeManifestVersion(MANIFEST_PATH, newVersion);
-    console.log(`Updated ${MANIFEST_PATH} to ${newVersion}`);
-
-    writeManifestVersion(BOUNCER_MANIFEST_PATH, newVersion);
-    console.log(`Updated ${BOUNCER_MANIFEST_PATH} to ${newVersion}`);
+    // Write version to base and regenerate the target manifest
+    writeManifestVersion(BASE_MANIFEST_PATH, newVersion);
+    console.log(`Updated ${BASE_MANIFEST_PATH} to ${newVersion}`);
+    const { generateManifest } = await import('./generate-manifests.mjs');
+    generateManifest(target);
   }
 
   // Zip the directory
@@ -103,23 +103,50 @@ async function main() {
   const zipName = `${dirName}-${newVersion}.zip`;
   const parentDir = resolve(ROOT, '..');
 
+  const zipPath = resolve(parentDir, zipName);
+  execSync(`rm -f "${zipPath}"`);
+
   console.log(`\nCreating ${zipName}...`);
   const excludes = [
     'node_modules/*',
+    'vendor/*',
     '.git/*',
+    '.gitignore',
+    '.wrangler/*',
+    'hosting/*',
     'src/*',
     'tests/*',
     '.env.*',
     'build.js',
     'cut.js',
+    'generate-manifests.mjs',
+    'webllm-stub.js',
+    'background.js',
+    'popup.js',
+    'content.js',
+    'adapters/twitter/TwitterAdapter.ts',
     'package.json',
     'package-lock.json',
     'vitest.config.js',
     'eslint.config.mjs',
+    'manifest.base.json',
     'manifest.chrome.json',
     'manifest.firefox.json',
-  ].map(e => `"${dirName}/${e}"`).join(' ');
-  execSync(`cd "${parentDir}" && zip -r "${zipName}" "${dirName}" -x ${excludes}`, {
+    'manifest.safari.json',
+    '.DS_Store',
+    '*/.DS_Store',
+    '*/*/.DS_Store',
+    '*/*/*/.DS_Store',
+    'iOS (App)/*',
+    'Bouncer.xcodeproj/*',
+    '.claude/*',
+    '.nvmrc',
+    'README.md',
+    'tsconfig.json',
+    'tsconfig.test.json',
+    'update-webllm.js',
+  ].map(e => `"${e}"`).join(' ');
+  execSync(`cd "${ROOT}" && zip -r "${resolve(parentDir, zipName)}" . -x ${excludes}`, {
     stdio: 'inherit',
   });
 

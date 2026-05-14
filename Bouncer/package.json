@@ -7,6 +7,10 @@
   "scripts": {
     "build": "node build.js",
     "build:dev": "node build.js --dev",
+    "build:safari": "node build.js --target=safari",
+    "build:safari:dev": "node build.js --dev --target=safari",
+    "build:firefox": "node build.js --target=firefox",
+    "gen-manifests": "node generate-manifests.mjs",
     "watch": "node build.js --watch",
     "watch:dev": "node build.js --watch --dev",
     "test": "vitest run",
@@ -14,6 +18,9 @@
     "lint": "eslint . && tsc --noEmit",
     "lint:fix": "eslint . --fix",
     "cut-chrome": "node cut.js",
+    "cut-chrome:same": "node cut.js --same-version",
+    "cut-firefox": "node cut.js --firefox",
+    "cut-firefox:same": "node cut.js --firefox --same-version",
     "update-webllm": "node update-webllm.js",
     "typecheck": "tsc --noEmit"
   },
@@ -32,6 +39,7 @@
   "dependencies": {
     "@mlc-ai/web-llm": "file:./vendor/web-llm",
     "dompurify": "^3.3.1",
-    "firebase": "^12.11.0"
+    "firebase": "^12.11.0",
+    "html-to-image": "^1.11.13"
   }
 }

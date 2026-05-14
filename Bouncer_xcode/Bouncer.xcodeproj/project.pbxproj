@@ -1,0 +1,1001 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		4E38A4CE2F72199A00496A14 /* AppCheckBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E38A4CC2F72199A00496A14 /* AppCheckBridge.swift */; };
+		4E38A4CF2F72199A00496A14 /* AppCheckProviderFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E38A4CD2F72199A00496A14 /* AppCheckProviderFactory.swift */; };
+		4E38A4D32F721C2500496A14 /* FirebaseAppCheck in Frameworks */ = {isa = PBXBuildFile; productRef = 4E38A4D22F721C2500496A14 /* FirebaseAppCheck */; };
+		4E38A4D42F72196200496A14 /* GoogleService-Info.plist in Resources */ = {isa = PBXBuildFile; fileRef = 4E38A4CA2F72196000496A14 /* GoogleService-Info.plist */; };
+		4E38A4D52F72196300496A14 /* GoogleService-Info-Dev.plist in Resources */ = {isa = PBXBuildFile; fileRef = 4E38A4CB2F72196100496A14 /* GoogleService-Info-Dev.plist */; };
+		4E3B363A2F857BE400A929AD /* iosicon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 4E3B36392F857BE300A929AD /* iosicon.icon */; };
+		971D84C92FB271A2006BC538 /* FirebaseCrashlytics in Frameworks */ = {isa = PBXBuildFile; productRef = 971D84C82FB271A2006BC538 /* FirebaseCrashlytics */; };
+		974832542F91595300493A71 /* Bouncer (macOS) Extension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 974832532F91595300493A71 /* Bouncer (macOS) Extension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		97BD3B812F3EB56C00F8BF65 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97BD3B802F3EB56C00F8BF65 /* AppDelegate.swift */; };
+		97BD3B832F3EB56C00F8BF65 /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97BD3B822F3EB56C00F8BF65 /* SceneDelegate.swift */; };
+		97BD3B862F3EB56C00F8BF65 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3B842F3EB56C00F8BF65 /* LaunchScreen.storyboard */; };
+		97BD3B892F3EB56C00F8BF65 /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3B872F3EB56C00F8BF65 /* Main.storyboard */; };
+		97BD3BB52F3EB56C00F8BF65 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3B762F3EB56C00F8BF65 /* Assets.xcassets */; };
+		97BD3BE02F3EB56D00F8BF65 /* browser-polyfill.js in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BCB2F3EB56D00F8BF65 /* browser-polyfill.js */; };
+		97BD3BE12F3EB56D00F8BF65 /* popup.js in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BCC2F3EB56D00F8BF65 /* popup.js */; };
+		97BD3BE22F3EB56D00F8BF65 /* content.css in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BCD2F3EB56D00F8BF65 /* content.css */; };
+		97BD3BE32F3EB56D00F8BF65 /* background.js in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BCE2F3EB56D00F8BF65 /* background.js */; };
+		97BD3BE42F3EB56D00F8BF65 /* dist in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BCF2F3EB56D00F8BF65 /* dist */; };
+		97BD3BE52F3EB56D00F8BF65 /* popup.html in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BD02F3EB56D00F8BF65 /* popup.html */; };
+		97BD3BE72F3EB56D00F8BF65 /* build.js in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BD22F3EB56D00F8BF65 /* build.js */; };
+		97BD3BE82F3EB56D00F8BF65 /* manifest.firefox.json in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BD32F3EB56D00F8BF65 /* manifest.firefox.json */; };
+		97BD3BE92F3EB56D00F8BF65 /* manifest.chrome.json in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BD42F3EB56D00F8BF65 /* manifest.chrome.json */; };
+		97BD3BEA2F3EB56D00F8BF65 /* shared in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BD52F3EB56D00F8BF65 /* shared */; };
+		97BD3BEB2F3EB56D00F8BF65 /* adapters in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BD62F3EB56D00F8BF65 /* adapters */; };
+		97BD3BEC2F3EB56D00F8BF65 /* package-lock.json in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BD72F3EB56D00F8BF65 /* package-lock.json */; };
+		97BD3BED2F3EB56D00F8BF65 /* package.json in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BD82F3EB56D00F8BF65 /* package.json */; };
+		97BD3BEE2F3EB56D00F8BF65 /* icons in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BD92F3EB56D00F8BF65 /* icons */; };
+		97BD3BF12F3EB56D00F8BF65 /* popup.css in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BDC2F3EB56D00F8BF65 /* popup.css */; };
+		97BD3BF22F3EB56D00F8BF65 /* content.js in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BDD2F3EB56D00F8BF65 /* content.js */; };
+		97BD3BF32F3EB56D00F8BF65 /* dompurify.js in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BDE2F3EB56D00F8BF65 /* dompurify.js */; };
+		AA00001100000000000000AA /* FilteredWebView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000100000000000000AA /* FilteredWebView.swift */; };
+		AA00001400000000000000AA /* ChromePolyfill.js in Resources */ = {isa = PBXBuildFile; fileRef = AA00000400000000000000AA /* ChromePolyfill.js */; };
+		AA00001500000000000000AA /* FilterPhraseSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000700000000000000AA /* FilterPhraseSheet.swift */; };
+		AA00002000000000000000AA /* WebSocketBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00002100000000000000AA /* WebSocketBridge.swift */; };
+		AA00003000000000000000AA /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00003100000000000000AA /* OnboardingView.swift */; };
+		AA00004000000000000000AA /* filterphrases.mp4 in Resources */ = {isa = PBXBuildFile; fileRef = AA00004100000000000000AA /* filterphrases.mp4 */; };
+		EE00000200000000000000EE /* manifest.json in Resources */ = {isa = PBXBuildFile; fileRef = EE00000100000000000000EE /* manifest.json */; };
+		SF00000100000000000000SF /* manifest.json in Resources */ = {isa = PBXBuildFile; fileRef = EE00000100000000000000EE /* manifest.json */; };
+		SF00000200000000000000SF /* browser-polyfill.js in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BCB2F3EB56D00F8BF65 /* browser-polyfill.js */; };
+		SF00000300000000000000SF /* dompurify.js in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BDE2F3EB56D00F8BF65 /* dompurify.js */; };
+		SF00000400000000000000SF /* content.css in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BCD2F3EB56D00F8BF65 /* content.css */; };
+		SF00000500000000000000SF /* content.js in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BDD2F3EB56D00F8BF65 /* content.js */; };
+		SF00000600000000000000SF /* popup.html in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BD02F3EB56D00F8BF65 /* popup.html */; };
+		SF00000700000000000000SF /* popup.css in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BDC2F3EB56D00F8BF65 /* popup.css */; };
+		SF00000800000000000000SF /* dist in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BCF2F3EB56D00F8BF65 /* dist */; };
+		SF00000900000000000000SF /* icons in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BD92F3EB56D00F8BF65 /* icons */; };
+		SF00001000000000000000SF /* adapters in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BD62F3EB56D00F8BF65 /* adapters */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		974832552F91595300493A71 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 97BD3B6A2F3EB56C00F8BF65 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 974832522F91595300493A71;
+			remoteInfo = "Bouncer (macOS) Extension";
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		9748326E2F91595300493A71 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				974832542F91595300493A71 /* Bouncer (macOS) Extension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		4E38A4CA2F72196000496A14 /* GoogleService-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "GoogleService-Info.plist"; sourceTree = "<group>"; };
+		4E38A4CB2F72196100496A14 /* GoogleService-Info-Dev.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "GoogleService-Info-Dev.plist"; sourceTree = "<group>"; };
+		4E38A4CC2F72199A00496A14 /* AppCheckBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppCheckBridge.swift; sourceTree = "<group>"; };
+		4E38A4CD2F72199A00496A14 /* AppCheckProviderFactory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppCheckProviderFactory.swift; sourceTree = "<group>"; };
+		4E3B36392F857BE300A929AD /* iosicon.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = iosicon.icon; sourceTree = "<group>"; };
+		9748323A2F91595100493A71 /* Bouncer.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Bouncer.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		974832532F91595300493A71 /* Bouncer (macOS) Extension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = "Bouncer (macOS) Extension.appex"; sourceTree = BUILT_PRODUCTS_DIR; };
+		97BD3B762F3EB56C00F8BF65 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		97BD3B7D2F3EB56C00F8BF65 /* Bouncer.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Bouncer.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		97BD3B802F3EB56C00F8BF65 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		97BD3B822F3EB56C00F8BF65 /* SceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneDelegate.swift; sourceTree = "<group>"; };
+		97BD3B852F3EB56C00F8BF65 /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/LaunchScreen.storyboard; sourceTree = "<group>"; };
+		97BD3B882F3EB56C00F8BF65 /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/Main.storyboard; sourceTree = "<group>"; };
+		97BD3B8A2F3EB56C00F8BF65 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		97BD3BCB2F3EB56D00F8BF65 /* browser-polyfill.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "browser-polyfill.js"; sourceTree = "<group>"; };
+		97BD3BCC2F3EB56D00F8BF65 /* popup.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = popup.js; sourceTree = "<group>"; };
+		97BD3BCD2F3EB56D00F8BF65 /* content.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; path = content.css; sourceTree = "<group>"; };
+		97BD3BCE2F3EB56D00F8BF65 /* background.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = background.js; sourceTree = "<group>"; };
+		97BD3BCF2F3EB56D00F8BF65 /* dist */ = {isa = PBXFileReference; lastKnownFileType = folder; path = dist; sourceTree = "<group>"; };
+		97BD3BD02F3EB56D00F8BF65 /* popup.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = popup.html; sourceTree = "<group>"; };
+		97BD3BD22F3EB56D00F8BF65 /* build.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = build.js; sourceTree = "<group>"; };
+		97BD3BD32F3EB56D00F8BF65 /* manifest.firefox.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = manifest.firefox.json; sourceTree = "<group>"; };
+		97BD3BD42F3EB56D00F8BF65 /* manifest.chrome.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = manifest.chrome.json; sourceTree = "<group>"; };
+		97BD3BD52F3EB56D00F8BF65 /* shared */ = {isa = PBXFileReference; lastKnownFileType = folder; name = shared; path = src/shared; sourceTree = "<group>"; };
+		97BD3BD62F3EB56D00F8BF65 /* adapters */ = {isa = PBXFileReference; lastKnownFileType = folder; path = adapters; sourceTree = "<group>"; };
+		97BD3BD72F3EB56D00F8BF65 /* package-lock.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "package-lock.json"; sourceTree = "<group>"; };
+		97BD3BD82F3EB56D00F8BF65 /* package.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = package.json; sourceTree = "<group>"; };
+		97BD3BD92F3EB56D00F8BF65 /* icons */ = {isa = PBXFileReference; lastKnownFileType = folder; path = icons; sourceTree = "<group>"; };
+		97BD3BDC2F3EB56D00F8BF65 /* popup.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; path = popup.css; sourceTree = "<group>"; };
+		97BD3BDD2F3EB56D00F8BF65 /* content.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = content.js; sourceTree = "<group>"; };
+		97BD3BDE2F3EB56D00F8BF65 /* dompurify.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = dompurify.js; sourceTree = "<group>"; };
+		AA00000100000000000000AA /* FilteredWebView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FilteredWebView.swift; sourceTree = "<group>"; };
+		AA00000400000000000000AA /* ChromePolyfill.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = ChromePolyfill.js; sourceTree = "<group>"; };
+		AA00000600000000000000AA /* Bouncer.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Bouncer.entitlements; sourceTree = "<group>"; };
+		AA00000700000000000000AA /* FilterPhraseSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FilterPhraseSheet.swift; sourceTree = "<group>"; };
+		AA00002100000000000000AA /* WebSocketBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebSocketBridge.swift; sourceTree = "<group>"; };
+		AA00003100000000000000AA /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
+		AA00004100000000000000AA /* filterphrases.mp4 */ = {isa = PBXFileReference; lastKnownFileType = file; path = filterphrases.mp4; sourceTree = "<group>"; };
+		EE00000100000000000000EE /* manifest.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = manifest.json; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		974832712F91595300493A71 /* Exceptions for "Bouncer (macOS) Extension" folder in "Bouncer (macOS) Extension" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 974832522F91595300493A71 /* Bouncer (macOS) Extension */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		9748323B2F91595100493A71 /* Bouncer (macOS) */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = "Bouncer (macOS)";
+			sourceTree = "<group>";
+		};
+		974832572F91595300493A71 /* Bouncer (macOS) Extension */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				974832712F91595300493A71 /* Exceptions for "Bouncer (macOS) Extension" folder in "Bouncer (macOS) Extension" target */,
+			);
+			path = "Bouncer (macOS) Extension";
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		974832372F91595100493A71 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		974832502F91595300493A71 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		97BD3B7A2F3EB56C00F8BF65 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				4E38A4D32F721C2500496A14 /* FirebaseAppCheck in Frameworks */,
+				971D84C92FB271A2006BC538 /* FirebaseCrashlytics in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		4E38A4D12F721C2500496A14 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		97BD3B692F3EB56C00F8BF65 = {
+			isa = PBXGroup;
+			children = (
+				97BD3B7F2F3EB56C00F8BF65 /* iOS (App) */,
+				97BD3BC92F3EB56D00F8BF65 /* Extension Resources */,
+				9748323B2F91595100493A71 /* Bouncer (macOS) */,
+				974832572F91595300493A71 /* Bouncer (macOS) Extension */,
+				4E38A4D12F721C2500496A14 /* Frameworks */,
+				97BD3B7E2F3EB56C00F8BF65 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		97BD3B7E2F3EB56C00F8BF65 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				97BD3B7D2F3EB56C00F8BF65 /* Bouncer.app */,
+				9748323A2F91595100493A71 /* Bouncer.app */,
+				974832532F91595300493A71 /* Bouncer (macOS) Extension.appex */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		97BD3B7F2F3EB56C00F8BF65 /* iOS (App) */ = {
+			isa = PBXGroup;
+			children = (
+				4E38A4CC2F72199A00496A14 /* AppCheckBridge.swift */,
+				4E38A4CD2F72199A00496A14 /* AppCheckProviderFactory.swift */,
+				4E38A4CA2F72196000496A14 /* GoogleService-Info.plist */,
+				4E38A4CB2F72196100496A14 /* GoogleService-Info-Dev.plist */,
+				97BD3B802F3EB56C00F8BF65 /* AppDelegate.swift */,
+				97BD3B822F3EB56C00F8BF65 /* SceneDelegate.swift */,
+				AA00000100000000000000AA /* FilteredWebView.swift */,
+				AA00002100000000000000AA /* WebSocketBridge.swift */,
+				AA00000700000000000000AA /* FilterPhraseSheet.swift */,
+				AA00003100000000000000AA /* OnboardingView.swift */,
+				AA00004100000000000000AA /* filterphrases.mp4 */,
+				AA00000400000000000000AA /* ChromePolyfill.js */,
+				AA00000600000000000000AA /* Bouncer.entitlements */,
+				97BD3B762F3EB56C00F8BF65 /* Assets.xcassets */,
+				4E3B36392F857BE300A929AD /* iosicon.icon */,
+				97BD3B842F3EB56C00F8BF65 /* LaunchScreen.storyboard */,
+				97BD3B872F3EB56C00F8BF65 /* Main.storyboard */,
+				97BD3B8A2F3EB56C00F8BF65 /* Info.plist */,
+			);
+			path = "iOS (App)";
+			sourceTree = "<group>";
+		};
+		97BD3BC92F3EB56D00F8BF65 /* Extension Resources */ = {
+			isa = PBXGroup;
+			children = (
+				97BD3BCB2F3EB56D00F8BF65 /* browser-polyfill.js */,
+				97BD3BCC2F3EB56D00F8BF65 /* popup.js */,
+				97BD3BCD2F3EB56D00F8BF65 /* content.css */,
+				97BD3BCE2F3EB56D00F8BF65 /* background.js */,
+				97BD3BCF2F3EB56D00F8BF65 /* dist */,
+				97BD3BD02F3EB56D00F8BF65 /* popup.html */,
+				97BD3BD22F3EB56D00F8BF65 /* build.js */,
+				97BD3BD32F3EB56D00F8BF65 /* manifest.firefox.json */,
+				97BD3BD42F3EB56D00F8BF65 /* manifest.chrome.json */,
+				EE00000100000000000000EE /* manifest.json */,
+				97BD3BD52F3EB56D00F8BF65 /* shared */,
+				97BD3BD62F3EB56D00F8BF65 /* adapters */,
+				97BD3BD72F3EB56D00F8BF65 /* package-lock.json */,
+				97BD3BD82F3EB56D00F8BF65 /* package.json */,
+				97BD3BD92F3EB56D00F8BF65 /* icons */,
+				97BD3BDC2F3EB56D00F8BF65 /* popup.css */,
+				97BD3BDD2F3EB56D00F8BF65 /* content.js */,
+				97BD3BDE2F3EB56D00F8BF65 /* dompurify.js */,
+			);
+			name = "Extension Resources";
+			path = ../Bouncer;
+			sourceTree = SOURCE_ROOT;
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		974832392F91595100493A71 /* Bouncer (macOS) */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 974832732F91595300493A71 /* Build configuration list for PBXNativeTarget "Bouncer (macOS)" */;
+			buildPhases = (
+				974832362F91595100493A71 /* Sources */,
+				974832372F91595100493A71 /* Frameworks */,
+				974832382F91595100493A71 /* Resources */,
+				9748326E2F91595300493A71 /* Embed Foundation Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				974832562F91595300493A71 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				9748323B2F91595100493A71 /* Bouncer (macOS) */,
+			);
+			name = "Bouncer (macOS)";
+			packageProductDependencies = (
+			);
+			productName = "Bouncer (macOS)";
+			productReference = 9748323A2F91595100493A71 /* Bouncer.app */;
+			productType = "com.apple.product-type.application";
+		};
+		974832522F91595300493A71 /* Bouncer (macOS) Extension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 974832722F91595300493A71 /* Build configuration list for PBXNativeTarget "Bouncer (macOS) Extension" */;
+			buildPhases = (
+				SF00002000000000000000SF /* Build Extension JS */,
+				9748324F2F91595300493A71 /* Sources */,
+				974832502F91595300493A71 /* Frameworks */,
+				974832512F91595300493A71 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				974832572F91595300493A71 /* Bouncer (macOS) Extension */,
+			);
+			name = "Bouncer (macOS) Extension";
+			packageProductDependencies = (
+			);
+			productName = "Bouncer (macOS) Extension";
+			productReference = 974832532F91595300493A71 /* Bouncer (macOS) Extension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		97BD3B7C2F3EB56C00F8BF65 /* Bouncer (iOS) */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 97BD3BBF2F3EB56C00F8BF65 /* Build configuration list for PBXNativeTarget "Bouncer (iOS)" */;
+			buildPhases = (
+				DD00000200000000000000DD /* Build Extension JS */,
+				97BD3B792F3EB56C00F8BF65 /* Sources */,
+				97BD3B7A2F3EB56C00F8BF65 /* Frameworks */,
+				97BD3B7B2F3EB56C00F8BF65 /* Resources */,
+				CR00000300000000000000CR /* Crashlytics dSYM upload */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = "Bouncer (iOS)";
+			productName = "Twitter For You Filter (iOS)";
+			productReference = 97BD3B7D2F3EB56C00F8BF65 /* Bouncer.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		97BD3B6A2F3EB56C00F8BF65 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2620;
+				LastUpgradeCheck = 2620;
+				TargetAttributes = {
+					974832392F91595100493A71 = {
+						CreatedOnToolsVersion = 26.2;
+					};
+					974832522F91595300493A71 = {
+						CreatedOnToolsVersion = 26.2;
+					};
+					97BD3B7C2F3EB56C00F8BF65 = {
+						CreatedOnToolsVersion = 26.2;
+					};
+				};
+			};
+			buildConfigurationList = 97BD3B6D2F3EB56C00F8BF65 /* Build configuration list for PBXProject "Bouncer" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 97BD3B692F3EB56C00F8BF65;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				4E38A4C92F7218D300496A14 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 97BD3B7E2F3EB56C00F8BF65 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				97BD3B7C2F3EB56C00F8BF65 /* Bouncer (iOS) */,
+				974832392F91595100493A71 /* Bouncer (macOS) */,
+				974832522F91595300493A71 /* Bouncer (macOS) Extension */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		974832382F91595100493A71 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		974832512F91595300493A71 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				SF00000100000000000000SF /* manifest.json in Resources */,
+				SF00000200000000000000SF /* browser-polyfill.js in Resources */,
+				SF00000300000000000000SF /* dompurify.js in Resources */,
+				SF00000400000000000000SF /* content.css in Resources */,
+				SF00000500000000000000SF /* content.js in Resources */,
+				SF00000600000000000000SF /* popup.html in Resources */,
+				SF00000700000000000000SF /* popup.css in Resources */,
+				SF00000800000000000000SF /* dist in Resources */,
+				SF00000900000000000000SF /* icons in Resources */,
+				SF00001000000000000000SF /* adapters in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		97BD3B7B2F3EB56C00F8BF65 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				4E38A4D42F72196200496A14 /* GoogleService-Info.plist in Resources */,
+				4E38A4D52F72196300496A14 /* GoogleService-Info-Dev.plist in Resources */,
+				97BD3B862F3EB56C00F8BF65 /* LaunchScreen.storyboard in Resources */,
+				97BD3BB52F3EB56C00F8BF65 /* Assets.xcassets in Resources */,
+				97BD3B892F3EB56C00F8BF65 /* Main.storyboard in Resources */,
+				AA00001400000000000000AA /* ChromePolyfill.js in Resources */,
+				97BD3BE02F3EB56D00F8BF65 /* browser-polyfill.js in Resources */,
+				97BD3BE12F3EB56D00F8BF65 /* popup.js in Resources */,
+				4E3B363A2F857BE400A929AD /* iosicon.icon in Resources */,
+				97BD3BE22F3EB56D00F8BF65 /* content.css in Resources */,
+				97BD3BE32F3EB56D00F8BF65 /* background.js in Resources */,
+				97BD3BE42F3EB56D00F8BF65 /* dist in Resources */,
+				97BD3BE52F3EB56D00F8BF65 /* popup.html in Resources */,
+				97BD3BE72F3EB56D00F8BF65 /* build.js in Resources */,
+				97BD3BE82F3EB56D00F8BF65 /* manifest.firefox.json in Resources */,
+				97BD3BE92F3EB56D00F8BF65 /* manifest.chrome.json in Resources */,
+				EE00000200000000000000EE /* manifest.json in Resources */,
+				97BD3BEA2F3EB56D00F8BF65 /* shared in Resources */,
+				97BD3BEB2F3EB56D00F8BF65 /* adapters in Resources */,
+				97BD3BEC2F3EB56D00F8BF65 /* package-lock.json in Resources */,
+				97BD3BED2F3EB56D00F8BF65 /* package.json in Resources */,
+				97BD3BEE2F3EB56D00F8BF65 /* icons in Resources */,
+				97BD3BF12F3EB56D00F8BF65 /* popup.css in Resources */,
+				97BD3BF22F3EB56D00F8BF65 /* content.js in Resources */,
+				97BD3BF32F3EB56D00F8BF65 /* dompurify.js in Resources */,
+				AA00004000000000000000AA /* filterphrases.mp4 in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		CR00000300000000000000CR /* Crashlytics dSYM upload */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"${DWARF_DSYM_FOLDER_PATH}/${DWARF_DSYM_FILE_NAME}",
+				"${DWARF_DSYM_FOLDER_PATH}/${DWARF_DSYM_FILE_NAME}/Contents/Resources/DWARF/${PRODUCT_NAME}",
+				"${DWARF_DSYM_FOLDER_PATH}/${DWARF_DSYM_FILE_NAME}/Contents/Resources/DWARF/${PRODUCT_NAME}.debug.dylib",
+				"${DWARF_DSYM_FOLDER_PATH}/${DWARF_DSYM_FILE_NAME}/Contents/Info.plist",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/GoogleService-Info.plist",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/GoogleService-Info-Dev.plist",
+				"$(TARGET_BUILD_DIR)/$(EXECUTABLE_PATH)",
+			);
+			name = "Crashlytics dSYM upload";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "if [ \"$BOUNCER_ENV\" = \"DEV\" ]; then\n  PLIST=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/GoogleService-Info-Dev.plist\"\nelse\n  PLIST=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/GoogleService-Info.plist\"\nfi\necho \"[Crashlytics] uploading dSYM with $PLIST\"\n\"${BUILD_DIR%/Build/*}/SourcePackages/checkouts/firebase-ios-sdk/Crashlytics/run\" -gsp \"$PLIST\"\n";
+		};
+		DD00000200000000000000DD /* Build Extension JS */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Build Extension JS";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "export NVM_DIR=\"$HOME/.nvm\"\n[ -s \"$NVM_DIR/nvm.sh\" ] && . \"$NVM_DIR/nvm.sh\"\nif ! command -v node > /dev/null 2>&1; then\n  export PATH=\"/usr/local/bin:/opt/homebrew/bin:$PATH\"\nfi\nEXT_DIR=\"${PROJECT_DIR}/../Bouncer\"\nif [ ! -d \"$EXT_DIR/node_modules\" ]; then\n  echo \"Installing npm dependencies...\"\n  cd \"$EXT_DIR\" && npm install --silent\nfi\ncd \"$EXT_DIR\"\nif [ \"$BOUNCER_ENV\" = \"DEV\" ]; then\n  echo \"Building extension JS (dev)...\"\n  npm run build:dev --silent\nelse\n  echo \"Building extension JS (prod)...\"\n  npm run build --silent\nfi\n";
+		};
+		SF00002000000000000000SF /* Build Extension JS */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Build Extension JS";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "export NVM_DIR=\"$HOME/.nvm\"\n[ -s \"$NVM_DIR/nvm.sh\" ] && . \"$NVM_DIR/nvm.sh\"\nif ! command -v node > /dev/null 2>&1; then\n  export PATH=\"/usr/local/bin:/opt/homebrew/bin:$PATH\"\nfi\nEXT_DIR=\"${PROJECT_DIR}/../Bouncer\"\nif [ ! -d \"$EXT_DIR/node_modules\" ]; then\n  echo \"Installing npm dependencies...\"\n  cd \"$EXT_DIR\" && npm install --silent\nfi\ncd \"$EXT_DIR\"\nif [ \"$BOUNCER_ENV\" = \"DEV\" ]; then\n  echo \"Building Safari extension JS (dev)...\"\n  npm run build:safari:dev --silent\nelse\n  echo \"Building Safari extension JS (prod)...\"\n  npm run build:safari --silent\nfi\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		974832362F91595100493A71 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		9748324F2F91595300493A71 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		97BD3B792F3EB56C00F8BF65 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				97BD3B812F3EB56C00F8BF65 /* AppDelegate.swift in Sources */,
+				97BD3B832F3EB56C00F8BF65 /* SceneDelegate.swift in Sources */,
+				AA00001100000000000000AA /* FilteredWebView.swift in Sources */,
+				AA00002000000000000000AA /* WebSocketBridge.swift in Sources */,
+				AA00001500000000000000AA /* FilterPhraseSheet.swift in Sources */,
+				4E38A4CE2F72199A00496A14 /* AppCheckBridge.swift in Sources */,
+				4E38A4CF2F72199A00496A14 /* AppCheckProviderFactory.swift in Sources */,
+				AA00003000000000000000AA /* OnboardingView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		974832562F91595300493A71 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 974832522F91595300493A71 /* Bouncer (macOS) Extension */;
+			targetProxy = 974832552F91595300493A71 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin PBXVariantGroup section */
+		97BD3B842F3EB56C00F8BF65 /* LaunchScreen.storyboard */ = {
+			isa = PBXVariantGroup;
+			children = (
+				97BD3B852F3EB56C00F8BF65 /* Base */,
+			);
+			name = LaunchScreen.storyboard;
+			sourceTree = "<group>";
+		};
+		97BD3B872F3EB56C00F8BF65 /* Main.storyboard */ = {
+			isa = PBXVariantGroup;
+			children = (
+				97BD3B882F3EB56C00F8BF65 /* Base */,
+			);
+			name = Main.storyboard;
+			sourceTree = "<group>";
+		};
+/* End PBXVariantGroup section */
+
+/* Begin XCBuildConfiguration section */
+		9748326C2F91595300493A71 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = iosicon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				BOUNCER_ENV = DEV;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 7;
+				DEVELOPMENT_TEAM = LDDYAR29MP;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
+				ENABLE_USER_SELECTED_FILES = readonly;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Bouncer;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.entertainment";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSMainStoryboardFile = Main;
+				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.1.2;
+				OTHER_LDFLAGS = (
+					"-framework",
+					SafariServices,
+					"-framework",
+					WebKit,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.imbue.bouncermac.dev;
+				PRODUCT_NAME = Bouncer;
+				REGISTER_APP_GROUPS = YES;
+				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		9748326D2F91595300493A71 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = iosicon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				BOUNCER_ENV = PROD;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 7;
+				DEVELOPMENT_TEAM = LDDYAR29MP;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
+				ENABLE_USER_SELECTED_FILES = readonly;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Bouncer;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.entertainment";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSMainStoryboardFile = Main;
+				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.1.2;
+				OTHER_LDFLAGS = (
+					"-framework",
+					SafariServices,
+					"-framework",
+					WebKit,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.imbue.bouncermac;
+				PRODUCT_NAME = Bouncer;
+				REGISTER_APP_GROUPS = YES;
+				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		9748326F2F91595300493A71 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BOUNCER_ENV = DEV;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = LDDYAR29MP;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_USER_SELECTED_FILES = readonly;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Bouncer (macOS) Extension/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = Bouncer;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = (
+					"-framework",
+					SafariServices,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.imbue.bouncermac.dev.Extension;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		974832702F91595300493A71 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BOUNCER_ENV = PROD;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = LDDYAR29MP;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_USER_SELECTED_FILES = readonly;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Bouncer (macOS) Extension/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = Bouncer;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = (
+					"-framework",
+					SafariServices,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.imbue.bouncermac.Extension;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		97BD3BB92F3EB56C00F8BF65 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		97BD3BBA2F3EB56C00F8BF65 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
+			};
+			name = Release;
+		};
+		97BD3BC02F3EB56C00F8BF65 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = iosicon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
+				BOUNCER_ENV = DEV;
+				CODE_SIGN_ALLOW_ENTITLEMENTS_MODIFICATION = YES;
+				CODE_SIGN_ENTITLEMENTS = "iOS (App)/Bouncer.entitlements";
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = LDDYAR29MP;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "iOS (App)/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Bouncer Dev";
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen;
+				INFOPLIST_KEY_UIMainStoryboardFile = "";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.2.1;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-ObjC",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.imbue.xbouncer.dev;
+				PRODUCT_NAME = Bouncer;
+				PROVISIONING_PROFILE_SPECIFIER = "";
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		97BD3BC12F3EB56C00F8BF65 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = iosicon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
+				BOUNCER_ENV = PROD;
+				CODE_SIGN_ALLOW_ENTITLEMENTS_MODIFICATION = YES;
+				CODE_SIGN_ENTITLEMENTS = "iOS (App)/Bouncer.entitlements";
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = LDDYAR29MP;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "iOS (App)/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = Bouncer;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen;
+				INFOPLIST_KEY_UIMainStoryboardFile = "";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.2.1;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-ObjC",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.imbue.xbouncer;
+				PRODUCT_NAME = Bouncer;
+				PROVISIONING_PROFILE_SPECIFIER = "";
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		974832722F91595300493A71 /* Build configuration list for PBXNativeTarget "Bouncer (macOS) Extension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				9748326F2F91595300493A71 /* Debug */,
+				974832702F91595300493A71 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		974832732F91595300493A71 /* Build configuration list for PBXNativeTarget "Bouncer (macOS)" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				9748326C2F91595300493A71 /* Debug */,
+				9748326D2F91595300493A71 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		97BD3B6D2F3EB56C00F8BF65 /* Build configuration list for PBXProject "Bouncer" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				97BD3BB92F3EB56C00F8BF65 /* Debug */,
+				97BD3BBA2F3EB56C00F8BF65 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		97BD3BBF2F3EB56C00F8BF65 /* Build configuration list for PBXNativeTarget "Bouncer (iOS)" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				97BD3BC02F3EB56C00F8BF65 /* Debug */,
+				97BD3BC12F3EB56C00F8BF65 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		4E38A4C92F7218D300496A14 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/firebase/firebase-ios-sdk.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 12.11.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		4E38A4D22F721C2500496A14 /* FirebaseAppCheck */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 4E38A4C92F7218D300496A14 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseAppCheck;
+		};
+		971D84C82FB271A2006BC538 /* FirebaseCrashlytics */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 4E38A4C92F7218D300496A14 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseCrashlytics;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 97BD3B6A2F3EB56C00F8BF65 /* Project object */;
+}

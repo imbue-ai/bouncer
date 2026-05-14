@@ -138,6 +138,9 @@
       }
     }
 
+    // Check if media is blurred (age-restricted / sensitive content interstitial)
+    const mediaBlurred = !!tweetEntity.mediaVisibilityResults?.blurred_image_interstitial;
+
     return {
       tweetId,
       fullText,
@@ -149,6 +152,7 @@
       userAvatarUrl,
       postUrl,
       quotedTweet,
+      mediaBlurred,
     };
   }
 

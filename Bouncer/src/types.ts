@@ -5,6 +5,19 @@ export type SiteId = 'twitter';
 
 // ==================== Core Evaluation ====================
 
+/** Snapshot of one detector's contribution to an evaluation. Persisted in the
+ *  cache so the popup can replay tabs identically on cache hits. */
+export interface DetectorSnapshot {
+  status: 'success' | 'error' | 'skipped';
+  shouldHide?: boolean;
+  reasoning?: string;
+  category?: string | null;
+  error?: string;
+  /** Either pre-run skip reason or post-race "aborted because other detector
+   *  hid first" — both render the same way in the popup. */
+  skipReason?: string;
+}
+
 /** The cached verdict for a post — what parseAPIResponse produces and what gets stored. */
 export interface EvaluationResult {
   shouldHide: boolean;
@@ -16,6 +29,8 @@ export interface EvaluationResult {
   model?: string;
   /** Set by the background when the result came from the evaluation cache. */
   cached?: boolean;
+  /** Per-detector snapshots so a cache hit can rebuild the same tab UI. */
+  detectorStates?: { names: string[]; map: Record<string, DetectorSnapshot> };
 }
 
 /** The post data sent to a model for evaluation. */
@@ -65,6 +80,7 @@ export interface PostContent {
   imageUrls: string[];
   hasMediaContainer: boolean;
   fromStore?: boolean;
+  mediaBlurred?: boolean;
 }
 
 /** Stored for the "filtered posts" panel — includes captured display data for re-rendering. */
@@ -95,6 +111,7 @@ export interface ModelDef {
 /** A local model with WebLLM-specific configuration. */
 export interface LocalModelDef extends ModelDef {
   isLocal?: boolean;
+  backend?: 'mlc';
   extraBody?: Record<string, unknown>;
   inferenceParams?: Record<string, unknown>;
   webllmConfig?: {
@@ -134,6 +151,8 @@ interface SettingsBase {
   selectedModel: string;
   customModels: ModelDef[];
   predefinedModelKwargs: Record<string, Record<string, unknown>>;
+  aiTextFilterEnabled: boolean;
+  aiTextDetectionThreshold: number;
 }
 
 export interface Settings extends SettingsBase {
@@ -190,44 +209,19 @@ export interface ErrorState {
 }
 
 export interface PendingEvaluation {
+  /** Per-call UUID so tab dispatch messages can be routed back to the
+   *  originating article even when its postUrl is null (ads, etc.). */
+  evaluationId: string;
   post: string;
+  /** Raw post text without the "Author: " prefix. Used by AI text detection
+   *  so the model only sees the post content, not author metadata. */
+  rawText: string;
   imageUrls: string[];
   resolve: (result: PipelineResponse) => void;
   cacheKey: string;
   tabId: number | undefined;
   postUrl: string | null;
   siteId: SiteId;
-}
-
-// ==================== Alert System ====================
-
-/** Model/provider context shared across alert subsystems. */
-export interface ModelContext {
-  selectedModel: string;
-  hasAlternativeApis: boolean;
-}
-
-export interface AlertState {
-  latency: {
-    isHighLatency: boolean;
-    medianLatency: number;
-  } & ModelContext;
-  error: {
-    type: string | null;
-    subType: string | null;
-    count: number;
-    apiDisplayName: string | null;
-  } & ModelContext;
-  queue_backlog: {
-    pendingCount: number;
-    isLocalModel: boolean;
-    modelInitializing: boolean;
-  };
-}
-
-export interface AlertDisplayConfig {
-  message: string;
-  buttonText: string | null;
 }
 
 // ==================== Chat Messages ====================
@@ -241,7 +235,7 @@ export interface ChatMessage {
 
 export type ContentToBackgroundMessage =
   | { type: 'pageLoad' }
-  | { type: 'evaluatePost'; post: string; imageUrls: string[]; postUrl: string | null; siteId: SiteId }
+  | { type: 'evaluatePost'; evaluationId: string; post: string; rawText: string; imageUrls: string[]; postUrl: string | null; siteId: SiteId }
   | { type: 'suggestAnnoyingReasons'; post: string; imageUrls: string[]; siteId?: SiteId }
   | { type: 'clearCache' }
   | { type: 'clearSinglePost'; post: string; imageUrls: string[] }
@@ -255,7 +249,11 @@ export type ContentToBackgroundMessage =
   | { type: 'overrideCacheEntry'; post: string; imageUrls: string[]; shouldHide: boolean; reasoning?: string }
   | { type: 'sendFeedback'; decision: string; tweetData: { text: string; imageUrls: string[] }; reasoning?: string; rawResponse?: string; siteId?: SiteId }
   | { type: 'getAuthStatus' }
-  | { type: 'launchGoogleAuth' };
+  | { type: 'launchAuth' }
+  | { type: 'appleSignIn'; idToken: string; rawNonce: string }
+  | { type: 'nativeAppleSignIn' }
+  | { type: 'signOut' }
+  | { type: 'launchOpenRouterAuth' };
 
 export type BackgroundToContentMessage =
   | { type: 'ping' }
@@ -266,7 +264,9 @@ export type BackgroundToContentMessage =
   | { type: 'getPositions'; postUrls: string[] }
   | { type: 'processingPost'; postUrl: string }
   | { type: 'annoyingProgress'; verified: number; total: number }
-  | { type: 'authStateChanged'; authenticated: boolean };
+  | { type: 'authStateChanged'; authenticated: boolean }
+  | { type: 'evaluationStarted'; evaluationId: string; detectorNames: string[] }
+  | { type: 'detectorResponse'; evaluationId: string; detectorName: string; shouldHide?: boolean; reasoning?: string; category?: string | null; error?: string; skipped?: boolean; skipReason?: string };
 
 // ==================== Dependency Injection ====================
 
@@ -323,11 +323,13 @@ export type DescriptionKey = `descriptions_${SiteId}`;
 export type StorageSchema = SettingsBase & {
   authErrorApis: Record<string, boolean>;
   localModelsEnabled: boolean;
+  aiTextFilterExperimental: boolean;
   localModelStatuses: Record<string, LocalModelStatus>;
   evaluationCache: Record<string, EvaluationResult>;
   stats: { filtered: number; evaluated: number; totalCost: number };
   googleAuthToken: string;
   openrouterCodeVerifier: string;
+  lastSeenVersion: string;
 } & DescriptionKeys;
 
 // ==================== API Response Types ====================
@@ -341,12 +343,10 @@ export interface DirectAPIResponse {
 
 // ==================== Imbue Backend Responses ====================
 
-/** Common metadata fields present on all Imbue WebSocket responses. */
+/** Common envelope fields present on all Imbue WebSocket responses. */
 interface ImbueResponseBase {
   processingTime: number;
-  gpuId: string;
   jobId: string;
-  rawResponse: string;
 }
 
 /** Response from the filterPost / validatePhrase actions.
@@ -355,13 +355,22 @@ export interface ImbueFilterResponse extends ImbueResponseBase {
   shouldHide: boolean;
   reasoning: string | null;
   category?: string | null;
+  rawResponse: string;
 }
 
 /** Response from the suggestAnnoying action.
  *  The backend parses one category label per line from the LLM output. */
 export interface ImbueSuggestResponse extends ImbueResponseBase {
   suggestions: string[];
+  rawResponse: string;
+}
+
+/** Response from the detectAiText action. Confidence is in [0, 1];
+ *  the threshold for "is AI" lives client-side. No rawResponse — the worker
+ *  emits a score directly, not LLM text. */
+export interface ImbueAiTextResponse extends ImbueResponseBase {
+  confidence: number;
 }
 
 /** Discriminated Imbue response — callers should narrow via the action they sent. */
-export type ImbueAPIResponse = ImbueFilterResponse | ImbueSuggestResponse;
+export type ImbueAPIResponse = ImbueFilterResponse | ImbueSuggestResponse | ImbueAiTextResponse;

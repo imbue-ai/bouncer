@@ -34,7 +34,6 @@ interface WSAckMessage {
 interface WSResultMessage {
   jobId: string;
   processingTime: number;
-  gpuId: string;
   rawResponse: string;
   // Filter responses (filterPost / validatePhrase)
   shouldHide?: boolean;
@@ -42,6 +41,8 @@ interface WSResultMessage {
   category?: string | null;
   // Suggest responses (suggestAnnoying)
   suggestions?: string[];
+  // AI-text-detection responses (detectAiText) — confidence in [0, 1]
+  confidence?: number;
   // WebSocket envelope fields
   type?: string;
   error?: string;
@@ -66,6 +67,7 @@ function validateWSMessage(raw: unknown): (WSAckMessage & WSResultMessage) | nul
   if (msg.shouldHide !== undefined && typeof msg.shouldHide !== 'boolean') return null;
   if (msg.processingTime !== undefined && typeof msg.processingTime !== 'number') return null;
   if (msg.suggestions !== undefined && !Array.isArray(msg.suggestions)) return null;
+  if (msg.confidence !== undefined && typeof msg.confidence !== 'number') return null;
   if (msg.queueDepth !== undefined && typeof msg.queueDepth !== 'number') return null;
 
   return msg as unknown as WSAckMessage & WSResultMessage;
@@ -108,9 +110,30 @@ class ImbueWebSocket {
   }
 
   private async _connect(): Promise<WebSocket> {
-    const authToken = await getAuthToken();
     const baseUrl = IMBUE_WS_URL;
-    const wsUrl = authToken ? `${baseUrl}?token=${encodeURIComponent(authToken)}` : baseUrl;
+    const isIOS = typeof window !== 'undefined' && typeof (window as unknown as Record<string, (() => Promise<string>) | undefined>).__ff_getAppCheckToken === 'function';
+    let wsUrl = baseUrl;
+
+    if (isIOS) {
+      // iOS: use only App Check token (no anonymous auth)
+      try {
+        const getAppCheckToken = (window as unknown as Record<string, () => Promise<string>>).__ff_getAppCheckToken;
+        const appCheckToken = await getAppCheckToken();
+        if (appCheckToken) {
+          wsUrl += `?token_ios=${encodeURIComponent(appCheckToken)}`;
+        }
+      } catch (err) {
+        console.error('[WS Manager] Failed to get App Check token:', (err as Error).message);
+      }
+    } else {
+      // Chrome: use Google auth token
+      const authToken = await getAuthToken();
+      if (authToken) {
+        wsUrl += `?token=${encodeURIComponent(authToken)}`;
+      }
+    }
+
+    console.log('[WS Manager] Connecting to:', baseUrl, '| iOS:', isIOS);
 
     return new Promise((resolve, reject) => {
       const ws = new WebSocket(wsUrl);

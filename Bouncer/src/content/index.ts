@@ -2,8 +2,8 @@
 // Entry point: post processing, observers, init, storage/message listeners
 
 import type { PlatformAdapter, PostContent, PipelineResponse, BackgroundToContentMessage, DescriptionKey } from '../types';
-import { DEFAULT_MODEL } from '../shared/models';
 import { getStorage, removeStorage, getDescriptions, setDescriptions } from '../shared/storage';
+import { FILTER_PACK_CODE_PREFIX } from '../shared/share-encoding';
 
 import {
   IS_IOS, initIOS,
@@ -14,19 +14,21 @@ import {
 
 import {
   initUI, checkAuthStatus,
-  getFilteredPosts, getFilteredTabActive, updateAlertState, alertState,
+  getFilteredPosts, getFilteredTabActive,
   updateTheme,
   injectFilterPhrasesInput, injectBottomFilterBox, injectMobileFilterBox,
   syncFilterPhrases, addFilterPhrase, removeFilterPhrase,
   showSettingsModal, renderFilteredPostsView,
-  updateAlertBanners, initModelLoadingListener,
+  initModelLoadingListener,
   markPostPending, markPostVerified, getVerificationBar,
   storeFilteredPost, hidePost, showApiKeyWarning,
   addContextMenuHandler,
   addWhyAnnoyingButton,
+  processImportCodeInPost,
   handleDOMMutation,
   setupSearchBarHide,
-  checkViewportPendingLatency,
+  initDetectorStates,
+  updateDetectorState,
 } from './ui';
 
 import { formatPostForEvaluation } from '../shared/utils';
@@ -34,12 +36,26 @@ import { formatPostForEvaluation } from '../shared/utils';
 (function() {
   'use strict';
 
+  // Safari re-injects content scripts when extension permissions change on
+  // an already-loaded tab. Each re-injection has a fresh module scope and
+  // would register duplicate listeners + create duplicate UI. Guard with a
+  // window-level sentinel so only the first injection per page runs.
+  interface BouncerWindow extends Window { __bouncerContentScriptLoaded?: boolean }
+  const w = window as unknown as BouncerWindow;
+  if (w.__bouncerContentScriptLoaded) {
+    console.log('[Bouncer] Content script already loaded in this tab — skipping re-init');
+    return;
+  }
+  w.__bouncerContentScriptLoaded = true;
+
   // Platform adapter (loaded by manifest before content.js)
   if (typeof BouncerAdapter === 'undefined') {
     console.error('[Bouncer] No platform adapter found');
     return;
   }
+  console.log('[Bouncer] Content script starting, IS_IOS:', IS_IOS);
   const adapter: PlatformAdapter = new BouncerAdapter();
+  console.log('[Bouncer] Adapter loaded:', adapter.siteId);
   document.body.classList.add(`site-${adapter.siteId}`);
 
   if (IS_IOS) document.body.classList.add('ff-ios');
@@ -116,6 +132,26 @@ import { formatPostForEvaluation } from '../shared/utils';
     return Array.from(document.querySelectorAll<HTMLElement>(adapter.selectors.post));
   }
 
+  // Tab-dispatch messages from background reference an evaluation by a UUID
+  // we generated when sending the evaluatePost message. This map gives us the
+  // article back regardless of postUrl (some posts have no time link / no
+  // store URL). Entries auto-expire 30s after the evaluation completes so
+  // late-arriving detector responses (e.g. AI taking 14s post-race) still
+  // route correctly.
+  const articleByEvaluationId = new Map<string, HTMLElement>();
+  const EVALUATION_ID_TTL_MS = 30000;
+
+  function registerEvaluation(id: string, article: HTMLElement) {
+    articleByEvaluationId.set(id, article);
+  }
+  function releaseEvaluation(id: string) {
+    setTimeout(() => articleByEvaluationId.delete(id), EVALUATION_ID_TTL_MS);
+  }
+  function articleForEvaluation(id: string | undefined): HTMLElement | null {
+    if (!id) return null;
+    return articleByEvaluationId.get(id) ?? null;
+  }
+
   function extractPostContent(article: HTMLElement): PostContent {
     return adapter.extractPostContent(article);
   }
@@ -123,11 +159,8 @@ import { formatPostForEvaluation } from '../shared/utils';
   async function checkLocalModelActive() {
     try {
       const data = await getStorage(['selectedModel']);
-      const model = data.selectedModel || DEFAULT_MODEL;
+      const model = data.selectedModel || 'imbue';
       isLocalModelActive = model.startsWith('local:');
-      // Keep latency alert state in sync so the viewport-based latency check
-      // knows which model is active before any latencyUpdate message arrives.
-      alertState.latency.selectedModel = model;
     } catch (err) {
       console.debug('[Bouncer] Failed to check model type:', err);
       isLocalModelActive = false;
@@ -158,29 +191,40 @@ import { formatPostForEvaluation } from '../shared/utils';
 
   const MAX_STORE_RETRIES = 3;
 
+  // In-app WKWebView mode: fiber-extractor can't load, use DOM extraction directly
+  const isInApp = typeof chrome !== 'undefined' && chrome._polyfilled;
+
   // Evaluate a post using the background script
   async function evaluatePost(article: HTMLElement) {
-    // Extract post content from platform store (sole source of evaluation data)
+    console.log('[Bouncer] evaluatePost called, isInApp:', isInApp);
     let content: PostContent | undefined;
-    try {
-      content = await adapter.extractPostContentFromStore(article) ?? undefined;
-    } catch { /* store not ready */ }
 
-    // If store returned nothing, defer for MutationObserver to retry
-    if (!content) {
-      const retries = parseInt(article.dataset.ffStoreRetries || '0', 10);
-      if (retries >= MAX_STORE_RETRIES) {
-        console.warn('[Bouncer] Store extraction failed after', MAX_STORE_RETRIES, 'retries, skipping post');
-        postReasonings.set(article, {
-          shouldHide: false,
-          reasoning: 'Could not extract post data from store.'
-        });
-        markPostVerified(article);
+    if (isInApp) {
+      // WKWebView: use DOM-based extraction (store extraction unavailable)
+      content = extractPostContent(article);
+      console.log('[Bouncer] DOM extraction result:', content?.text?.substring(0, 80));
+    } else {
+      // Extension: extract post content from platform store (preferred source)
+      try {
+        content = await adapter.extractPostContentFromStore(article) ?? undefined;
+      } catch { /* store not ready */ }
+
+      // If store returned nothing, defer for MutationObserver to retry
+      if (!content) {
+        const retries = parseInt(article.dataset.ffStoreRetries || '0', 10);
+        if (retries >= MAX_STORE_RETRIES) {
+          console.warn('[Bouncer] Store extraction failed after', MAX_STORE_RETRIES, 'retries, skipping post');
+          postReasonings.set(article, {
+            shouldHide: false,
+            reasoning: 'Could not extract post data from store.'
+          });
+          markPostVerified(article);
+          return;
+        }
+        article.dataset.ffStoreRetries = String(retries + 1);
+        processedPosts.delete(article);
         return;
       }
-      article.dataset.ffStoreRetries = String(retries + 1);
-      processedPosts.delete(article);
-      return;
     }
 
     // Clear retry counter on success
@@ -198,15 +242,22 @@ import { formatPostForEvaluation } from '../shared/utils';
       return;
     }
 
+    const evaluationId = crypto.randomUUID();
+    registerEvaluation(evaluationId, article);
     try {
+      console.log('[Bouncer] Sending evaluatePost message for:', content.text?.substring(0, 60));
       const evaluatePromise = chrome.runtime.sendMessage({
           type: 'evaluatePost',
+          evaluationId,
           post: formatPostForEvaluation(content),
+          rawText: content.text,
           imageUrls: content.imageUrls || [],
           postUrl: content.postUrl || null,
           siteId: adapter.siteId
         });
       const response = await evaluatePromise as PipelineResponse;
+      releaseEvaluation(evaluationId);
+      console.log('[Bouncer] evaluatePost response:', JSON.stringify(response)?.substring(0, 200));
 
       // Clear processing tracker when this post's evaluation completes
       if (content.postUrl && content.postUrl === currentlyProcessingPostUrl) {
@@ -240,20 +291,31 @@ import { formatPostForEvaluation } from '../shared/utils';
         article.dataset.errorType = response.error;
         const verificationBar = getVerificationBar(article);
         verificationBar.classList.remove('pending', 'verified', 'api-error');
-        verificationBar.classList.add(response.error === 'rate_limit' ? 'pending' : 'api-error');
+        // Rate-limit errors fall back to the pending state; all other API errors
+        // leave the bar invisible. The red .api-error stripe has been removed
+        // entirely — a red stripe on a tweet is always wrong.
+        if (response.error === 'rate_limit') verificationBar.classList.add('pending');
         article.removeAttribute('data-ff-pending');
         article.classList.add('ff-error');
         return;
       }
 
-      // EvaluationResult
+      // EvaluationResult. Tweets that share a Bouncer filter pack are exempt
+      // from auto-hiding — otherwise the import button would get filtered
+      // before the recipient could click it. The substring check is robust:
+      // bncr2_ is the share-code prefix and is unique enough that false
+      // positives are effectively zero. Manual user-flagged hides (in ui.ts)
+      // remain unaffected — this only vetoes the AI's automatic decision.
+      const containsShareCode = (article.textContent || '').includes(FILTER_PACK_CODE_PREFIX);
+      const effectiveShouldHide = response.shouldHide && !containsShareCode;
+
       postReasonings.set(article, {
-        shouldHide: response.shouldHide,
+        shouldHide: effectiveShouldHide,
         reasoning: response.reasoning || 'No reasoning available',
         rawResponse: response.rawResponse || null
       });
 
-      if (response.shouldHide) {
+      if (effectiveShouldHide) {
         if (content.postUrl) {
           errorPostUrls.delete(content.postUrl);
         }
@@ -306,6 +368,7 @@ import { formatPostForEvaluation } from '../shared/utils';
       }
     } catch (err) {
       console.debug('Post evaluation error:', err);
+      releaseEvaluation(evaluationId);
       postReasonings.set(article, {
         shouldHide: false,
         reasoning: `Error evaluating: ${(err instanceof Error) ? err.message : 'Unknown error'}`
@@ -316,8 +379,8 @@ import { formatPostForEvaluation } from '../shared/utils';
 
   // Process a single post - sends it to background for evaluation
   function processPost(article: HTMLElement, forceForYou = false) {
-    if (getFFPageActive()) return;
-    if (!forceForYou && !adapter.shouldProcessCurrentPage()) return;
+    if (getFFPageActive()) { console.log('[Bouncer] processPost: skipped (FF page active)'); return; }
+    if (!forceForYou && !adapter.shouldProcessCurrentPage()) { console.log('[Bouncer] processPost: skipped (shouldProcessCurrentPage false, path:', window.location.pathname, ')'); return; }
 
     if (adapter.isMainPost(article)) return;
 
@@ -356,8 +419,16 @@ import { formatPostForEvaluation } from '../shared/utils';
       if (adapter.isMainPost(article)) return;
 
       processedPosts.delete(article);
-      markPostPending(article);
-      evaluatePost(article).catch(err => console.error('[Bouncer] evaluatePost failed:', err));
+
+      // Defer the pending indicator — cache hits resolve quickly and we don't
+      // want posts to flash the dim/bar state when the evaluation comes back
+      // before the timer fires. If the evaluation resolves before the timer
+      // fires, the post never goes through the pending UI; true cache misses
+      // still show pending after the short delay.
+      const pendingTimer = setTimeout(() => markPostPending(article), 120);
+      evaluatePost(article)
+        .catch(err => console.error('[Bouncer] evaluatePost failed:', err))
+        .finally(() => clearTimeout(pendingTimer));
     });
   }
 
@@ -398,10 +469,36 @@ import { formatPostForEvaluation } from '../shared/utils';
     pendingPostReeval.set(article, timeoutId);
   }
 
+  // ==================== Import-Code Observer ====================
+
+  // The "import filter pack" transform is a pure DOM enhancement — it doesn't
+  // classify or filter anything. Run it on every visible tweet regardless of
+  // adapter.shouldProcessCurrentPage(), so profile pages, the explore feed,
+  // search, and individual tweet permalinks all get the button swap too.
+  function observeImportCodes() {
+    const scan = (root: ParentNode) => {
+      root.querySelectorAll<HTMLElement>(adapter.selectors.post).forEach(processImportCodeInPost);
+    };
+    scan(document);
+    const observer = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        for (const node of mutation.addedNodes) {
+          if (node.nodeType !== Node.ELEMENT_NODE) continue;
+          const el = node as HTMLElement;
+          if (!el.querySelectorAll) continue;
+          if (el.matches?.(adapter.selectors.post)) processImportCodeInPost(el);
+          scan(el);
+        }
+      }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+  }
+
   // ==================== Observer ====================
 
   function observePosts() {
     const existingPosts = findPosts();
+    console.log('[Bouncer] observePosts: found', existingPosts.length, 'existing posts, shouldProcess:', adapter.shouldProcessCurrentPage());
     existingPosts.forEach(article => processPost(article));
 
     const observer = new MutationObserver((mutations) => {
@@ -453,6 +550,11 @@ import { formatPostForEvaluation } from '../shared/utils';
       processExistingPosts();
     }
 
+    // Always run the import-code transform, even on pages where filter
+    // classification is gated off (profiles, notifications, lists, etc.) —
+    // users should be able to import shared filter packs from anywhere.
+    observeImportCodes();
+
     injectFilterPhrasesInput();
     injectBottomFilterBox();
     injectMobileFilterBox();
@@ -494,11 +596,8 @@ import { formatPostForEvaluation } from '../shared/utils';
         }
       }
       if (changes.selectedModel) {
-        const newModel = (changes.selectedModel.newValue as string) || DEFAULT_MODEL;
+        const newModel = (changes.selectedModel.newValue as string) || 'imbue';
         isLocalModelActive = newModel.startsWith('local:') || false;
-        updateAlertState('latency', { isHighLatency: false, medianLatency: 0, selectedModel: newModel, hasAlternativeApis: false });
-        updateAlertState('error', { type: null, subType: null, count: 0, apiDisplayName: null, selectedModel: newModel, hasAlternativeApis: false });
-        updateAlertBanners();
       }
       if (changes[descriptionsKey]) {
         syncFilterPhrases();
@@ -509,6 +608,19 @@ import { formatPostForEvaluation } from '../shared/utils';
           reEvaluateAllPosts();
         }
       }
+      if (changes.aiTextFilterEnabled) {
+        // Sync each filter box's checkbox to the new value, then re-evaluate
+        // all posts since the cache has been invalidated by the background.
+        const checked = changes.aiTextFilterEnabled.newValue === true;
+        document.querySelectorAll<HTMLInputElement>('.filter-ai-text-toggle-input')
+          .forEach(el => { if (el.checked !== checked) el.checked = checked; });
+        reEvaluateAllPosts();
+      }
+      if (changes.aiTextFilterExperimental) {
+        const expEnabled = changes.aiTextFilterExperimental.newValue === true;
+        document.querySelectorAll<HTMLElement>('.filter-ai-text-toggle')
+          .forEach(el => { el.style.display = expEnabled ? '' : 'none'; });
+      }
     });
 
     // Fallback recovery: periodically check for posts stuck in pending state
@@ -517,13 +629,10 @@ import { formatPostForEvaluation } from '../shared/utils';
       if (pendingPosts.size === 0) return;
 
       const now = Date.now();
-      let recoveredCount = 0;
-      let cleanedCount = 0;
 
       for (const article of pendingPosts) {
         if (!article.isConnected) {
           pendingPosts.delete(article);
-          cleanedCount++;
           continue;
         }
 
@@ -536,24 +645,20 @@ import { formatPostForEvaluation } from '../shared/utils';
         const startTime = parseInt(article.dataset.pendingStartTime || '0', 10);
         if (now - startTime < stuckPostCheckDelay) continue;
 
-        const content = extractPostContent(article);
-        if (content.postUrl && errorPostUrls.has(content.postUrl)) continue;
-
         if (processedPosts.has(article)) {
+          const content = extractPostContent(article);
+          if (content.postUrl && errorPostUrls.has(content.postUrl)) continue;
           processedPosts.delete(article);
           pendingPosts.delete(article);
           processPost(article, true);
-          recoveredCount++;
+        } else {
+          // Article stuck in pendingPosts with no active evaluation (e.g. came
+          // from reEvaluateAllPosts which clears processedPosts before evaluating).
+          // Release it so it's visible at full opacity instead of lingering.
+          markPostVerified(article);
         }
       }
-
-      if (recoveredCount > 0 || cleanedCount > 0) {
-        checkViewportPendingLatency();
-      }
     }, stuckPostCheckDelay);
-
-    // Poll viewport latency every second
-    setInterval(checkViewportPendingLatency, 1000);
 
     // Preempt local model inference when user scrolls past the processing post
     let preemptScrollTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -599,22 +704,7 @@ import { formatPostForEvaluation } from '../shared/utils';
         sendResponse({ alive: true });
         return;
       case 'latencyUpdate':
-        // Only update model info from background; isHighLatency is computed locally
-        // based on whether any viewport post has been pending > 5s
-        alertState.latency.selectedModel = message.selectedModel;
-        alertState.latency.hasAlternativeApis = message.hasAlternativeApis || false;
-        sendResponse({ received: true });
-        break;
       case 'errorStatusUpdate':
-        updateAlertState('error', {
-          type: message.errorType || null,
-          subType: message.subType || null,
-          count: message.count || 0,
-          apiDisplayName: message.apiDisplayName || null,
-          selectedModel: message.selectedModel,
-          hasAlternativeApis: message.hasAlternativeApis || false
-        });
-        updateAlertBanners();
         sendResponse({ received: true });
         break;
       case 'reEvaluateErrors': {
@@ -642,18 +732,38 @@ import { formatPostForEvaluation } from '../shared/utils';
         break;
       }
       case 'queueStatusUpdate':
-        updateAlertState('queue_backlog', {
-          pendingCount: message.pendingCount,
-          isLocalModel: message.isLocalModel,
-          modelInitializing: message.modelInitializing || false
-        });
-        updateAlertBanners();
         sendResponse({ received: true });
         break;
       case 'processingPost':
         currentlyProcessingPostUrl = message.postUrl;
         sendResponse({ received: true });
         break;
+      case 'evaluationStarted': {
+        const article = articleForEvaluation(message.evaluationId);
+        if (article) initDetectorStates(article, message.detectorNames);
+        sendResponse({ received: true });
+        break;
+      }
+      case 'detectorResponse': {
+        const article = articleForEvaluation(message.evaluationId);
+        if (article) {
+          const status = message.skipped ? 'skipped'
+                       : message.error ? 'error'
+                       : 'success';
+          updateDetectorState(article, message.detectorName, {
+            status,
+            shouldHide: message.shouldHide,
+            reasoning: message.reasoning,
+            category: message.category ?? null,
+            error: message.error,
+            skipReason: message.skipReason,
+          });
+        } else {
+          console.debug('[Bouncer] detectorResponse: no article for id', message.evaluationId);
+        }
+        sendResponse({ received: true });
+        break;
+      }
       case 'getPositions': {
         const positions: Record<string, number> = {};
         const viewportCenter = window.innerHeight / 2;
@@ -677,7 +787,6 @@ import { formatPostForEvaluation } from '../shared/utils';
         break;
       }
     }
-    return true;
   });
 
   // Notify background to reset queue state for this page load
