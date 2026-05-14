@@ -474,8 +474,8 @@ window.BouncerAdapter = class YouTubeAdapter implements PlatformAdapter {
     //     (the row that contains both the title and the menu button).
     // The class we add (`ff-yt-under-menu` vs `ff-yt-short-menu`) lets the
     // stylesheet apply different absolute offsets per surface.
-    let anchor: HTMLElement | null = null;
-    let positionClass = 'ff-yt-under-menu';
+    let anchor: HTMLElement | null;
+    let positionClass: string;
 
     const shortMeta = article.querySelector<HTMLElement>('.shortsLockupViewModelHostOutsideMetadata');
     if (shortMeta) {
@@ -485,6 +485,7 @@ window.BouncerAdapter = class YouTubeAdapter implements PlatformAdapter {
       anchor =
         article.querySelector<HTMLElement>('.ytLockupMetadataViewModelHost')
         || article.querySelector<HTMLElement>('feed-ad-metadata-view-model');
+      positionClass = 'ff-yt-under-menu';
     }
 
     if (!anchor) {
