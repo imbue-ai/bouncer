@@ -560,7 +560,10 @@
   bottom: -1px;
   width: var(--green-border-width);
   pointer-events: none;
-  z-index: 9999;
+  /* Above the post's own content, but well below page chrome (YT masthead
+     ~2030, our popover 2300). Previously 9999, which punched through the
+     YouTube masthead and chip rail when a pending post scrolled under them. */
+  z-index: 1;
   transition: background-color 0.3s ease;
 }
 
@@ -1398,6 +1401,12 @@ article {
   top: 0;
   left: 4px;
   right: 4px;
+  /* `1.2em` would resolve against whatever font-size the parent inherits
+     (16px on Twitter, 14px on YouTube), but the spans inside are sized to
+     1.2 × 15px = 18px. Pin font-size to 15px so the container height
+     matches the span height regardless of platform — otherwise the bottom
+     of the text gets clipped (e.g. on YT). */
+  font-size: 15px;
   height: 1.2em;
   overflow: hidden;
   pointer-events: none;

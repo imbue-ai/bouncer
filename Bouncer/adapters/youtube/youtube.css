@@ -27,6 +27,12 @@ body.site-youtube .bouncer-chip {
   background: #f2f2f2;
   border-color: #d3d3d3;
   color: #0f0f0f;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+body.site-youtube .bouncer-chip:hover {
+  background: #e5e5e5;
+  border-color: #c0c0c0;
 }
 
 /* Dark mode — YT toggles `dark` on the <html> element. */
@@ -36,7 +42,10 @@ html[dark] .bouncer-chip {
   color: #f1f1f1;
 }
 
-.bouncer-chip:hover { filter: brightness(1.08); }
+html[dark] .bouncer-chip:hover {
+  background: #3f3f3f;
+  border-color: #525252;
+}
 
 .bouncer-chip__logo {
   width: 24px;
@@ -78,6 +87,30 @@ html[dark] .bouncer-chip {
 /* ===== Share button — Twitter-only, hide on YT's popover ===== */
 .filter-phrases-banner--youtube .filter-pack-share-btn {
   display: none !important;
+}
+
+/* ===== "Bounce this video" action button ===== */
+/* Anchored directly below the three-dots menu on every card. Visual
+   styling — size, color, hover — is inherited from content.css. */
+
+/* Regular videos + ads: 3-dots sits at the top-right of the metadata host;
+   metadata host's height varies with title wrap, so we use a fixed top
+   offset (matches the 3-dots' height + a small gap). */
+.ff-why-annoying-btn.ff-yt-under-menu {
+  position: absolute;
+  top: 40px;
+  right: 0;
+  z-index: 10;
+}
+
+/* Shorts: 3-dots sits at the right edge of the title row, vertically
+   centered. We anchor inside the same metadata row and pin our button
+   directly below it. */
+.ff-why-annoying-btn.ff-yt-short-menu {
+  position: absolute;
+  top: 40px;
+  right: 0;
+  z-index: 10;
 }
 
 /* ===== Popover (the former full-width banner) ===== */

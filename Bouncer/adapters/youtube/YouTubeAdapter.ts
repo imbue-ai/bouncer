@@ -458,14 +458,61 @@ window.BouncerAdapter = class YouTubeAdapter implements PlatformAdapter {
   }
 
   getShareButton(article: HTMLElement): HTMLElement | null {
-    // The three-dots menu is the only per-card action button in the lockup;
-    // we anchor our action button next to it.
-    return article.querySelector<HTMLElement>('.ytLockupMetadataViewModelMenuButton button');
+    // Use the lockup as the gate (always present), but the actual injection
+    // anchors to the three-dots menu so the button sits directly below it.
+    return article.querySelector<HTMLElement>('yt-lockup-view-model') || article;
   }
 
   insertActionButton(article: HTMLElement, button: HTMLElement): void {
-    const menu = article.querySelector<HTMLElement>('.ytLockupMetadataViewModelMenuButton');
-    if (!menu || !menu.parentElement) return;
-    menu.parentElement.insertBefore(button, menu);
+    if (article.querySelector('.ff-why-annoying-btn')) return;
+    // Surface-specific anchors. Each card type renders its 3-dots menu in
+    // a different container; we anchor our button to the same container so
+    // it lands directly below the menu regardless of layout.
+    //   - Regular videos: `.ytLockupMetadataViewModelHost`
+    //   - Sponsored ads:  `feed-ad-metadata-view-model`
+    //   - Shorts:         `.shortsLockupViewModelHostOutsideMetadata`
+    //     (the row that contains both the title and the menu button).
+    // The class we add (`ff-yt-under-menu` vs `ff-yt-short-menu`) lets the
+    // stylesheet apply different absolute offsets per surface.
+    let anchor: HTMLElement | null = null;
+    let positionClass = 'ff-yt-under-menu';
+
+    const shortMeta = article.querySelector<HTMLElement>('.shortsLockupViewModelHostOutsideMetadata');
+    if (shortMeta) {
+      anchor = shortMeta;
+      positionClass = 'ff-yt-short-menu';
+    } else {
+      anchor =
+        article.querySelector<HTMLElement>('.ytLockupMetadataViewModelHost')
+        || article.querySelector<HTMLElement>('feed-ad-metadata-view-model');
+    }
+
+    if (!anchor) {
+      // Anchor not hydrated yet — observe the card and retry when YT
+      // finishes rendering the metadata row. Without this we'd silently
+      // miss the first few cards on every page load.
+      const mo = new MutationObserver(() => {
+        if (article.querySelector('.ff-why-annoying-btn')) { mo.disconnect(); return; }
+        const a =
+          article.querySelector<HTMLElement>('.shortsLockupViewModelHostOutsideMetadata')
+          || article.querySelector<HTMLElement>('.ytLockupMetadataViewModelHost')
+          || article.querySelector<HTMLElement>('feed-ad-metadata-view-model');
+        if (a) {
+          mo.disconnect();
+          this.insertActionButton(article, button);
+        }
+      });
+      mo.observe(article, { childList: true, subtree: true });
+      // Stop observing after a few seconds to avoid leaking observers on
+      // cards that genuinely never render a usable anchor.
+      setTimeout(() => mo.disconnect(), 8000);
+      return;
+    }
+
+    button.classList.add(positionClass);
+    if (getComputedStyle(anchor).position === 'static') {
+      anchor.style.position = 'relative';
+    }
+    anchor.appendChild(button);
   }
 };
