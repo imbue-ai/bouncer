@@ -153,6 +153,10 @@ interface SettingsBase {
   predefinedModelKwargs: Record<string, Record<string, unknown>>;
   aiTextFilterEnabled: boolean;
   aiTextDetectionThreshold: number;
+  // When false, replies on permalink (/status/<id>) pages are not
+  // submitted for evaluation. The main timeline is unaffected either way.
+  // Defaults to true to preserve historical behavior.
+  filterReplies: boolean;
 }
 
 export interface Settings extends SettingsBase {
@@ -187,6 +191,13 @@ export interface PlatformAdapter {
   extractPostContent(article: HTMLElement): PostContent;
   shouldProcessCurrentPage(): boolean;
   isMainPost(article: HTMLElement): boolean;
+  /**
+   * True when the current page is a permalink / conversation view — the
+   * main post sits at the top and everything below it is replies. Used
+   * by the "Filter replies/comments" toggle to gate evaluation on those
+   * replies. Returns false on home / explore / search.
+   */
+  isPermalinkView(): boolean;
   getPostUrl(article: HTMLElement): string | null;
   getPostContentKey(article: HTMLElement): string;
   getPostContainer(article: HTMLElement): HTMLElement;

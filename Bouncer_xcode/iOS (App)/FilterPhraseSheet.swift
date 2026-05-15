@@ -41,6 +41,7 @@ class FilterSheetViewModel: ObservableObject {
     @Published var isFilteredModalOpen = false
     @Published var aiTextFilterEnabled: Bool = false
     @Published var aiTextDetectionThreshold: Double = 0.7
+    @Published var filterReplies: Bool = true
 
     weak var webView: WKWebView?
 
@@ -104,6 +105,26 @@ class FilterSheetViewModel: ObservableObject {
         }
         guard let url = URL(string: input) else { return }
         webView?.load(URLRequest(url: url))
+    }
+
+    func loadFilterReplies() {
+        Task { @MainActor in
+            let data = await getStorage(keys: ["filterReplies"])
+            // Treat missing as true so users get the historical behavior
+            // until they explicitly opt out via the toggle.
+            if let value = data["filterReplies"] as? Bool {
+                self.filterReplies = value
+            } else {
+                self.filterReplies = true
+            }
+        }
+    }
+
+    func setFilterReplies(_ enabled: Bool) {
+        filterReplies = enabled
+        Task { @MainActor in
+            await setStorage(["filterReplies": enabled])
+        }
     }
 
     func loadAiTextFilterEnabled() {
@@ -617,6 +638,15 @@ struct BouncerSettingsView: View {
                 }
             }
 
+            Section {
+                Toggle(isOn: Binding(
+                    get: { viewModel.filterReplies },
+                    set: { viewModel.setFilterReplies($0) }
+                )) {
+                    Text("Filter replies in conversations")
+                }
+            }
+
             if hasImbueBackend {
                 Section {
                     Toggle(isOn: Binding(
@@ -669,6 +699,7 @@ struct BouncerSettingsView: View {
         .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
+            viewModel.loadFilterReplies()
             if hasImbueBackend {
                 viewModel.loadAiTextFilterEnabled()
                 viewModel.loadAiTextDetectionThreshold()

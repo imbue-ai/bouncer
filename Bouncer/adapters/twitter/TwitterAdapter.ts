@@ -256,8 +256,12 @@ window.BouncerAdapter = class TwitterAdapter implements PlatformAdapter {
     return false;
   }
 
+  isPermalinkView() {
+    return /^\/.+\/status\/\d+/.test(window.location.pathname);
+  }
+
   isMainPost(article: HTMLElement) {
-    if (!/^\/.+\/status\/\d+/.test(window.location.pathname)) {
+    if (!this.isPermalinkView()) {
       return false;
     }
     const conversationTimeline = document.querySelector('div[aria-label="Timeline: Conversation"]');

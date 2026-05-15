@@ -88,6 +88,10 @@ import { formatPostForEvaluation } from '../shared/utils';
   const stuckPostCheckDelay = 5000;
   let isLocalModelActive = false;
   let enabled = true;
+  // Cached `filterReplies` setting; loaded on init and kept current by the
+  // storage-change listener below. Defaults to true so the gate is a no-op
+  // until the user explicitly opts out.
+  let filterReplies = true;
   let currentlyProcessingPostUrl: string | null = null;
 
   // ==================== Wire up modules ====================
@@ -389,6 +393,11 @@ import { formatPostForEvaluation } from '../shared/utils';
 
     if (adapter.isMainPost(article)) return;
 
+    // "Filter replies/comments" toggle: on a permalink page everything
+    // below the main post is a reply. The main-timeline filter is
+    // unaffected because adapter.isPermalinkView() is false there.
+    if (!filterReplies && adapter.isPermalinkView()) return;
+
     if (processedPosts.has(article)) return;
     if (article.dataset.filteredByExtension) return;
 
@@ -417,11 +426,13 @@ import { formatPostForEvaluation } from '../shared/utils';
 
   function reEvaluateAllPosts() {
     const posts = findPosts();
+    const skipReplies = !filterReplies && adapter.isPermalinkView();
     posts.forEach(article => {
       if (adapter.getPostContainer(article).dataset.filteredByExtension) {
         return;
       }
       if (adapter.isMainPost(article)) return;
+      if (skipReplies) return;
 
       processedPosts.delete(article);
 
@@ -442,6 +453,7 @@ import { formatPostForEvaluation } from '../shared/utils';
   function schedulePostReeval(article: HTMLElement) {
     if (!article.isConnected) return;
     if (adapter.isMainPost(article)) return;
+    if (!filterReplies && adapter.isPermalinkView()) return;
     if (adapter.getPostContainer(article).dataset.filteredByExtension) return;
 
     if (pendingPostReeval.has(article)) {
@@ -544,8 +556,11 @@ import { formatPostForEvaluation } from '../shared/utils';
   // ==================== Init ====================
 
   async function init() {
-    const data = await getStorage(['enabled']);
+    const data = await getStorage(['enabled', 'filterReplies']);
     enabled = data.enabled !== false;
+    // Treat undefined as true so users on builds released before this
+    // setting existed keep their current behavior.
+    filterReplies = data.filterReplies !== false;
 
     await checkLocalModelActive();
     await checkAuthStatus();
@@ -625,6 +640,26 @@ import { formatPostForEvaluation } from '../shared/utils';
         const expEnabled = changes.aiTextFilterExperimental.newValue === true;
         document.querySelectorAll<HTMLElement>('.filter-ai-text-toggle')
           .forEach(el => { el.style.display = expEnabled ? '' : 'none'; });
+      }
+      if (changes.filterReplies) {
+        filterReplies = changes.filterReplies.newValue !== false;
+        if (filterReplies) {
+          // Toggling back on: replies the user scrolled past while the
+          // setting was off were never submitted; re-evaluate them now.
+          reEvaluateAllPosts();
+        } else if (adapter.isPermalinkView()) {
+          // Toggling off: undo what we'd already hidden on this permalink
+          // page so the user sees the replies they wanted without a
+          // reload. We deliberately only touch replies on this page —
+          // home-timeline filtering is unaffected by this setting.
+          document.querySelectorAll<HTMLElement>('[data-filtered-by-extension="true"]').forEach(cell => {
+            const article = cell.querySelector<HTMLElement>(adapter.selectors.post);
+            if (!article || adapter.isMainPost(article)) return;
+            cell.style.display = '';
+            delete cell.dataset.filteredByExtension;
+            processedPosts.delete(article);
+          });
+        }
       }
     });
 

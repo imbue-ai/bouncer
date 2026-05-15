@@ -416,7 +416,8 @@ export async function getSettings(siteId?: SiteId): Promise<Settings> {
   const settingsKeys = [
     'apiKey', 'openaiApiKey', 'openaiApiBase', 'openrouterApiKey', 'geminiApiKey',
     'anthropicApiKey', 'enabled', 'useEmbeddings', 'selectedModel',
-    'customModels', 'predefinedModelKwargs', 'aiTextFilterEnabled', 'aiTextDetectionThreshold'
+    'customModels', 'predefinedModelKwargs', 'aiTextFilterEnabled', 'aiTextDetectionThreshold',
+    'filterReplies'
   ] as const;
   const [data, descriptions] = await Promise.all([
     getStorage([...settingsKeys]),
@@ -436,7 +437,8 @@ export async function getSettings(siteId?: SiteId): Promise<Settings> {
     customModels: data.customModels || [],
     predefinedModelKwargs: data.predefinedModelKwargs || {},
     aiTextFilterEnabled: data.aiTextFilterEnabled === true,
-    aiTextDetectionThreshold: clampThreshold(data.aiTextDetectionThreshold)
+    aiTextDetectionThreshold: clampThreshold(data.aiTextDetectionThreshold),
+    filterReplies: data.filterReplies !== false
   };
 }
 

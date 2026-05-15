@@ -182,6 +182,16 @@
         </div>
       </div>
 
+      <!-- "Filter replies" sits under providers but above the experimental
+           toggles so it stays a primary user-facing setting, not buried
+           with the experimental flags. -->
+      <div class="filter-replies-toggle">
+        <label class="checkbox-label">
+          <input type="checkbox" id="enableFilterReplies" checked>
+          <span>Filter replies in conversations</span>
+        </label>
+      </div>
+
       <!-- Local models toggle (hidden by default, shown only if WebGPU is supported) -->
       <div class="local-models-toggle" style="display: none;">
         <label class="checkbox-label">

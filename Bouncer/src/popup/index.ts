@@ -233,6 +233,11 @@ function setupStorageListener() {
       if (expEl) expEl.checked = enabled;
       setAiTextExperimentalContentVisible(enabled);
     }
+    if (areaName === 'local' && changes.filterReplies) {
+      const checked = changes.filterReplies.newValue !== false;
+      const el = document.getElementById('enableFilterReplies') as HTMLInputElement | null;
+      if (el && el.checked !== checked) el.checked = checked;
+    }
     if (areaName === 'local' && changes.aiTextDetectionThreshold) {
       const v = clampThreshold(changes.aiTextDetectionThreshold.newValue);
       const thresholdEl = document.getElementById('aiTextThreshold') as HTMLInputElement | null;
@@ -258,7 +263,8 @@ async function loadSettings() {
     'localModelsEnabled',
     'aiTextFilterEnabled',
     'aiTextDetectionThreshold',
-    'aiTextFilterExperimental'
+    'aiTextFilterExperimental',
+    'filterReplies'
   ]);
 
   // Load predefined model kwargs overrides
@@ -275,6 +281,12 @@ async function loadSettings() {
   const localModelsEnabled = data.localModelsEnabled || false;
   (document.getElementById('enableLocalModels') as HTMLInputElement).checked = localModelsEnabled;
   dropdownState.localModelsEnabled = localModelsEnabled;
+
+  // "Filter replies in conversations" toggle (defaults to true so existing
+  // installs keep filtering replies). The content script reads the same
+  // key and skips reply evaluation on permalink pages when this is off.
+  const filterRepliesEl = document.getElementById('enableFilterReplies') as HTMLInputElement | null;
+  if (filterRepliesEl) filterRepliesEl.checked = data.filterReplies !== false;
 
   // AI-text-detection toggle (gated on auth via parent mainContainer visibility)
   const aiTextEl = document.getElementById('enableAiTextFilter') as HTMLInputElement | null;
@@ -609,6 +621,11 @@ function setupEventListeners() {
     setThresholdBlockEnabled(enabled);
     await setStorage({ aiTextFilterEnabled: enabled });
   })().catch(err => console.error('[Popup] enableAiTextFilter change failed:', err)); });
+
+  document.getElementById('enableFilterReplies')?.addEventListener('change', (e) => { (async () => {
+    const checked = (e.target as HTMLInputElement).checked;
+    await setStorage({ filterReplies: checked });
+  })().catch(err => console.error('[Popup] enableFilterReplies change failed:', err)); });
 
   // AI-text-detection threshold (range slider). Live-update the percentage
   // display on `input` (every drag tick); persist only on `change` (release)

@@ -118,16 +118,6 @@
 		EE00000100000000000000EE /* manifest.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = manifest.json; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
-/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		974832712F91595300493A71 /* Exceptions for "Bouncer (macOS) Extension" folder in "Bouncer (macOS) Extension" target */ = {
-			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
-			membershipExceptions = (
-				Info.plist,
-			);
-			target = 974832522F91595300493A71 /* Bouncer (macOS) Extension */;
-		};
-/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
-
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		9748323B2F91595100493A71 /* Bouncer (macOS) */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
@@ -136,9 +126,6 @@
 		};
 		974832572F91595300493A71 /* Bouncer (macOS) Extension */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-				974832712F91595300493A71 /* Exceptions for "Bouncer (macOS) Extension" folder in "Bouncer (macOS) Extension" target */,
-			);
 			path = "Bouncer (macOS) Extension";
 			sourceTree = "<group>";
 		};
