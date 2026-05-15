@@ -37,6 +37,16 @@ function getVideoIdFromContentIdClass(article: HTMLElement): string | null {
   return null;
 }
 
+// YouTube's signed `oar*.jpg` thumbnail variants (used for Shorts and ads)
+// serve AVIF despite the `.jpg` extension, and Anthropic/OpenAI both reject
+// AVIF (only image/{jpeg,png,gif,webp} supported). Use the canonical
+// `mqdefault.jpg` endpoint (320×180, unsigned, stable JPEG) for the classifier
+// payload only — the filtered-posts panel uses the original lockup URL since
+// browsers render AVIF fine.
+function canonicalThumbnailUrl(videoId: string): string {
+  return `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`;
+}
+
 window.BouncerAdapter = class YouTubeAdapter implements PlatformAdapter {
   siteId = 'youtube' as const;
   filterBoxPlacement = 'banner' as const;
@@ -236,6 +246,8 @@ window.BouncerAdapter = class YouTubeAdapter implements PlatformAdapter {
 
   isMainPost(_article: HTMLElement): boolean { return false; }
 
+  isPermalinkView(): boolean { return false; }
+
   getPostUrl(article: HTMLElement): string | null {
     const id = getVideoIdFromContentIdClass(article);
     if (id) return 'https://www.youtube.com/watch?v=' + id;
@@ -318,9 +330,23 @@ window.BouncerAdapter = class YouTubeAdapter implements PlatformAdapter {
     });
     const timeText = rowTexts.join(' • ') || null;
 
+    // Prefer canonical mqdefault.jpg over whatever lazy/oar variant the DOM
+    // exposes — see `canonicalThumbnailUrl` for the why.
+    const videoId = getVideoIdFromContentIdClass(article);
     const thumbImg = article.querySelector<HTMLImageElement>('yt-thumbnail-view-model img.ytCoreImageHost');
     const thumbSrc = thumbImg?.src || '';
-    const imageUrls = thumbSrc && !thumbSrc.startsWith('data:') ? [thumbSrc] : [];
+    const hasOriginalThumb = thumbSrc && !thumbSrc.startsWith('data:');
+    let imageUrls: string[];
+    let displayImageUrls: string[] | undefined;
+    if (videoId) {
+      imageUrls = [canonicalThumbnailUrl(videoId)];
+      // Panel shows the original full-resolution thumb (AVIF is fine in a browser).
+      if (hasOriginalThumb) displayImageUrls = [thumbSrc];
+    } else if (hasOriginalThumb) {
+      imageUrls = [thumbSrc];
+    } else {
+      imageUrls = [];
+    }
 
     return {
       text,
@@ -332,6 +358,7 @@ window.BouncerAdapter = class YouTubeAdapter implements PlatformAdapter {
       quote: null,
       postUrl: this.getPostUrl(article),
       imageUrls,
+      displayImageUrls,
       hasMediaContainer: imageUrls.length > 0,
     };
   }
@@ -416,7 +443,22 @@ window.BouncerAdapter = class YouTubeAdapter implements PlatformAdapter {
     let textHtml = data.title || '';
     if (data.kind === 'ad' && textHtml) textHtml = `[Sponsored] ${textHtml}`;
 
-    const imageUrls = data.thumbnailUrl ? [data.thumbnailUrl] : [];
+    // For the classifier we want a stable JPEG. When we have a video ID,
+    // rewrite to canonical mqdefault.jpg (see `canonicalThumbnailUrl`). Ads
+    // without a videoId fall back to whatever the lockup gave us — those have
+    // not been observed serving AVIF in practice.
+    const hasOriginalThumb = data.thumbnailUrl && !data.thumbnailUrl.startsWith('data:');
+    let imageUrls: string[];
+    let displayImageUrls: string[] | undefined;
+    if (data.videoId) {
+      imageUrls = [canonicalThumbnailUrl(data.videoId)];
+      // Panel shows the original full-resolution thumb (AVIF is fine in a browser).
+      if (hasOriginalThumb) displayImageUrls = [data.thumbnailUrl!];
+    } else if (hasOriginalThumb) {
+      imageUrls = [data.thumbnailUrl!];
+    } else {
+      imageUrls = [];
+    }
 
     return {
       text,
@@ -428,6 +470,7 @@ window.BouncerAdapter = class YouTubeAdapter implements PlatformAdapter {
       quote: null,
       postUrl: data.postUrl || this.getPostUrl(article),
       imageUrls,
+      displayImageUrls,
       hasMediaContainer: imageUrls.length > 0,
       fromStore: true,
     };

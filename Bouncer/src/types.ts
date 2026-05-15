@@ -91,6 +91,12 @@ export interface PostContent {
   quote: QuoteContent | null;
   postUrl: string | null;
   imageUrls: string[];
+  /** Optional higher-quality URLs for the filtered-posts panel. `imageUrls`
+   *  is what we send to the classifier (small, JPEG-guaranteed); when an
+   *  adapter wants the panel to display a richer image (e.g. YouTube's
+   *  hqdefault thumbnail vs. the classifier's mqdefault), it sets this.
+   *  Falls back to `imageUrls` when absent. */
+  displayImageUrls?: string[];
   hasMediaContainer: boolean;
   fromStore?: boolean;
   mediaBlurred?: boolean;

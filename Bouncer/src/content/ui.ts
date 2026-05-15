@@ -891,7 +891,7 @@ export function injectBannerFilterBox() {
   filterPhrasesContainer = document.createElement('div');
   filterPhrasesContainer.className = `filter-phrases-banner filter-phrases-banner--${adapter.siteId}`;
 
-  if (!isAuthenticated) {
+  if (process.env.HAS_IMBUE_BACKEND === 'true' && !isAuthenticated) {
     filterPhrasesContainer.replaceChildren(parseHTML(getSignInHTML()));
     anchor.parent.insertBefore(filterPhrasesContainer, anchor.insertBefore);
     updateTheme();
@@ -2079,11 +2079,17 @@ export function renderFilteredPostsView(container: Element) {
       body.appendChild(quoteBox);
     }
 
-    // Images (skip if media was blurred/age-restricted on the platform)
-    if (postContent.imageUrls && postContent.imageUrls.length > 0 && !postContent.mediaBlurred) {
+    // Images (skip if media was blurred/age-restricted on the platform).
+    // Prefer the adapter's higher-quality display URLs when present
+    // (e.g. YouTube's original AVIF/JPEG lockup thumb); fall back to the
+    // classifier payload (smaller, JPEG-only).
+    const displayUrls = postContent.displayImageUrls?.length
+      ? postContent.displayImageUrls
+      : postContent.imageUrls;
+    if (displayUrls && displayUrls.length > 0 && !postContent.mediaBlurred) {
       const mediaContainer = document.createElement('div');
       mediaContainer.className = 'slop-media-container';
-      postContent.imageUrls.forEach(url => {
+      displayUrls.forEach(url => {
         const img = document.createElement('img');
         img.src = url;
         img.className = 'slop-media-image';
