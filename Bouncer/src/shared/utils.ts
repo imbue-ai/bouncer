@@ -35,7 +35,7 @@ export function parseAPIResponse(content: string): ParsedResult {
     return { shouldHide, reasoning, category: shouldHide ? category : null };
   }
 
-  console.warn('[ParseAPI] Could not parse response');
+  console.warn('[ParseAPI] Could not parse response. Raw content was:', content);
   return { shouldHide: false, reasoning: 'Could not parse response', category: null };
 }
 

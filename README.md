@@ -25,10 +25,10 @@
 
 ## Supported Models
 
-| Provider | Models | Requires |
-|----------|--------|----------|
-| **Local (WebGPU)** | Qwen3-4B, Qwen3.5-4B, Qwen3.5-4B Vision | WebGPU-capable browser |
-| **OpenAI** | GPT-5 Nano, gpt-oss-20b | API key |
+| Provider | Models                                     | Requires |
+|----------|--------------------------------------------|----------|
+| **Local (WebGPU)** | Qwen3-4B, Qwen3.5-4B, Qwen3.5-4B Vision    | WebGPU-capable browser |
+| **OpenAI** | GPT-5 Nano, gpt-oss-20b                    | API key |
 | **Google Gemini** | 2.5 Flash Lite, 2.5 Flash, 3 Flash Preview | API key |
 | **Anthropic** | Claude Haiku 4.5 | API key |
 | **OpenRouter** | Nemotron Nano 12B VL (free), Ministral 3B | Account |

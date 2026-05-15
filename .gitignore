@@ -18,6 +18,10 @@ DerivedData/
 Bouncer/.env.prod
 Bouncer/.env.dev
 
+# Firebase config (per-developer / per-env, never check in)
+Bouncer_xcode/iOS (App)/GoogleService-Info.plist
+Bouncer_xcode/iOS (App)/GoogleService-Info-Dev.plist
+
 # Node
 node_modules/
 

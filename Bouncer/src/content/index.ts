@@ -264,8 +264,13 @@ import { formatPostForEvaluation } from '../shared/utils';
         currentlyProcessingPostUrl = null;
       }
 
-      if (response === null) {
-        // Skip - post stays as-is (pending). Covers: disabled, no_rules, page_reload.
+      if (response == null) {
+        // Skip - post stays as-is (pending). Covers: disabled, no_rules,
+        // page_reload, and Safari's MV3 quirk of resolving sendMessage with
+        // `undefined` when the service worker tears the channel down before
+        // sendResponse is called (Chrome/Firefox keep the promise pending).
+        // Treat both as "leave the post alone" rather than letting the
+        // `'retry' in response` check below throw on a non-object.
         return;
       }
 

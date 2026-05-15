@@ -83,9 +83,15 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 // chrome.cookies.get requires the "cookies" permission + host permission for the URL,
 // which reliably surfaces Safari's "Allow on Websites" dialog.
 if (IS_SAFARI && chrome.cookies) {
+  // On open-source / BYOK-only builds BOUNCER_SIGNIN_DOMAIN is unset, which
+  // would produce `https:///` — Safari's cookies.get throws synchronously on
+  // invalid URLs, killing the rest of this module (including the
+  // chrome.runtime.onMessage listener registration below). Skip any empty
+  // domain entries so the background script always finishes loading.
+  const signinDomain = process.env.BOUNCER_SIGNIN_DOMAIN;
   const domains = [
     'https://x.com/',
-    `https://${process.env.BOUNCER_SIGNIN_DOMAIN}/`,
+    ...(signinDomain ? [`https://${signinDomain}/`] : []),
   ];
   for (const url of domains) {
     chrome.cookies.get({ url, name: '_dummy' }, (cookie) => {
@@ -151,6 +157,7 @@ async function handleMessage(
 
   switch (message.type) {
     case 'evaluatePost': {
+      console.log('[Bouncer][diag] evaluatePost received: tabId=', tabId, 'activeTabId=', activeTabId, 'sender.tab=', !!sender.tab);
       // Ensure tab is registered (re-registers after service worker restart)
       if (tabId) activeContentTabs.add(tabId);
 
@@ -199,14 +206,18 @@ async function handleMessage(
         const item = { evaluationId: message.evaluationId, post: message.post, rawText: message.rawText, imageUrls, resolve, cacheKey, tabId, postUrl: message.postUrl, siteId: message.siteId };
         enqueuePost(tabId!, item);
       });
+      console.log('[Bouncer][diag] evaluatePost enqueued for tab', tabId);
 
       // On first evaluatePost when activeTabId is unknown, detect if this tab is active
       if (activeTabId === null) {
-        chrome.tabs.query({ active: true, lastFocusedWindow: true }).then(([tab]) => {
+        chrome.tabs.query({ active: true, lastFocusedWindow: true }).then((tabs) => {
+          console.log('[Bouncer][diag] tabs.query(active,lastFocused) returned', tabs.length, 'tab(s); first.id=', tabs[0]?.id, 'msg.tabId=', tabId);
+          const tab = tabs[0];
           if (tab && tab.id === tabId) updateActiveTab(tabId);
-        }).catch(() => {});
+        }).catch((err) => { console.log('[Bouncer][diag] tabs.query failed:', err); });
       }
 
+      console.log('[Bouncer][diag] calling scheduleBatch; activeTabId=', activeTabId);
       scheduleBatch();
       broadcastQueueStatus().catch(err => console.error('[Background] broadcastQueueStatus error:', err));
       return resultPromise;
@@ -548,7 +559,7 @@ async function handleMessage(
 
         // Check if first auth for auto-model-switch. Users on the default
         // (Imbue when configured, empty string otherwise) get bumped onto
-        // the free Nemotron model so they have a working configuration
+        // the free model so they have a working configuration
         // immediately after signing in.
         const storageData = await getStorage(['openrouterApiKey', 'selectedModel']);
         const isFirstAuth = !storageData.openrouterApiKey;

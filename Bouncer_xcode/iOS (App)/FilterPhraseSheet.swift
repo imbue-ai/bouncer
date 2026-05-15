@@ -228,6 +228,59 @@ class FilterSheetViewModel: ObservableObject {
         }
     }
 
+    // Generic chrome.storage.local accessors used by the native providers
+    // settings page. The JS bridge (__ff_getStorage / __ff_setStorage) is
+    // only available once content.js has run, so the call site has to
+    // ensure the WebView is on x.com first.
+    @MainActor
+    func getStorage(keys: [String]) async -> [String: Any] {
+        guard let webView = webView else { return [:] }
+        await ensureOnX(webView: webView)
+        do {
+            let result = try await webView.callAsyncJavaScript(
+                "return await window.__ff_getStorage(keys)",
+                arguments: ["keys": keys],
+                in: nil,
+                contentWorld: Self.contentWorld
+            )
+            return (result as? [String: Any]) ?? [:]
+        } catch {
+            print("[FeedFilter] getStorage error: \(error)")
+            return [:]
+        }
+    }
+
+    @MainActor
+    func setStorage(_ items: [String: Any]) async {
+        guard let webView = webView else { return }
+        await ensureOnX(webView: webView)
+        do {
+            let _ = try await webView.callAsyncJavaScript(
+                "return await window.__ff_setStorage(items)",
+                arguments: ["items": items],
+                in: nil,
+                contentWorld: Self.contentWorld
+            )
+        } catch {
+            print("[FeedFilter] setStorage error: \(error)")
+        }
+    }
+
+    @MainActor
+    func clearModelCache() async {
+        guard let webView = webView else { return }
+        do {
+            let _ = try await webView.callAsyncJavaScript(
+                "return await window.__ff_clearModelCache()",
+                arguments: [:],
+                in: nil,
+                contentWorld: Self.contentWorld
+            )
+        } catch {
+            print("[FeedFilter] clearModelCache error: \(error)")
+        }
+    }
+
     func openFilteredModal() {
         guard let webView = webView else {
             print("[FeedFilter] openFilteredModal: no webView")
@@ -528,80 +581,369 @@ struct BouncerSettingsView: View {
         isDragging ? draftThreshold : viewModel.aiTextDetectionThreshold
     }
 
+    // AI text detection routes through the Imbue WebSocket gateway, which
+    // requires Firebase App Check. On builds shipped without a
+    // GoogleService-Info plist the feature is unusable, so hide the whole
+    // section.
+    private var hasImbueBackend: Bool {
+        AppCheckBridge.shared.isAvailable
+    }
+
     var body: some View {
-        ZStack {
-            // The sheet's presentationBackground is translucent on iOS 26, which
-            // looks fine when the phrase list fills the viewport but reads through
-            // here because the settings rows leave more empty space — especially
-            // at the .medium detent. A solid systemBackground layer overrides the
-            // sheet's translucency just for this page.
-            Color(.systemBackground).ignoresSafeArea()
-
-            List {
+        Form {
             Section {
-                Toggle(isOn: Binding(
-                    get: { viewModel.aiTextFilterEnabled },
-                    set: { viewModel.setAiTextFilterEnabled($0) }
-                )) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Filter AI-generated text")
-                        Text("Hide posts whose text appears to be written by AI.")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .listRowBackground(Color.clear)
-
-                VStack(alignment: .leading, spacing: 8) {
+                NavigationLink {
+                    ProvidersSettingsView(viewModel: viewModel)
+                } label: {
                     HStack {
-                        Text("Confidence threshold")
-                        Spacer()
-                        Text("\(Int(round(displayThreshold * 100)))%")
-                            .foregroundStyle(.secondary)
-                            .monospacedDigit()
-                    }
-                    Slider(
-                        value: Binding(
-                            get: { displayThreshold },
-                            set: { draftThreshold = $0 }
-                        ),
-                        in: 0...1
-                    ) {
-                        Text("Confidence threshold")
-                    } minimumValueLabel: {
-                        Text("0%").font(.caption2).foregroundStyle(.secondary)
-                    } maximumValueLabel: {
-                        Text("100%").font(.caption2).foregroundStyle(.secondary)
-                    } onEditingChanged: { editing in
-                        if editing {
-                            draftThreshold = viewModel.aiTextDetectionThreshold
-                            isDragging = true
-                        } else {
-                            isDragging = false
-                            viewModel.setAiTextDetectionThreshold(draftThreshold)
+                        Image(systemName: "key.fill")
+                            .foregroundStyle(.tint)
+                            .frame(width: 24)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("AI providers")
+                            if !hasImbueBackend {
+                                Text("Required — add an API key to enable filtering")
+                                    .font(.footnote)
+                                    .foregroundStyle(.secondary)
+                            }
                         }
                     }
-                    Text("Posts at or above this confidence are hidden. Lower values catch more, higher values catch only obvious cases.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
                 }
-                .padding(.vertical, 4)
-                .disabled(!viewModel.aiTextFilterEnabled)
-                .opacity(viewModel.aiTextFilterEnabled ? 1.0 : 0.5)
-                .listRowBackground(Color.clear)
             } header: {
-                Text("Filters")
+                Text("Providers")
+            } footer: {
+                if !hasImbueBackend {
+                    Text("This build has no bundled backend. Bring your own OpenAI, Anthropic, Gemini, or OpenRouter API key to classify posts.")
+                }
             }
-        }
-            .listStyle(.plain)
-            .scrollContentBackground(.hidden)
+
+            if hasImbueBackend {
+                Section {
+                    Toggle(isOn: Binding(
+                        get: { viewModel.aiTextFilterEnabled },
+                        set: { viewModel.setAiTextFilterEnabled($0) }
+                    )) {
+                        Text("Filter AI-generated text")
+                    }
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text("Confidence threshold")
+                            Spacer()
+                            Text("\(Int(round(displayThreshold * 100)))%")
+                                .foregroundStyle(.secondary)
+                                .monospacedDigit()
+                        }
+                        Slider(
+                            value: Binding(
+                                get: { displayThreshold },
+                                set: { draftThreshold = $0 }
+                            ),
+                            in: 0...1
+                        ) {
+                            Text("Confidence threshold")
+                        } minimumValueLabel: {
+                            Text("0%").font(.caption2).foregroundStyle(.secondary)
+                        } maximumValueLabel: {
+                            Text("100%").font(.caption2).foregroundStyle(.secondary)
+                        } onEditingChanged: { editing in
+                            if editing {
+                                draftThreshold = viewModel.aiTextDetectionThreshold
+                                isDragging = true
+                            } else {
+                                isDragging = false
+                                viewModel.setAiTextDetectionThreshold(draftThreshold)
+                            }
+                        }
+                    }
+                    .padding(.vertical, 4)
+                    .disabled(!viewModel.aiTextFilterEnabled)
+                    .opacity(viewModel.aiTextFilterEnabled ? 1.0 : 0.5)
+                } header: {
+                    Text("AI Text Detection")
+                } footer: {
+                    Text("Hide posts whose text appears to be written by AI. Posts at or above this confidence are hidden.")
+                }
+            }
         }
         .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
-            viewModel.loadAiTextFilterEnabled()
-            viewModel.loadAiTextDetectionThreshold()
+            if hasImbueBackend {
+                viewModel.loadAiTextFilterEnabled()
+                viewModel.loadAiTextDetectionThreshold()
+            }
         }
+    }
+}
+
+// MARK: - Providers Settings
+
+private struct ProviderSpec: Identifiable {
+    let id: String              // "openai", "anthropic", ...
+    let displayName: String
+    let storageKey: String      // chrome.storage.local key
+    let placeholder: String
+    let helpURL: String?
+    let models: [ProviderModel]
+}
+
+private struct ProviderModel {
+    let id: String              // model name as stored
+    let display: String
+}
+
+// Mirrors PREDEFINED_MODELS from Bouncer/src/shared/models.ts. Kept in sync
+// manually — the desktop list is the source of truth.
+private let providerSpecs: [ProviderSpec] = [
+    ProviderSpec(
+        id: "openai",
+        displayName: "OpenAI",
+        storageKey: "openaiApiKey",
+        placeholder: "sk-...",
+        helpURL: "https://platform.openai.com/api-keys",
+        models: [
+            ProviderModel(id: "gpt-5-nano", display: "GPT-5 Nano"),
+        ]
+    ),
+    ProviderSpec(
+        id: "anthropic",
+        displayName: "Anthropic",
+        storageKey: "anthropicApiKey",
+        placeholder: "sk-ant-...",
+        helpURL: "https://console.anthropic.com/settings/keys",
+        models: [
+            ProviderModel(id: "claude-haiku-4-5-20251001", display: "Claude Haiku 4.5"),
+        ]
+    ),
+    ProviderSpec(
+        id: "gemini",
+        displayName: "Gemini",
+        storageKey: "geminiApiKey",
+        placeholder: "AIza...",
+        helpURL: "https://aistudio.google.com/apikey",
+        models: [
+            ProviderModel(id: "gemini-2.5-flash-lite", display: "Gemini 2.5 Flash Lite"),
+            ProviderModel(id: "gemini-2.5-flash", display: "Gemini 2.5 Flash"),
+            ProviderModel(id: "gemini-3-flash-preview", display: "Gemini 3 Flash"),
+            ProviderModel(id: "gemini-3.1-flash-lite-preview", display: "Gemini 3.1 Flash Lite"),
+        ]
+    ),
+    ProviderSpec(
+        id: "openrouter",
+        displayName: "OpenRouter",
+        storageKey: "openrouterApiKey",
+        placeholder: "sk-or-...",
+        helpURL: "https://openrouter.ai/settings/keys",
+        models: [
+            ProviderModel(id: "nvidia/nemotron-nano-12b-v2-vl:free", display: "Nemotron Nano 12B VL (free)"),
+            ProviderModel(id: "mistralai/ministral-3b-2512", display: "Ministral 3B"),
+        ]
+    ),
+]
+
+// The Imbue backend ships its own bundled model selection — picking it
+// from the popup writes the literal string "imbue" to selectedModel
+// (no "provider:model" prefix like BYOK entries). Keep the sentinel in
+// one place so the comparison in selectModel/active-row logic doesn't
+// drift.
+private let imbueModelKey = "imbue"
+
+struct ProvidersSettingsView: View {
+    @ObservedObject var viewModel: FilterSheetViewModel
+
+    // provider id -> current key text in the field
+    @State private var keys: [String: String] = [:]
+    // provider id -> on-disk key (used to detect dirty state)
+    @State private var storedKeys: [String: String] = [:]
+    // "<provider>:<modelName>" selected for filtering, or "" if none.
+    // For Imbue, just the literal "imbue".
+    @State private var selectedModel: String = ""
+    @State private var isLoaded = false
+
+    private var hasImbueBackend: Bool {
+        AppCheckBridge.shared.isAvailable
+    }
+
+    var body: some View {
+        Form {
+            Section {
+                if selectedModel.isEmpty {
+                    Text("No model selected")
+                        .foregroundStyle(.secondary)
+                } else {
+                    HStack {
+                        Text(currentModelLabel)
+                        Spacer()
+                        Text(currentProviderLabel)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            } header: {
+                Text("Active model")
+            } footer: {
+                Text("The selected model is used to classify posts in your feed.")
+            }
+
+            if hasImbueBackend {
+                imbueSection
+            }
+
+            ForEach(providerSpecs) { spec in
+                providerSection(spec)
+            }
+        }
+        .navigationTitle("AI providers")
+        .navigationBarTitleDisplayMode(.inline)
+        .task {
+            await loadAll()
+        }
+    }
+
+    private var currentProviderLabel: String {
+        if selectedModel == imbueModelKey { return "Imbue" }
+        guard let colon = selectedModel.firstIndex(of: ":") else { return "" }
+        let providerId = String(selectedModel[..<colon])
+        return providerSpecs.first(where: { $0.id == providerId })?.displayName ?? providerId
+    }
+
+    private var currentModelLabel: String {
+        if selectedModel == imbueModelKey { return "Imbue (default)" }
+        guard let colon = selectedModel.firstIndex(of: ":") else { return selectedModel }
+        let providerId = String(selectedModel[..<colon])
+        let modelId = String(selectedModel[selectedModel.index(after: colon)...])
+        let spec = providerSpecs.first(where: { $0.id == providerId })
+        return spec?.models.first(where: { $0.id == modelId })?.display ?? modelId
+    }
+
+    @ViewBuilder
+    private var imbueSection: some View {
+        Section {
+            Button {
+                Task { await selectModel(imbueModelKey) }
+            } label: {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Imbue (default)")
+                            .foregroundStyle(.primary)
+                        Text("Use Bouncer's bundled hosted model. No API key required.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if selectedModel == imbueModelKey {
+                        Image(systemName: "checkmark")
+                            .foregroundStyle(.tint)
+                    }
+                }
+            }
+            .buttonStyle(.plain)
+        } header: {
+            Text("Imbue")
+        }
+    }
+
+    @ViewBuilder
+    private func providerSection(_ spec: ProviderSpec) -> some View {
+        let hasKey = !(storedKeys[spec.id] ?? "").isEmpty
+        let draft = keys[spec.id] ?? ""
+        let isDirty = draft != (storedKeys[spec.id] ?? "")
+
+        Section {
+            HStack {
+                SecureField(spec.placeholder, text: Binding(
+                    get: { keys[spec.id] ?? "" },
+                    set: { keys[spec.id] = $0 }
+                ))
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled(true)
+                .submitLabel(.done)
+
+                if hasKey && !isDirty {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                }
+            }
+
+            if isDirty {
+                Button(draft.isEmpty ? "Remove key" : "Save key") {
+                    Task { await saveKey(spec) }
+                }
+                .disabled(!isLoaded)
+            }
+
+            ForEach(spec.models, id: \.id) { model in
+                let modelKey = "\(spec.id):\(model.id)"
+                Button {
+                    Task { await selectModel(modelKey) }
+                } label: {
+                    HStack {
+                        Text(model.display)
+                            .foregroundStyle(.primary)
+                        Spacer()
+                        if selectedModel == modelKey {
+                            Image(systemName: "checkmark")
+                                .foregroundStyle(.tint)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+                .disabled(!hasKey || isDirty)
+                .opacity((!hasKey || isDirty) ? 0.5 : 1.0)
+            }
+
+            if let urlString = spec.helpURL, let url = URL(string: urlString) {
+                Link(destination: url) {
+                    HStack(spacing: 4) {
+                        Text("Get an API key")
+                        Image(systemName: "arrow.up.right")
+                            .font(.caption)
+                    }
+                    .font(.footnote)
+                }
+            }
+        } header: {
+            Text(spec.displayName)
+        }
+    }
+
+    @MainActor
+    private func loadAll() async {
+        let storageKeys = providerSpecs.map(\.storageKey) + ["selectedModel"]
+        let data = await viewModel.getStorage(keys: storageKeys)
+
+        var loadedKeys: [String: String] = [:]
+        for spec in providerSpecs {
+            loadedKeys[spec.id] = (data[spec.storageKey] as? String) ?? ""
+        }
+        self.keys = loadedKeys
+        self.storedKeys = loadedKeys
+        self.selectedModel = (data["selectedModel"] as? String) ?? ""
+        self.isLoaded = true
+    }
+
+    @MainActor
+    private func saveKey(_ spec: ProviderSpec) async {
+        let value = keys[spec.id] ?? ""
+        await viewModel.setStorage([spec.storageKey: value])
+        storedKeys[spec.id] = value
+
+        // If we just removed the key for the currently active provider,
+        // fall back to Imbue (when available) so filtering doesn't silently
+        // break; otherwise clear the selection.
+        if value.isEmpty, selectedModel.hasPrefix("\(spec.id):") {
+            let fallback = hasImbueBackend ? imbueModelKey : ""
+            await viewModel.setStorage(["selectedModel": fallback])
+            selectedModel = fallback
+        }
+        await viewModel.clearModelCache()
+    }
+
+    @MainActor
+    private func selectModel(_ modelKey: String) async {
+        await viewModel.setStorage(["selectedModel": modelKey])
+        selectedModel = modelKey
+        await viewModel.clearModelCache()
     }
 }
 

@@ -10,8 +10,6 @@
 		4E38A4CE2F72199A00496A14 /* AppCheckBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E38A4CC2F72199A00496A14 /* AppCheckBridge.swift */; };
 		4E38A4CF2F72199A00496A14 /* AppCheckProviderFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E38A4CD2F72199A00496A14 /* AppCheckProviderFactory.swift */; };
 		4E38A4D32F721C2500496A14 /* FirebaseAppCheck in Frameworks */ = {isa = PBXBuildFile; productRef = 4E38A4D22F721C2500496A14 /* FirebaseAppCheck */; };
-		4E38A4D42F72196200496A14 /* GoogleService-Info.plist in Resources */ = {isa = PBXBuildFile; fileRef = 4E38A4CA2F72196000496A14 /* GoogleService-Info.plist */; };
-		4E38A4D52F72196300496A14 /* GoogleService-Info-Dev.plist in Resources */ = {isa = PBXBuildFile; fileRef = 4E38A4CB2F72196100496A14 /* GoogleService-Info-Dev.plist */; };
 		4E3B363A2F857BE400A929AD /* iosicon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 4E3B36392F857BE300A929AD /* iosicon.icon */; };
 		971D84C92FB271A2006BC538 /* FirebaseCrashlytics in Frameworks */ = {isa = PBXBuildFile; productRef = 971D84C82FB271A2006BC538 /* FirebaseCrashlytics */; };
 		974832542F91595300493A71 /* Bouncer (macOS) Extension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 974832532F91595300493A71 /* Bouncer (macOS) Extension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
@@ -81,8 +79,6 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
-		4E38A4CA2F72196000496A14 /* GoogleService-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "GoogleService-Info.plist"; sourceTree = "<group>"; };
-		4E38A4CB2F72196100496A14 /* GoogleService-Info-Dev.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "GoogleService-Info-Dev.plist"; sourceTree = "<group>"; };
 		4E38A4CC2F72199A00496A14 /* AppCheckBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppCheckBridge.swift; sourceTree = "<group>"; };
 		4E38A4CD2F72199A00496A14 /* AppCheckProviderFactory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppCheckProviderFactory.swift; sourceTree = "<group>"; };
 		4E3B36392F857BE300A929AD /* iosicon.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = iosicon.icon; sourceTree = "<group>"; };
@@ -209,8 +205,6 @@
 			children = (
 				4E38A4CC2F72199A00496A14 /* AppCheckBridge.swift */,
 				4E38A4CD2F72199A00496A14 /* AppCheckProviderFactory.swift */,
-				4E38A4CA2F72196000496A14 /* GoogleService-Info.plist */,
-				4E38A4CB2F72196100496A14 /* GoogleService-Info-Dev.plist */,
 				97BD3B802F3EB56C00F8BF65 /* AppDelegate.swift */,
 				97BD3B822F3EB56C00F8BF65 /* SceneDelegate.swift */,
 				AA00000100000000000000AA /* FilteredWebView.swift */,
@@ -313,6 +307,7 @@
 				97BD3B792F3EB56C00F8BF65 /* Sources */,
 				97BD3B7A2F3EB56C00F8BF65 /* Frameworks */,
 				97BD3B7B2F3EB56C00F8BF65 /* Resources */,
+				CR00000400000000000000CR /* Copy GoogleService-Info plist (optional) */,
 				CR00000300000000000000CR /* Crashlytics dSYM upload */,
 			);
 			buildRules = (
@@ -398,8 +393,6 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				4E38A4D42F72196200496A14 /* GoogleService-Info.plist in Resources */,
-				4E38A4D52F72196300496A14 /* GoogleService-Info-Dev.plist in Resources */,
 				97BD3B862F3EB56C00F8BF65 /* LaunchScreen.storyboard in Resources */,
 				97BD3BB52F3EB56C00F8BF65 /* Assets.xcassets in Resources */,
 				97BD3B892F3EB56C00F8BF65 /* Main.storyboard in Resources */,
@@ -443,8 +436,6 @@
 				"${DWARF_DSYM_FOLDER_PATH}/${DWARF_DSYM_FILE_NAME}/Contents/Resources/DWARF/${PRODUCT_NAME}",
 				"${DWARF_DSYM_FOLDER_PATH}/${DWARF_DSYM_FILE_NAME}/Contents/Resources/DWARF/${PRODUCT_NAME}.debug.dylib",
 				"${DWARF_DSYM_FOLDER_PATH}/${DWARF_DSYM_FILE_NAME}/Contents/Info.plist",
-				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/GoogleService-Info.plist",
-				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/GoogleService-Info-Dev.plist",
 				"$(TARGET_BUILD_DIR)/$(EXECUTABLE_PATH)",
 			);
 			name = "Crashlytics dSYM upload";
@@ -454,7 +445,26 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "if [ \"$BOUNCER_ENV\" = \"DEV\" ]; then\n  PLIST=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/GoogleService-Info-Dev.plist\"\nelse\n  PLIST=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/GoogleService-Info.plist\"\nfi\necho \"[Crashlytics] uploading dSYM with $PLIST\"\n\"${BUILD_DIR%/Build/*}/SourcePackages/checkouts/firebase-ios-sdk/Crashlytics/run\" -gsp \"$PLIST\"\n";
+			shellScript = "if [ \"$BOUNCER_ENV\" = \"DEV\" ]; then\n  PLIST=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/GoogleService-Info-Dev.plist\"\nelse\n  PLIST=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/GoogleService-Info.plist\"\nfi\nif [ ! -f \"$PLIST\" ]; then\n  echo \"[Crashlytics] no plist at $PLIST — skipping dSYM upload (BYOK build)\"\n  exit 0\nfi\necho \"[Crashlytics] uploading dSYM with $PLIST\"\n\"${BUILD_DIR%/Build/*}/SourcePackages/checkouts/firebase-ios-sdk/Crashlytics/run\" -gsp \"$PLIST\"\n";
+		};
+		CR00000400000000000000CR /* Copy GoogleService-Info plist (optional) */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Copy GoogleService-Info plist (optional)";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "# Copy the GoogleService-Info plist matching the current BOUNCER_ENV\n# into the app bundle. Open-source / BYOK-only builds ship without it;\n# AppCheckBridge picks the same plist name at launch (gated by\n# Info.plist's BouncerEnv build-setting expansion) and disables Firebase\n# gracefully when it isn't present.\n#\n# Requires ENABLE_USER_SCRIPT_SANDBOXING = NO on the iOS target so cp\n# can read files under $PROJECT_DIR without declaring them as inputs\n# (which would make the build fail when the plist is absent — the\n# whole point of this phase being optional).\nset -e\nSRC_DIR=\"${PROJECT_DIR}/iOS (App)\"\nDEST_DIR=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}\"\nif [ \"$BOUNCER_ENV\" = \"DEV\" ]; then\n  PLIST_NAME=\"GoogleService-Info-Dev.plist\"\n  STALE_NAME=\"GoogleService-Info.plist\"\nelse\n  PLIST_NAME=\"GoogleService-Info.plist\"\n  STALE_NAME=\"GoogleService-Info-Dev.plist\"\nfi\necho \"[Bouncer] Copy plist phase — SRC_DIR=$SRC_DIR DEST_DIR=$DEST_DIR BOUNCER_ENV=$BOUNCER_ENV PLIST=$PLIST_NAME\"\nmkdir -p \"$DEST_DIR\"\nSRC=\"$SRC_DIR/$PLIST_NAME\"\nDEST=\"$DEST_DIR/$PLIST_NAME\"\nif [ -f \"$SRC\" ]; then\n  cp \"$SRC\" \"$DEST\"\n  echo \"[Bouncer] Copied $PLIST_NAME into bundle\"\nelse\n  echo \"[Bouncer] $PLIST_NAME not found at $SRC — building without Firebase\"\n  rm -f \"$DEST\"\nfi\n# Drop the other-env plist if a previous build copied it in.\nrm -f \"$DEST_DIR/$STALE_NAME\"\n";
 		};
 		DD00000200000000000000DD /* Build Extension JS */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -846,6 +856,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = LDDYAR29MP;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "iOS (App)/Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = "Bouncer Dev";
@@ -895,6 +906,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = LDDYAR29MP;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "iOS (App)/Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = Bouncer;

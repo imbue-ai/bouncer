@@ -278,6 +278,7 @@ export function initPipeline(tabs: Set<number>): void {
 
 // Update active tab. Clears inference queue (stale closures) and schedules batch for new tab.
 export function setActiveTab(tabId: number | null): void {
+  console.log('[Bouncer][diag] setActiveTab: prev=', activeTabId, 'new=', tabId, 'hasQueue=', tabId !== null && tabQueues.has(tabId), 'queueLen=', tabId !== null ? tabQueues.get(tabId)?.length : 'n/a');
   activeTabId = tabId;
   localEngine.clearQueue();
   if (tabId !== null && tabQueues.has(tabId) && tabQueues.get(tabId)!.length > 0) {
@@ -316,6 +317,7 @@ export function isKeyPending(tabId: number, cacheKey: string): boolean {
 
 // Resolve an item AND any duplicate resolvers waiting on the same cacheKey.
 function resolveWithDuplicates(tabId: number, item: PendingEvaluation, result: PipelineResponse): void {
+  console.log('[Bouncer][diag] resolveWithDuplicates: tab=', tabId, 'evalId=', item.evaluationId, 'resultKind=', result === null ? 'null' : Object.keys(result as object).slice(0, 3).join(','));
   item.resolve(result);
   const dupes = tabDuplicateResolvers.get(tabId);
   if (dupes && item.cacheKey && dupes.has(item.cacheKey)) {
@@ -699,6 +701,7 @@ export function classifyError(errorMessage: string, apiName: string): { errorTyp
 
 // Process a batch of posts
 async function processBatch(): Promise<void> {
+  console.log('[Bouncer][diag] processBatch entered; activeTabId=', activeTabId, 'inFlight=', inFlightBatches);
   batchTimeout = null; // Clear timeout first, before any early returns
 
   if (activeTabId === null) return;
@@ -1021,15 +1024,23 @@ async function processBatch(): Promise<void> {
 
 // Schedule processing for the next pending post
 export function scheduleBatch(): void {
-  if (batchTimeout) return; // Already scheduled
-  if (activeTabId === null) return;
+  if (batchTimeout) {
+    console.log('[Bouncer][diag] scheduleBatch: already scheduled, returning');
+    return;
+  }
+  if (activeTabId === null) {
+    console.log('[Bouncer][diag] scheduleBatch: activeTabId is null — items will sit unresolved until setActiveTab runs');
+    return;
+  }
 
   const activeQueue = tabQueues.get(activeTabId);
-  if (!activeQueue || activeQueue.length === 0) return;
-
-  if (activeQueue.length > 0) {
-    processBatch().catch(err => console.error('[Pipeline] processBatch failed:', err));
+  if (!activeQueue || activeQueue.length === 0) {
+    console.log('[Bouncer][diag] scheduleBatch: no queue or empty queue for activeTabId=', activeTabId);
+    return;
   }
+
+  console.log('[Bouncer][diag] scheduleBatch: invoking processBatch, queueLen=', activeQueue.length);
+  processBatch().catch(err => console.error('[Pipeline] processBatch failed:', err));
 }
 
 // ==================== Settings change handling ====================

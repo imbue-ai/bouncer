@@ -131,47 +131,57 @@ export async function init() {
     sendSize();
   }
 
-  // Check auth status and show appropriate screen
+  // Check auth status and show appropriate screen.
+  //
+  // On open-source / BYOK-only builds (HAS_IMBUE_BACKEND !== 'true') there's
+  // nothing to sign in to, so the whole sign-in screen is dead code and we
+  // skip the round-trip entirely. The background's getAuthStatus returns
+  // authenticated:true in that case anyway, but Safari's MV3 message round-
+  // trip is flakier than Chrome/Firefox — an undefined response there would
+  // surface the sign-in screen with a dead "Activate Bouncer" button. Gating
+  // at build time eliminates the failure mode and the bytes.
   const signinContainer = document.getElementById('signinContainer');
   const mainContainer = document.getElementById('mainContainer');
   const popupGoogleSignIn = document.getElementById('popupGoogleSignIn');
-  try {
-    const authResponse: { authenticated?: boolean; isSafari?: boolean } = await chrome.runtime.sendMessage({ type: 'getAuthStatus' });
-    if (!authResponse?.authenticated) {
-      if (signinContainer) signinContainer.style.display = '';
-      if (mainContainer) mainContainer.style.display = 'none';
+  if (process.env.HAS_IMBUE_BACKEND === 'true') {
+    try {
+      const authResponse: { authenticated?: boolean; isSafari?: boolean } = await chrome.runtime.sendMessage({ type: 'getAuthStatus' });
+      if (!authResponse?.authenticated) {
+        if (signinContainer) signinContainer.style.display = '';
+        if (mainContainer) mainContainer.style.display = 'none';
 
-      // On Safari, show Apple sign-in button instead of Google
-      if (authResponse?.isSafari && popupGoogleSignIn) {
-        popupGoogleSignIn.replaceChildren(parseHTML(`
-          <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" width="18" height="18" style="margin-right: 8px;">
-            <path d="M17.05 20.28c-.98.95-2.05.88-3.08.4-1.09-.5-2.08-.48-3.24 0-1.44.62-2.2.44-3.06-.4C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.54 4.09zM12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25z" fill="currentColor"/>
-          </svg>
-          Activate Bouncer
-        `));
-        const explanation = signinContainer?.querySelector('.signin-description');
-        if (explanation) explanation.textContent = 'Sign in with Apple to start filtering your feed.';
-      }
-
-      // Wire up sign-in button
-      popupGoogleSignIn?.addEventListener('click', () => { (async () => {
-        const result: { success?: boolean } = await chrome.runtime.sendMessage({ type: 'launchAuth' });
-        if (result?.success) {
-          if (signinContainer) signinContainer.style.display = 'none';
-          if (mainContainer) mainContainer.style.display = '';
-          await loadSettings();
-          setupEventListeners();
-          await updateOpenRouterStatus();
-          await updateRateLimitAlert();
-          await updateLocalModelStatus();
-          setupLocalModelListeners();
-          setupStorageListener();
+        // On Safari, show Apple sign-in button instead of Google
+        if (authResponse?.isSafari && popupGoogleSignIn) {
+          popupGoogleSignIn.replaceChildren(parseHTML(`
+            <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" width="18" height="18" style="margin-right: 8px;">
+              <path d="M17.05 20.28c-.98.95-2.05.88-3.08.4-1.09-.5-2.08-.48-3.24 0-1.44.62-2.2.44-3.06-.4C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.54 4.09zM12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25z" fill="currentColor"/>
+            </svg>
+            Activate Bouncer
+          `));
+          const explanation = signinContainer?.querySelector('.signin-description');
+          if (explanation) explanation.textContent = 'Sign in with Apple to start filtering your feed.';
         }
-      })().catch(err => console.error('[Popup] Sign-in failed:', err)); });
-      return;
+
+        // Wire up sign-in button
+        popupGoogleSignIn?.addEventListener('click', () => { (async () => {
+          const result: { success?: boolean } = await chrome.runtime.sendMessage({ type: 'launchAuth' });
+          if (result?.success) {
+            if (signinContainer) signinContainer.style.display = 'none';
+            if (mainContainer) mainContainer.style.display = '';
+            await loadSettings();
+            setupEventListeners();
+            await updateOpenRouterStatus();
+            await updateRateLimitAlert();
+            await updateLocalModelStatus();
+            setupLocalModelListeners();
+            setupStorageListener();
+          }
+        })().catch(err => console.error('[Popup] Sign-in failed:', err)); });
+        return;
+      }
+    } catch {
+      // If we can't check auth, show main UI anyway
     }
-  } catch {
-    // If we can't check auth, show main UI anyway
   }
 
   console.log('[Popup] About to loadSettings');
@@ -549,8 +559,32 @@ function setupEventListeners() {
     renderModelDropdown(data.customModels || [], data.selectedModel || DEFAULT_MODEL);
   })().catch(err => console.error('[Popup] geminiApiKey change failed:', err)); });
 
-  // OpenRouter sign in
-  document.getElementById('openrouterSignIn')!.addEventListener('click', asyncHandler(startOpenRouterOAuth));
+  // OpenRouter: Safari has no chrome.identity, so launchWebAuthFlow throws.
+  // Show the API-key paste input instead and hide the OAuth button. The
+  // input mirrors the same chrome.storage.local.openrouterApiKey field the
+  // OAuth flow would have written, so everything downstream is identical.
+  const isSafariPopup = /^((?!chrome|android|crios|fxios|edg|opr).)*safari/i.test(navigator.userAgent);
+  if (isSafariPopup) {
+    const signInBtn = document.getElementById('openrouterSignIn') as HTMLButtonElement | null;
+    if (signInBtn) signInBtn.style.display = 'none';
+    const keyField = document.getElementById('openrouterApiKeyField');
+    if (keyField) keyField.style.display = '';
+    const keyInput = document.getElementById('openrouterApiKey') as HTMLInputElement | null;
+    if (keyInput) {
+      // Seed input from storage (async, but fine — `loadSettings` already
+      // populated other inputs before we got here; this is just a backstop).
+      getStorage(['openrouterApiKey'])
+        .then((d) => { keyInput.value = d.openrouterApiKey || ''; })
+        .catch((err) => console.error('[Popup] seed openrouterApiKey failed:', err));
+      keyInput.addEventListener('change', (e) => { (async () => {
+        const key = (e.target as HTMLInputElement).value.trim();
+        await setStorage({ openrouterApiKey: key });
+        await updateOpenRouterStatus();
+      })().catch(err => console.error('[Popup] openrouterApiKey change failed:', err)); });
+    }
+  } else {
+    document.getElementById('openrouterSignIn')!.addEventListener('click', asyncHandler(startOpenRouterOAuth));
+  }
 
   // OpenRouter sign out
   document.getElementById('openrouterSignOut')!.addEventListener('click', asyncHandler(signOutOpenRouter));
@@ -1188,6 +1222,10 @@ async function updateOpenRouterStatus() {
 // Sign out from OpenRouter
 async function signOutOpenRouter() {
   await removeStorage('openrouterApiKey');
+  // Clear the Safari paste-input so re-opening signed-out view doesn't
+  // show the stale (just-removed) key.
+  const keyInput = document.getElementById('openrouterApiKey') as HTMLInputElement | null;
+  if (keyInput) keyInput.value = '';
   await updateOpenRouterStatus();
 }
 

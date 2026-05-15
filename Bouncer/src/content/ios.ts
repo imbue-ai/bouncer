@@ -17,6 +17,9 @@ interface FFWindow {
   __ff_getAiTextDetectionThreshold?: () => Promise<number>;
   __ff_setAiTextDetectionThreshold?: (value: number) => Promise<void>;
   __ff_shareFilterPack?: () => Promise<{ ok: boolean; error?: string }>;
+  __ff_getStorage?: (keys: string[]) => Promise<Record<string, unknown>>;
+  __ff_setStorage?: (items: Record<string, unknown>) => Promise<void>;
+  __ff_clearModelCache?: () => Promise<void>;
 }
 interface WebkitMessageHandlers {
   feedfilterPhrasesUpdated?: { postMessage: (msg: string) => void };
@@ -61,6 +64,26 @@ export function initIOS(deps: IOSDeps) {
 
   const _showFilteredModal = showIOSFilteredModal;
   w.__ff_showFilteredModal = () => _showFilteredModal();
+
+  // Native settings page reads/writes BYOK provider keys, selected model,
+  // etc. through these generic bridges. Limited to chrome.storage.local
+  // and the in-extension `clearCache` message so the surface stays small
+  // and we don't expose arbitrary chrome.runtime calls to the native UI.
+  w.__ff_getStorage = async (keys: string[]): Promise<Record<string, unknown>> => {
+    if (!Array.isArray(keys)) return {};
+    return await chrome.storage.local.get(keys);
+  };
+  w.__ff_setStorage = async (items: Record<string, unknown>): Promise<void> => {
+    if (!items || typeof items !== 'object') return;
+    await chrome.storage.local.set(items);
+  };
+  w.__ff_clearModelCache = async (): Promise<void> => {
+    try {
+      await chrome.runtime.sendMessage({ type: 'clearCache' });
+    } catch (err) {
+      console.warn('[Bouncer][iOS] clearModelCache failed:', err);
+    }
+  };
 
   // AI-text-detection toggle bridge. The native settings page reads/writes
   // chrome.storage.local through these; the storage-change listener in

@@ -87,10 +87,18 @@ let apiKeyWarningShown = false;
 
 // ==================== Auth State ====================
 
-let isAuthenticated = false;
+// Open-source / BYOK-only builds (no Imbue backend) have nothing to sign in
+// to. Seed `true` so the in-page filter UI never flashes the sign-in screen
+// during init, and so even a missing/late getAuthStatus response on Safari
+// can't drop us back onto it.
+let isAuthenticated = process.env.HAS_IMBUE_BACKEND !== 'true';
 
 // Check auth status from background and cache it
 async function checkAuthStatus() {
+  if (process.env.HAS_IMBUE_BACKEND !== 'true') {
+    isAuthenticated = true;
+    return isAuthenticated;
+  }
   try {
     const response: { authenticated?: boolean; isSafari?: boolean } = await chrome.runtime.sendMessage({ type: 'getAuthStatus' });
     isAuthenticated = response?.authenticated ?? false;
@@ -511,7 +519,7 @@ export function injectFilterPhrasesInput() {
     ? 'filter-phrases-sidebar filter-phrases-sidebar--in-wrapper'
     : 'filter-phrases-sidebar';
 
-  if (!isAuthenticated) {
+  if (process.env.HAS_IMBUE_BACKEND === 'true' && !isAuthenticated) {
     filterPhrasesContainer.replaceChildren(parseHTML(getSignInHTML()));
     insertParent.insertBefore(filterPhrasesContainer, insertBeforeRef);
     if (usingWrapper && wrapper) setupFixedInWrapper(filterPhrasesContainer, wrapper);
@@ -719,7 +727,7 @@ export function injectBottomFilterBox() {
   bottomFilterContainer = document.createElement('div');
   bottomFilterContainer.className = 'filter-phrases-bottom expanded';
 
-  if (!isAuthenticated) {
+  if (process.env.HAS_IMBUE_BACKEND === 'true' && !isAuthenticated) {
     bottomFilterContainer.replaceChildren(parseHTML(`
       <div class="filter-collapse-handle">
         <span class="filter-collapse-chevron"></span>
@@ -813,7 +821,7 @@ export function injectMobileFilterBox() {
   mobileFilterContainer = document.createElement('div');
   mobileFilterContainer.className = 'filter-phrases-mobile';
 
-  if (!isAuthenticated) {
+  if (process.env.HAS_IMBUE_BACKEND === 'true' && !isAuthenticated) {
     mobileFilterContainer.replaceChildren(parseHTML(getSignInHTML()));
     nav.parentNode!.insertBefore(mobileFilterContainer, nav);
     updateTheme();
