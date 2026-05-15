@@ -1,13 +1,16 @@
-// Google OAuth authentication via Firebase Auth + chrome.identity.launchWebAuthFlow
+// Authentication via Firebase Auth
+// Chrome: Google OAuth via chrome.identity.launchWebAuthFlow
+// Safari: Apple Sign-In via OAuthProvider popup
 // Firebase handles token persistence and automatic refresh.
-// launchWebAuthFlow handles the Google sign-in popup (cross-browser).
 
 import { initializeApp } from 'firebase/app';
 import {
   getAuth,
   signInWithCredential,
   GoogleAuthProvider,
+  OAuthProvider,
   onAuthStateChanged,
+  signOut as firebaseSignOut,
 } from 'firebase/auth/web-extension';
 import type { User } from 'firebase/auth';
 
@@ -21,7 +24,8 @@ const firebaseConfig = {
   appId: process.env.FIREBASE_APP_ID,
 };
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
-const REDIRECT_URI = `https://${chrome.runtime.id}.chromiumapp.org/`;
+export const IS_SAFARI = typeof (globalThis as unknown as { browser?: unknown }).browser !== 'undefined' && typeof chrome.identity?.getRedirectURL !== 'function';
+const REDIRECT_URI = IS_SAFARI ? '' : chrome.identity.getRedirectURL();
 const SCOPES = 'email';
 
 // Initialize Firebase
@@ -47,7 +51,8 @@ onAuthStateChanged(auth, (user) => {
 // ==================== Token management ====================
 
 // Get a valid Firebase ID token. Firebase auto-refreshes expired tokens.
-// Returns null if no user is signed in.
+// On iOS, auto-signs in anonymously (no user interaction needed).
+// On Chrome, requires Google sign-in first.
 export async function getAuthToken(): Promise<string | null> {
   await authReadyPromise;
 
@@ -66,10 +71,103 @@ export async function getAuthToken(): Promise<string | null> {
 
 // ==================== Interactive sign-in ====================
 
-// Launch Google sign-in via launchWebAuthFlow, then sign into Firebase.
-export async function launchAuthFlow(): Promise<string | null> {
+// Sign out
+export async function signOut(): Promise<void> {
   try {
-    // Step 1: Get Google access token via launchWebAuthFlow
+    await firebaseSignOut(auth);
+    currentUser = null;
+    console.log('[Auth] Signed out');
+  } catch (err) {
+    console.error('[Auth] Sign out failed:', (err as Error).message);
+  }
+}
+
+// Launch sign-in flow. Chrome uses Google OAuth, Safari uses hosted page.
+export async function launchAuthFlow(_method?: string): Promise<string | null> {
+  if (IS_SAFARI) {
+    return launchHostedAuthFlow();
+  }
+  return launchGoogleAuthFlow();
+}
+
+// Safari sign-in — opens a hosted page on BOUNCER_SIGNIN_DOMAIN
+// (bouncer.imbue.com in prod, bouncer-dev.imbue.com in dev) that runs
+// Firebase Auth's signInWithPopup for both Apple and Google. The bridge
+// content script on that domain relays the credential back to the extension.
+const SIGNIN_DOMAIN = process.env.BOUNCER_SIGNIN_DOMAIN || '';
+
+async function launchHostedAuthFlow(): Promise<string | null> {
+  try {
+    const authDomain = firebaseConfig.authDomain;
+    const extensionId = chrome.runtime.id;
+    const params = new URLSearchParams({
+      apiKey: firebaseConfig.apiKey || '',
+      authDomain: authDomain || '',
+      projectId: firebaseConfig.projectId || '',
+      extensionId: extensionId || '',
+    });
+    const signinUrl = `https://${SIGNIN_DOMAIN}/signin#${params.toString()}`;
+
+    console.log('[Auth] Opening sign-in tab:', signinUrl);
+    await chrome.tabs.create({ url: signinUrl, active: true });
+    // The bridge content script on SIGNIN_DOMAIN will send the credential
+    // back via chrome.runtime.sendMessage({ type: 'appleSignIn' }).
+    // The background message handler in index.ts will call handleAppleSignIn().
+    return null;
+  } catch (err) {
+    console.error('[Auth] Failed to open sign-in tab:', (err as Error).message);
+    return null;
+  }
+}
+
+// Called when the bridge content script sends a credential from the hosted sign-in page.
+// The message may contain an Apple/Google OAuth idToken or a Firebase token.
+export async function handleAppleSignIn(idToken: string, rawNonce: string, firebaseToken?: string, providerId?: string): Promise<string | null> {
+  try {
+    // If we got a Firebase token directly (from the hosted page's getIdToken()),
+    // we can't use it to sign into this background instance of Firebase Auth.
+    // We need the OAuth credential to call signInWithCredential.
+    if (idToken && providerId === 'apple.com') {
+      console.log('[Auth] Exchanging Apple credential with Firebase...');
+      const provider = new OAuthProvider('apple.com');
+      const credential = provider.credential({ idToken, rawNonce: rawNonce || undefined });
+      const userCredential = await signInWithCredential(auth, credential);
+      const token = await userCredential.user.getIdToken();
+      console.log('[Auth] Apple sign-in succeeded');
+      return token;
+    }
+
+    if (idToken && providerId === 'google.com') {
+      console.log('[Auth] Exchanging Google credential with Firebase...');
+      const credential = GoogleAuthProvider.credential(idToken);
+      const userCredential = await signInWithCredential(auth, credential);
+      const token = await userCredential.user.getIdToken();
+      console.log('[Auth] Google sign-in succeeded');
+      return token;
+    }
+
+    // Fallback: try as Apple credential
+    if (idToken) {
+      console.log('[Auth] Exchanging credential with Firebase (provider unknown)...');
+      const provider = new OAuthProvider('apple.com');
+      const credential = provider.credential({ idToken, rawNonce: rawNonce || undefined });
+      const userCredential = await signInWithCredential(auth, credential);
+      const token = await userCredential.user.getIdToken();
+      console.log('[Auth] Sign-in succeeded');
+      return token;
+    }
+
+    console.error('[Auth] No usable credential received');
+    return null;
+  } catch (err) {
+    console.error('[Auth] Sign-in credential exchange failed:', (err as Error).message);
+    return null;
+  }
+}
+
+// Google OAuth via chrome.identity.launchWebAuthFlow (Chrome)
+async function launchGoogleAuthFlow(): Promise<string | null> {
+  try {
     const params = new URLSearchParams({
       client_id: GOOGLE_CLIENT_ID,
       redirect_uri: REDIRECT_URI,
@@ -83,7 +181,6 @@ export async function launchAuthFlow(): Promise<string | null> {
       interactive: true,
     });
 
-    // Extract access token from redirect URL fragment
     if (!responseUrl) {
       console.error('[Auth] No response URL from launchWebAuthFlow');
       return null;
@@ -97,15 +194,12 @@ export async function launchAuthFlow(): Promise<string | null> {
       return null;
     }
 
-    // Step 2: Sign into Firebase with the Google credential
     const credential = GoogleAuthProvider.credential(null, accessToken);
     const userCredential = await signInWithCredential(auth, credential);
-
-    // Step 3: Get Firebase ID token
     const idToken = await userCredential.user.getIdToken();
     return idToken;
   } catch (err) {
-    console.error('[Auth] Sign-in failed:', (err as Error).message);
+    console.error('[Auth] Google sign-in failed:', (err as Error).message);
     return null;
   }
 }

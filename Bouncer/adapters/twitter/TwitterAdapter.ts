@@ -9,6 +9,7 @@ interface TweetStoreData {
   postUrl: string | null;
   imageUrls: string[];
   videoThumbnailUrls: string[];
+  mediaBlurred?: boolean;
   quotedTweet?: {
     fullText: string;
     userName: string;
@@ -453,6 +454,7 @@ window.BouncerAdapter = class TwitterAdapter implements PlatformAdapter {
       imageUrls: allImageUrls,
       hasMediaContainer: allImageUrls.length > 0,
       fromStore: true,
+      mediaBlurred: data.mediaBlurred || false,
     };
   }
 

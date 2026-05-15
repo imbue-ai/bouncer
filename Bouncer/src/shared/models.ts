@@ -61,7 +61,6 @@ export const PREDEFINED_MODELS: PredefinedModelsMap = {
   ],
   openai: [
     { name: 'gpt-5-nano', display: 'GPT-5 Nano', apiKwargs: { reasoning_effort: "minimal" } },
-    { name: 'gpt-oss-20b', display: 'gpt-oss-20b' },
   ],
   gemini: [
     { name: 'gemini-2.5-flash-lite', display: 'Gemini 2.5 Flash Lite' },
@@ -74,8 +73,11 @@ export const PREDEFINED_MODELS: PredefinedModelsMap = {
   ]
 };
 
-// Default model: 'imbue' when the Imbue backend is configured, empty string otherwise.
-// Imported by background, popup, and content scripts to avoid repeating the conditional.
+// Default model: 'imbue' when the Imbue backend is configured at build
+// time, empty string otherwise. Empty string represents "no model
+// configured" and triggers the OpenRouter auto-switch on first sign-in
+// (see popup/index.ts). Imported by background, popup, and content
+// scripts to avoid repeating the conditional everywhere.
 export const DEFAULT_MODEL = process.env.HAS_IMBUE_BACKEND === 'true' ? 'imbue' : '';
 
 export const API_DISPLAY_NAMES: Record<string, string> = {

@@ -35,7 +35,7 @@ export function parseAPIResponse(content: string): ParsedResult {
     return { shouldHide, reasoning, category: shouldHide ? category : null };
   }
 
-  console.warn('[ParseAPI] Could not parse response');
+  console.warn('[ParseAPI] Could not parse response. Raw content was:', content);
   return { shouldHide: false, reasoning: 'Could not parse response', category: null };
 }
 
@@ -244,4 +244,11 @@ export function escapeHtml(text: string): string {
   const div = document.createElement('div');
   div.textContent = text;
   return div.innerHTML;
+}
+
+// Parse an HTML string into a DocumentFragment, sanitized via DOMPurify so
+// any accidentally-interpolated hostile markup is stripped before it ever
+// touches the live DOM. All call sites pass this through `replaceChildren`.
+export function parseHTML(html: string): DocumentFragment {
+  return DOMPurify.sanitize(html, { RETURN_DOM_FRAGMENT: true });
 }

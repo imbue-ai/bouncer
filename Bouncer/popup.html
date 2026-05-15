@@ -38,7 +38,7 @@
       <label>Choose a model</label>
       <div class="model-dropdown" id="modelDropdown">
         <div class="model-dropdown-selected" id="modelDropdownSelected">
-          <span class="model-dropdown-text">Select a model</span>
+          <span class="model-dropdown-text">Imbue (Default)</span>
           <span class="model-dropdown-arrow">&#9662;</span>
         </div>
         <div class="model-dropdown-menu" id="modelDropdownMenu">
@@ -107,6 +107,12 @@
               </svg>
               Sign in with OpenRouter
             </button>
+            <!-- Safari fallback: chrome.identity.launchWebAuthFlow doesn't
+                 exist on Safari, so we let users paste a key instead. -->
+            <div id="openrouterApiKeyField" class="api-field" style="display: none;">
+              <label for="openrouterApiKey">API Key</label>
+              <input type="password" id="openrouterApiKey" placeholder="sk-or-..." autocomplete="off">
+            </div>
           </div>
           <div id="openrouterSignedIn" style="display: none;">
             <button id="openrouterSignOut" class="api-signout-btn">Sign out</button>
@@ -183,14 +189,60 @@
           <span>Enable local models using WebLLM (Experimental)</span>
         </label>
       </div>
+
+      <!-- AI text filtering experimental toggle -->
+      <div class="experimental-toggle">
+        <label class="checkbox-label">
+          <input type="checkbox" id="enableAiTextExperimental">
+          <span>Enable AI text filtering (Experimental)</span>
+        </label>
+      </div>
+    </section>
+
+    <section class="ai-text-filter-section">
+      <div id="aiTextFilterExperimentalContent" style="display: none;">
+      <label class="toggle-switch">
+        <input type="checkbox" id="enableAiTextFilter">
+        <span class="toggle-switch-slider" aria-hidden="true"></span>
+        <span class="toggle-switch-text">
+          <span class="toggle-switch-label">Filter AI-generated text</span>
+          <span class="toggle-switch-sub">Hide posts whose text appears to be written by AI.</span>
+        </span>
+      </label>
+      <div class="ai-text-threshold-block" id="aiTextThresholdBlock">
+        <div class="ai-text-threshold-header">
+          <span>Confidence threshold</span>
+          <span class="ai-text-threshold-value" id="aiTextThresholdValue">70%</span>
+        </div>
+        <input type="range" id="aiTextThreshold" min="0" max="1" step="0.01" value="0.7">
+        <div class="ai-text-threshold-scale">
+          <span>0%</span>
+          <span>100%</span>
+        </div>
+        <p class="hint ai-text-threshold-hint">Posts at or above this confidence are hidden. Lower values catch more, higher values catch only obvious cases.</p>
+      </div>
+      </div>
     </section>
 
     <footer class="pricing-disclaimer">
       <p class="hint">* Free models may have rate limits or daily quotas.<br>Non-Imbue models are charged by their providers.</p>
     </footer>
+
+    <footer class="contact-footer">
+      <p class="hint contact-footer-text">
+        <span>Contact us:</span>
+        <a class="contact-icon-link" href="https://x.com/Millanphilipose" target="_blank" rel="noopener" aria-label="Contact us on X">
+          <img class="contact-icon" src="icons/x-logo.png" alt="X" width="16" height="16">
+        </a>
+        <a class="contact-icon-link" href="https://discord.gg/bcG87mkdN9" target="_blank" rel="noopener" aria-label="Contact us on Discord">
+          <img class="contact-icon" src="icons/discord-logo.png" alt="Discord" width="16" height="16">
+        </a>
+      </p>
+    </footer>
   </div>
 
   <script src="browser-polyfill.js"></script>
+  <script src="dompurify.js"></script>
   <script src="dist/popup.js" type="module"></script>
 </body>
 </html>

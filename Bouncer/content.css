@@ -116,6 +116,74 @@
   color: #e7e9ea;
 }
 
+.reasoning-text-pending { color: #8899a6; font-style: italic; }
+.reasoning-text-error { color: #f4b1b1; }
+
+.reasoning-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 6px 6px 0;
+  border-bottom: 1px solid #38444d;
+  background: #15202b;
+}
+
+.reasoning-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  color: #8899a6;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.reasoning-tab:hover { color: #e7e9ea; background: #1c2732; }
+
+.reasoning-tab.active {
+  background: #192734;
+  color: #e7e9ea;
+  border-color: #38444d;
+  border-bottom-color: #192734;
+  margin-bottom: -1px;
+}
+
+.reasoning-tab-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: #71767b;
+}
+.reasoning-tab-dot-pending { background: #71767b; animation: reasoning-tab-pulse 1.2s ease-in-out infinite; }
+.reasoning-tab-dot-keep { background: #00ba7c; }
+.reasoning-tab-dot-hide { background: #f4212e; }
+.reasoning-tab-dot-error { background: #ffad1f; }
+.reasoning-tab-dot-skipped { background: #555f66; }
+
+@keyframes reasoning-tab-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
+.reasoning-tab-body { background: #192734; }
+
+.reasoning-tab-verdict {
+  display: inline-block;
+  margin: 10px 12px 0;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.reasoning-tab-verdict.verdict-hide { background: #4a1a20; color: #f4212e; }
+.reasoning-tab-verdict.verdict-keep { background: #14322a; color: #00ba7c; }
+.reasoning-tab-verdict.verdict-skipped { background: #2a3138; color: #8899a6; }
+.reasoning-text-skipped { color: #8899a6; font-style: italic; }
+
 .reasoning-post {
   padding: 10px 12px;
   font-size: 12px;
@@ -520,12 +588,6 @@
   display: none;
 }
 
-/* API error state - red bar, no pulsing, stays visible */
-.post-verification-bar.api-error {
-  background-color: #f44336;
-  animation: none;
-}
-
 /* Keep post content slightly dimmed for error state to indicate something is wrong */
 .ff-error > *:not(.post-verification-bar) {
   opacity: 0.7;
@@ -620,7 +682,6 @@
   align-items: center;
   justify-content: center;
   width: 34px;
-  height: 34px;
   border: none;
   background: transparent;
   color: rgb(234, 133, 84);
@@ -649,6 +710,12 @@
   pointer-events: none;
 }
 
+/* Prevent article from clipping the tooltip */
+article {
+  overflow-x: clip !important;
+  overflow-y: visible !important;
+}
+
 /* Tooltip for annoying reasons — fixed positioning set inline by JS */
 .ff-annoying-tooltip {
   min-width: 220px;
@@ -663,6 +730,15 @@
   flex-direction: column;
   gap: 6px;
   animation: popup-fade-in 0.15s ease-out;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+@media (prefers-color-scheme: light) {
+  .ff-annoying-tooltip {
+    background: #ffffff;
+    border-color: #cfd9de;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  }
 }
 
 /* Tooltip arrow (default: pointing down, tooltip above button) */
@@ -687,6 +763,14 @@
   border-bottom: none;
   border-left: 1px solid rgb(47, 51, 54);
   border-top: 1px solid rgb(47, 51, 54);
+}
+
+@media (prefers-color-scheme: light) {
+  .ff-annoying-tooltip::after {
+    background: #ffffff;
+    border-right-color: #cfd9de;
+    border-bottom-color: #cfd9de;
+  }
 }
 
 /* Spinner */
@@ -776,8 +860,8 @@
 }
 
 .ff-annoying-chip:hover {
-  background: #1d9bf0;
-  border-color: #1d9bf0;
+  background: rgb(234, 133, 84);
+  border-color: rgb(234, 133, 84);
   color: #fff;
 }
 
@@ -793,6 +877,77 @@
   font-size: 10px;
   opacity: 0.55;
   font-style: italic;
+}
+
+/* "Something else" custom input wrapper in tooltip */
+.ff-annoying-custom-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  background: transparent;
+  border: 1px solid #38444d;
+  border-radius: 8px;
+  box-sizing: border-box;
+  transition: border-color 0.15s;
+}
+
+.ff-annoying-custom-wrapper:focus-within {
+  border-color: rgb(234, 133, 84);
+}
+
+.ff-annoying-custom-input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 12px;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  color: #e7e9ea;
+  font-size: 13px;
+  outline: none;
+  appearance: none;
+  -webkit-appearance: none;
+  box-shadow: none;
+  box-sizing: border-box;
+}
+
+.ff-annoying-custom-input::placeholder {
+  color: #8b98a5;
+  font-weight: 400;
+}
+.ff-annoying-custom-input:focus {
+  border-color: #1d9bf0;
+}
+
+.ff-annoying-send-btn {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin-right: 5px;
+  padding: 0;
+  background: rgb(234, 133, 84);
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: opacity 0.15s;
+}
+
+.ff-annoying-send-btn:hover {
+  opacity: 0.85;
+}
+
+.ff-annoying-send-btn svg {
+  width: 11px;
+  height: 11px;
+  fill: #fff;
+}
+
+.ff-annoying-custom-wrapper.has-text .ff-annoying-send-btn {
+  display: flex;
 }
 
 .ff-missed-link {
@@ -845,9 +1000,9 @@
   border-color: #cfd9de;
 }
 .twitter-light .ff-annoying-chip:hover {
-  background: #1d9bf0;
+  background: rgb(234, 133, 84);
   color: #fff;
-  border-color: #1d9bf0;
+  border-color: rgb(234, 133, 84);
 }
 .twitter-light .ff-annoying-thinking {
   color: #536471;
@@ -857,6 +1012,61 @@
 }
 .twitter-light .ff-annoying-label {
   color: #536471;
+}
+.twitter-light .ff-annoying-custom-wrapper {
+  border-color: #cfd9de;
+}
+.twitter-light .ff-annoying-custom-wrapper:focus-within {
+  border-color: rgb(234, 133, 84);
+}
+.twitter-light .ff-annoying-custom-input {
+  color: #0f1419;
+}
+.twitter-light .ff-annoying-custom-input::placeholder {
+  color: #536471;
+}
+.twitter-light .ff-annoying-custom-input:focus {
+  border-color: #1d9bf0;
+}
+
+/* System-level light mode fallback (for iOS Safari where .twitter-light may not be set) */
+@media (prefers-color-scheme: light) {
+  .ff-annoying-chip {
+    background: #eff3f4;
+    color: #0f1419;
+    border-color: #cfd9de;
+  }
+  .ff-annoying-chip:hover {
+    background: #1d9bf0;
+    color: #fff;
+    border-color: #1d9bf0;
+  }
+  .ff-annoying-thinking {
+    color: #536471;
+  }
+  .ff-annoying-empty {
+    color: #536471;
+  }
+  .ff-annoying-label {
+    color: #536471;
+  }
+  .ff-progress-track {
+    background: #cfd9de;
+  }
+  .ff-missed-link {
+    border-top-color: #cfd9de;
+  }
+  .ff-annoying-custom-input {
+    background: transparent;
+    color: #0f1419;
+    border-color: #cfd9de;
+  }
+  .ff-annoying-custom-input::placeholder {
+    color: #536471;
+  }
+  .ff-annoying-custom-input:focus {
+    border-color: #1d9bf0;
+  }
 }
 
 /* Filtered posts view */
@@ -1009,6 +1219,22 @@
   /* position:relative for ::before pseudo-element positioning (sticky provides this) */
 }
 
+/* In-wrapper variant: filter box is `position: fixed` (like Twitter's own
+   search bar), with `width` and `left` set inline by JS to match the sidebar
+   wrapper. A sibling .filter-phrases-sidebar-spacer reserves flow space so
+   Premium/News don't scroll under us at scroll=0. z=1 sits between Twitter's
+   fixed search bar (z=2) and scrolling content (z=0). */
+.filter-phrases-sidebar--in-wrapper {
+  position: fixed;
+  top: 70px;
+  margin-top: 0;
+  z-index: 1;
+}
+
+.filter-phrases-sidebar-spacer {
+  flex-shrink: 0;
+}
+
 /* Background fill above the filter box to cover scrolling content (e.g., "Subscribe to Premium") */
 .filter-phrases-sidebar::before {
   content: '';
@@ -1019,6 +1245,12 @@
   height: 40px;
   background-color: rgb(0, 0, 0);
   z-index: -1;
+}
+
+/* In-wrapper: stacking handles search-bar overlap (we're below z=2), so the fill can extend tall. */
+.filter-phrases-sidebar--in-wrapper::before {
+  top: -100px;
+  height: 100px;
 }
 
 /* Theme-specific backgrounds for the gap cover */
@@ -1163,7 +1395,7 @@
 /* Animated cycling placeholder */
 .filter-placeholder-cycle {
   position: absolute;
-  top: 2px;
+  top: 0;
   left: 4px;
   right: 4px;
   height: 1.2em;
@@ -1217,6 +1449,16 @@
   font-weight: 400;
   color: rgb(231, 233, 234);
   margin-left: -4px;
+}
+
+/* Wrapper that keeps the last phrase + oxford comma as a single flex item so
+   the comma never wraps onto a new line by itself. */
+.filter-phrase-with-oxford {
+  display: inline;
+}
+
+.filter-phrase-with-oxford .filter-phrase-separator {
+  margin-left: 0;
 }
 
 /* Model loading progress display */
@@ -1274,7 +1516,10 @@
   font-size: 13px;
   font-weight: 500;
   line-height: 1;
+  white-space: nowrap;
   cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
   transition: background 0.2s, border-color 0.2s;
 }
 
@@ -1510,9 +1755,10 @@
 .filter-phrases-bottom .filter-phrases-container {
   padding: 12px 16px 12px 16px;
   padding-bottom: max(12px, env(safe-area-inset-bottom));
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
   transition: max-height 0.3s ease, padding 0.3s ease, opacity 0.2s ease;
-  max-height: 200px;
+  max-height: min(70vh, 560px);
   opacity: 1;
   /* Remove the inner border - outer pill already has border */
   border: none;
@@ -1635,24 +1881,163 @@
   gap: 12px;
 }
 
-/* Settings button */
+/* Left side of the actions row: Filter packs + View filtered sit side by side
+   with comfortable spacing; Settings stays on the right via the outer row's
+   justify-content: space-between. */
+.filter-phrases-actions-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+}
+
+.filter-ai-text-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  font-size: 13px;
+  color: rgb(113, 118, 123);
+  cursor: pointer;
+  user-select: none;
+}
+
+.filter-ai-text-toggle-input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.filter-ai-text-toggle-slider {
+  position: relative;
+  display: inline-block;
+  width: 36px;
+  height: 20px;
+  background: #cfd9de;
+  border-radius: 999px;
+  flex-shrink: 0;
+  transition: background 0.15s ease;
+}
+.filter-ai-text-toggle-slider::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  background: #ffffff;
+  border-radius: 50%;
+  transition: transform 0.15s ease;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+.filter-ai-text-toggle-input:checked + .filter-ai-text-toggle-slider {
+  background: #1d9bf0;
+}
+.filter-ai-text-toggle-input:checked + .filter-ai-text-toggle-slider::after {
+  transform: translateX(16px);
+}
+.filter-ai-text-toggle-input:focus-visible + .filter-ai-text-toggle-slider {
+  outline: 2px solid #1d9bf0;
+  outline-offset: 2px;
+}
+
+/* Dim/dark theme adjustments */
+body.dim-mode .filter-ai-text-toggle-slider,
+body.dark-mode .filter-ai-text-toggle-slider {
+  background: #2f3336;
+}
+
+/* Right side of the actions row: circular Share and Settings icon buttons. */
+.filter-phrases-actions-right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+/* Circular share button on the actions row, sitting just to the left of
+   Settings. Sized to match X's own icon-button affordances. */
+.filter-pack-share-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 9999px;
+  color: rgb(113, 118, 123);
+  line-height: 0;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.filter-pack-share-btn:hover {
+  background: rgba(29, 155, 240, 0.1);
+  color: rgb(29, 155, 240);
+}
+
+.filter-pack-share-btn:active {
+  opacity: 0.7;
+}
+
+.filter-pack-share-btn svg {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  fill: currentColor;
+}
+
+.light-mode .filter-pack-share-btn {
+  color: rgb(83, 100, 113);
+}
+
+.light-mode .filter-pack-share-btn:hover {
+  background: rgba(29, 155, 240, 0.1);
+  color: rgb(29, 155, 240);
+}
+
+.filter-phrases-mobile .filter-pack-share-btn {
+  width: 24px;
+  height: 24px;
+}
+
+.filter-phrases-mobile .filter-pack-share-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* Settings button — circular icon button (horizontal ellipsis), matches the
+   share button's footprint so the two read as a pair on the right of the row. */
 .filter-phrases-container .filter-settings-btn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
   background: none;
   border: none;
-  border-radius: 0;
+  border-radius: 9999px;
   color: rgb(113, 118, 123);
-  font-size: 13px;
-  font-weight: 400;
-  line-height: 1;
+  line-height: 0;
   cursor: pointer;
   padding: 0;
+  transition: background 0.15s ease, color 0.15s ease;
 }
 
 .filter-settings-btn:hover {
-  text-decoration: underline;
+  background: rgba(29, 155, 240, 0.1);
   color: rgb(29, 155, 240);
+}
+
+.filter-settings-btn svg {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  fill: currentColor;
 }
 
 .light-mode .filter-settings-btn {
@@ -1660,7 +2045,18 @@
 }
 
 .light-mode .filter-settings-btn:hover {
+  background: rgba(29, 155, 240, 0.1);
   color: rgb(29, 155, 240);
+}
+
+.filter-phrases-mobile .filter-settings-btn {
+  width: 24px;
+  height: 24px;
+}
+
+.filter-phrases-mobile .filter-settings-btn svg {
+  width: 14px;
+  height: 14px;
 }
 
 /* ======================================
@@ -1705,209 +2101,21 @@
   transform: scale(1);
 }
 
-/* ======================================
-   Latency Warning Banner
-   ====================================== */
-
-.latency-warning-banner {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 12px;
-  margin-bottom: 8px;
-  background: rgba(255, 173, 31, 0.15);
-  border: 1px solid rgba(255, 173, 31, 0.4);
-  border-radius: 8px;
-  font-size: 13px;
-  gap: 8px;
+/* In-app popup (div instead of iframe) needs its own background */
+div.settings-modal-iframe {
+  background: #fff;
+  color: #0f1419;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 14px;
+  padding: 0;
 }
-
-.latency-warning-text {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: #ffad1f;
-  flex: 1;
+div.settings-modal-iframe.dark-mode {
+  background: rgb(0, 0, 0);
+  color: rgb(231, 233, 234);
 }
-
-.latency-warning-actions {
-  display: flex;
-  align-items: center;
-  width: 100%;
-  gap: 8px;
-  flex-shrink: 0;
-}
-
-.latency-configure-btn {
-  background: #ffad1f;
-  color: #000;
-  text-align: center;
-  border: none;
-  width: 100%;
-  border-radius: 6px;
-  padding: 4px 10px;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: background 0.2s;
-}
-
-.latency-configure-btn:hover {
-  background: #e69c1a;
-}
-
-
-/* Light mode */
-.light-mode .latency-warning-banner {
-  background: rgba(255, 173, 31, 0.1);
-  border-color: rgba(255, 173, 31, 0.3);
-}
-
-.light-mode .latency-warning-text {
-  color: #b37a00;
-}
-
-.light-mode .latency-configure-btn {
-  background: #e69c1a;
-}
-
-.light-mode .latency-configure-btn:hover {
-  background: #cc8a17;
-}
-
-/* ======================================
-   Error Banner (unified for auth, rate limit, API errors)
-   ====================================== */
-
-.api-error-banner {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 12px;
-  margin-bottom: 8px;
-  background: rgba(244, 67, 54, 0.15);
-  border: 1px solid rgba(244, 67, 54, 0.4);
-  border-radius: 8px;
-  font-size: 13px;
-  gap: 8px;
-}
-
-.api-error-text {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: #f44336;
-  flex: 1;
-}
-
-.api-error-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
-}
-
-.api-error-configure-btn {
-  background: #f44336;
-  color: #fff;
-  border: none;
-  border-radius: 6px;
-  padding: 4px 10px;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: background 0.2s;
-}
-
-.api-error-configure-btn:hover {
-  background: #d32f2f;
-}
-
-/* Light mode */
-.light-mode .api-error-banner {
-  background: rgba(244, 67, 54, 0.1);
-  border-color: rgba(244, 67, 54, 0.3);
-}
-
-.light-mode .api-error-text {
-  color: #c62828;
-}
-
-.light-mode .api-error-configure-btn {
-  background: #d32f2f;
-}
-
-.light-mode .api-error-configure-btn:hover {
-  background: #b71c1c;
-}
-
-
-/* ======================================
-   Queue Backlog Banner (Local Models)
-   ====================================== */
-
-.queue-backlog-banner {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 12px;
-  margin-bottom: 8px;
-  background: rgba(29, 161, 242, 0.15);
-  border: 1px solid rgba(29, 161, 242, 0.4);
-  border-radius: 8px;
-  font-size: 13px;
-  gap: 8px;
-}
-
-.queue-backlog-text {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: #1da1f2;
-  flex: 1;
-}
-
-.queue-backlog-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
-}
-
-.queue-backlog-configure-btn {
-  background: #1da1f2;
-  color: #fff;
-  border: none;
-  border-radius: 6px;
-  padding: 4px 10px;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: background 0.2s;
-}
-
-.queue-backlog-configure-btn:hover {
-  background: #1a91da;
-}
-
-
-/* Light mode */
-.light-mode .queue-backlog-banner {
-  background: rgba(29, 161, 242, 0.1);
-  border-color: rgba(29, 161, 242, 0.3);
-}
-
-.light-mode .queue-backlog-text {
-  color: #1a8cd8;
-}
-
-.light-mode .queue-backlog-configure-btn {
-  background: #1a91da;
-}
-
-.light-mode .queue-backlog-configure-btn:hover {
-  background: #1681c4;
+div.settings-modal-iframe.dim-mode {
+  background: rgb(21, 32, 43);
+  color: rgb(247, 249, 249);
 }
 
 /* ======================================
@@ -2181,54 +2389,6 @@ body.ff-ios .ff-ios-send-btn:hover {
   background-color: rgb(26, 140, 216);
 }
 
-/* FAB button — positioned above Twitter's compose button */
-body.ff-ios .ff-fab-button {
-  position: absolute;
-  bottom: calc(100% + 12px);
-  right: 0;
-  width: 52px;
-  height: 52px;
-  border-radius: 50%;
-  border: none;
-  background-color: rgb(0, 186, 124);
-  color: white;
-  cursor: pointer;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 1px;
-  z-index: 100;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
-  -webkit-tap-highlight-color: transparent;
-}
-
-body.ff-ios .ff-fab-button:active {
-  background-color: rgb(0, 160, 107);
-  transform: scale(0.95);
-}
-
-.ff-fab-badge {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  font-size: 11px;
-  font-weight: 700;
-  color: white;
-  line-height: 1;
-  pointer-events: none;
-}
-
-@keyframes ff-fab-bounce {
-  0%   { transform: scale(1); }
-  30%  { transform: scale(1.25); }
-  50%  { transform: scale(0.92); }
-  70%  { transform: scale(1.08); }
-  100% { transform: scale(1); }
-}
-
-body.ff-ios .ff-fab-button.ff-fab-bounce {
-  animation: ff-fab-bounce 0.4s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
 /* ======================================
    iOS Filtered Posts Modal
    ====================================== */
@@ -2465,5 +2625,151 @@ body.ff-ios .ff-ios-page.dark-mode .ff-ios-page-header {
 
 .ff-ios-filtered-modal-backdrop.dark-mode .ff-ios-filtered-modal-header {
   border-bottom-color: rgb(47, 51, 54);
+}
+
+/* ==================== Filter Pack Badges ==================== */
+
+/* Share the header row with the existing "Bouncer" box name. Houses
+   the "View filtered" button on the right. */
+.filter-phrases-title-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 10px;
+}
+
+.filter-phrases-title-row .filter-phrases-box-name {
+  padding-bottom: 0;
+}
+
+.filter-phrases-mobile .filter-phrases-title-row {
+  padding-bottom: 6px;
+}
+
+/* "What's new" update banner shown inside the filter box once per version. */
+.bouncer-update-banner {
+  position: relative;
+  margin-bottom: 10px;
+  padding: 10px 32px 10px 12px;
+  border-radius: 12px;
+  background: rgba(255, 196, 87, 0.10);
+  border: 1px solid rgba(255, 196, 87, 0.35);
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.bouncer-update-banner-title {
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.bouncer-update-banner-bullets {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.bouncer-update-banner-bullets li {
+  margin: 2px 0;
+}
+
+.bouncer-update-banner-close {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.7;
+}
+
+.bouncer-update-banner-close:hover {
+  opacity: 1;
+}
+
+.light-mode .bouncer-update-banner {
+  background: rgba(190, 130, 40, 0.10);
+  border-color: rgba(190, 130, 40, 0.35);
+  color: rgb(80, 50, 0);
+}
+
+.dim-mode .bouncer-update-banner,
+.dark-mode .bouncer-update-banner {
+  color: rgb(231, 233, 234);
+}
+
+/* "Import filter pack" CTA injected into tweets that carry a Bouncer share
+   code. Styled to match Twitter's primary "Post" button — solid blue pill,
+   white text, bold, sized to content, on its own line. */
+.bouncer-import-btn {
+  display: block;
+  width: fit-content;
+  margin: 8px 0;
+  padding: 8px 16px;
+  background: rgb(29, 155, 240);
+  border: none;
+  border-radius: 9999px;
+  color: rgb(255, 255, 255);
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.2;
+  text-align: center;
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.08s ease;
+}
+
+.bouncer-import-btn:hover {
+  background: rgb(26, 140, 216);
+}
+
+.bouncer-import-btn:active {
+  transform: translateY(1px);
+}
+
+.bouncer-import-btn-meta {
+  margin-left: 8px;
+  opacity: 0.8;
+  font-weight: 500;
+}
+
+/* Brief flash on the Bouncer box right after a flying screenshot lands during
+   the import-pack animation. Outline (not box-shadow) so it doesn't fight with
+   the box's own resting shadow. */
+.filter-phrases-container.bouncer-import-landing {
+  animation: bouncer-import-landing-pulse 700ms ease-out;
+}
+
+@keyframes bouncer-import-landing-pulse {
+  0%   { outline: 0 solid rgba(29, 155, 240, 0); outline-offset: 0; }
+  20%  { outline: 4px solid rgba(29, 155, 240, 0.55); outline-offset: 2px; }
+  100% { outline: 0 solid rgba(29, 155, 240, 0); outline-offset: 0; }
+}
+
+/* ======================================
+   Screenshot capture overrides (ff-capture)
+   Applied only during html-to-image capture. SVG foreignObject rendering
+   doesn't honour line-height:1 the same way as normal layout — text in
+   flex buttons ends up baseline-anchored instead of centred. Setting
+   line-height:normal here lets flex align-items:center do its job without
+   changing the live button height.
+   ====================================== */
+.ff-capture button {
+  line-height: normal;
+}
+
+/* Hide local-only chrome (share + settings + sign-out icon buttons) during
+   screenshot capture so the shared image only shows filter content, not
+   per-user controls. */
+.ff-capture .filter-pack-share-btn,
+.ff-capture .filter-settings-btn,
+.ff-capture .filter-signout-btn {
+  display: none;
 }
 

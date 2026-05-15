@@ -3,7 +3,7 @@
 import { convertSystemToUserMessages } from '../shared/utils';
 import { API_BASE_URLS } from '../shared/models';
 import { imbueWebSocket } from './ws-manager';
-import type { ChatMessage, APIConfig, DirectAPIResponse, ImbueFilterResponse, ImbueSuggestResponse, EvaluationPostData } from '../types';
+import type { ChatMessage, APIConfig, DirectAPIResponse, ImbueFilterResponse, ImbueSuggestResponse, ImbueAiTextResponse, EvaluationPostData } from '../types';
 
 // Call an OpenAI-compatible API directly from the extension via fetch
 // Used for OpenAI, OpenRouter, and Gemini models
@@ -43,6 +43,7 @@ export async function callDirectAPI(messages: ChatMessage[], apiConfig: APIConfi
 
   async function makeRequest(msgs: ChatMessage[]): Promise<DirectAPIResponse> {
     const body = { ...requestBody, messages: msgs };
+    console.log(`[Provider:${apiConfig.apiName}] POST ${endpointUrl} model=${apiConfig.modelName} messages=${msgs.length}`);
     const response = await fetch(endpointUrl, {
       method: 'POST',
       headers,
@@ -51,9 +52,11 @@ export async function callDirectAPI(messages: ChatMessage[], apiConfig: APIConfi
 
     if (!response.ok) {
       const errorBody = await response.text();
+      console.log(`[Provider:${apiConfig.apiName}] HTTP ${response.status} error body:`, errorBody);
 
       // Retry with converted messages if model doesn't support system prompts
       if (errorBody.includes('Developer instruction is not enabled')) {
+        console.log(`[Provider:${apiConfig.apiName}] retrying with converted system→user messages`);
         const convertedMessages = convertSystemToUserMessages(msgs);
         const retryResponse = await fetch(endpointUrl, {
           method: 'POST',
@@ -62,19 +65,40 @@ export async function callDirectAPI(messages: ChatMessage[], apiConfig: APIConfi
         });
         if (!retryResponse.ok) {
           const retryErrorBody = await retryResponse.text();
+          console.log(`[Provider:${apiConfig.apiName}] retry HTTP ${retryResponse.status} error body:`, retryErrorBody);
           throw new Error(`${apiConfig.apiName} API error (HTTP ${retryResponse.status}): ${retryErrorBody}`);
         }
-        return retryResponse.json() as Promise<DirectAPIResponse>;
+        const retryJson = await retryResponse.text();
+        console.log(`[Provider:${apiConfig.apiName}] retry OK body:`, retryJson);
+        return JSON.parse(retryJson) as DirectAPIResponse;
       }
 
       throw new Error(`${apiConfig.apiName} API error (HTTP ${response.status}): ${errorBody}`);
     }
 
-    return response.json() as Promise<DirectAPIResponse>;
+    // Read as text first so we can log the raw body even when it doesn't
+    // parse as the expected shape (e.g. OpenRouter's HTTP-200 `{error: ...}`).
+    const rawBody = await response.text();
+    console.log(`[Provider:${apiConfig.apiName}] HTTP ${response.status} body:`, rawBody);
+    return JSON.parse(rawBody) as DirectAPIResponse;
   }
 
   const responseData = await makeRequest(messages);
-  return responseData.choices[0].message.content;
+  // OpenRouter (and other OpenAI-compatible providers) can return HTTP 200
+  // with an `{ error: { message, code } }` body instead of a chat completion
+  // — most commonly on rate limit / quota / moderation / upstream-provider
+  // failures. Surface the real error instead of letting `.choices[0]` throw
+  // a generic TypeError that the pipeline can't classify.
+  const choice = responseData.choices?.[0];
+  if (!choice?.message?.content) {
+    const apiError = (responseData as unknown as { error?: { message?: string; code?: string | number } }).error;
+    if (apiError?.message) {
+      throw new Error(`${apiConfig.apiName} API error: ${apiError.message}`);
+    }
+    throw new Error(`${apiConfig.apiName} returned unexpected response shape: ${JSON.stringify(responseData).slice(0, 200)}`);
+  }
+  console.log(`[Provider:${apiConfig.apiName}] model content:`, choice.message.content);
+  return choice.message.content;
 }
 
 // Call Anthropic Messages API directly
@@ -148,6 +172,7 @@ export async function callAnthropicAPI(messages: ChatMessage[], apiConfig: APICo
     Object.assign(requestBody, apiConfig.apiKwargs);
   }
 
+  console.log(`[Provider:anthropic] POST ${endpointUrl} model=${apiConfig.modelName} messages=${anthropicMessages.length}`);
   const response = await fetch(endpointUrl, {
     method: 'POST',
     headers,
@@ -160,25 +185,27 @@ export async function callAnthropicAPI(messages: ChatMessage[], apiConfig: APICo
     throw new Error(`anthropic API error (HTTP ${response.status}): ${errorBody}`);
   }
 
-  const responseData = await response.json() as { content: Array<{ type: string; text: string }> };
+  const rawBody = await response.text();
+  console.log(`[Provider:anthropic] HTTP ${response.status} body:`, rawBody);
+  const responseData = JSON.parse(rawBody) as { content: Array<{ type: string; text: string }> };
   // Anthropic returns content as an array of content blocks
   const textBlocks = responseData.content.filter(b => b.type === 'text');
-  return textBlocks.map(b => b.text).join('');
+  const out = textBlocks.map(b => b.text).join('');
+  console.log(`[Provider:anthropic] model content:`, out);
+  return out;
 }
 
 // Call Imbue backend via persistent WebSocket
 // tweetData is a single post object: { text: string, imageUrls: string[] }
-export async function callImbueAPI(tweetData: EvaluationPostData, categories: string[] | undefined, reason: 'filterPost' | 'validatePhrase', authToken?: string | null): Promise<ImbueFilterResponse>;
-export async function callImbueAPI(tweetData: EvaluationPostData, categories: string[] | undefined, reason: 'suggestAnnoying', authToken?: string | null): Promise<ImbueSuggestResponse>;
+// Auth token is not sent — the WS gateway authenticates the connection itself
+// via the App Check token at handshake time.
+export async function callImbueAPI(tweetData: EvaluationPostData, categories: string[] | undefined, reason: 'filterPost' | 'validatePhrase'): Promise<ImbueFilterResponse>;
+export async function callImbueAPI(tweetData: EvaluationPostData, categories: string[] | undefined, reason: 'suggestAnnoying'): Promise<ImbueSuggestResponse>;
 export async function callImbueAPI(
   tweetData: EvaluationPostData,
   categories: string[] | undefined,
   reason: string,
-  authToken?: string | null
 ): Promise<ImbueFilterResponse | ImbueSuggestResponse> {
-  if (process.env.HAS_IMBUE_BACKEND !== 'true') {
-    throw new Error('Imbue backend not configured');
-  }
   const message: Record<string, unknown> = {
     action: "tweetFilter",
     tweetData: tweetData,
@@ -186,11 +213,34 @@ export async function callImbueAPI(
     version: chrome.runtime.getManifest().version,
     reason: reason || 'unknown',
   };
-  if (authToken) {
-    message.authToken = authToken;
-  }
 
-  return imbueWebSocket.send(message);
+  return imbueWebSocket.send(message) as unknown as Promise<ImbueFilterResponse | ImbueSuggestResponse>;
+}
+
+// Call the Imbue AI-text-detection worker via the same WebSocket gateway.
+// Routes to a dedicated worker via the `detectAiText` action; threshold is applied client-side.
+export async function callImbueAiTextDetection(
+  tweetData: EvaluationPostData,
+): Promise<ImbueAiTextResponse> {
+  const message: Record<string, unknown> = {
+    action: 'detectAiText',
+    tweetData,
+    version: chrome.runtime.getManifest().version,
+  };
+
+  console.log('[AiDetect] → request:', message);
+  const startedAt = Date.now();
+
+  try {
+    const response = await imbueWebSocket.send(message) as unknown as ImbueAiTextResponse;
+    const wallMs = Date.now() - startedAt;
+    console.log(`[AiDetect] ← response (wallMs=${wallMs}):`, response);
+    return response;
+  } catch (err) {
+    const wallMs = Date.now() - startedAt;
+    console.warn(`[AiDetect] ✗ error after ${wallMs}ms:`, err);
+    throw err;
+  }
 }
 
 interface FeedbackMessage {
@@ -207,7 +257,6 @@ interface FeedbackMessage {
 
 // Send feedback (false_positive / false_negative) to Imbue via persistent WebSocket
 export async function sendFeedback(feedbackMessage: FeedbackMessage, authToken?: string | null): Promise<void> {
-  if (process.env.HAS_IMBUE_BACKEND !== 'true') return;
   if (authToken) {
     feedbackMessage.authToken = authToken;
   }

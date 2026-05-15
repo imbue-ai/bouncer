@@ -58,7 +58,6 @@ popup.html / popup.js / popup.css   # Extension settings UI
 content.css                          # Content script styles
 fiber-extractor.js                   # Main-world script for React fiber access
 manifest.json                        # Chrome MV3 manifest
-manifest.firefox.json                # Firefox variant
 ```
 
 ## Dependencies

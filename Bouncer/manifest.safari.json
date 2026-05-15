@@ -1,0 +1,24 @@
+{
+  "permissions": [
+    "cookies"
+  ],
+  "background": {
+    "scripts": [
+      "browser-polyfill.js",
+      "dist/background.js"
+    ]
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://bouncer.imbue.com/*",
+        "https://bouncer-dev.imbue.com/*"
+      ],
+      "js": [
+        "browser-polyfill.js",
+        "dist/signin-bridge.js"
+      ],
+      "run_at": "document_start"
+    }
+  ]
+}

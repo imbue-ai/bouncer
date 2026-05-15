@@ -7,14 +7,15 @@ import {
 } from '../shared/utils';
 import { PREDEFINED_MODELS, API_DISPLAY_NAMES, DEFAULT_MODEL } from '../shared/models';
 import { buildAPIMessages } from '../shared/prompts';
-import { callDirectAPI, callAnthropicAPI, callImbueAPI } from './providers';
+import { callDirectAPI, callAnthropicAPI, callImbueAPI, callImbueAiTextDetection } from './providers';
+import { runDetectors, type Detector, type DetectorResult } from './detectors';
 import { callLocalInference, localEngine } from './local-model';
-import { getAuthToken } from './auth';
-import { getStorage, setStorage, removeStorage, getDescriptions } from '../shared/storage';
+import { getStorage, setStorage, removeStorage, getDescriptions, clampThreshold, DEFAULT_AI_TEXT_DETECTION_THRESHOLD } from '../shared/storage';
+export { DEFAULT_AI_TEXT_DETECTION_THRESHOLD };
 import type {
   EvaluationResult, PipelineResponse, PipelineError, PendingEvaluation,
   ErrorState, Settings, APIConfig, ChatMessage, BackgroundToContentMessage, LocalModelDef,
-  SiteId,
+  SiteId, DetectorSnapshot,
 } from '../types';
 
 // ==================== Constants ====================
@@ -30,8 +31,202 @@ const LATENCY_THRESHOLD_SECONDS = 8;
 // Error retry
 const RATE_LIMIT_RETRY_INTERVAL_MS = 60000; // 1 minute
 
+
 // Queue backlog
 export const QUEUE_BACKLOG_THRESHOLD = 5;
+
+
+// Posts shorter than this aren't sent to the AI-text detector. Short text
+// produces unreliable scores and burns quota.
+const AI_TEXT_DETECTION_MIN_WORDS = 10;
+
+// Word count using ICU word-boundary segmentation (Unicode UAX #29). Counts
+// word-like segments — handles contractions ("don't" → 1), hyphenated forms
+// ("well-known" → 1), URLs sensibly, and CJK / Thai dictionary segmentation.
+const wordSegmenter = new Intl.Segmenter(undefined, { granularity: 'word' });
+function countWords(text: string): number {
+  if (!text) return 0;
+  let n = 0;
+  for (const seg of wordSegmenter.segment(text)) if (seg.isWordLike) n++;
+  return n;
+}
+
+// =============================================================================
+// Multi-detector orchestration helpers used by processBatch.
+// =============================================================================
+
+interface TabPlanEntry {
+  name: string;
+  willRun: boolean;
+  skipReason?: string;
+}
+
+// Why AI detection won't run for a given post (or null if it will). Priority:
+// toggle off → post too short. Auth is handled at WS handshake time (Google
+// token on Chrome, App Check on iOS); we mirror the filter detector and let
+// any handshake failure surface through the existing auth-error banner
+// rather than gating per-post here.
+function computeAiSkipReason(
+  aiToggleOn: boolean,
+  rawText: string,
+): string | null {
+  // AI text detection is currently Imbue-only (callImbueAiTextDetection).
+  // Open-source builds without the Imbue backend always skip this detector.
+  if (process.env.HAS_IMBUE_BACKEND !== 'true') return 'AI detection requires Imbue backend';
+  if (!aiToggleOn) return 'AI detection disabled';
+  const wc = countWords(rawText);
+  if (wc < AI_TEXT_DETECTION_MIN_WORDS) {
+    return `Post too short (${wc} words; need ${AI_TEXT_DETECTION_MIN_WORDS})`;
+  }
+  return null;
+}
+
+// The full per-post plan. Always two entries so the popup is consistent. A
+// detector that can't run gets a skipReason instead of a willRun=true flag.
+function buildTabPlan(
+  filterEnabled: boolean,
+  aiSkipReason: string | null,
+): TabPlanEntry[] {
+  return [
+    {
+      name: 'filter',
+      willRun: filterEnabled,
+      skipReason: filterEnabled ? undefined : 'No filter phrases configured',
+    },
+    {
+      name: 'aiText',
+      willRun: !aiSkipReason,
+      skipReason: aiSkipReason ?? undefined,
+    },
+  ];
+}
+
+// Send the initial evaluationStarted + per-skipped detectorResponse messages
+// and seed the snapshots map so cache writes capture skipped state too.
+function dispatchInitialTabs(
+  tabId: number,
+  evaluationId: string,
+  tabPlan: TabPlanEntry[],
+): Map<string, DetectorSnapshot> {
+  const snapshots = new Map<string, DetectorSnapshot>();
+  if (tabPlan.length === 0) return snapshots;
+
+  void sendToTab(tabId, {
+    type: 'evaluationStarted',
+    evaluationId,
+    detectorNames: tabPlan.map(t => t.name),
+  });
+  for (const entry of tabPlan) {
+    if (!entry.willRun) {
+      snapshots.set(entry.name, { status: 'skipped', skipReason: entry.skipReason });
+      void sendToTab(tabId, {
+        type: 'detectorResponse',
+        evaluationId,
+        detectorName: entry.name,
+        skipped: true,
+        skipReason: entry.skipReason,
+      });
+    }
+  }
+  return snapshots;
+}
+
+// Run the detector race, mirror each settle to live tab updates, and capture
+// each settle into the snapshots map for cache persistence. Also marks any
+// detector that didn't finish (because a sibling hid first) as aborted.
+async function runDetectorsAndCaptureSnapshots(
+  detectors: Detector[],
+  snapshots: Map<string, DetectorSnapshot>,
+  tabId: number,
+  evaluationId: string,
+): Promise<DetectorResult> {
+  const result = await runDetectors(detectors, {
+    onResponse: (detName, value, error) => {
+      if (value) {
+        snapshots.set(detName, {
+          status: 'success',
+          shouldHide: value.shouldHide,
+          reasoning: value.reasoning,
+          category: value.category ?? null,
+        });
+      } else if (error) {
+        snapshots.set(detName, { status: 'error', error: error.message });
+      }
+      void sendToTab(tabId, {
+        type: 'detectorResponse',
+        evaluationId,
+        detectorName: detName,
+        ...(value && {
+          shouldHide: value.shouldHide,
+          reasoning: value.reasoning,
+          category: value.category ?? null,
+        }),
+        ...(error && { error: error.message }),
+      });
+    },
+  });
+  for (const det of detectors) {
+    if (!snapshots.has(det.name)) {
+      snapshots.set(det.name, {
+        status: 'skipped',
+        skipReason: 'Aborted (other detector hid first)',
+      });
+    }
+  }
+  return result;
+}
+
+// Construct the live detector list from settings + per-post gates. Filter is
+// index 0 (highest priority); AI is index 1 when it'll actually run.
+function buildLiveDetectors(args: {
+  filterEnabled: boolean;
+  aiEnabled: boolean;
+  runFilter: () => Promise<DetectorResult>;
+  rawText: string;
+  imageUrls: string[];
+  aiThreshold: number;
+}): Detector[] {
+  const detectors: Detector[] = [];
+  if (args.filterEnabled) {
+    detectors.push({ name: 'filter', promise: args.runFilter() });
+  }
+  if (args.aiEnabled) {
+    detectors.push({
+      name: 'aiText',
+      promise: (async (): Promise<DetectorResult> => {
+        // AI detection sees only the post content — no "Author: " prefix.
+        const aiResp = await callImbueAiTextDetection(
+          { text: args.rawText, imageUrls: args.imageUrls },
+        );
+        const isAi = aiResp.confidence >= args.aiThreshold;
+        const pct = `${(aiResp.confidence * 100).toFixed(0)}%`;
+        return {
+          shouldHide: isAi,
+          reasoning: isAi
+            ? `AI-generated text detected (confidence ${pct})`
+            : `Text not detected as AI-generated (confidence ${pct})`,
+          category: isAi ? 'AI-generated' : null,
+          rawResponse: null,
+        };
+      })(),
+    });
+  }
+  return detectors;
+}
+
+// Build a stable detectorStates blob from a tab plan + accumulated snapshots,
+// suitable for persisting on EvaluationResult.
+function buildDetectorStates(
+  tabPlan: TabPlanEntry[],
+  snapshots: Map<string, DetectorSnapshot>,
+): EvaluationResult['detectorStates'] {
+  if (tabPlan.length === 0) return undefined;
+  return {
+    names: tabPlan.map(t => t.name),
+    map: Object.fromEntries(snapshots),
+  };
+}
+
 
 // Map API names to their corresponding settings key for API key lookup
 const API_KEY_SETTINGS: Record<string, keyof Settings> = {
@@ -83,6 +278,7 @@ export function initPipeline(tabs: Set<number>): void {
 
 // Update active tab. Clears inference queue (stale closures) and schedules batch for new tab.
 export function setActiveTab(tabId: number | null): void {
+  console.log('[Bouncer][diag] setActiveTab: prev=', activeTabId, 'new=', tabId, 'hasQueue=', tabId !== null && tabQueues.has(tabId), 'queueLen=', tabId !== null ? tabQueues.get(tabId)?.length : 'n/a');
   activeTabId = tabId;
   localEngine.clearQueue();
   if (tabId !== null && tabQueues.has(tabId) && tabQueues.get(tabId)!.length > 0) {
@@ -121,6 +317,7 @@ export function isKeyPending(tabId: number, cacheKey: string): boolean {
 
 // Resolve an item AND any duplicate resolvers waiting on the same cacheKey.
 function resolveWithDuplicates(tabId: number, item: PendingEvaluation, result: PipelineResponse): void {
+  console.log('[Bouncer][diag] resolveWithDuplicates: tab=', tabId, 'evalId=', item.evaluationId, 'resultKind=', result === null ? 'null' : Object.keys(result as object).slice(0, 3).join(','));
   item.resolve(result);
   const dupes = tabDuplicateResolvers.get(tabId);
   if (dupes && item.cacheKey && dupes.has(item.cacheKey)) {
@@ -148,7 +345,57 @@ export function clearTabQueue(tabId: number): void {
 
 // Send a typed message to a single tab
 export function sendToTab(tabId: number, message: BackgroundToContentMessage): Promise<unknown> {
-  return chrome.tabs.sendMessage(tabId, message).catch(() => {});
+  return chrome.tabs.sendMessage(tabId, message);
+}
+
+// Replay a cached evaluation as per-tab messages so the popup looks the same
+// for cache hits as for fresh runs. New entries with `detectorStates` replay
+// exactly; legacy entries get synthesized two-tab output where the cached
+// reasoning is attributed to the right detector by category.
+export function replayDetectorStates(tabId: number, evaluationId: string, evalResult: EvaluationResult): void {
+  if (evalResult.detectorStates) {
+    const { names, map } = evalResult.detectorStates;
+    void sendToTab(tabId, { type: 'evaluationStarted', evaluationId, detectorNames: names });
+    for (const name of names) {
+      const snap = map[name];
+      if (!snap) continue;
+      void sendToTab(tabId, {
+        type: 'detectorResponse',
+        evaluationId,
+        detectorName: name,
+        ...(snap.status === 'success' && {
+          shouldHide: snap.shouldHide,
+          reasoning: snap.reasoning,
+          category: snap.category ?? null,
+        }),
+        ...(snap.status === 'error' && { error: snap.error }),
+        ...(snap.status === 'skipped' && { skipped: true, skipReason: snap.skipReason }),
+      });
+    }
+    return;
+  }
+
+  // Legacy entry without per-detector state. Show two tabs and attribute the
+  // cached reasoning to whichever detector likely produced it (by category).
+  const isAi = evalResult.category === 'AI-generated';
+  const winnerName = isAi ? 'aiText' : 'filter';
+  const otherName = isAi ? 'filter' : 'aiText';
+  void sendToTab(tabId, { type: 'evaluationStarted', evaluationId, detectorNames: ['filter', 'aiText'] });
+  void sendToTab(tabId, {
+    type: 'detectorResponse',
+    evaluationId,
+    detectorName: winnerName,
+    shouldHide: evalResult.shouldHide,
+    reasoning: evalResult.reasoning,
+    category: evalResult.category ?? null,
+  });
+  void sendToTab(tabId, {
+    type: 'detectorResponse',
+    evaluationId,
+    detectorName: otherName,
+    skipped: true,
+    skipReason: 'No detail available (cached before tabs were added)',
+  });
 }
 
 // Generic helper to broadcast messages to all tabs with active content scripts
@@ -169,7 +416,7 @@ export async function getSettings(siteId?: SiteId): Promise<Settings> {
   const settingsKeys = [
     'apiKey', 'openaiApiKey', 'openaiApiBase', 'openrouterApiKey', 'geminiApiKey',
     'anthropicApiKey', 'enabled', 'useEmbeddings', 'selectedModel',
-    'customModels', 'predefinedModelKwargs'
+    'customModels', 'predefinedModelKwargs', 'aiTextFilterEnabled', 'aiTextDetectionThreshold'
   ] as const;
   const [data, descriptions] = await Promise.all([
     getStorage([...settingsKeys]),
@@ -187,7 +434,9 @@ export async function getSettings(siteId?: SiteId): Promise<Settings> {
     useEmbeddings: data.useEmbeddings || false,
     selectedModel: data.selectedModel || DEFAULT_MODEL,
     customModels: data.customModels || [],
-    predefinedModelKwargs: data.predefinedModelKwargs || {}
+    predefinedModelKwargs: data.predefinedModelKwargs || {},
+    aiTextFilterEnabled: data.aiTextFilterEnabled === true,
+    aiTextDetectionThreshold: clampThreshold(data.aiTextDetectionThreshold)
   };
 }
 
@@ -370,6 +619,11 @@ export async function saveCache(): Promise<void> {
   }
 }
 
+export async function clearEvaluationCache(): Promise<void> {
+  evaluationCache.clear();
+  await removeStorage('evaluationCache');
+}
+
 // ==================== Viewport prioritization ====================
 
 // Prioritize pending posts by their distance to viewport center
@@ -447,6 +701,7 @@ export function classifyError(errorMessage: string, apiName: string): { errorTyp
 
 // Process a batch of posts
 async function processBatch(): Promise<void> {
+  console.log('[Bouncer][diag] processBatch entered; activeTabId=', activeTabId, 'inFlight=', inFlightBatches);
   batchTimeout = null; // Clear timeout first, before any early returns
 
   if (activeTabId === null) return;
@@ -502,26 +757,18 @@ async function processBatch(): Promise<void> {
     return;
   }
 
-  // Check if filter rules are defined
-  if (!settings.descriptions || settings.descriptions.length === 0) {
-    resolveWithDuplicates(batchTabId, item, { shouldHide: false, reasoning: 'No filter categories defined.' });
-    inFlightBatches--;
-    return;
-  }
-
-  // Check if a model is configured
-  if (!settings.selectedModel) {
-    const noModelError: PipelineError = { error: 'no_api_key', reasoning: 'No model configured. Open Bouncer settings to choose a model.' };
-    resolveWithDuplicates(batchTabId, item, noModelError);
-    inFlightBatches--;
-    return;
-  }
+  // Filter and AI detection are independent gating mechanisms. Even when both
+  // are off we still flow through the tab-dispatch logic below so the popup
+  // always shows two tabs (both marked skipped).
+  const filterEnabled = !!(settings.descriptions && settings.descriptions.length > 0);
+  const aiToggleOn = settings.aiTextFilterEnabled;
 
   // Check cache
   const imageUrls = item.imageUrls || [];
   const cacheKey = generateCacheKey(item.post, imageUrls);
   if (evaluationCache.has(cacheKey)) {
     const cached = evaluationCache.get(cacheKey)!;
+    replayDetectorStates(batchTabId, item.evaluationId, cached);
     resolveWithDuplicates(batchTabId, item, { ...cached, cached: true });
     inFlightBatches--;
     if (pendingEvaluations.length > 0) scheduleBatch();
@@ -531,7 +778,22 @@ async function processBatch(): Promise<void> {
   const postData = { text: item.post, imageUrls };
   const startTime = Date.now();
 
-  // Build API config
+  // Even with no filter phrases configured, still send the tweet to our
+  // servers (with empty categories) so we capture feed contents for
+  // analytics. Fire-and-forget — the result is discarded and no UI
+  // indicators are shown. Only runs when the Imbue backend is wired up
+  // at build time; open-source builds skip this telemetry.
+  if (
+    process.env.HAS_IMBUE_BACKEND === 'true'
+    && !filterEnabled
+    && settings.selectedModel === 'imbue'
+  ) {
+    void callImbueAPI(postData, [], 'filterPost').catch(err =>
+      console.warn('[Bouncer] Empty-filter tweet send failed:', (err as Error).message)
+    );
+  }
+
+  // Build API config (only used when the filter path runs)
   let apiConfig: APIConfig;
 
   if (process.env.HAS_IMBUE_BACKEND === 'true' && settings.selectedModel === 'imbue') {
@@ -566,31 +828,65 @@ async function processBatch(): Promise<void> {
   }
 
   try {
-    let result: { shouldHide: boolean; reasoning: string; category?: string | null; rawResponse?: string | null; inferenceTime?: number };
+    let result: DetectorResult;
 
-    if (isLocalModel) {
-      const postUrl = item.postUrl;
-      const onInferenceStart = postUrl
-        ? () => { void sendToTab(batchTabId, { type: 'processingPost', postUrl }); }
-        : undefined;
-      result = await callLocalInference(postData, settings.descriptions, apiConfig.modelConfig as LocalModelDef | null, apiConfig.modelName, { onInferenceStart });
-    } else if (apiConfig.apiName === 'imbue') {
-      const authToken = await getAuthToken();
-      const imbueResponse = await callImbueAPI(postData, settings.descriptions, 'filterPost', authToken);
-      result = {
-        shouldHide: imbueResponse.shouldHide,
-        reasoning: imbueResponse.reasoning || 'No reasoning provided',
-        category: imbueResponse.category || null,
-        rawResponse: imbueResponse.rawResponse || null,
-      };
-    } else if (apiConfig.apiName === 'anthropic') {
-      const messages = buildAPIMessages(postData, settings.descriptions);
-      const rawContent = await callAnthropicAPI(messages, apiConfig);
-      result = { ...parseAPIResponse(rawContent), rawResponse: rawContent };
+    // The user-selected filter pipeline. Returns whether the user's filter rules apply.
+    const runFilter = async (): Promise<DetectorResult> => {
+      if (isLocalModel) {
+        const postUrl = item.postUrl;
+        const onInferenceStart = postUrl
+          ? () => { void sendToTab(batchTabId, { type: 'processingPost', postUrl }); }
+          : undefined;
+        return await callLocalInference(postData, settings.descriptions, apiConfig.modelConfig as LocalModelDef | null, apiConfig.modelName, { onInferenceStart });
+      } else if (apiConfig.apiName === 'imbue') {
+        const imbueResponse = await callImbueAPI(postData, settings.descriptions, 'filterPost');
+        return {
+          shouldHide: imbueResponse.shouldHide,
+          reasoning: imbueResponse.reasoning || 'No reasoning provided',
+          category: imbueResponse.category || null,
+          rawResponse: imbueResponse.rawResponse || null,
+        };
+      } else if (apiConfig.apiName === 'anthropic') {
+        const messages = buildAPIMessages(postData, settings.descriptions);
+        const rawContent = await callAnthropicAPI(messages, apiConfig);
+        return { ...parseAPIResponse(rawContent), rawResponse: rawContent };
+      } else {
+        const messages = buildAPIMessages(postData, settings.descriptions);
+        const rawContent = await callDirectAPI(messages, apiConfig);
+        return { ...parseAPIResponse(rawContent), rawResponse: rawContent };
+      }
+    };
+
+    // Per-post detector orchestration. Three logical phases: plan tabs and
+    // dispatch their initial state to the content script; build the live
+    // detector list; race them and capture snapshots for cache persistence.
+    const aiSkipReason = computeAiSkipReason(aiToggleOn, item.rawText);
+    const aiEnabled = !aiSkipReason;
+
+    const tabPlan = buildTabPlan(filterEnabled, aiSkipReason);
+    const snapshots = dispatchInitialTabs(batchTabId, item.evaluationId, tabPlan);
+
+    const detectors = buildLiveDetectors({
+      filterEnabled,
+      aiEnabled,
+      runFilter,
+      rawText: item.rawText,
+      imageUrls,
+      aiThreshold: settings.aiTextDetectionThreshold,
+    });
+
+    if (detectors.length === 0) {
+      // Nothing to run — tabs were already dispatched as skipped above.
+      result = tabPlan.length > 0
+        ? { shouldHide: false, reasoning: `All detectors skipped: ${tabPlan.map(t => `${t.name} (${t.skipReason})`).join(', ')}` }
+        : { shouldHide: false, reasoning: 'AI detection unavailable (signed out) and no filter phrases set.' };
     } else {
-      const messages = buildAPIMessages(postData, settings.descriptions);
-      const rawContent = await callDirectAPI(messages, apiConfig);
-      result = { ...parseAPIResponse(rawContent), rawResponse: rawContent };
+      result = await runDetectorsAndCaptureSnapshots(
+        detectors,
+        snapshots,
+        batchTabId,
+        item.evaluationId,
+      );
     }
 
     console.log(`[Eval] shouldHide=${result.shouldHide}, category="${result.category}", reasoning="${result.reasoning?.substring(0, 80)}"`);
@@ -601,7 +897,8 @@ async function processBatch(): Promise<void> {
       category: result.category || null,
       rawResponse: result.rawResponse || null,
       model: settings.selectedModel || 'unknown',
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      detectorStates: buildDetectorStates(tabPlan, snapshots),
     };
 
     // Update cache
@@ -727,30 +1024,37 @@ async function processBatch(): Promise<void> {
 
 // Schedule processing for the next pending post
 export function scheduleBatch(): void {
-  if (batchTimeout) return; // Already scheduled
-  if (activeTabId === null) return;
+  if (batchTimeout) {
+    console.log('[Bouncer][diag] scheduleBatch: already scheduled, returning');
+    return;
+  }
+  if (activeTabId === null) {
+    console.log('[Bouncer][diag] scheduleBatch: activeTabId is null — items will sit unresolved until setActiveTab runs');
+    return;
+  }
 
   const activeQueue = tabQueues.get(activeTabId);
-  if (!activeQueue || activeQueue.length === 0) return;
-
-  if (activeQueue.length > 0) {
-    processBatch().catch(err => console.error('[Pipeline] processBatch failed:', err));
+  if (!activeQueue || activeQueue.length === 0) {
+    console.log('[Bouncer][diag] scheduleBatch: no queue or empty queue for activeTabId=', activeTabId);
+    return;
   }
+
+  console.log('[Bouncer][diag] scheduleBatch: invoking processBatch, queueLen=', activeQueue.length);
+  processBatch().catch(err => console.error('[Pipeline] processBatch failed:', err));
 }
 
 // ==================== Settings change handling ====================
 
-// Called from index.ts when settings change to reset pipeline state
-export async function handleSettingsChange(changes: Record<string, chrome.storage.StorageChange>): Promise<void> {
-  // Cancel any pending batch
+// Drain in-flight pipeline state without touching the cache. Used when we want in-flight
+// and queued classifications to be retried against fresh settings while keeping cached
+// classifications intact.
+function flushPipelineQueues(reason: string): void {
   if (batchTimeout) {
     clearTimeout(batchTimeout);
     batchTimeout = null;
   }
-
-  // Clear all tab queues
   for (const [tabId, queue] of tabQueues.entries()) {
-    const result: PipelineResponse = { retry: true as const, reasoning: 'Settings changed, re-evaluating...' };
+    const result: PipelineResponse = { retry: true as const, reasoning: reason };
     for (const queueItem of queue) {
       resolveWithDuplicates(tabId, queueItem, result);
     }
@@ -759,19 +1063,32 @@ export async function handleSettingsChange(changes: Record<string, chrome.storag
     tabDuplicateResolvers.delete(tabId);
   }
   localEngine.clearQueue();
-
-  broadcastQueueStatus().catch(err => console.error('[Queue] Broadcast failed:', err)); // Clear queue backlog warning
-
-  // Reset processing state
+  broadcastQueueStatus().catch(err => console.error('[Queue] Broadcast failed:', err));
   inFlightBatches = 0;
+}
 
-  // Clear cache
-  evaluationCache.clear();
-  await removeStorage('evaluationCache');
-  // If settings changed and we have error posts, retry them
+// Called from index.ts when settings change to reset pipeline state.
+// Model changes wipe the entire cache (classifications from a prior model are meaningless);
+// API-key changes just flush queues and retry errored posts. Phrase edits are handled
+// separately and never reach this path.
+export async function handleSettingsChange(changes: Record<string, chrome.storage.StorageChange>): Promise<void> {
+  flushPipelineQueues('Settings changed, re-evaluating...');
+
+  if (changes.selectedModel) {
+    await clearEvaluationCache();
+  }
+
   if ((changes.selectedModel || changes.openaiApiKey || changes.geminiApiKey || changes.openrouterApiKey || changes.anthropicApiKey) && errorState.count > 0) {
     triggerErrorRetry().catch(err => console.error('[Error] triggerErrorRetry failed:', err));
   }
+}
+
+// Called when the filter phrase list changed. Clears the cache and flushes in-flight
+// batches so they re-run against the updated phrase set.
+export function handleFilterPackChange(): void {
+  evaluationCache.clear();
+  removeStorage('evaluationCache').catch(err => console.error('[Cache] clear failed:', err));
+  flushPipelineQueues('Filter phrases changed, re-evaluating...');
 }
 
 // Handle page load: clear pending evaluations for a specific tab
@@ -790,8 +1107,7 @@ async function validateFilterPhrase(postText: string, imageUrls: string[], phras
   const isLocalModel = settings.selectedModel?.startsWith('local:');
 
   if (process.env.HAS_IMBUE_BACKEND === 'true' && settings.selectedModel === 'imbue') {
-    const authToken = await getAuthToken();
-    const imbueResponse = await callImbueAPI(postData, [phrase], 'validatePhrase', authToken);
+    const imbueResponse = await callImbueAPI(postData, [phrase], 'validatePhrase');
     return imbueResponse.shouldHide === true;
   } else if (isLocalModel) {
     const modelName = settings.selectedModel.split(':')[1];
@@ -829,8 +1145,7 @@ async function generateCandidatePhrases(postText: string, imageUrls: string[], c
 
   if (process.env.HAS_IMBUE_BACKEND === 'true' && settings.selectedModel === 'imbue') {
     const postData = { text: postText, imageUrls: imageUrls || [] };
-    const authToken = await getAuthToken();
-    const imbueResponse = await callImbueAPI(postData, undefined, 'suggestAnnoying', authToken);
+    const imbueResponse = await callImbueAPI(postData, undefined, 'suggestAnnoying');
     const suggestions = imbueResponse.suggestions || [];
     result = suggestions.slice(0, count);
   } else if (isLocalModel) {

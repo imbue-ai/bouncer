@@ -71,7 +71,7 @@ export default tseslint.config(
 
   // build.js and utility scripts (ESM, Node)
   {
-    files: ['build.js', 'cut.js', 'update-webllm.js'],
+    files: ['build.js', 'cut.js', 'update-webllm.js', 'generate-manifests.mjs'],
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: 'module',

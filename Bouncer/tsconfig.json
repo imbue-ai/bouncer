@@ -9,7 +9,7 @@
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
-    "lib": ["ES2020", "ES2022.Error", "DOM", "DOM.Iterable"],
+    "lib": ["ES2020", "ES2022.Error", "ES2022.Intl", "DOM", "DOM.Iterable"],
     "types": ["chrome"]
   },
   "include": ["src/**/*.ts", "adapters/**/*.ts"],
