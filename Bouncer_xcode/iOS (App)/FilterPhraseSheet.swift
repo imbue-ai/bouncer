@@ -918,7 +918,19 @@ struct ProvidersSettingsView: View {
         }
         self.keys = loadedKeys
         self.storedKeys = loadedKeys
-        self.selectedModel = (data["selectedModel"] as? String) ?? ""
+
+        // On a fresh install chrome.storage.local has no `selectedModel`
+        // entry yet. The JS pipeline still classifies posts because
+        // `DEFAULT_MODEL` in shared/models.ts falls back to "imbue" on
+        // Imbue-enabled builds — but the native UI was showing
+        // "No model selected" because we only mirrored the stored value.
+        // Reflect the JS default so the providers page matches reality.
+        let stored = (data["selectedModel"] as? String) ?? ""
+        if stored.isEmpty, hasImbueBackend {
+            self.selectedModel = imbueModelKey
+        } else {
+            self.selectedModel = stored
+        }
         self.isLoaded = true
     }
 
