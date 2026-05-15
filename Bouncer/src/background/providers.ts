@@ -214,8 +214,6 @@ export async function callImbueAPI(
     reason: reason || 'unknown',
   };
 
-  console.log('[Imbue] → tweetFilter request:', JSON.stringify(message, null, 2));
-
   return imbueWebSocket.send(message) as unknown as Promise<ImbueFilterResponse | ImbueSuggestResponse>;
 }
 

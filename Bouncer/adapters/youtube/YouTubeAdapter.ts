@@ -47,6 +47,27 @@ function canonicalThumbnailUrl(videoId: string): string {
   return `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`;
 }
 
+// Builds the `imageUrls` / `displayImageUrls` pair for a YouTube post.
+// `imageUrls` is the classifier payload (JPEG-guaranteed via canonical
+// mqdefault when we have a video ID). `displayImageUrls` is the original
+// lockup URL for the filtered-posts panel, when available.
+function buildThumbnailUrls(
+  videoId: string | null,
+  originalUrl: string | null | undefined,
+): { imageUrls: string[]; displayImageUrls: string[] | undefined } {
+  const hasOriginal = !!originalUrl && !originalUrl.startsWith('data:');
+  if (videoId) {
+    return {
+      imageUrls: [canonicalThumbnailUrl(videoId)],
+      displayImageUrls: hasOriginal ? [originalUrl] : undefined,
+    };
+  }
+  if (hasOriginal) {
+    return { imageUrls: [originalUrl], displayImageUrls: undefined };
+  }
+  return { imageUrls: [], displayImageUrls: undefined };
+}
+
 window.BouncerAdapter = class YouTubeAdapter implements PlatformAdapter {
   siteId = 'youtube' as const;
   filterBoxPlacement = 'banner' as const;
@@ -78,80 +99,84 @@ window.BouncerAdapter = class YouTubeAdapter implements PlatformAdapter {
   // anchored just below it — that's where the existing filter UI lives.
   // Footprint matches a normal YT chip; the heavy editor only appears when
   // the user wants it.
-  private _initChipAndPopover() {
-    const banner = () => document.querySelector<HTMLElement>('.filter-phrases-banner--youtube');
+  private _countMirrorWired = false;
 
-    const ensureChip = (): HTMLElement | null => {
-      let chip = document.querySelector<HTMLElement>('.bouncer-chip');
-      if (chip) return chip;
+  private _getBanner(): HTMLElement | null {
+    return document.querySelector<HTMLElement>('.filter-phrases-banner--youtube');
+  }
 
-      // Insert into `iron-selector#chips` (the actual scrollable chip list)
-      // so that horizontal scrolling moves the Bouncer chip along with the
-      // other category chips. Inserting one level up (chips-content) places
-      // the chip outside the scroll viewport and freezes it in place.
-      const chipBar = document.querySelector<HTMLElement>('ytd-feed-filter-chip-bar-renderer');
-      if (!chipBar) return null;
-      const chipList = chipBar.querySelector<HTMLElement>('iron-selector#chips');
-      if (!chipList) return null;
+  private _ensureChip(): HTMLElement | null {
+    let chip = document.querySelector<HTMLElement>('.bouncer-chip');
+    if (chip) return chip;
 
-      const logoUrl = chrome.runtime.getURL('icons/icon48.png');
-      chip = document.createElement('button');
-      chip.className = 'bouncer-chip';
-      (chip as HTMLButtonElement).type = 'button';
-      chip.setAttribute('aria-label', 'Open Bouncer filters');
-      chip.setAttribute('aria-haspopup', 'dialog');
-      chip.setAttribute('aria-expanded', 'false');
-      chip.innerHTML = `
-        <img class="bouncer-chip__logo" src="${logoUrl}" alt="" aria-hidden="true">
-        <span class="bouncer-chip__label">Bouncer</span>
-        <span class="bouncer-chip__count" aria-hidden="true">0</span>
-      `;
-      chip.addEventListener('click', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        this._togglePopover();
-      });
+    // Insert into `iron-selector#chips` (the actual scrollable chip list)
+    // so that horizontal scrolling moves the Bouncer chip along with the
+    // other category chips. Inserting one level up (chips-content) places
+    // the chip outside the scroll viewport and freezes it in place.
+    const chipBar = document.querySelector<HTMLElement>('ytd-feed-filter-chip-bar-renderer');
+    if (!chipBar) return null;
+    const chipList = chipBar.querySelector<HTMLElement>('iron-selector#chips');
+    if (!chipList) return null;
 
-      // First child so it sits left of "All".
-      chipList.insertBefore(chip, chipList.firstChild);
-      return chip;
+    const logoUrl = chrome.runtime.getURL('icons/icon48.png');
+    chip = document.createElement('button');
+    chip.className = 'bouncer-chip';
+    (chip as HTMLButtonElement).type = 'button';
+    chip.setAttribute('aria-label', 'Open Bouncer filters');
+    chip.setAttribute('aria-haspopup', 'dialog');
+    chip.setAttribute('aria-expanded', 'false');
+    chip.innerHTML = `
+      <img class="bouncer-chip__logo" src="${logoUrl}" alt="" aria-hidden="true">
+      <span class="bouncer-chip__label">Bouncer</span>
+      <span class="bouncer-chip__count" aria-hidden="true">0</span>
+    `;
+    chip.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this._togglePopover();
+    });
+
+    // First child so it sits left of "All".
+    chipList.insertBefore(chip, chipList.firstChild);
+    return chip;
+  }
+
+  // Mirror the filtered-post count into the chip's badge. The shared UI
+  // already maintains `.filtered-toggle-count` inside the banner-now-popover;
+  // watching its mutations is simpler than plumbing through a new hook from
+  // `updateFilteredTabCount()`.
+  private _wireCountMirror(): boolean {
+    const popover = this._getBanner();
+    if (!popover) return false;
+    const source = popover.querySelector('.filtered-toggle-count');
+    if (!source) return false;
+    const update = () => {
+      const chip = document.querySelector<HTMLElement>('.bouncer-chip__count');
+      if (!chip) return;
+      // Source text is "(N)" — strip parens for the chip badge.
+      const raw = source.textContent || '';
+      const n = raw.replace(/[^\d]/g, '') || '0';
+      chip.textContent = n;
+      chip.classList.toggle('bouncer-chip__count--nonzero', n !== '0');
     };
+    update();
+    new MutationObserver(update).observe(source, { characterData: true, childList: true, subtree: true });
+    return true;
+  }
 
-    // Mirror the filtered-post count into the chip's badge. The shared UI
-    // already maintains `.filtered-toggle-count` inside the banner-now-
-    // popover; watching its mutations is simpler than plumbing through a
-    // new hook from `updateFilteredTabCount()`.
-    const wireCountMirror = () => {
-      const popover = banner();
-      if (!popover) return false;
-      const source = popover.querySelector('.filtered-toggle-count');
-      if (!source) return false;
-      const update = () => {
-        const chip = document.querySelector<HTMLElement>('.bouncer-chip__count');
-        if (!chip) return;
-        // Source text is "(N)" — strip parens for the chip badge.
-        const raw = source.textContent || '';
-        const n = raw.replace(/[^\d]/g, '') || '0';
-        chip.textContent = n;
-        chip.classList.toggle('bouncer-chip__count--nonzero', n !== '0');
-      };
-      update();
-      new MutationObserver(update).observe(source, { characterData: true, childList: true, subtree: true });
-      return true;
-    };
+  private _positionPopover = (): void => {
+    const b = this._getBanner();
+    const chip = document.querySelector<HTMLElement>('.bouncer-chip');
+    if (!b || !chip) return;
+    const rect = chip.getBoundingClientRect();
+    b.style.setProperty('--ff-banner-left', `${rect.left}px`);
+    b.style.setProperty('--ff-banner-top', `${rect.bottom + 8}px`);
+  };
 
-    const positionPopover = () => {
-      const b = banner();
-      const chip = document.querySelector<HTMLElement>('.bouncer-chip');
-      if (!b || !chip) return;
-      const rect = chip.getBoundingClientRect();
-      b.style.setProperty('--ff-banner-left', `${rect.left}px`);
-      b.style.setProperty('--ff-banner-top', `${rect.bottom + 8}px`);
-    };
-
+  private _wireDismissHandlers(): void {
     // Close popover when clicking outside it or pressing Escape.
     document.addEventListener('click', (e) => {
-      const b = banner();
+      const b = this._getBanner();
       if (!b || !b.classList.contains('bouncer-popover-open')) return;
       const target = e.target as Node;
       const chip = document.querySelector('.bouncer-chip');
@@ -163,27 +188,28 @@ window.BouncerAdapter = class YouTubeAdapter implements PlatformAdapter {
     });
 
     // Reposition on resize/scroll (popover top tracks the chip).
-    window.addEventListener('resize', positionPopover, { passive: true });
-    window.addEventListener('scroll', positionPopover, { passive: true });
+    window.addEventListener('resize', this._positionPopover, { passive: true });
+    window.addEventListener('scroll', this._positionPopover, { passive: true });
+  }
 
-    let countMirrorWired = false;
-    const trySetup = () => {
-      const chip = ensureChip();
-      const b = banner();
-      if (chip && b) {
-        b.classList.remove('bouncer-popover-open');
-        chip.setAttribute('aria-expanded', 'false');
-        positionPopover();
-        if (!countMirrorWired) countMirrorWired = wireCountMirror();
-        return countMirrorWired;
-      }
-      return false;
-    };
+  private _trySetupChip(): boolean {
+    const chip = this._ensureChip();
+    const b = this._getBanner();
+    if (!chip || !b) return false;
+    b.classList.remove('bouncer-popover-open');
+    chip.setAttribute('aria-expanded', 'false');
+    this._positionPopover();
+    if (!this._countMirrorWired) this._countMirrorWired = this._wireCountMirror();
+    return this._countMirrorWired;
+  }
 
-    if (!trySetup()) {
-      const mo = new MutationObserver(() => { if (trySetup()) mo.disconnect(); });
-      mo.observe(document.body, { childList: true, subtree: true });
-    }
+  private _initChipAndPopover() {
+    this._wireDismissHandlers();
+    if (this._trySetupChip()) return;
+    // The chip bar isn't in the DOM yet (SPA navigation, lazy renderer).
+    // Retry on each mutation until setup completes, then disconnect.
+    const mo = new MutationObserver(() => { if (this._trySetupChip()) mo.disconnect(); });
+    mo.observe(document.body, { childList: true, subtree: true });
   }
 
   private _togglePopover() {
@@ -330,23 +356,9 @@ window.BouncerAdapter = class YouTubeAdapter implements PlatformAdapter {
     });
     const timeText = rowTexts.join(' • ') || null;
 
-    // Prefer canonical mqdefault.jpg over whatever lazy/oar variant the DOM
-    // exposes — see `canonicalThumbnailUrl` for the why.
     const videoId = getVideoIdFromContentIdClass(article);
     const thumbImg = article.querySelector<HTMLImageElement>('yt-thumbnail-view-model img.ytCoreImageHost');
-    const thumbSrc = thumbImg?.src || '';
-    const hasOriginalThumb = thumbSrc && !thumbSrc.startsWith('data:');
-    let imageUrls: string[];
-    let displayImageUrls: string[] | undefined;
-    if (videoId) {
-      imageUrls = [canonicalThumbnailUrl(videoId)];
-      // Panel shows the original full-resolution thumb (AVIF is fine in a browser).
-      if (hasOriginalThumb) displayImageUrls = [thumbSrc];
-    } else if (hasOriginalThumb) {
-      imageUrls = [thumbSrc];
-    } else {
-      imageUrls = [];
-    }
+    const { imageUrls, displayImageUrls } = buildThumbnailUrls(videoId, thumbImg?.src);
 
     return {
       text,
@@ -447,18 +459,7 @@ window.BouncerAdapter = class YouTubeAdapter implements PlatformAdapter {
     // rewrite to canonical mqdefault.jpg (see `canonicalThumbnailUrl`). Ads
     // without a videoId fall back to whatever the lockup gave us — those have
     // not been observed serving AVIF in practice.
-    const hasOriginalThumb = data.thumbnailUrl && !data.thumbnailUrl.startsWith('data:');
-    let imageUrls: string[];
-    let displayImageUrls: string[] | undefined;
-    if (data.videoId) {
-      imageUrls = [canonicalThumbnailUrl(data.videoId)];
-      // Panel shows the original full-resolution thumb (AVIF is fine in a browser).
-      if (hasOriginalThumb) displayImageUrls = [data.thumbnailUrl!];
-    } else if (hasOriginalThumb) {
-      imageUrls = [data.thumbnailUrl!];
-    } else {
-      imageUrls = [];
-    }
+    const { imageUrls, displayImageUrls } = buildThumbnailUrls(data.videoId, data.thumbnailUrl);
 
     return {
       text,
