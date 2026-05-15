@@ -1,7 +1,20 @@
 // ==================== Site IDs ====================
 
 /** Known platform adapter identifiers. Add new entries when adding adapters. */
-export type SiteId = 'twitter';
+export type SiteId = 'twitter' | 'youtube';
+
+/** Where the filter box is rendered on a platform.
+ *  - `sidebar`: Twitter-style — pinned in the right-hand column, with companion
+ *    bottom and mobile variants injected as well.
+ *  - `banner`: full-width strip inserted above the main feed. Used on
+ *    platforms without a usable right-hand column. */
+export type FilterBoxPlacement = 'sidebar' | 'banner';
+
+/** Where a banner-style adapter wants the filter box inserted. */
+export interface FilterBoxAnchor {
+  parent: HTMLElement;
+  insertBefore: Node | null;
+}
 
 // ==================== Core Evaluation ====================
 
@@ -78,6 +91,12 @@ export interface PostContent {
   quote: QuoteContent | null;
   postUrl: string | null;
   imageUrls: string[];
+  /** Optional higher-quality URLs for the filtered-posts panel. `imageUrls`
+   *  is what we send to the classifier (small, JPEG-guaranteed); when an
+   *  adapter wants the panel to display a richer image (e.g. YouTube's
+   *  hqdefault thumbnail vs. the classifier's mqdefault), it sets this.
+   *  Falls back to `imageUrls` when absent. */
+  displayImageUrls?: string[];
   hasMediaContainer: boolean;
   fromStore?: boolean;
   mediaBlurred?: boolean;
@@ -188,6 +207,13 @@ export interface PlatformSelectors {
 export interface PlatformAdapter {
   siteId: SiteId;
   selectors: PlatformSelectors;
+  /** Where to render the filter box on this platform. Defaults to `'sidebar'`
+   *  when omitted, for backwards compatibility with the original Twitter adapter. */
+  filterBoxPlacement?: FilterBoxPlacement;
+  /** Banner-style adapters return the anchor (parent + insertBefore reference)
+   *  where the banner should be inserted in the page. Sidebar-style adapters
+   *  don't need this — they use `selectors.sidebar`. */
+  getFilterBoxAnchor?(): FilterBoxAnchor | null;
   extractPostContent(article: HTMLElement): PostContent;
   shouldProcessCurrentPage(): boolean;
   isMainPost(article: HTMLElement): boolean;

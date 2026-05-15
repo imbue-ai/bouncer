@@ -1,0 +1,184 @@
+/* YouTube-specific styles for Bouncer */
+
+/* ===== Bouncer chip (lives in YT's chip rail) ===== */
+/* Slightly taller than YT's 32px chips and fully pill-shaped so the
+   Bouncer brand reads at a glance. Bold label, real logo, circular badge. */
+.bouncer-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  box-sizing: border-box;
+  padding: 0 10px 0 6px;
+  margin-right: 8px;
+  border-radius: 999px;
+  border: 1px solid;
+  font-family: "Roboto", "Arial", sans-serif;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  white-space: nowrap;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+
+/* Light mode — match YT's inactive chip palette. */
+body.site-youtube .bouncer-chip {
+  background: #f2f2f2;
+  border-color: #d3d3d3;
+  color: #0f0f0f;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+body.site-youtube .bouncer-chip:hover {
+  background: #e5e5e5;
+  border-color: #c0c0c0;
+}
+
+/* Dark mode — YT toggles `dark` on the <html> element. */
+html[dark] .bouncer-chip {
+  background: #272727;
+  border-color: #3f3f3f;
+  color: #f1f1f1;
+}
+
+html[dark] .bouncer-chip:hover {
+  background: #3f3f3f;
+  border-color: #525252;
+}
+
+.bouncer-chip__logo {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: block;
+  flex-shrink: 0;
+}
+
+.bouncer-chip__label {
+  font-weight: 600;
+  letter-spacing: 0.1px;
+}
+
+/* Count badge: circular, fixed dimensions. Background only when nonzero,
+   so a "0" doesn't visually clutter the chip. */
+.bouncer-chip__count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  opacity: 0.55;
+}
+
+.bouncer-chip__count--nonzero {
+  background: rgb(200, 110, 65);
+  color: #fff;
+  opacity: 1;
+}
+
+/* ===== Share button — Twitter-only, hide on YT's popover ===== */
+.filter-phrases-banner--youtube .filter-pack-share-btn {
+  display: none !important;
+}
+
+/* ===== "Bounce this video" action button ===== */
+/* Anchored directly below the three-dots menu on every card. Visual
+   styling — size, color, hover — is inherited from content.css. */
+
+/* Regular videos + ads: 3-dots sits at the top-right of the metadata host;
+   metadata host's height varies with title wrap, so we use a fixed top
+   offset (matches the 3-dots' height + a small gap). */
+.ff-why-annoying-btn.ff-yt-under-menu {
+  position: absolute;
+  top: 40px;
+  right: 0;
+  z-index: 10;
+}
+
+/* Shorts: 3-dots sits at the right edge of the title row, vertically
+   centered. We anchor inside the same metadata row and pin our button
+   directly below it. */
+.ff-why-annoying-btn.ff-yt-short-menu {
+  position: absolute;
+  top: 40px;
+  right: 0;
+  z-index: 10;
+}
+
+/* ===== Popover (the former full-width banner) ===== */
+/* The banner element from injectBannerFilterBox is repurposed as a
+   floating popover anchored under the Bouncer chip. Hidden by default;
+   `.bouncer-popover-open` reveals it. Position is `fixed` because
+   `ytd-browse`'s overflow: hidden breaks sticky. */
+.filter-phrases-banner.filter-phrases-banner--youtube {
+  display: none;
+  position: fixed;
+  top: var(--ff-banner-top, 112px);
+  left: var(--ff-banner-left, 240px);
+  width: 380px;
+  max-height: 70vh;
+  overflow-y: auto;
+  z-index: 2300;
+  font-family: "Roboto", "Arial", sans-serif;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  border-radius: 12px;
+}
+
+.filter-phrases-banner--youtube.bouncer-popover-open {
+  display: block;
+}
+
+.filter-phrases-banner--youtube.dark-mode .filter-phrases-container {
+  background-color: #212121;
+  border-color: rgb(234, 133, 84);
+}
+
+.filter-phrases-banner--youtube.light-mode .filter-phrases-container {
+  background-color: #ffffff;
+  border-color: rgb(200, 110, 65);
+}
+
+.filter-phrases-banner--youtube .filter-phrases-container {
+  padding: 12px 16px;
+  border-radius: 12px;
+}
+
+/* Filtered-posts panel: 16:9 thumbnail when we replay a hidden lockup. */
+body.site-youtube .slop-media-container {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border-radius: 12px;
+  margin-top: 8px;
+}
+
+body.site-youtube .slop-media-container .slop-media-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* Avatar fallback for Shorts: YouTube's Shorts payload doesn't include channel
+   info, so we render the Shorts glyph on a red square instead of "?". */
+body.site-youtube .slop-post-avatar.slop-avatar-shorts {
+  background-color: #ff0033;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+body.site-youtube .slop-post-avatar.slop-avatar-shorts svg {
+  width: 60%;
+  height: 60%;
+}
+

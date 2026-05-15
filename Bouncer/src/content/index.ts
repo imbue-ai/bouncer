@@ -17,6 +17,7 @@ import {
   getFilteredPosts, getFilteredTabActive,
   updateTheme,
   injectFilterPhrasesInput, injectBottomFilterBox, injectMobileFilterBox,
+  injectBannerFilterBox,
   syncFilterPhrases, addFilterPhrase, removeFilterPhrase,
   showSettingsModal, renderFilteredPostsView,
   initModelLoadingListener,
@@ -575,9 +576,13 @@ import { formatPostForEvaluation } from '../shared/utils';
     // users should be able to import shared filter packs from anywhere.
     observeImportCodes();
 
-    injectFilterPhrasesInput();
-    injectBottomFilterBox();
-    injectMobileFilterBox();
+    if (adapter.filterBoxPlacement === 'banner') {
+      injectBannerFilterBox();
+    } else {
+      injectFilterPhrasesInput();
+      injectBottomFilterBox();
+      injectMobileFilterBox();
+    }
 
     initModelLoadingListener();
 

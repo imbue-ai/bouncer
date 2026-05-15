@@ -28,6 +28,7 @@ interface StoreResult {
 
 window.BouncerAdapter = class TwitterAdapter implements PlatformAdapter {
   siteId = 'twitter' as const;
+  filterBoxPlacement = 'sidebar' as const;
 
   selectors: PlatformSelectors = {
     post: 'article[data-testid="tweet"]',
