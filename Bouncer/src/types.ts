@@ -153,6 +153,8 @@ interface SettingsBase {
   predefinedModelKwargs: Record<string, Record<string, unknown>>;
   aiTextFilterEnabled: boolean;
   aiTextDetectionThreshold: number;
+  aiImageFilterEnabled: boolean;
+  aiImageDetectionThreshold: number;
   // When false, replies on permalink (/status/<id>) pages are not
   // submitted for evaluation. The main timeline is unaffected either way.
   // Defaults to true to preserve historical behavior.
@@ -383,5 +385,13 @@ export interface ImbueAiTextResponse extends ImbueResponseBase {
   confidence: number;
 }
 
+/** Response from the detectAiImage action. One p_fake score per input URL,
+ *  in the same order; confidence is max(scores). No rawResponse — the
+ *  worker emits scores directly. */
+export interface ImbueAiImageResponse extends ImbueResponseBase {
+  scores: number[];
+  confidence: number;
+}
+
 /** Discriminated Imbue response — callers should narrow via the action they sent. */
-export type ImbueAPIResponse = ImbueFilterResponse | ImbueSuggestResponse | ImbueAiTextResponse;
+export type ImbueAPIResponse = ImbueFilterResponse | ImbueSuggestResponse | ImbueAiTextResponse | ImbueAiImageResponse;

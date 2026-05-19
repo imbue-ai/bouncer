@@ -3,7 +3,7 @@
 import type { ModelDef, LocalModelDef, LocalModelStatus, StorageSchema } from '../types';
 import { PREDEFINED_MODELS, DEFAULT_MODEL } from '../shared/models';
 import { escapeHtml, parseHTML } from '../shared/utils';
-import { getStorage, setStorage, removeStorage, clampThreshold } from '../shared/storage';
+import { getStorage, setStorage, removeStorage, clampThreshold, clampImageThreshold } from '../shared/storage';
 import { asyncHandler } from '../shared/async';
 
 // Storage key for predefined model API kwargs overrides
@@ -245,6 +245,19 @@ function setupStorageListener() {
       const valueEl = document.getElementById('aiTextThresholdValue');
       if (valueEl) valueEl.textContent = `${Math.round(v * 100)}%`;
     }
+    if (areaName === 'local' && changes.aiImageFilterEnabled) {
+      const enabled = changes.aiImageFilterEnabled.newValue === true;
+      const aiImageEl = document.getElementById('enableAiImageFilter') as HTMLInputElement | null;
+      if (aiImageEl) aiImageEl.checked = enabled;
+      setImageThresholdBlockEnabled(enabled);
+    }
+    if (areaName === 'local' && changes.aiImageDetectionThreshold) {
+      const v = clampImageThreshold(changes.aiImageDetectionThreshold.newValue);
+      const thresholdEl = document.getElementById('aiImageThreshold') as HTMLInputElement | null;
+      if (thresholdEl) thresholdEl.value = String(v);
+      const valueEl = document.getElementById('aiImageThresholdValue');
+      if (valueEl) valueEl.textContent = `${Math.round(v * 100)}%`;
+    }
   });
 }
 
@@ -263,6 +276,8 @@ async function loadSettings() {
     'localModelsEnabled',
     'aiTextFilterEnabled',
     'aiTextDetectionThreshold',
+    'aiImageFilterEnabled',
+    'aiImageDetectionThreshold',
     'aiTextFilterExperimental',
     'filterReplies'
   ]);
@@ -302,6 +317,19 @@ async function loadSettings() {
   }
   setThresholdBlockEnabled(aiEnabled);
 
+  // AI-image-detection toggle + threshold (sibling of the text controls).
+  const aiImageEl = document.getElementById('enableAiImageFilter') as HTMLInputElement | null;
+  const aiImageEnabled = data.aiImageFilterEnabled === true;
+  if (aiImageEl) aiImageEl.checked = aiImageEnabled;
+  const imageThresholdEl = document.getElementById('aiImageThreshold') as HTMLInputElement | null;
+  if (imageThresholdEl) {
+    const v = clampImageThreshold(data.aiImageDetectionThreshold);
+    imageThresholdEl.value = String(v);
+    const valueEl = document.getElementById('aiImageThresholdValue');
+    if (valueEl) valueEl.textContent = `${Math.round(v * 100)}%`;
+  }
+  setImageThresholdBlockEnabled(aiImageEnabled);
+
   // AI-text-filter experimental gate. The AI detector is Imbue-only
   // (callImbueAiTextDetection), so hide the entire UI surface — the
   // experimental toggle and its content — when the Imbue backend isn't
@@ -332,6 +360,11 @@ async function loadSettings() {
 // slider always reflects whether the feature is on.
 function setThresholdBlockEnabled(enabled: boolean) {
   const block = document.getElementById('aiTextThresholdBlock');
+  if (block) block.setAttribute('aria-disabled', enabled ? 'false' : 'true');
+}
+
+function setImageThresholdBlockEnabled(enabled: boolean) {
+  const block = document.getElementById('aiImageThresholdBlock');
   if (block) block.setAttribute('aria-disabled', enabled ? 'false' : 'true');
 }
 
@@ -608,11 +641,11 @@ function setupEventListeners() {
     const enabled = (e.target as HTMLInputElement).checked;
     setAiTextExperimentalContentVisible(enabled);
     await setStorage({ aiTextFilterExperimental: enabled });
-    // When experimental is turned off, also disable the underlying AI text filter
-    // so the pipeline naturally stops applying it (mirrors how disabling local
-    // models switches a selected local model back to imbue).
+    // When experimental is turned off, also disable the underlying AI text and
+    // image filters so the pipeline naturally stops applying them (mirrors how
+    // disabling local models switches a selected local model back to imbue).
     if (!enabled) {
-      await setStorage({ aiTextFilterEnabled: false });
+      await setStorage({ aiTextFilterEnabled: false, aiImageFilterEnabled: false });
     }
   })().catch(err => console.error('[Popup] enableAiTextExperimental change failed:', err)); });
 
@@ -645,6 +678,29 @@ function setupEventListeners() {
     renderThresholdPercent(clamped);
     await setStorage({ aiTextDetectionThreshold: clamped });
   })().catch(err => console.error('[Popup] aiTextThreshold change failed:', err)); });
+
+  // AI-image-detection toggle + threshold (mirrors the AI text controls).
+  document.getElementById('enableAiImageFilter')?.addEventListener('change', (e) => { (async () => {
+    const enabled = (e.target as HTMLInputElement).checked;
+    setImageThresholdBlockEnabled(enabled);
+    await setStorage({ aiImageFilterEnabled: enabled });
+  })().catch(err => console.error('[Popup] enableAiImageFilter change failed:', err)); });
+
+  const imageThresholdInputEl = document.getElementById('aiImageThreshold') as HTMLInputElement | null;
+  const imageThresholdValueEl = document.getElementById('aiImageThresholdValue');
+  const renderImageThresholdPercent = (v: number) => {
+    if (imageThresholdValueEl) imageThresholdValueEl.textContent = `${Math.round(v * 100)}%`;
+  };
+  imageThresholdInputEl?.addEventListener('input', (e) => {
+    renderImageThresholdPercent(parseFloat((e.target as HTMLInputElement).value));
+  });
+  imageThresholdInputEl?.addEventListener('change', (e) => { (async () => {
+    const v = parseFloat((e.target as HTMLInputElement).value);
+    if (!Number.isFinite(v)) return;
+    const clamped = Math.min(1, Math.max(0, v));
+    renderImageThresholdPercent(clamped);
+    await setStorage({ aiImageDetectionThreshold: clamped });
+  })().catch(err => console.error('[Popup] aiImageThreshold change failed:', err)); });
 
   // Local models toggle
   document.getElementById('enableLocalModels')!.addEventListener('change', (e) => { (async () => {

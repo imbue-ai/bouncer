@@ -1,7 +1,7 @@
 // iOS FAB, filtered modal, native sheet bridge
 
 import type { IOSDeps } from '../types';
-import { clampThreshold } from '../shared/storage';
+import { clampThreshold, clampImageThreshold } from '../shared/storage';
 import { parseHTML } from '../shared/utils';
 import { shareFilterPackForIOS } from './ui';
 
@@ -16,6 +16,10 @@ interface FFWindow {
   __ff_setAiTextFilterEnabled?: (enabled: boolean) => Promise<void>;
   __ff_getAiTextDetectionThreshold?: () => Promise<number>;
   __ff_setAiTextDetectionThreshold?: (value: number) => Promise<void>;
+  __ff_getAiImageFilterEnabled?: () => Promise<boolean>;
+  __ff_setAiImageFilterEnabled?: (enabled: boolean) => Promise<void>;
+  __ff_getAiImageDetectionThreshold?: () => Promise<number>;
+  __ff_setAiImageDetectionThreshold?: (value: number) => Promise<void>;
   __ff_shareFilterPack?: () => Promise<{ ok: boolean; error?: string }>;
   __ff_getStorage?: (keys: string[]) => Promise<Record<string, unknown>>;
   __ff_setStorage?: (items: Record<string, unknown>) => Promise<void>;
@@ -107,6 +111,27 @@ export function initIOS(deps: IOSDeps) {
     const clamped = clampThreshold(n);
     console.log('[Bouncer][iOS] __ff_setAiTextDetectionThreshold:', clamped);
     await chrome.storage.local.set({ aiTextDetectionThreshold: clamped });
+  };
+
+  // AI-image-detection toggle bridge. Mirrors the AI-text bridge above.
+  w.__ff_getAiImageFilterEnabled = async (): Promise<boolean> => {
+    const data = await chrome.storage.local.get(['aiImageFilterEnabled']);
+    return data.aiImageFilterEnabled === true;
+  };
+  w.__ff_setAiImageFilterEnabled = async (enabled: boolean): Promise<void> => {
+    console.log('[Bouncer][iOS] __ff_setAiImageFilterEnabled:', enabled);
+    await chrome.storage.local.set({ aiImageFilterEnabled: enabled === true });
+  };
+  w.__ff_getAiImageDetectionThreshold = async (): Promise<number> => {
+    const data = await chrome.storage.local.get(['aiImageDetectionThreshold']);
+    return clampImageThreshold(data.aiImageDetectionThreshold);
+  };
+  w.__ff_setAiImageDetectionThreshold = async (value: number): Promise<void> => {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return;
+    const clamped = clampImageThreshold(n);
+    console.log('[Bouncer][iOS] __ff_setAiImageDetectionThreshold:', clamped);
+    await chrome.storage.local.set({ aiImageDetectionThreshold: clamped });
   };
 
   // Native "Share filters" button drives the same composer-paste flow the

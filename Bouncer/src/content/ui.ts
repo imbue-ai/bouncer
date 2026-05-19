@@ -273,6 +273,17 @@ const aiTextToggleHTML = `
   </label>
 `;
 
+// Sibling of the AI-text toggle. Same DOM shape so it picks up the existing
+// `.filter-ai-text-toggle-*` styling; only the input class differs so we can
+// wire change handlers separately.
+const aiImageToggleHTML = `
+  <label class="filter-ai-text-toggle filter-ai-image-toggle">
+    <input type="checkbox" class="filter-ai-text-toggle-input filter-ai-image-toggle-input">
+    <span class="filter-ai-text-toggle-slider" aria-hidden="true"></span>
+    <span class="filter-ai-text-toggle-label">Filter AI-generated images</span>
+  </label>
+`;
+
 function injectPlaceholderKeyframes() {
   const n = PLACEHOLDER_PHRASES.length;
   const step = 100 / n;
@@ -371,6 +382,7 @@ function buildFilterContainerHTML(showSignOut = false): string {
         </div>
       </div>
       ${aiTextToggleHTML}
+      ${aiImageToggleHTML}
       <div class="filter-phrases-actions">
         <div class="filter-phrases-actions-left">
           <button class="filtered-toggle-btn">
@@ -583,7 +595,8 @@ function setupFilterBoxEventHandlers(container: HTMLElement) {
   const placeholderCycle = container.querySelector('.filter-placeholder-cycle');
   const toggleBtn = container.querySelector('.filtered-toggle-btn:not(.filter-pack-toggle-btn)')!;
   const settingsBtn = container.querySelector('.filter-settings-btn')!;
-  const aiTextToggle = container.querySelector<HTMLInputElement>('.filter-ai-text-toggle-input');
+  const aiTextToggle = container.querySelector<HTMLInputElement>('.filter-ai-text-toggle-input:not(.filter-ai-image-toggle-input)');
+  const aiImageToggle = container.querySelector<HTMLInputElement>('.filter-ai-image-toggle-input');
 
   // AI-text-detection toggle. Cache invalidation + post re-evaluation are
   // handled by the storage-change listener in background/index.ts.
@@ -599,6 +612,23 @@ function setupFilterBoxEventHandlers(container: HTMLElement) {
     aiTextToggle.addEventListener('change', () => {
       chrome.storage.local.set({ aiTextFilterEnabled: aiTextToggle.checked })
         .catch(err => console.error('[UI] Failed to save aiTextFilterEnabled:', err));
+    });
+  }
+
+  // AI-image-detection toggle. Same lifecycle as the text toggle and gated by
+  // the same `aiTextFilterExperimental` flag.
+  if (aiImageToggle) {
+    const aiImageToggleRow = aiImageToggle.closest<HTMLElement>('.filter-ai-image-toggle');
+    getStorage(['aiImageFilterEnabled', 'aiTextFilterExperimental']).then(data => {
+      aiImageToggle.checked = data.aiImageFilterEnabled === true;
+      if (aiImageToggleRow) {
+        aiImageToggleRow.style.display = data.aiTextFilterExperimental === true ? '' : 'none';
+      }
+    }).catch(err => console.error('[UI] Failed to load aiImageFilterEnabled:', err));
+
+    aiImageToggle.addEventListener('change', () => {
+      chrome.storage.local.set({ aiImageFilterEnabled: aiImageToggle.checked })
+        .catch(err => console.error('[UI] Failed to save aiImageFilterEnabled:', err));
     });
   }
 
@@ -955,9 +985,9 @@ async function runShareFilterPackForIOS(): Promise<void> {
   wrapper.style.fontFamily = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
   wrapper.replaceChildren(parseHTML(buildFilterContainerHTML(false)));
 
-  // Strip elements that don't belong in a shared screenshot — the AI-text
-  // toggle is a personal setting, not part of the filter pack identity.
-  wrapper.querySelector('.filter-ai-text-toggle')?.remove();
+  // Strip elements that don't belong in a shared screenshot — the AI-text /
+  // AI-image toggles are personal settings, not part of the filter pack identity.
+  wrapper.querySelectorAll('.filter-ai-text-toggle').forEach(el => el.remove());
 
   const list = wrapper.querySelector<HTMLElement>('.filter-phrases-list');
   if (list) renderPhrasesInContainer(list, phrases);
@@ -2465,6 +2495,7 @@ function detectorLabel(name: string): string {
   switch (name) {
     case 'filter': return 'Filter';
     case 'aiText': return 'AI text';
+    case 'aiImage': return 'AI image';
     default: return name;
   }
 }

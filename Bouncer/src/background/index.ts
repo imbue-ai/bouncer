@@ -695,7 +695,8 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
       handleFilterPackChange();
     }
 
-    if (changes.aiTextFilterEnabled || changes.aiTextDetectionThreshold) {
+    if (changes.aiTextFilterEnabled || changes.aiTextDetectionThreshold
+        || changes.aiImageFilterEnabled || changes.aiImageDetectionThreshold) {
       await handleSettingsChange(changes);
     }
 

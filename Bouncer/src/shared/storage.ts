@@ -79,8 +79,19 @@ export async function setDescriptions(descriptionsKey: DescriptionKey, descripti
 // classified as AI-generated.
 export const DEFAULT_AI_TEXT_DETECTION_THRESHOLD = 0.7;
 
+// Default confidence threshold for the AI-image-detection worker. The worker
+// returns a per-image score in [0, 1]; posts whose max score is at or above
+// the active threshold are classified as AI-generated.
+export const DEFAULT_AI_IMAGE_DETECTION_THRESHOLD = 0.7;
+
 /** Clamp a stored threshold to [0, 1] and fall back to the default for missing/non-finite values. */
 export function clampThreshold(v: unknown): number {
   if (typeof v !== 'number' || !Number.isFinite(v)) return DEFAULT_AI_TEXT_DETECTION_THRESHOLD;
+  return Math.min(1, Math.max(0, v));
+}
+
+/** Same as clampThreshold but with the image-detector default. */
+export function clampImageThreshold(v: unknown): number {
+  if (typeof v !== 'number' || !Number.isFinite(v)) return DEFAULT_AI_IMAGE_DETECTION_THRESHOLD;
   return Math.min(1, Math.max(0, v));
 }

@@ -632,7 +632,13 @@ import { formatPostForEvaluation } from '../shared/utils';
         // Sync each filter box's checkbox to the new value, then re-evaluate
         // all posts since the cache has been invalidated by the background.
         const checked = changes.aiTextFilterEnabled.newValue === true;
-        document.querySelectorAll<HTMLInputElement>('.filter-ai-text-toggle-input')
+        document.querySelectorAll<HTMLInputElement>('.filter-ai-text-toggle-input:not(.filter-ai-image-toggle-input)')
+          .forEach(el => { if (el.checked !== checked) el.checked = checked; });
+        reEvaluateAllPosts();
+      }
+      if (changes.aiImageFilterEnabled) {
+        const checked = changes.aiImageFilterEnabled.newValue === true;
+        document.querySelectorAll<HTMLInputElement>('.filter-ai-image-toggle-input')
           .forEach(el => { if (el.checked !== checked) el.checked = checked; });
         reEvaluateAllPosts();
       }

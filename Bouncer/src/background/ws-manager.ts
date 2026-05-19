@@ -43,6 +43,8 @@ interface WSResultMessage {
   suggestions?: string[];
   // AI-text-detection responses (detectAiText) — confidence in [0, 1]
   confidence?: number;
+  // AI-image-detection responses (detectAiImage) — per-image p_fake scores
+  scores?: number[];
   // WebSocket envelope fields
   type?: string;
   error?: string;
@@ -68,6 +70,7 @@ function validateWSMessage(raw: unknown): (WSAckMessage & WSResultMessage) | nul
   if (msg.processingTime !== undefined && typeof msg.processingTime !== 'number') return null;
   if (msg.suggestions !== undefined && !Array.isArray(msg.suggestions)) return null;
   if (msg.confidence !== undefined && typeof msg.confidence !== 'number') return null;
+  if (msg.scores !== undefined && !Array.isArray(msg.scores)) return null;
   if (msg.queueDepth !== undefined && typeof msg.queueDepth !== 'number') return null;
 
   return msg as unknown as WSAckMessage & WSResultMessage;
