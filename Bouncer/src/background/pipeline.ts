@@ -40,39 +40,6 @@ export const QUEUE_BACKLOG_THRESHOLD = 5;
 // produces unreliable scores and burns quota.
 const AI_TEXT_DETECTION_MIN_WORDS = 10;
 
-// Image hosts the backend AI-image-detection worker accepts. URLs to other
-// hosts are dropped server-side; we filter client-side so we can short-circuit
-// posts with no eligible images without burning a round trip.
-const AI_IMAGE_ALLOWED_HOSTS = new Set([
-  'pbs.twimg.com',
-  'media.licdn.com',
-  'i.ytimg.com',
-  'yt3.ggpht.com',
-  'yt3.googleusercontent.com',
-]);
-
-// Backend caps requests at 4 image URLs; extras are silently dropped.
-const AI_IMAGE_MAX_URLS = 4;
-
-// Mirrors the server-side URL validator: https only, allowed host, length cap.
-function filterAiImageUrls(urls: string[]): string[] {
-  const out: string[] = [];
-  for (const url of urls) {
-    if (typeof url !== 'string' || url.length === 0 || url.length > 2048) continue;
-    let parsed: URL;
-    try {
-      parsed = new URL(url);
-    } catch {
-      continue;
-    }
-    if (parsed.protocol !== 'https:') continue;
-    if (!AI_IMAGE_ALLOWED_HOSTS.has(parsed.hostname)) continue;
-    out.push(url);
-    if (out.length >= AI_IMAGE_MAX_URLS) break;
-  }
-  return out;
-}
-
 // Word count using ICU word-boundary segmentation (Unicode UAX #29). Counts
 // word-like segments — handles contractions ("don't" → 1), hyphenated forms
 // ("well-known" → 1), URLs sensibly, and CJK / Thai dictionary segmentation.
@@ -118,11 +85,11 @@ function computeAiSkipReason(
 // Mirrors computeAiSkipReason: backend gate → toggle → per-post content gate.
 function computeAiImageSkipReason(
   aiImageToggleOn: boolean,
-  eligibleImageUrls: string[],
+  imageUrls: string[],
 ): string | null {
   if (process.env.HAS_IMBUE_BACKEND !== 'true') return 'AI detection requires Imbue backend';
   if (!aiImageToggleOn) return 'AI image detection disabled';
-  if (eligibleImageUrls.length === 0) return 'No eligible images on this post';
+  if (imageUrls.length === 0) return 'No images on this post';
   return null;
 }
 
@@ -236,7 +203,6 @@ function buildLiveDetectors(args: {
   runFilter: () => Promise<DetectorResult>;
   rawText: string;
   imageUrls: string[];
-  aiImageUrls: string[];
   aiThreshold: number;
   aiImageThreshold: number;
 }): Detector[] {
@@ -269,16 +235,14 @@ function buildLiveDetectors(args: {
     detectors.push({
       name: 'aiImage',
       promise: (async (): Promise<DetectorResult> => {
-        const aiResp = await callImbueAiImageDetection(args.aiImageUrls);
+        const aiResp = await callImbueAiImageDetection(args.imageUrls);
         const isAi = aiResp.confidence >= args.aiImageThreshold;
         const pct = `${(aiResp.confidence * 100).toFixed(0)}%`;
-        const count = args.aiImageUrls.length;
-        const imgWord = count === 1 ? 'image' : 'images';
         return {
           shouldHide: isAi,
           reasoning: isAi
-            ? `AI-generated image detected (confidence ${pct} across ${count} ${imgWord})`
-            : `Images not detected as AI-generated (confidence ${pct} across ${count} ${imgWord})`,
+            ? `AI-generated image detected (confidence ${pct})`
+            : `Images not detected as AI-generated (confidence ${pct})`,
           category: isAi ? 'AI-generated image' : null,
           rawResponse: null,
         };
@@ -949,8 +913,7 @@ async function processBatch(): Promise<void> {
     const aiSkipReason = computeAiSkipReason(aiToggleOn, item.rawText);
     const aiEnabled = !aiSkipReason;
 
-    const aiImageUrls = filterAiImageUrls(imageUrls);
-    const aiImageSkipReason = computeAiImageSkipReason(aiImageToggleOn, aiImageUrls);
+    const aiImageSkipReason = computeAiImageSkipReason(aiImageToggleOn, imageUrls);
     const aiImageEnabled = !aiImageSkipReason;
 
     const tabPlan = buildTabPlan(filterEnabled, aiSkipReason, aiImageSkipReason);
@@ -963,7 +926,6 @@ async function processBatch(): Promise<void> {
       runFilter,
       rawText: item.rawText,
       imageUrls,
-      aiImageUrls,
       aiThreshold: settings.aiTextDetectionThreshold,
       aiImageThreshold: settings.aiImageDetectionThreshold,
     });
