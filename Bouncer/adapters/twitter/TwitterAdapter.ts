@@ -350,10 +350,21 @@ window.BouncerAdapter = class TwitterAdapter implements PlatformAdapter {
     if (this._fiberExtractorReady) return;
     this._fiberExtractorReady = true;
 
-    const script = document.createElement('script');
-    script.src = chrome.runtime.getURL('adapters/twitter/fiber-extractor.js');
-    (document.head || document.documentElement).appendChild(script);
-    script.onload = () => script.remove();
+    // iOS (WKWebView in-app mode) injects fiber-extractor.js as a WKUserScript
+    // in the page's main world from the native side — `chrome.runtime.getURL`
+    // would return an unhandled `feedfilter://` URL here, and a `<script src>`
+    // load would silently fail. The chrome-extension path needs the on-demand
+    // injection because manifest.json doesn't list the extractor as a
+    // content_script (it has to land in the page world, not the isolated
+    // world). We still need the cross-world result listener set up below in
+    // both cases.
+    const isInApp = typeof chrome !== 'undefined' && chrome._polyfilled;
+    if (!isInApp) {
+      const script = document.createElement('script');
+      script.src = chrome.runtime.getURL('adapters/twitter/fiber-extractor.js');
+      (document.head || document.documentElement).appendChild(script);
+      script.onload = () => script.remove();
+    }
 
     // Listen for store data results
     document.addEventListener('ff-tweet-data-result', (e) => {

@@ -105,6 +105,18 @@ struct FilteredWebView: UIViewRepresentable {
             print("[FeedFilter] Injected TwitterAdapter.js")
         }
 
+        // 5b. fiber-extractor.js — document end, page main world. Must run in
+        // the page's world (not `feedfilter`) so it can read X's React fiber
+        // refs (`__reactFiber$…`) and the Redux store off DOM nodes — those
+        // properties are world-scoped JS state, not DOM. Communicates with
+        // TwitterAdapter (in `feedfilter`) via document-level CustomEvents,
+        // which cross WKContentWorld boundaries because they're DOM events.
+        if let source = loadBundledScript(named: "fiber-extractor", ext: "js", subdirectory: "adapters/twitter") {
+            let script = WKUserScript(source: source, injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: .page)
+            controller.addUserScript(script)
+            print("[FeedFilter] Injected fiber-extractor.js (page world)")
+        }
+
         // 6. content.js — document end (bundled IIFE from dist/)
         if let source = loadBundledScript(named: "content", ext: "js", subdirectory: "dist") {
             let script = WKUserScript(source: source, injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: world)

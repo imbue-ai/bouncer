@@ -214,7 +214,19 @@ export async function callImbueAPI(
     reason: reason || 'unknown',
   };
 
-  return imbueWebSocket.send(message) as unknown as Promise<ImbueFilterResponse | ImbueSuggestResponse>;
+  console.log('[Filter] → request:', message);
+  const startedAt = Date.now();
+
+  try {
+    const response = await imbueWebSocket.send(message) as unknown as ImbueFilterResponse | ImbueSuggestResponse;
+    const wallMs = Date.now() - startedAt;
+    console.log(`[Filter] ← response (wallMs=${wallMs}):`, response);
+    return response;
+  } catch (err) {
+    const wallMs = Date.now() - startedAt;
+    console.warn(`[Filter] ✗ error after ${wallMs}ms:`, err);
+    throw err;
+  }
 }
 
 // Call the Imbue AI-text-detection worker via the same WebSocket gateway.

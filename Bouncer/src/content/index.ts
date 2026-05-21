@@ -195,40 +195,32 @@ import { formatPostForEvaluation } from '../shared/utils';
 
   const MAX_STORE_RETRIES = 3;
 
-  // In-app WKWebView mode: fiber-extractor can't load, use DOM extraction directly
-  const isInApp = typeof chrome !== 'undefined' && chrome._polyfilled;
-
   // Evaluate a post using the background script
   async function evaluatePost(article: HTMLElement) {
-    console.log('[Bouncer] evaluatePost called, isInApp:', isInApp);
     let content: PostContent | undefined;
 
-    if (isInApp) {
-      // WKWebView: use DOM-based extraction (store extraction unavailable)
-      content = extractPostContent(article);
-      console.log('[Bouncer] DOM extraction result:', content?.text?.substring(0, 80));
-    } else {
-      // Extension: extract post content from platform store (preferred source)
-      try {
-        content = await adapter.extractPostContentFromStore(article) ?? undefined;
-      } catch { /* store not ready */ }
+    // Extract post content from platform store (preferred source). On iOS the
+    // fiber-extractor is injected into the page's main world by the native
+    // host (see FilteredWebView.swift), so the same store path works there.
+    try {
+      content = await adapter.extractPostContentFromStore(article) ?? undefined;
+    } catch { /* store not ready */ }
 
-      // If store returned nothing, defer for MutationObserver to retry
-      if (!content) {
-        const retries = parseInt(article.dataset.ffStoreRetries || '0', 10);
-        if (retries >= MAX_STORE_RETRIES) {
-          console.warn('[Bouncer] Store extraction failed after', MAX_STORE_RETRIES, 'retries, skipping post');
-          postReasonings.set(article, {
-            shouldHide: false,
-            reasoning: 'Could not extract post data from store.'
-          });
-          markPostVerified(article);
-          return;
-        }
-        article.dataset.ffStoreRetries = String(retries + 1);
-        processedPosts.delete(article);
+    // If store returned nothing, defer for MutationObserver to retry
+    if (!content) {
+      const retries = parseInt(article.dataset.ffStoreRetries || '0', 10);
+      if (retries >= MAX_STORE_RETRIES) {
+        console.warn('[Bouncer] Store extraction failed after', MAX_STORE_RETRIES, 'retries, skipping post');
+        postReasonings.set(article, {
+          shouldHide: false,
+          reasoning: 'Could not extract post data from store.'
+        });
+        markPostVerified(article);
         return;
       }
+      article.dataset.ffStoreRetries = String(retries + 1);
+      processedPosts.delete(article);
+      return;
     }
 
     // Clear retry counter on success

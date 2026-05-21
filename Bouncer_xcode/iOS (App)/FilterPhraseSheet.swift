@@ -41,6 +41,8 @@ class FilterSheetViewModel: ObservableObject {
     @Published var isFilteredModalOpen = false
     @Published var aiTextFilterEnabled: Bool = false
     @Published var aiTextDetectionThreshold: Double = 0.7
+    @Published var aiImageFilterEnabled: Bool = false
+    @Published var aiImageDetectionThreshold: Double = 0.7
     @Published var filterReplies: Bool = true
 
     weak var webView: WKWebView?
@@ -187,6 +189,73 @@ class FilterSheetViewModel: ObservableObject {
         Task {
             try? await webView.callAsyncJavaScript(
                 "return await window.__ff_setAiTextDetectionThreshold(value)",
+                arguments: ["value": clamped],
+                in: nil,
+                contentWorld: Self.contentWorld
+            )
+        }
+    }
+
+    func loadAiImageFilterEnabled() {
+        guard let webView = webView else { return }
+        Task { @MainActor in
+            do {
+                let result = try await webView.callAsyncJavaScript(
+                    "return await window.__ff_getAiImageFilterEnabled()",
+                    arguments: [:],
+                    in: nil,
+                    contentWorld: Self.contentWorld
+                )
+                if let value = result as? Bool {
+                    self.aiImageFilterEnabled = value
+                }
+            } catch {
+                print("[FeedFilter] loadAiImageFilterEnabled error: \(error)")
+            }
+        }
+    }
+
+    func setAiImageFilterEnabled(_ enabled: Bool) {
+        aiImageFilterEnabled = enabled
+        guard let webView = webView else { return }
+        Task {
+            try? await webView.callAsyncJavaScript(
+                "return await window.__ff_setAiImageFilterEnabled(enabled)",
+                arguments: ["enabled": enabled],
+                in: nil,
+                contentWorld: Self.contentWorld
+            )
+        }
+    }
+
+    func loadAiImageDetectionThreshold() {
+        guard let webView = webView else { return }
+        Task { @MainActor in
+            do {
+                let result = try await webView.callAsyncJavaScript(
+                    "return await window.__ff_getAiImageDetectionThreshold()",
+                    arguments: [:],
+                    in: nil,
+                    contentWorld: Self.contentWorld
+                )
+                if let value = result as? Double {
+                    self.aiImageDetectionThreshold = value
+                } else if let value = result as? NSNumber {
+                    self.aiImageDetectionThreshold = value.doubleValue
+                }
+            } catch {
+                print("[FeedFilter] loadAiImageDetectionThreshold error: \(error)")
+            }
+        }
+    }
+
+    func setAiImageDetectionThreshold(_ value: Double) {
+        let clamped = min(1.0, max(0.0, value))
+        aiImageDetectionThreshold = clamped
+        guard let webView = webView else { return }
+        Task {
+            try? await webView.callAsyncJavaScript(
+                "return await window.__ff_setAiImageDetectionThreshold(value)",
                 arguments: ["value": clamped],
                 in: nil,
                 contentWorld: Self.contentWorld
@@ -598,8 +667,15 @@ struct BouncerSettingsView: View {
     @State private var draftThreshold: Double = 0.7
     @State private var isDragging: Bool = false
 
+    @State private var draftImageThreshold: Double = 0.7
+    @State private var isDraggingImage: Bool = false
+
     private var displayThreshold: Double {
         isDragging ? draftThreshold : viewModel.aiTextDetectionThreshold
+    }
+
+    private var displayImageThreshold: Double {
+        isDraggingImage ? draftImageThreshold : viewModel.aiImageDetectionThreshold
     }
 
     // AI text detection routes through the Imbue WebSocket gateway, which
@@ -694,6 +770,53 @@ struct BouncerSettingsView: View {
                 } footer: {
                     Text("Hide posts whose text appears to be written by AI. Posts at or above this confidence are hidden.")
                 }
+
+                Section {
+                    Toggle(isOn: Binding(
+                        get: { viewModel.aiImageFilterEnabled },
+                        set: { viewModel.setAiImageFilterEnabled($0) }
+                    )) {
+                        Text("Filter AI-generated images")
+                    }
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text("Confidence threshold")
+                            Spacer()
+                            Text("\(Int(round(displayImageThreshold * 100)))%")
+                                .foregroundStyle(.secondary)
+                                .monospacedDigit()
+                        }
+                        Slider(
+                            value: Binding(
+                                get: { displayImageThreshold },
+                                set: { draftImageThreshold = $0 }
+                            ),
+                            in: 0...1
+                        ) {
+                            Text("Confidence threshold")
+                        } minimumValueLabel: {
+                            Text("0%").font(.caption2).foregroundStyle(.secondary)
+                        } maximumValueLabel: {
+                            Text("100%").font(.caption2).foregroundStyle(.secondary)
+                        } onEditingChanged: { editing in
+                            if editing {
+                                draftImageThreshold = viewModel.aiImageDetectionThreshold
+                                isDraggingImage = true
+                            } else {
+                                isDraggingImage = false
+                                viewModel.setAiImageDetectionThreshold(draftImageThreshold)
+                            }
+                        }
+                    }
+                    .padding(.vertical, 4)
+                    .disabled(!viewModel.aiImageFilterEnabled)
+                    .opacity(viewModel.aiImageFilterEnabled ? 1.0 : 0.5)
+                } header: {
+                    Text("AI Image Detection")
+                } footer: {
+                    Text("Hide posts whose images appear to be AI-generated. Posts whose most-suspect image is at or above this confidence are hidden.")
+                }
             }
         }
         .navigationTitle("Settings")
@@ -703,6 +826,8 @@ struct BouncerSettingsView: View {
             if hasImbueBackend {
                 viewModel.loadAiTextFilterEnabled()
                 viewModel.loadAiTextDetectionThreshold()
+                viewModel.loadAiImageFilterEnabled()
+                viewModel.loadAiImageDetectionThreshold()
             }
         }
     }
