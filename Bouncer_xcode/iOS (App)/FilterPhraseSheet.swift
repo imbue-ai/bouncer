@@ -686,6 +686,26 @@ struct BouncerSettingsView: View {
         AppCheckBridge.shared.isAvailable
     }
 
+    // Load a brand logo PNG out of the bundled icons/ folder reference (same
+    // files the desktop popup uses) and render it as a template image so it
+    // tints with the row's foreground color — mirrors the desktop's
+    // `filter: invert(1)` dark-mode rule.
+    @ViewBuilder
+    private func contactRow(icon: String, text: String) -> some View {
+        HStack(spacing: 12) {
+            if let url = Bundle.main.url(forResource: icon, withExtension: "png", subdirectory: "icons"),
+               let data = try? Data(contentsOf: url),
+               let ui = UIImage(data: data) {
+                Image(uiImage: ui.withRenderingMode(.alwaysTemplate))
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 20, height: 20)
+                    .foregroundStyle(.primary)
+            }
+            Text(text)
+        }
+    }
+
     var body: some View {
         Form {
             Section {
@@ -817,6 +837,28 @@ struct BouncerSettingsView: View {
                 } footer: {
                     Text("Hide posts whose images appear to be AI-generated. Posts whose most-suspect image is at or above this confidence are hidden.")
                 }
+            }
+
+            Section {
+                Link(destination: URL(string: "https://x.com/Millanphilipose")!) {
+                    contactRow(icon: "x-logo", text: "X (@Millanphilipose)")
+                }
+                Link(destination: URL(string: "https://github.com/imbue-ai/bouncer")!) {
+                    contactRow(icon: "github-logo", text: "GitHub")
+                }
+                Link(destination: URL(string: "https://discord.gg/bcG87mkdN9")!) {
+                    contactRow(icon: "discord-logo", text: "Discord")
+                }
+            } header: {
+                Text("Contact us")
+            }
+
+            Section {
+                Link(destination: URL(string: "https://apps.apple.com/us/app/bouncer-heal-your-feed/id6759466393")!) {
+                    Label("Rate us on the App Store", systemImage: "star.fill")
+                }
+            } footer: {
+                Text("Enjoying Bouncer? Leave a review — it really helps.")
             }
         }
         .navigationTitle("Settings")

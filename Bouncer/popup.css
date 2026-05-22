@@ -699,6 +699,12 @@ footer.contact-footer p {
   gap: 10px;
 }
 
+.rate-us-text {
+  text-align: center;
+  margin: 6px 0 0;
+  font-size: 11px;
+}
+
 .contact-icon-link {
   display: inline-flex;
   align-items: center;

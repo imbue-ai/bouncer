@@ -609,6 +609,18 @@ function setupEventListeners() {
   // input mirrors the same chrome.storage.local.openrouterApiKey field the
   // OAuth flow would have written, so everything downstream is identical.
   const isSafariPopup = /^((?!chrome|android|crios|fxios|edg|opr).)*safari/i.test(navigator.userAgent);
+  const isFirefoxPopup = navigator.userAgent.includes('Firefox');
+
+  // Per-store "Rate us" link. HTML defaults to the Chrome Web Store URL;
+  // override for Firefox + Safari at runtime.
+  const rateUsLink = document.getElementById('rateUsLink') as HTMLAnchorElement | null;
+  if (rateUsLink) {
+    if (isFirefoxPopup) {
+      rateUsLink.href = 'https://addons.mozilla.org/en-US/firefox/addon/bouncer-heal-your-feed/';
+    } else if (isSafariPopup) {
+      rateUsLink.href = 'https://apps.apple.com/us/app/bouncer-heal-your-feed/id6762687153';
+    }
+  }
   if (isSafariPopup) {
     const signInBtn = document.getElementById('openrouterSignIn') as HTMLButtonElement | null;
     if (signInBtn) signInBtn.style.display = 'none';
