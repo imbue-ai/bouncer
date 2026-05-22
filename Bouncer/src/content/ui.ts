@@ -1731,6 +1731,15 @@ export function updateFilteredTabCount() {
   const shouldAnimate = newCount > previousFilteredCount;
   previousFilteredCount = newCount;
 
+  // Broadcast count changes so platform adapters can mirror them into
+  // ambient UI (e.g. YT's mini-guide badge) without scraping the box's
+  // DOM. The box may not be present yet on platforms whose anchor lazy-
+  // hydrates (YT only renders the guide drawer's section list on first
+  // open), so DOM-scrape mirrors miss early filter activity.
+  document.dispatchEvent(new CustomEvent('bouncer:filtered-count-changed', {
+    detail: { count: newCount, animate: shouldAnimate },
+  }));
+
   const containers = [filterPhrasesContainer, bottomFilterContainer, mobileFilterContainer];
   containers.forEach(container => {
     if (container && container.isConnected) {

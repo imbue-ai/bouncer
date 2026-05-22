@@ -91,149 +91,158 @@ window.BouncerAdapter = class YouTubeAdapter implements PlatformAdapter {
   constructor() {
     this._initLockupExtractor();
     this._initFilteredPostObserver();
-    this._initChipAndPopover();
+    this._initMiniGuideEntry();
   }
 
-  // Inject a Bouncer-branded chip into YT's chip rail (sibling of the
-  // "All / Music / Gaming" chips). Clicking the chip toggles a popover
-  // anchored just below it — that's where the existing filter UI lives.
-  // Footprint matches a normal YT chip; the heavy editor only appears when
-  // the user wants it.
-  private _countMirrorWired = false;
+  // ===== Mini-guide entry =====
+  // The full filter box is anchored inline in YT's guide drawer (see
+  // `getFilterBoxAnchor`). When the drawer is collapsed to its mini-rail
+  // (`ytd-mini-guide-renderer`), we still want users to be able to reach
+  // Bouncer — so we inject a Bouncer entry styled to match the native
+  // mini-guide entries (Home / Shorts / Subs / You). Clicking it presses
+  // YT's own hamburger button, which opens the drawer and reveals the
+  // inline box.
 
-  private _getBanner(): HTMLElement | null {
-    return document.querySelector<HTMLElement>('.filter-phrases-banner--youtube');
-  }
+  private _countListenerWired = false;
 
-  private _ensureChip(): HTMLElement | null {
-    let chip = document.querySelector<HTMLElement>('.bouncer-chip');
-    if (chip) return chip;
+  private _ensureMiniGuideEntry(): HTMLElement | null {
+    // Mirror the box's page scope: the mini icon should only appear on
+    // pages where clicking it actually leads somewhere useful (i.e. where
+    // `shouldProcessCurrentPage` returns true and the inline box exists).
+    // On other pages, strip any stale entry so we don't leave dangling UI.
+    if (!this.shouldProcessCurrentPage()) {
+      const stale = document.querySelector<HTMLElement>('.bouncer-mini-guide-entry');
+      stale?.remove();
+      return null;
+    }
 
-    // Insert into `iron-selector#chips` (the actual scrollable chip list)
-    // so that horizontal scrolling moves the Bouncer chip along with the
-    // other category chips. Inserting one level up (chips-content) places
-    // the chip outside the scroll viewport and freezes it in place.
-    const chipBar = document.querySelector<HTMLElement>('ytd-feed-filter-chip-bar-renderer');
-    if (!chipBar) return null;
-    const chipList = chipBar.querySelector<HTMLElement>('iron-selector#chips');
-    if (!chipList) return null;
+    let entry = document.querySelector<HTMLElement>('.bouncer-mini-guide-entry');
+    if (entry && entry.isConnected) return entry;
+
+    const miniItems = document.querySelector<HTMLElement>('ytd-mini-guide-renderer #items');
+    if (!miniItems) return null;
 
     const logoUrl = chrome.runtime.getURL('icons/icon48.png');
-    chip = document.createElement('button');
-    chip.className = 'bouncer-chip';
-    (chip as HTMLButtonElement).type = 'button';
-    chip.setAttribute('aria-label', 'Open Bouncer filters');
-    chip.setAttribute('aria-haspopup', 'dialog');
-    chip.setAttribute('aria-expanded', 'false');
-    chip.innerHTML = `
-      <img class="bouncer-chip__logo" src="${logoUrl}" alt="" aria-hidden="true">
-      <span class="bouncer-chip__label">Bouncer</span>
-      <span class="bouncer-chip__count" aria-hidden="true">0</span>
+    entry = document.createElement('button');
+    entry.className = 'bouncer-mini-guide-entry';
+    (entry as HTMLButtonElement).type = 'button';
+    entry.setAttribute('aria-label', 'Open Bouncer filters');
+    entry.innerHTML = `
+      <span class="bouncer-mini-guide-entry__icon-wrap">
+        <img class="bouncer-mini-guide-entry__icon" src="${logoUrl}" alt="" aria-hidden="true">
+        <span class="bouncer-mini-guide-entry__count" aria-hidden="true">0</span>
+      </span>
+      <span class="bouncer-mini-guide-entry__label">Bouncer</span>
     `;
-    chip.addEventListener('click', (e) => {
+    entry.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
-      this._togglePopover();
+      this._jumpToBox();
     });
 
-    // First child so it sits left of "All".
-    chipList.insertBefore(chip, chipList.firstChild);
-    return chip;
+    // Insert between Shorts and Subscriptions so the order in the mini-rail
+    // matches the order in the expanded drawer: Home → Shorts → Bouncer →
+    // Subscriptions → You. We anchor against the Subscriptions link rather
+    // than a positional index because YT occasionally reshuffles primary
+    // tabs (e.g. signed-out users see fewer entries).
+    const subsAnchor = miniItems.querySelector<HTMLElement>('a[href="/feed/subscriptions"]')
+      ?.closest('ytd-mini-guide-entry-renderer') as HTMLElement | null;
+    miniItems.insertBefore(entry, subsAnchor);
+    return entry;
   }
 
-  // Mirror the filtered-post count into the chip's badge. The shared UI
-  // already maintains `.filtered-toggle-count` inside the banner-now-popover;
-  // watching its mutations is simpler than plumbing through a new hook from
-  // `updateFilteredTabCount()`.
-  private _wireCountMirror(): boolean {
-    const popover = this._getBanner();
-    if (!popover) return false;
-    const source = popover.querySelector('.filtered-toggle-count');
-    if (!source) return false;
-    const update = () => {
-      const chip = document.querySelector<HTMLElement>('.bouncer-chip__count');
-      if (!chip) return;
-      // Source text is "(N)" — strip parens for the chip badge.
-      const raw = source.textContent || '';
-      const n = raw.replace(/[^\d]/g, '') || '0';
-      chip.textContent = n;
-      chip.classList.toggle('bouncer-chip__count--nonzero', n !== '0');
+  // Mirror the filtered-post count into the mini-guide entry's badge.
+  // Listen for the count-changed event dispatched by `updateFilteredTabCount`
+  // in shared UI. This decouples the badge from the box's DOM — important
+  // on YT because the guide drawer (where the box lives) lazy-hydrates on
+  // first open, so DOM-scrape mirrors miss filter activity that happens
+  // before the user touches the drawer.
+  private _wireFilteredCountListener(): void {
+    document.addEventListener('bouncer:filtered-count-changed', (e) => {
+      const detail = (e as CustomEvent<{ count: number }>).detail;
+      const c = document.querySelector<HTMLElement>('.bouncer-mini-guide-entry__count');
+      if (!c) return;
+      const n = String(detail?.count ?? 0);
+      if (c.textContent !== n) c.textContent = n;
+      c.classList.toggle('bouncer-mini-guide-entry__count--nonzero', n !== '0');
+    });
+  }
+
+  // Click handler for the mini-guide entry. The inline box is the single
+  // source of truth — the mini icon is a "jump to" shortcut, not a real
+  // tab. If the drawer is collapsed (box hidden), open it before scrolling.
+  private _jumpToBox() {
+    const scrollAndFocus = () => {
+      const b = document.querySelector<HTMLElement>('.filter-phrases-banner--youtube');
+      if (!b) return;
+      b.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      const input = b.querySelector<HTMLInputElement>('.filter-phrases-input');
+      input?.focus({ preventScroll: true });
     };
-    update();
-    new MutationObserver(update).observe(source, { characterData: true, childList: true, subtree: true });
-    return true;
-  }
 
-  private _positionPopover = (): void => {
-    const b = this._getBanner();
-    const chip = document.querySelector<HTMLElement>('.bouncer-chip');
-    if (!b || !chip) return;
-    const rect = chip.getBoundingClientRect();
-    b.style.setProperty('--ff-banner-left', `${rect.left}px`);
-    b.style.setProperty('--ff-banner-top', `${rect.bottom + 8}px`);
-  };
+    const box = document.querySelector<HTMLElement>('.filter-phrases-banner--youtube');
+    const rect = box?.getBoundingClientRect();
+    const boxInViewport =
+      !!rect
+      && rect.width > 0
+      && rect.height > 0
+      && rect.right > 0
+      && rect.left < window.innerWidth
+      && rect.bottom > 0
+      && rect.top < window.innerHeight;
 
-  private _wireDismissHandlers(): void {
-    // Close popover when clicking outside it or pressing Escape.
-    document.addEventListener('click', (e) => {
-      const b = this._getBanner();
-      if (!b || !b.classList.contains('bouncer-popover-open')) return;
-      const target = e.target as Node;
-      const chip = document.querySelector('.bouncer-chip');
-      if (b.contains(target) || chip?.contains(target)) return;
-      this._closePopover();
-    });
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') this._closePopover();
-    });
-
-    // Reposition on resize/scroll (popover top tracks the chip).
-    window.addEventListener('resize', this._positionPopover, { passive: true });
-    window.addEventListener('scroll', this._positionPopover, { passive: true });
-  }
-
-  private _trySetupChip(): boolean {
-    const chip = this._ensureChip();
-    const b = this._getBanner();
-    if (!chip || !b) return false;
-    b.classList.remove('bouncer-popover-open');
-    chip.setAttribute('aria-expanded', 'false');
-    this._positionPopover();
-    if (!this._countMirrorWired) this._countMirrorWired = this._wireCountMirror();
-    return this._countMirrorWired;
-  }
-
-  private _initChipAndPopover() {
-    this._wireDismissHandlers();
-    if (this._trySetupChip()) return;
-    // The chip bar isn't in the DOM yet (SPA navigation, lazy renderer).
-    // Retry on each mutation until setup completes, then disconnect.
-    const mo = new MutationObserver(() => { if (this._trySetupChip()) mo.disconnect(); });
-    mo.observe(document.body, { childList: true, subtree: true });
-  }
-
-  private _togglePopover() {
-    const b = document.querySelector<HTMLElement>('.filter-phrases-banner--youtube');
-    const chip = document.querySelector<HTMLElement>('.bouncer-chip');
-    if (!b) return;
-    const open = b.classList.toggle('bouncer-popover-open');
-    chip?.setAttribute('aria-expanded', open ? 'true' : 'false');
-    if (open) {
-      // Anchor under the chip every time we open (chip might've moved).
-      const rect = chip?.getBoundingClientRect();
-      if (rect) {
-        b.style.setProperty('--ff-banner-left', `${rect.left}px`);
-        b.style.setProperty('--ff-banner-top', `${rect.bottom + 8}px`);
-      }
+    if (boxInViewport) {
+      scrollAndFocus();
+      return;
     }
+
+    // YT wraps its hamburger in a Polymer `yt-icon-button` whose id is
+    // `guide-button`; the actual <button> is nested inside. The first
+    // selector targets that inner button. The fallbacks cover older or
+    // future YT builds where the structure may differ.
+    const hamburger =
+      document.querySelector<HTMLElement>('ytd-masthead #guide-button button')
+      || document.querySelector<HTMLElement>('ytd-masthead #guide-button')
+      || document.querySelector<HTMLElement>('#guide-button button')
+      || document.querySelector<HTMLElement>('#guide-button');
+    hamburger?.click();
+    setTimeout(scrollAndFocus, 350);
   }
 
-  private _closePopover() {
-    const b = document.querySelector<HTMLElement>('.filter-phrases-banner--youtube');
-    const chip = document.querySelector<HTMLElement>('.bouncer-chip');
-    if (!b) return;
-    b.classList.remove('bouncer-popover-open');
-    chip?.setAttribute('aria-expanded', 'false');
+  // Prepend the Bouncer logo into the box's title span. Done from the
+  // adapter (not from shared UI markup) because the logo URL needs
+  // `chrome.runtime.getURL`, which isn't reachable from CSS, and only the
+  // YouTube skin wants this decoration.
+  private _ensureTitleLogo() {
+    const title = document.querySelector<HTMLElement>(
+      '.filter-phrases-banner--youtube .filter-phrases-box-name'
+    );
+    if (!title) return;
+    if (title.querySelector('.bouncer-title-logo')) return;
+    const img = document.createElement('img');
+    img.className = 'bouncer-title-logo';
+    img.src = chrome.runtime.getURL('icons/icon48.png');
+    img.alt = '';
+    img.setAttribute('aria-hidden', 'true');
+    title.prepend(img);
+  }
+
+  private _initMiniGuideEntry() {
+    if (!this._countListenerWired) {
+      this._wireFilteredCountListener();
+      this._countListenerWired = true;
+    }
+    const tick = () => {
+      this._ensureMiniGuideEntry();
+      this._ensureTitleLogo();
+    };
+    tick();
+    // Long-running observer — handles delayed guide hydration, SPA nav, and
+    // YT re-rendering the mini-guide on viewport changes. Each tick is just
+    // a few querySelectors so it's cheap. CRITICAL: every DOM write inside
+    // `tick` must be idempotent (re-writing the same value would re-fire
+    // this observer and lock up the page on YT's already-frequent mutations).
+    new MutationObserver(tick).observe(document.body, { childList: true, subtree: true });
   }
 
   shouldProcessCurrentPage(): boolean {
@@ -243,16 +252,24 @@ window.BouncerAdapter = class YouTubeAdapter implements PlatformAdapter {
   }
 
   getFilterBoxAnchor(): FilterBoxAnchor | null {
-    // Place the banner inside `#header` as a sibling of the chip rail. YT's
-    // chip rail (`ytd-feed-filter-chip-bar-renderer`) uses position: sticky
-    // here successfully, so the same DOM context works for our banner —
-    // avoiding whatever overflow/transform on `ytd-rich-grid-renderer`
-    // blocks sticky from propagating to direct children.
-    const grid = document.querySelector<HTMLElement>('ytd-rich-grid-renderer');
-    if (!grid) return null;
-    const header = grid.querySelector<HTMLElement>('#header');
-    if (header) return { parent: header, insertBefore: null };
-    return { parent: grid, insertBefore: null };
+    // Anchor inside the FIRST guide section's `#items` list, after the
+    // Shorts entry — so Bouncer becomes part of the same section as Home
+    // and Shorts. This matters because YT draws faint dividers between
+    // adjacent `ytd-guide-section-renderer` elements; if Bouncer were
+    // inserted between sections it would sit BELOW the divider (separated
+    // from Home/Shorts visually). Anchoring inside the section keeps the
+    // divider where YT wants it — below Bouncer, above Subscriptions.
+    //
+    // The drawer is in the DOM from page load even in "mini-only" viewport
+    // modes (it's just visually hidden until the user opens it), so we can
+    // anchor against it eagerly.
+    const firstSection = document.querySelector<HTMLElement>(
+      'ytd-guide-renderer #sections ytd-guide-section-renderer'
+    );
+    if (!firstSection) return null;
+    const items = firstSection.querySelector<HTMLElement>('#items');
+    if (!items) return null;
+    return { parent: items, insertBefore: null };
   }
 
   getThemeMode(): 'light' | 'dim' | 'dark' {
