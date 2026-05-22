@@ -21,7 +21,6 @@
     "cut-chrome:same": "node cut.js --same-version",
     "cut-firefox": "node cut.js --firefox",
     "cut-firefox:same": "node cut.js --firefox --same-version",
-    "update-webllm": "node update-webllm.js",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
@@ -37,7 +36,7 @@
     "vitest": "^4.0.18"
   },
   "dependencies": {
-    "@mlc-ai/web-llm": "file:./vendor/web-llm",
+    "@litert-lm/core": "^0.12.1",
     "dompurify": "^3.3.1",
     "firebase": "^12.11.0",
     "html-to-image": "^1.11.13"

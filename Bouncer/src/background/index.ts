@@ -2,7 +2,7 @@
 
 import { PREDEFINED_MODELS } from '../shared/models';
 import { generateCacheKey } from '../shared/utils';
-import { getStorage, setStorage } from '../shared/storage';
+import { getStorage, setStorage, removeStorage } from '../shared/storage';
 import type { ContentToBackgroundMessage, LocalModelStatus } from '../types';
 import { localEngine } from './local-model';
 import {
@@ -65,14 +65,14 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   // Model weights stay in Cache Storage for fast reload when a tab opens again.
   if (activeContentTabs.size === 0 && localEngine.engine) {
     const modelId = localEngine.loadedModel;
-    console.log('[WebLLM] No active tabs remaining, unloading engine for', modelId);
+    console.log('[LocalModel] No active tabs remaining, unloading engine for', modelId);
     localEngine.drainQueue(async () => {
       await localEngine.reset();
       if (modelId) {
         await localEngine.updateStatus(modelId, { state: 'cached' });
       }
     }).catch(err => {
-      console.error('[WebLLM] Error unloading engine on last tab close:', err);
+      console.error('[LocalModel] Error unloading engine on last tab close:', err);
     });
   }
 });
@@ -106,10 +106,26 @@ if (chrome.runtime.setUninstallURL) {
     .catch(err => console.error('[Startup] setUninstallURL failed:', err));
 }
 
+// One-shot migration: clear any stored selection that points at a local model
+// we no longer ship (e.g. an old Qwen ID from before LiteRT-LM was the sole
+// local backend). Without this, the popup would render a permanent "error"
+// badge until the user picked a new model.
+async function migrateStaleLocalSelection(): Promise<void> {
+  const { selectedModel } = await getStorage(['selectedModel']);
+  if (typeof selectedModel !== 'string' || !selectedModel.startsWith('local:')) return;
+  const modelId = selectedModel.split(':')[1];
+  const isKnownLocal = PREDEFINED_MODELS.local.some(m => m.name === modelId);
+  if (!isKnownLocal) {
+    console.log('[Migration] Cleared stale local model selection:', modelId);
+    await removeStorage(['selectedModel']);
+  }
+}
+
 // Initialize cache, sync model statuses, and auto-init local model on startup
 // Wrapped in try/catch to prevent unhandled rejections from destabilizing the service worker
 (async () => {
   try {
+    await migrateStaleLocalSelection();
     await loadCache();
     await refreshAuthToken();
     // Wire up pipeline with shared state
@@ -622,9 +638,9 @@ chrome.runtime.onMessage.addListener((message: ContentToBackgroundMessage, sende
     return;
   }
 
-  // --- Fire-and-forget: initializeWebLLM responds synchronously, starts async work ---
-  if (message.type === 'initializeWebLLM') {
-    console.log('[Background] initializeWebLLM received, modelId:', message.modelId, 'hasNativeBridge:', typeof window !== 'undefined' && !!(window as unknown as Record<string, unknown>)?.webkit);
+  // --- Fire-and-forget: initializeLocalModel responds synchronously, starts async work ---
+  if (message.type === 'initializeLocalModel') {
+    console.log('[Background] initializeLocalModel received, modelId:', message.modelId, 'hasNativeBridge:', typeof window !== 'undefined' && !!(window as unknown as Record<string, unknown>)?.webkit);
     const modelId = message.modelId;
     if (!modelId) {
       sendResponse({ success: false, error: 'No model ID provided' });
@@ -632,7 +648,7 @@ chrome.runtime.onMessage.addListener((message: ContentToBackgroundMessage, sende
     }
     // Start initialization but respond immediately - progress is tracked via storage
     localEngine.initialize(modelId).catch(err => {
-      console.error('[WebLLM] Initialization error for', modelId, ':', err);
+      console.error('[LocalModel] Initialization error for', modelId, ':', err);
     });
     sendResponse({ success: true, started: true, modelId });
     return false; // Synchronous response
@@ -679,7 +695,7 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
         const cached = await localEngine.checkCached(modelId);
         if (cached) {
           localEngine.initialize(modelId).catch(err => {
-            console.error('[WebLLM] Auto-init on model switch failed:', err);
+            console.error('[LocalModel] Auto-init on model switch failed:', err);
           });
         }
       }

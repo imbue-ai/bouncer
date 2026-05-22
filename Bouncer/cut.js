@@ -120,7 +120,6 @@ async function main() {
     'build.js',
     'cut.js',
     'generate-manifests.mjs',
-    'webllm-stub.js',
     'background.js',
     'popup.js',
     'content.js',
@@ -144,7 +143,6 @@ async function main() {
     'README.md',
     'tsconfig.json',
     'tsconfig.test.json',
-    'update-webllm.js',
   ].map(e => `"${e}"`).join(' ');
   execSync(`cd "${ROOT}" && zip -r "${resolve(parentDir, zipName)}" . -x ${excludes}`, {
     stdio: 'inherit',

@@ -1954,10 +1954,27 @@ export function renderFilteredPostsView(container: Element) {
     top.appendChild(meta);
 
     if (post.category) {
-      const tag = document.createElement('span');
-      tag.className = 'slop-category-tag';
-      tag.textContent = post.category.toUpperCase();
-      top.appendChild(tag);
+      // table_yesno (LiteRT-LM local Gemma) produces a comma-joined list of
+      // matched categories; the single-category XML path stores one name.
+      // Either way, split + render one badge per match. Wrap the tags in a
+      // flex group so `.slop-post-top`'s `justify-content: space-between`
+      // doesn't distribute siblings across the right column — keep them
+      // 5px apart instead.
+      const names = post.category.split(',').map(s => s.trim()).filter(Boolean);
+      if (names.length > 0) {
+        const tagGroup = document.createElement('div');
+        tagGroup.style.display = 'flex';
+        tagGroup.style.gap = '5px';
+        tagGroup.style.marginLeft = '8px';
+        for (const name of names) {
+          const tag = document.createElement('span');
+          tag.className = 'slop-category-tag';
+          tag.style.marginLeft = '0';
+          tag.textContent = name.toUpperCase();
+          tagGroup.appendChild(tag);
+        }
+        top.appendChild(tagGroup);
+      }
     }
     body.appendChild(top);
 
@@ -2866,7 +2883,7 @@ export function addWhyAnnoyingButton(article: HTMLElement) {
         }).catch(err => console.error('[Bouncer] Override cache error:', err));
       });
       try {
-        response = await cachedPromise as { reasons: string[]; hadImages?: boolean };
+        response = await cachedPromise;
       } catch (err) {
         console.error('[Bouncer] Why annoying error:', err);
         cleanupProgress();

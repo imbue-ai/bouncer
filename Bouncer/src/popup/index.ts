@@ -1,6 +1,6 @@
 // Bouncer - Popup Script
 
-import type { ModelDef, LocalModelDef, LocalModelStatus, StorageSchema } from '../types';
+import type { ModelDef, LocalModelStatus, StorageSchema } from '../types';
 import { PREDEFINED_MODELS, DEFAULT_MODEL } from '../shared/models';
 import { escapeHtml, parseHTML } from '../shared/utils';
 import { getStorage, setStorage, removeStorage, clampThreshold, clampImageThreshold } from '../shared/storage';
@@ -28,8 +28,8 @@ const isIOSDevice = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
 // In-app mode detection
 const isInAppMode = typeof chrome !== 'undefined' && chrome._polyfilled;
 
-// User-friendly error message mapping for WebLLM errors
-const WEBLLM_ERROR_MESSAGES: Record<string, { display: string; hint: string }> = {
+// User-friendly error message mapping for local-model errors
+const LOCAL_ERROR_MESSAGES: Record<string, { display: string; hint: string }> = {
   'device lost': {
     display: 'GPU device was lost',
     hint: 'Try closing other tabs or restarting your browser.'
@@ -76,12 +76,12 @@ const WEBLLM_ERROR_MESSAGES: Record<string, { display: string; hint: string }> =
   }
 };
 
-// Get user-friendly error message for WebLLM errors
+// Get user-friendly error message for local-model errors
 function getUserFriendlyError(errorMessage: string | undefined): { display: string; hint: string } {
   if (!errorMessage) return { display: 'Unknown error', hint: 'Try again or switch models.' };
 
   const lowerError = errorMessage.toLowerCase();
-  for (const [pattern, info] of Object.entries(WEBLLM_ERROR_MESSAGES)) {
+  for (const [pattern, info] of Object.entries(LOCAL_ERROR_MESSAGES)) {
     if (lowerError.includes(pattern)) {
       return info;
     }
@@ -926,13 +926,12 @@ function renderModelDropdown(customModels: ModelDef[], selectedModel: string) {
         statusIndicator = '<span class="download-indicator">\u2B07</span>';
       }
 
-      const backendLabel = (model as LocalModelDef & { backend?: string }).backend === 'mlc' ? 'MLC' : 'local';
-      localItem.replaceChildren(parseHTML(`<span class="model-dropdown-item-text">${escapeHtml(model.display)} <span class="local-badge">${backendLabel}</span>${statusIndicator}</span>`));
+      localItem.replaceChildren(parseHTML(`<span class="model-dropdown-item-text">${escapeHtml(model.display)} <span class="local-badge">local</span>${statusIndicator}</span>`));
       localItem.addEventListener('click', asyncHandler(() => selectModel(modelKey)));
       menu.appendChild(localItem);
     });
 
-    // Add custom local models (user-added WebLLM models)
+    // Add custom local models (user-added local models)
     const customLocalModels = customModels.filter(m => m.api === 'local');
     customLocalModels.forEach(model => {
       const modelKey = `local:${model.name}`;
@@ -1391,7 +1390,7 @@ function clearRateLimitAlert() {
 }
 
 
-// ==================== Local Model (WebLLM) ====================
+// ==================== Local Model ====================
 
 // Get current statuses for all local models from background
 async function updateLocalModelStatus() {
@@ -1444,7 +1443,7 @@ async function autoInitializeCachedModel(modelId: string) {
 
   console.log('[LocalModel] Auto-initializing cached model:', modelId);
   try {
-    await chrome.runtime.sendMessage({ type: 'initializeWebLLM', modelId });
+    await chrome.runtime.sendMessage({ type: 'initializeLocalModel', modelId });
   } catch (err) {
     console.error('[LocalModel] Failed to auto-initialize cached model:', err);
     autoInitTriggered.delete(modelId);
@@ -1523,7 +1522,7 @@ function updateLocalModelSectionUI() {
       progressFill.style.width = '0%';
       progressText.textContent = 'Loading cached model...';
       // Trigger auto-initialization (async, don't await)
-      autoInitializeCachedModel(selectedLocalModel.name).catch(err => console.error('[WebLLM] autoInitializeCachedModel failed:', err));
+      autoInitializeCachedModel(selectedLocalModel.name).catch(err => console.error('[LocalModel] autoInitializeCachedModel failed:', err));
       break;
 
     case 'not_downloaded': {
@@ -1595,9 +1594,9 @@ function setupLocalModelListeners() {
       downloadBtn.replaceChildren(parseHTML('<span class="download-icon">&#8987;</span> Starting...'));
 
       try {
-        console.log('[Popup] Sending initializeWebLLM message for:', selectedLocalModel.name);
-        const result: unknown = await chrome.runtime.sendMessage({ type: 'initializeWebLLM', modelId: selectedLocalModel.name });
-        console.log('[Popup] initializeWebLLM response:', result);
+        console.log('[Popup] Sending initializeLocalModel message for:', selectedLocalModel.name);
+        const result: unknown = await chrome.runtime.sendMessage({ type: 'initializeLocalModel', modelId: selectedLocalModel.name });
+        console.log('[Popup] initializeLocalModel response:', result);
       } catch (err) {
         console.error('[Popup] Failed to start model download:', err);
         downloadBtn.disabled = false;
@@ -1618,7 +1617,7 @@ function setupLocalModelListeners() {
       retryBtn.textContent = 'Retrying...';
 
       try {
-        await chrome.runtime.sendMessage({ type: 'initializeWebLLM', modelId: selectedLocalModel.name });
+        await chrome.runtime.sendMessage({ type: 'initializeLocalModel', modelId: selectedLocalModel.name });
       } catch (err) {
         console.error('Failed to retry model download:', err);
         retryBtn.disabled = false;

@@ -1,22 +1,44 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-// Mock @mlc-ai/web-llm before importing local-model
-vi.mock('@mlc-ai/web-llm', () => ({
-  CreateMLCEngine: vi.fn(),
-  hasModelInCache: vi.fn(),
-  prebuiltAppConfig: {
-    model_list: [
-      {
-        model_id: 'Qwen3-4B-q4f16_1-MLC',
-        model: 'https://huggingface.co/mlc-ai/Qwen3-4B-q4f16_1-MLC',
-        model_lib: 'https://raw.githubusercontent.com/user/Qwen3-4B-q4f16_1-ctx4k_cs1k-webgpu.wasm',
-      },
-    ],
-  },
+// Each test that exercises localEngine.initialize() needs its own controllable
+// LocalBackend instance. The mock factory below pulls from this slot — set it
+// in beforeEach (or just before triggering an init) so the next
+// `new LitertlmBackend()` returns the configured fake.
+type FakeBackend = {
+  initialize: ReturnType<typeof vi.fn>;
+  unload: ReturnType<typeof vi.fn>;
+  generate: ReturnType<typeof vi.fn>;
+  interrupt: ReturnType<typeof vi.fn>;
+  countTokens: ReturnType<typeof vi.fn>;
+  truncateText: ReturnType<typeof vi.fn>;
+  getImageEmbedSize: ReturnType<typeof vi.fn>;
+};
+
+function makeFakeBackend(): FakeBackend {
+  return {
+    initialize: vi.fn().mockResolvedValue(undefined),
+    unload: vi.fn().mockResolvedValue(undefined),
+    generate: vi.fn().mockResolvedValue(''),
+    interrupt: vi.fn().mockResolvedValue(undefined),
+    countTokens: vi.fn().mockResolvedValue(0),
+    truncateText: vi.fn().mockImplementation((t: string) => Promise.resolve(t)),
+    getImageEmbedSize: vi.fn().mockResolvedValue(0),
+  };
+}
+
+let nextFakeBackend: FakeBackend | null = null;
+let isLitertlmCachedReturn = false;
+
+vi.mock('../../src/background/backends/litertlm-backend.js', () => ({
+  LitertlmBackend: vi.fn(function () {
+    const fb = nextFakeBackend ?? makeFakeBackend();
+    nextFakeBackend = null;
+    return fb;
+  }),
+  isLitertlmCached: vi.fn(async () => isLitertlmCachedReturn),
 }));
 
-// We need to mock models.js so we can control PREDEFINED_MODELS per test.
-// Use a mutable holder so individual tests can override the values.
+// Holder so individual tests can override PREDEFINED_MODELS.
 const modelsState: { PREDEFINED_MODELS: { local: Record<string, unknown>[] } } = {
   PREDEFINED_MODELS: { local: [] },
 };
@@ -25,22 +47,17 @@ vi.mock('../../src/shared/models.js', () => ({
   get PREDEFINED_MODELS() { return modelsState.PREDEFINED_MODELS; },
 }));
 
-// Mock shared modules needed by LocalEngine
 vi.mock('../../src/shared/utils.js', () => ({
   isGPUDeviceLostError: vi.fn(() => false),
   isNetworkError: vi.fn(() => false),
   formatLocalInferenceResult: vi.fn(),
 }));
-vi.mock('../../src/shared/prompts.js', () => ({
-  LOCAL_SYSTEM_PROMPT: 'mock system prompt',
-  buildLocalUserMessage: vi.fn(),
-}));
 
-import { buildModelConfig, localEngine, parseLocalModelResponse } from '../../src/background/local-model.js';
+import { localEngine } from '../../src/background/local-model.js';
 import { InferenceQueue, inferenceQueue } from '../../src/background/inference-queue.js';
-import { CreateMLCEngine, hasModelInCache } from '@mlc-ai/web-llm';
 import { isGPUDeviceLostError } from '../../src/shared/utils.js';
 import type { Mock } from 'vitest';
+import type { LocalBackend } from '../../src/background/backends/types.js';
 import type { LocalModelDef } from '../../src/types.js';
 
 // ==================== InferenceQueue ====================
@@ -147,160 +164,17 @@ describe('InferenceQueue', () => {
   });
 });
 
-// ==================== buildModelConfig ====================
-
-describe('buildModelConfig', () => {
-  beforeEach(() => {
-    modelsState.PREDEFINED_MODELS = { local: [] };
-  });
-
-  // --- appConfig tests ---
-
-  it('returns undefined appConfig for a built-in model with no webllmConfig', () => {
-    modelsState.PREDEFINED_MODELS = {
-      local: [{ name: 'Qwen3-4B-q4f16_1-MLC', display: 'Qwen3 4B' }],
-    };
-    expect(buildModelConfig('Qwen3-4B-q4f16_1-MLC').appConfig).toBeUndefined();
-  });
-
-  it('returns undefined appConfig for an unknown model', () => {
-    expect(buildModelConfig('nonexistent-model').appConfig).toBeUndefined();
-  });
-
-  // --- Custom registry path (webllmConfig.model set) ---
-
-  it('builds config from webllmConfig.model for non-registry models', () => {
-    modelsState.PREDEFINED_MODELS = {
-      local: [{
-        name: 'InternVL3_5-4B-q4f16_1-MLC',
-        webllmConfig: {
-          model_type: 2,
-          model: 'https://huggingface.co/imbue/internvl3_5-4b-q4f16_1-mlc',
-          model_lib: 'https://example.com/model.wasm',
-          overrides: { context_window_size: 4096, prefill_chunk_size: 1024 },
-        },
-      }],
-    };
-    const { appConfig } = buildModelConfig('InternVL3_5-4B-q4f16_1-MLC');
-    const record = appConfig!.model_list[0];
-    expect(record.model_id).toBe('InternVL3_5-4B-q4f16_1-MLC');
-    expect(record.model).toBe('https://huggingface.co/imbue/internvl3_5-4b-q4f16_1-mlc');
-    expect(record.model_lib).toBe('https://example.com/model.wasm');
-    expect(record.model_type).toBe(2);
-    expect(record.overrides).toEqual({ context_window_size: 4096, prefill_chunk_size: 1024 });
-  });
-
-  it('omits overrides key when webllmConfig has no overrides', () => {
-    modelsState.PREDEFINED_MODELS = {
-      local: [{
-        name: 'Custom-MLC',
-        webllmConfig: {
-          model: 'https://example.com/model',
-          model_lib: 'https://example.com/model.wasm',
-        },
-      }],
-    };
-    const record = buildModelConfig('Custom-MLC').appConfig!.model_list[0];
-    expect(record).not.toHaveProperty('overrides');
-  });
-
-  it('returns undefined appConfig when webllmConfig exists but model is not in prebuilt registry', () => {
-    modelsState.PREDEFINED_MODELS = {
-      local: [{
-        name: 'LocalOnly-MLC',
-        webllmConfig: { model_type: 2 },
-      }],
-    };
-    // Not in prebuilt registry and no custom model URL → falls through to default
-    expect(buildModelConfig('LocalOnly-MLC').appConfig).toBeUndefined();
-  });
-
-  it('merges model_lib override onto prebuilt registry record', () => {
-    modelsState.PREDEFINED_MODELS = {
-      local: [{
-        name: 'Qwen3-4B-q4f16_1-MLC',
-        webllmConfig: {
-          model_lib: 'https://example.com/custom.wasm',
-          overrides: { context_window_size: 4096 },
-        },
-      }],
-    };
-    const { appConfig } = buildModelConfig('Qwen3-4B-q4f16_1-MLC');
-    const record = appConfig!.model_list[0];
-    // Should use prebuilt model URL
-    expect(record.model).toBe('https://huggingface.co/mlc-ai/Qwen3-4B-q4f16_1-MLC');
-    // Should use custom model_lib
-    expect(record.model_lib).toBe('https://example.com/custom.wasm');
-    expect(record.overrides).toEqual({ context_window_size: 4096 });
-  });
-
-  it('returns undefined appConfig when webllmConfig has only overrides and model is in prebuilt registry', () => {
-    modelsState.PREDEFINED_MODELS = {
-      local: [{
-        name: 'Qwen3-4B-q4f16_1-MLC',
-        webllmConfig: {
-          overrides: { context_window_size: 4096 },
-        },
-      }],
-    };
-    // Only overrides, no record-level fields to merge → use default config
-    expect(buildModelConfig('Qwen3-4B-q4f16_1-MLC').appConfig).toBeUndefined();
-  });
-
-  // --- chatOpts tests ---
-
-  it('returns base chatOpts when no webllmConfig', () => {
-    modelsState.PREDEFINED_MODELS = {
-      local: [{ name: 'Qwen3-4B-q4f16_1-MLC', display: 'Qwen3 4B' }],
-    };
-    const { chatOpts } = buildModelConfig('Qwen3-4B-q4f16_1-MLC');
-    expect(chatOpts).toEqual({ context_window_size: 1024 });
-  });
-
-  it('merges overrides into chatOpts', () => {
-    modelsState.PREDEFINED_MODELS = {
-      local: [{
-        name: 'Qwen3-4B-q4f16_1-MLC',
-        webllmConfig: {
-          overrides: { context_window_size: 4096, prefill_chunk_size: 1024 },
-        },
-      }],
-    };
-    const { chatOpts } = buildModelConfig('Qwen3-4B-q4f16_1-MLC');
-    expect(chatOpts.context_window_size).toBe(4096);
-    expect(chatOpts.prefill_chunk_size).toBe(1024);
-  });
-
-  it('excludes model-record-level keys from chatOpts', () => {
-    modelsState.PREDEFINED_MODELS = {
-      local: [{
-        name: 'TestVLM-MLC',
-        webllmConfig: {
-          model_type: 2,
-          model: 'https://example.com/model',
-          model_lib: 'https://example.com/model.wasm',
-          overrides: { context_window_size: 4096 },
-        },
-      }],
-    };
-    const { chatOpts } = buildModelConfig('TestVLM-MLC');
-    expect(chatOpts).not.toHaveProperty('model_type');
-    expect(chatOpts).not.toHaveProperty('model');
-    expect(chatOpts).not.toHaveProperty('model_lib');
-    expect(chatOpts.context_window_size).toBe(4096);
-  });
-});
-
 // ==================== localEngine.cancelDownload ====================
 
 describe('localEngine.cancelDownload', () => {
   let storageData: Record<string, unknown>;
 
   beforeEach(async () => {
-    // Reset mocks and state
-    (CreateMLCEngine as Mock).mockReset();
-    (hasModelInCache as Mock).mockReset();
-    modelsState.PREDEFINED_MODELS = { local: [{ name: 'TestModel-MLC', display: 'Test' }] };
+    nextFakeBackend = null;
+    isLitertlmCachedReturn = false;
+    modelsState.PREDEFINED_MODELS = {
+      local: [{ name: 'TestModel', display: 'Test', backend: 'litertlm' }],
+    };
 
     await localEngine.reset();
 
@@ -324,27 +198,29 @@ describe('localEngine.cancelDownload', () => {
   });
 
   it('returns false when no download is in progress for the model', async () => {
-    const result = await localEngine.cancelDownload('TestModel-MLC');
+    const result = await localEngine.cancelDownload('TestModel');
     expect(result).toBe(false);
   });
 
   it('aborts an in-progress download and resets state', async () => {
-    (hasModelInCache as Mock).mockResolvedValue(false);
+    isLitertlmCachedReturn = false;
 
-    // Start an initialization that will hang (never resolve)
-    (CreateMLCEngine as Mock).mockImplementation(() => new Promise(() => {}));
+    // Make the backend's initialize hang so the download stays in flight
+    const fb = makeFakeBackend();
+    fb.initialize.mockImplementation(() => new Promise(() => {}));
+    nextFakeBackend = fb;
 
-    // Start init (don't await - it will hang because CreateMLCEngine never resolves)
-    localEngine.initialize('TestModel-MLC');
+    // Start init (don't await - it will hang because initialize never resolves)
+    localEngine.initialize('TestModel');
 
     // Wait for init to start
     await new Promise(r => setTimeout(r, 10));
 
     expect(localEngine.isInitializing()).toBe(true);
-    expect(localEngine.isInitializingModel('TestModel-MLC')).toBe(true);
+    expect(localEngine.isInitializingModel('TestModel')).toBe(true);
 
     // Cancel it
-    const cancelled = await localEngine.cancelDownload('TestModel-MLC');
+    const cancelled = await localEngine.cancelDownload('TestModel');
     expect(cancelled).toBe(true);
 
     // State should be reset
@@ -354,53 +230,60 @@ describe('localEngine.cancelDownload', () => {
   });
 
   it('sets status to not_downloaded when model is not cached', async () => {
-    (hasModelInCache as Mock).mockResolvedValue(false);
-    (CreateMLCEngine as Mock).mockImplementation(() => new Promise(() => {}));
+    isLitertlmCachedReturn = false;
 
-    localEngine.initialize('TestModel-MLC');
+    const fb = makeFakeBackend();
+    fb.initialize.mockImplementation(() => new Promise(() => {}));
+    nextFakeBackend = fb;
+
+    localEngine.initialize('TestModel');
     await new Promise(r => setTimeout(r, 10));
 
-    await localEngine.cancelDownload('TestModel-MLC');
+    await localEngine.cancelDownload('TestModel');
 
     // Check that status was set to not_downloaded
     const statuses = (storageData.localModelStatuses || {}) as Record<string, Record<string, unknown>>;
-    expect(statuses['TestModel-MLC']?.state).toBe('not_downloaded');
+    expect(statuses['TestModel']?.state).toBe('not_downloaded');
   });
 
   it('sets status to cached when partial download exists in cache', async () => {
-    // First call during init (for syncLocalModelStatus), then true for cancel check
-    (hasModelInCache as Mock).mockResolvedValue(true);
-    (CreateMLCEngine as Mock).mockImplementation(() => new Promise(() => {}));
+    isLitertlmCachedReturn = true;
 
-    localEngine.initialize('TestModel-MLC');
+    const fb = makeFakeBackend();
+    fb.initialize.mockImplementation(() => new Promise(() => {}));
+    nextFakeBackend = fb;
+
+    localEngine.initialize('TestModel');
     await new Promise(r => setTimeout(r, 10));
 
-    await localEngine.cancelDownload('TestModel-MLC');
+    await localEngine.cancelDownload('TestModel');
 
     const statuses = (storageData.localModelStatuses || {}) as Record<string, Record<string, unknown>>;
-    expect(statuses['TestModel-MLC']?.state).toBe('cached');
+    expect(statuses['TestModel']?.state).toBe('cached');
   });
 
-  it('abort paths resolve initPromise when engine creation completes after abort', async () => {
-    (hasModelInCache as Mock).mockResolvedValue(false);
+  it('abort paths resolve initPromise when backend init completes after abort', async () => {
+    isLitertlmCachedReturn = false;
 
-    // CreateMLCEngine resolves after abort fires — the post-creation abort check
-    // must call _completeInit(null) so waiters on _initPromise don't hang.
-    const mockEngine = { unload: vi.fn().mockResolvedValue(undefined) };
-    let resolveCreate!: (value: unknown) => void;
-    (CreateMLCEngine as Mock).mockImplementation(() => new Promise(resolve => { resolveCreate = resolve; }));
+    // Backend initialize resolves after abort fires — the post-completion
+    // abort check must call _completeInit(null) so waiters on _initPromise
+    // don't hang.
+    const fb = makeFakeBackend();
+    let resolveInit!: () => void;
+    fb.initialize.mockImplementation(() => new Promise<void>(resolve => { resolveInit = resolve; }));
+    nextFakeBackend = fb;
 
-    const initPromise = localEngine.initialize('TestModel-MLC');
+    const initPromise = localEngine.initialize('TestModel');
     await new Promise(r => setTimeout(r, 10));
 
     // A second caller starts waiting on _initPromise
     const waiterPromise = localEngine._initPromise;
 
     // Cancel via cancelDownload (which calls reset internally)
-    await localEngine.cancelDownload('TestModel-MLC');
+    await localEngine.cancelDownload('TestModel');
 
-    // Now engine creation completes after abort
-    resolveCreate(mockEngine);
+    // Now backend.initialize completes after abort
+    resolveInit();
     await new Promise(r => setTimeout(r, 10));
 
     // Both promises should resolve to null (not hang)
@@ -412,27 +295,28 @@ describe('localEngine.cancelDownload', () => {
     expect(waiterResult).toBeNull();
   });
 
-  it('discards engine created after abort signal fires', async () => {
-    (hasModelInCache as Mock).mockResolvedValue(false);
+  it('discards backend created after abort signal fires', async () => {
+    isLitertlmCachedReturn = false;
 
-    const mockEngine = { unload: vi.fn().mockResolvedValue(undefined) };
-    let resolveCreate!: (value: unknown) => void;
-    (CreateMLCEngine as Mock).mockImplementation(() => new Promise(resolve => { resolveCreate = resolve; }));
+    const fb = makeFakeBackend();
+    let resolveInit!: () => void;
+    fb.initialize.mockImplementation(() => new Promise<void>(resolve => { resolveInit = resolve; }));
+    nextFakeBackend = fb;
 
-    const initPromise = localEngine.initialize('TestModel-MLC');
+    const initPromise = localEngine.initialize('TestModel');
     await new Promise(r => setTimeout(r, 10));
 
-    // Cancel while CreateMLCEngine is still pending
-    await localEngine.cancelDownload('TestModel-MLC');
+    // Cancel while backend.initialize is still pending
+    await localEngine.cancelDownload('TestModel');
 
-    // Now resolve CreateMLCEngine after cancellation
-    resolveCreate(mockEngine);
+    // Now resolve backend.initialize after cancellation
+    resolveInit();
     await new Promise(r => setTimeout(r, 10));
 
     const engine = await initPromise;
     expect(engine).toBeNull();
-    // Engine should have been unloaded since it completed after abort
-    expect(mockEngine.unload).toHaveBeenCalled();
+    // Backend should have been unloaded since it completed after abort
+    expect(fb.unload).toHaveBeenCalled();
   });
 });
 
@@ -440,13 +324,14 @@ describe('localEngine.cancelDownload', () => {
 
 describe('idle timeout', () => {
   let storageData: Record<string, unknown>;
+  let fb: FakeBackend;
 
   beforeEach(async () => {
     vi.useFakeTimers();
-    (CreateMLCEngine as Mock).mockReset();
-    (hasModelInCache as Mock).mockReset();
+    nextFakeBackend = null;
+    isLitertlmCachedReturn = false;
     modelsState.PREDEFINED_MODELS = {
-      local: [{ name: 'TestModel-MLC', display: 'Test' }],
+      local: [{ name: 'TestModel', display: 'Test', backend: 'litertlm' }],
     };
 
     await localEngine.reset();
@@ -466,6 +351,9 @@ describe('idle timeout', () => {
       writable: true,
       configurable: true,
     });
+
+    fb = makeFakeBackend();
+    nextFakeBackend = fb;
   });
 
   afterEach(async () => {
@@ -482,70 +370,58 @@ describe('idle timeout', () => {
   }
 
   it('unloads engine after idle timeout fires', async () => {
-    const mockEngine = { unload: vi.fn().mockResolvedValue(undefined) };
-    (CreateMLCEngine as Mock).mockResolvedValue(mockEngine);
-
-    await localEngine.initialize('TestModel-MLC');
-    expect(localEngine.engine).toBe(mockEngine);
+    await localEngine.initialize('TestModel');
+    expect(localEngine.engine).toBe(fb as unknown as LocalBackend);
 
     await advanceAndFlush(60000);
 
-    expect(mockEngine.unload).toHaveBeenCalled();
+    expect(fb.unload).toHaveBeenCalled();
     expect(localEngine.engine).toBeNull();
     expect(localEngine.loadedModel).toBeNull();
   });
 
   it('sets status to cached after idle unload', async () => {
-    const mockEngine = { unload: vi.fn().mockResolvedValue(undefined) };
-    (CreateMLCEngine as Mock).mockResolvedValue(mockEngine);
-
-    await localEngine.initialize('TestModel-MLC');
+    await localEngine.initialize('TestModel');
 
     await advanceAndFlush(60000);
 
     const statuses = (storageData.localModelStatuses || {}) as Record<string, Record<string, unknown>>;
-    expect(statuses['TestModel-MLC']?.state).toBe('cached');
+    expect(statuses['TestModel']?.state).toBe('cached');
   });
 
   it('_resetIdleTimeout delays the unload', async () => {
-    const mockEngine = { unload: vi.fn().mockResolvedValue(undefined) };
-    (CreateMLCEngine as Mock).mockResolvedValue(mockEngine);
-
-    await localEngine.initialize('TestModel-MLC');
+    await localEngine.initialize('TestModel');
 
     // Advance 50s (not yet at 60s threshold)
     await advanceAndFlush(50000);
-    expect(localEngine.engine).toBe(mockEngine);
+    expect(localEngine.engine).toBe(fb as unknown as LocalBackend);
 
     // Reset the timer (simulates an inference request)
     localEngine._resetIdleTimeout();
 
     // Advance another 50s (100s total, but only 50s since reset)
     await advanceAndFlush(50000);
-    expect(localEngine.engine).toBe(mockEngine);
+    expect(localEngine.engine).toBe(fb as unknown as LocalBackend);
 
     // Advance 10 more seconds (60s since last reset)
     await advanceAndFlush(10000);
 
-    expect(mockEngine.unload).toHaveBeenCalled();
+    expect(fb.unload).toHaveBeenCalled();
     expect(localEngine.engine).toBeNull();
   });
 
   it('explicit reset clears idle timer and prevents double-unload', async () => {
-    const mockEngine = { unload: vi.fn().mockResolvedValue(undefined) };
-    (CreateMLCEngine as Mock).mockResolvedValue(mockEngine);
-
-    await localEngine.initialize('TestModel-MLC');
+    await localEngine.initialize('TestModel');
 
     // Explicitly reset state (which calls _stopIdleTimeout internally)
     await localEngine.reset();
-    expect(mockEngine.unload).toHaveBeenCalledTimes(1);
+    expect(fb.unload).toHaveBeenCalledTimes(1);
 
     // Advance past what would have been the idle timeout
     await advanceAndFlush(60000);
 
     // Should not have been called again by the idle timer
-    expect(mockEngine.unload).toHaveBeenCalledTimes(1);
+    expect(fb.unload).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -555,12 +431,12 @@ describe('localEngine.initialize model switch', () => {
   let storageData: Record<string, unknown>;
 
   beforeEach(async () => {
-    (CreateMLCEngine as Mock).mockReset();
-    (hasModelInCache as Mock).mockReset();
+    nextFakeBackend = null;
+    isLitertlmCachedReturn = false;
     modelsState.PREDEFINED_MODELS = {
       local: [
-        { name: 'ModelA-MLC', display: 'Model A' },
-        { name: 'ModelB-MLC', display: 'Model B' },
+        { name: 'ModelA', display: 'Model A', backend: 'litertlm' },
+        { name: 'ModelB', display: 'Model B', backend: 'litertlm' },
       ],
     };
 
@@ -584,96 +460,35 @@ describe('localEngine.initialize model switch', () => {
   });
 
   it('concurrent init calls for new model do not reject each other via drain race', async () => {
-    // Model A is loaded and "running inference" (in-flight task in the queue)
-    const oldEngine = { unload: vi.fn(async () => {}), chat: { completions: { create: vi.fn() } } };
-    localEngine.engine = oldEngine as unknown as typeof localEngine.engine;
-    localEngine.loadedModel = 'ModelA-MLC';
+    // Model A is loaded
+    const oldBackend = makeFakeBackend();
+    localEngine.engine = oldBackend as unknown as LocalBackend;
+    localEngine.loadedModel = 'ModelA';
 
-    // CreateMLCEngine for model B — use a deferred promise so we control when it resolves
-    const newEngine = { unload: vi.fn(async () => {}), chat: { completions: { create: vi.fn() } } };
-    (CreateMLCEngine as Mock).mockImplementation(() => new Promise(resolve => {
+    // Init for model B uses a deferred promise so we control when it resolves
+    const newBackend = makeFakeBackend();
+    newBackend.initialize.mockImplementation(() => new Promise<void>(resolve => {
       // Resolve on next tick to simulate async engine creation
-      setTimeout(() => resolve(newEngine), 10);
+      setTimeout(() => resolve(), 10);
     }));
+    nextFakeBackend = newBackend;
 
     // Two concurrent localEngine.initialize calls for the new model,
     // simulating two processBatch → callLocalInference → initialize calls.
     // Before the fix, both would enter the drain path and the second drain would
     // clear the first's queued task, causing "Inference queue cleared" rejection.
     const [engine1, engine2] = await Promise.all([
-      localEngine.initialize('ModelB-MLC'),
-      localEngine.initialize('ModelB-MLC'),
+      localEngine.initialize('ModelB'),
+      localEngine.initialize('ModelB'),
     ]);
 
-    // Both should resolve to the same engine — no "Inference queue cleared" error
-    expect(engine1).toBe(newEngine);
-    expect(engine2).toBe(newEngine);
+    // Both should resolve to the same backend — no "Inference queue cleared" error.
+    expect(engine1).not.toBeNull();
+    expect(engine1).toBe(newBackend as unknown as LocalBackend);
+    expect(engine2).toBe(engine1);
 
-    // Old engine should have been unloaded exactly once
-    expect(oldEngine.unload).toHaveBeenCalledTimes(1);
-  });
-});
-
-// ==================== parseLocalModelResponse ====================
-
-describe('parseLocalModelResponse', () => {
-  it('returns SHOW with empty-response reasoning for empty string', () => {
-    const result = parseLocalModelResponse('');
-    expect(result.shouldHide).toBe(false);
-    expect(result.reasoning).toMatch(/empty model response/i);
-  });
-
-  it('returns SHOW with empty-response reasoning for null', () => {
-    const result = parseLocalModelResponse(null);
-    expect(result.shouldHide).toBe(false);
-    expect(result.reasoning).toMatch(/empty model response/i);
-  });
-
-  it('returns SHOW when response contains "No match"', () => {
-    const result = parseLocalModelResponse('Post about cooking dinner at home. No match.');
-    expect(result.shouldHide).toBe(false);
-    expect(result.reasoning).toBe('Post about cooking dinner at home. No match.');
-  });
-
-  it('returns HIDE when response contains "Matches <topic>"', () => {
-    const result = parseLocalModelResponse('Post about NBA basketball game results. Matches sports.');
-    expect(result.shouldHide).toBe(true);
-    expect(result.reasoning).toContain('(Matched: sports)');
-  });
-
-  it('uses last occurrence when both "no match" and "matches" are present', () => {
-    // "Matches" after "no match" → HIDE (last-wins)
-    const hide = parseLocalModelResponse('Not a no match situation. Matches politics.');
-    expect(hide.shouldHide).toBe(true);
-
-    // "No match" after "matches" → SHOW (last-wins)
-    const show = parseLocalModelResponse('This matches nothing relevant. No match.');
-    expect(show.shouldHide).toBe(false);
-  });
-
-  it('returns SHOW when neither pattern is present', () => {
-    const result = parseLocalModelResponse('Post about cooking dinner at home.');
-    expect(result.shouldHide).toBe(false);
-    expect(result.reasoning).toBe('Post about cooking dinner at home.');
-  });
-
-  it('is case-insensitive', () => {
-    const upper = parseLocalModelResponse('Post about sports. MATCHES sports.');
-    expect(upper.shouldHide).toBe(true);
-
-    const mixed = parseLocalModelResponse('Post about food. No Match.');
-    expect(mixed.shouldHide).toBe(false);
-  });
-
-  it('extracts the matched topic from after "Matches "', () => {
-    const result = parseLocalModelResponse('Political content about elections. Matches politics.');
-    expect(result.reasoning).toContain('(Matched: politics)');
-  });
-
-  it('strips trailing period from matched topic', () => {
-    const result = parseLocalModelResponse('Sports content. Matches sports.');
-    expect(result.reasoning).toContain('(Matched: sports)');
-    expect(result.reasoning).not.toContain('(Matched: sports.)');
+    // Old backend should have been unloaded exactly once
+    expect(oldBackend.unload).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -681,43 +496,28 @@ describe('parseLocalModelResponse', () => {
 
 describe('LocalEngine generate + preempt + lifecycle', () => {
   let storageData: Record<string, unknown>;
-  let mockEngine: ReturnType<typeof makeMockEngine>;
-
-  function makeMockEngine(createResponse = 'No match.') {
-    return {
-      resetChat: vi.fn().mockResolvedValue(undefined),
-      interruptGenerate: vi.fn().mockResolvedValue(undefined),
-      interruptSignal: false,
-      unload: vi.fn().mockResolvedValue(undefined),
-      chat: {
-        completions: {
-          create: vi.fn().mockResolvedValue({
-            choices: [{ message: { content: createResponse } }],
-          }),
-        },
-      },
-    };
-  }
+  let fb: FakeBackend;
 
   beforeEach(async () => {
-    (CreateMLCEngine as Mock).mockReset();
-    (hasModelInCache as Mock).mockReset();
+    nextFakeBackend = null;
+    isLitertlmCachedReturn = false;
     (isGPUDeviceLostError as Mock).mockReturnValue(false);
 
     modelsState.PREDEFINED_MODELS = {
-      local: [{ name: 'TestModel-MLC', display: 'Test' }],
+      local: [{ name: 'TestModel', display: 'Test', backend: 'litertlm' }],
     };
 
-    mockEngine = makeMockEngine();
+    fb = makeFakeBackend();
+    fb.generate.mockResolvedValue('No match.');
 
     // Reset localEngine and inference queue to clean state
     await localEngine.reset();
     inferenceQueue.reset();
 
-    // Set localEngine to a "loaded" state with the mock engine
-    localEngine.engine = mockEngine as unknown as typeof localEngine.engine;
-    localEngine.loadedModel = 'TestModel-MLC';
-    localEngine._modelConfig = { name: 'TestModel-MLC', display: 'Test' } as LocalModelDef;
+    // Set localEngine to a "loaded" state with the fake backend
+    localEngine.engine = fb as unknown as LocalBackend;
+    localEngine.loadedModel = 'TestModel';
+    localEngine._modelConfig = { name: 'TestModel', display: 'Test', backend: 'litertlm' } as LocalModelDef;
 
     storageData = {};
     globalThis.chrome = {
@@ -743,31 +543,20 @@ describe('LocalEngine generate + preempt + lifecycle', () => {
 
   // ---- generate() basic behavior ----
 
-  it('calls resetChat before inference and returns stripped response', async () => {
+  it('delegates to backend.generate and returns its response', async () => {
     const result = await localEngine.generate(
       [{ role: 'user', content: 'hello' }], 40
     );
-    expect(mockEngine.resetChat).toHaveBeenCalled();
-    expect(mockEngine.chat.completions.create).toHaveBeenCalled();
+    expect(fb.generate).toHaveBeenCalled();
     expect(result).toBe('No match.');
   });
 
-  it('strips <think> blocks from response', async () => {
-    mockEngine.chat.completions.create.mockResolvedValue({
-      choices: [{ message: { content: '<think>reasoning here</think>No match.' } }],
-    });
-    const result = await localEngine.generate(
-      [{ role: 'user', content: 'test' }], 40
-    );
-    expect(result).toBe('No match.');
-  });
-
-  it('passes temperature override through to engine request', async () => {
+  it('passes temperature override through to backend.generate params', async () => {
     await localEngine.generate(
       [{ role: 'user', content: 'test' }], 40, { temperature: 0.7 }
     );
-    const request = mockEngine.chat.completions.create.mock.calls[0][0];
-    expect(request.temperature).toBe(0.7);
+    const params = fb.generate.mock.calls[0][2] as Record<string, unknown>;
+    expect(params.temperature).toBe(0.7);
   });
 
   it('fires onStart callback when task begins executing, not when enqueued', async () => {
@@ -775,13 +564,11 @@ describe('LocalEngine generate + preempt + lifecycle', () => {
     let resolveFirst!: (value: unknown) => void;
 
     // Block the queue with a first generate
-    mockEngine.chat.completions.create
+    fb.generate
       .mockImplementationOnce(() => new Promise(resolve => {
         resolveFirst = resolve;
       }))
-      .mockResolvedValueOnce({
-        choices: [{ message: { content: 'second' } }],
-      });
+      .mockResolvedValueOnce('second');
 
     const first = localEngine.generate(
       [{ role: 'user', content: 'first' }], 40,
@@ -799,7 +586,7 @@ describe('LocalEngine generate + preempt + lifecycle', () => {
     expect(order).toEqual(['onStart-1']);
 
     // Resolve first, let second start
-    resolveFirst({ choices: [{ message: { content: 'first' } }] });
+    resolveFirst('first');
     await first;
     await second;
 
@@ -809,10 +596,10 @@ describe('LocalEngine generate + preempt + lifecycle', () => {
   // ---- preempt() during generate() ----
 
   it('preempt rejects in-flight generate with "Inference preempted"', async () => {
-    // Make the engine completion hang until preempted
-    mockEngine.chat.completions.create.mockImplementation(
+    // Make the backend generate hang until preempted
+    fb.generate.mockImplementation(
       () => new Promise((_, reject) => {
-        // Simulate engine rejecting after interrupt
+        // Simulate backend rejecting after interrupt
         setTimeout(() => reject(new Error('AbortError')), 20);
       })
     );
@@ -825,11 +612,11 @@ describe('LocalEngine generate + preempt + lifecycle', () => {
     localEngine.preempt();
 
     await expect(genPromise).rejects.toThrow('Inference preempted');
-    expect(mockEngine.interruptGenerate).toHaveBeenCalled();
+    expect(fb.interrupt).toHaveBeenCalled();
   });
 
-  it('preempt is idempotent — second call does not re-call interruptGenerate', async () => {
-    mockEngine.chat.completions.create.mockImplementation(
+  it('preempt is idempotent — second call does not re-call interrupt', async () => {
+    fb.generate.mockImplementation(
       () => new Promise((_, reject) => {
         setTimeout(() => reject(new Error('AbortError')), 20);
       })
@@ -844,25 +631,23 @@ describe('LocalEngine generate + preempt + lifecycle', () => {
     localEngine.preempt();
 
     await genPromise.catch(() => {});
-    expect(mockEngine.interruptGenerate).toHaveBeenCalledTimes(1);
+    expect(fb.interrupt).toHaveBeenCalledTimes(1);
   });
 
   // ---- preempt + next generate interaction ----
 
-  it('generate after preempt waits for interruptGenerate to settle and clears stale interruptSignal', async () => {
+  it('generate after preempt waits for interrupt to settle', async () => {
     let resolveInterrupt!: (value?: unknown) => void;
-    mockEngine.interruptGenerate.mockImplementation(
+    fb.interrupt.mockImplementation(
       () => new Promise(resolve => { resolveInterrupt = resolve; })
     );
 
     // First generate hangs, then gets preempted
-    mockEngine.chat.completions.create
+    fb.generate
       .mockImplementationOnce(() => new Promise((_, reject) => {
         setTimeout(() => reject(new Error('AbortError')), 10);
       }))
-      .mockResolvedValueOnce({
-        choices: [{ message: { content: 'after preempt' } }],
-      });
+      .mockResolvedValueOnce('after preempt');
 
     const first = localEngine.generate(
       [{ role: 'user', content: 'first' }], 40
@@ -870,8 +655,6 @@ describe('LocalEngine generate + preempt + lifecycle', () => {
     await new Promise(r => setTimeout(r, 0));
 
     localEngine.preempt();
-    // Simulate stale interruptSignal left on engine
-    mockEngine.interruptSignal = true;
 
     // Queue a second generate
     const onStart2 = vi.fn();
@@ -883,7 +666,7 @@ describe('LocalEngine generate + preempt + lifecycle', () => {
     // First should reject
     await expect(first).rejects.toThrow('Inference preempted');
 
-    // Second should be blocked waiting for interruptGenerate to settle
+    // Second should be blocked waiting for interrupt to settle
     await new Promise(r => setTimeout(r, 0));
     expect(onStart2).not.toHaveBeenCalled();
 
@@ -893,21 +676,17 @@ describe('LocalEngine generate + preempt + lifecycle', () => {
 
     expect(result).toBe('after preempt');
     expect(onStart2).toHaveBeenCalled();
-    // interruptSignal should have been cleared
-    expect(mockEngine.interruptSignal).toBe(false);
   });
 
   // ---- generate + generate + preempt: second generate picks up ----
 
   it('preempting first generate allows queued second generate to execute with onStart', async () => {
     let rejectFirst!: (reason?: unknown) => void;
-    mockEngine.chat.completions.create
+    fb.generate
       .mockImplementationOnce(() => new Promise((_resolve, reject) => {
         rejectFirst = reject;
       }))
-      .mockResolvedValueOnce({
-        choices: [{ message: { content: 'second result' } }],
-      });
+      .mockResolvedValueOnce('second result');
 
     const onStart1 = vi.fn();
     const onStart2 = vi.fn();
@@ -945,24 +724,27 @@ describe('LocalEngine generate + preempt + lifecycle', () => {
     localEngine.engine = null;
     localEngine.loadedModel = null;
 
-    const freshEngine = makeMockEngine('Matches politics.');
-    (CreateMLCEngine as Mock).mockResolvedValue(freshEngine);
-    (hasModelInCache as Mock).mockResolvedValue(false);
+    const freshBackend = makeFakeBackend();
+    freshBackend.generate.mockResolvedValue('Matches politics.');
+    nextFakeBackend = freshBackend;
 
-    await localEngine.ensureLoaded('TestModel-MLC');
-    expect(localEngine.engine).toBe(freshEngine);
+    await localEngine.ensureLoaded('TestModel');
+    expect(localEngine.engine).toBe(freshBackend as unknown as LocalBackend);
 
     const result = await localEngine.generate(
       [{ role: 'user', content: 'test' }], 40
     );
     expect(result).toBe('Matches politics.');
-    expect(freshEngine.resetChat).toHaveBeenCalled();
+    expect(freshBackend.generate).toHaveBeenCalled();
   });
 
   it('ensureLoaded is a no-op when model is already loaded', async () => {
-    await localEngine.ensureLoaded('TestModel-MLC');
-    // Should not have called CreateMLCEngine since engine is already set
-    expect(CreateMLCEngine).not.toHaveBeenCalled();
+    // Track new-backend constructions to confirm none happen.
+    const constructionsBefore = (await import('../../src/background/backends/litertlm-backend.js')).LitertlmBackend as unknown as Mock;
+    constructionsBefore.mockClear();
+
+    await localEngine.ensureLoaded('TestModel');
+    expect(constructionsBefore).not.toHaveBeenCalled();
   });
 
   it('ensureLoaded throws when engine cannot be created', async () => {
@@ -976,7 +758,7 @@ describe('LocalEngine generate + preempt + lifecycle', () => {
       configurable: true,
     });
 
-    await expect(localEngine.ensureLoaded('TestModel-MLC'))
+    await expect(localEngine.ensureLoaded('TestModel'))
       .rejects.toThrow('Local model not available');
   });
 
@@ -1031,9 +813,7 @@ describe('LocalEngine generate + preempt + lifecycle', () => {
 
   it('generate resets engine and updates status on GPU device lost error', async () => {
     (isGPUDeviceLostError as Mock).mockReturnValue(true);
-    mockEngine.chat.completions.create.mockRejectedValue(
-      new Error('GPU device was lost')
-    );
+    fb.generate.mockRejectedValue(new Error('GPU device was lost'));
 
     await expect(
       localEngine.generate([{ role: 'user', content: 'test' }], 40)
@@ -1041,7 +821,7 @@ describe('LocalEngine generate + preempt + lifecycle', () => {
 
     expect(localEngine.engine).toBeNull();
     const statuses = (storageData.localModelStatuses || {}) as Record<string, Record<string, unknown>>;
-    expect(statuses['TestModel-MLC']?.state).toBe('error');
-    expect(statuses['TestModel-MLC']?.error).toMatch(/GPU memory/);
+    expect(statuses['TestModel']?.state).toBe('error');
+    expect(statuses['TestModel']?.error).toMatch(/GPU memory/);
   });
 });

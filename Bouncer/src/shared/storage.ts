@@ -30,7 +30,7 @@ function siteIdFromDescKey(key: DescriptionKey): SiteId {
 }
 
 function descriptionsKeyFor(siteId: SiteId): DescriptionKey {
-  return `descriptions_${siteId}` as DescriptionKey;
+  return `descriptions_${siteId}`;
 }
 
 async function loadMainList(siteId: SiteId): Promise<string[]> {

@@ -1,5 +1,5 @@
 // Serial priority queue for inference tasks.
-// Ensures only one inference runs at a time against the WebLLM engine.
+// Ensures only one inference runs at a time against the local engine.
 // Exported as a class so tests can create isolated instances.
 
 interface QueueTask<T = unknown> {

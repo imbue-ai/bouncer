@@ -236,7 +236,7 @@ class ImbueWebSocket {
 
     // Check if this is a result for an acked request (has jobId)
     if (data.jobId && this.pendingRequests.has(data.jobId)) {
-      this._handleResult(data as WSResultMessage, this.pendingRequests.get(data.jobId)!);
+      this._handleResult(data, this.pendingRequests.get(data.jobId)!);
       this.pendingRequests.delete(data.jobId);
       return;
     }

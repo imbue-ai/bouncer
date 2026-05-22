@@ -108,17 +108,20 @@ export interface ModelDef {
   api?: string;
 }
 
-/** A local model with WebLLM-specific configuration. */
+/** A local model with backend-specific configuration. */
 export interface LocalModelDef extends ModelDef {
   isLocal?: boolean;
-  backend?: 'mlc';
+  backend?: 'litertlm';
   extraBody?: Record<string, unknown>;
   inferenceParams?: Record<string, unknown>;
-  webllmConfig?: {
-    model?: string;
-    model_lib?: string;
-    model_type?: number;
-    overrides?: Record<string, unknown>;
+  litertlmConfig?: {
+    // Absolute URL to the `.litertlm` model asset.
+    modelUrl: string;
+    // Combined prompt + output token budget passed to mainExecutorSettings.maxNumTokens.
+    maxTokens?: number;
+    // Sampler knobs forwarded to SessionConfig.samplerParams. inferenceParams
+    // override these per-call via the existing LocalBackend.generate(params) channel.
+    topK?: number;
   };
 }
 
@@ -256,7 +259,7 @@ export type ContentToBackgroundMessage =
   | { type: 'getReasoning'; post: string; imageUrls: string[] }
   | { type: 'getErrorStatus' }
   | { type: 'getAllLocalModelStatuses' }
-  | { type: 'initializeWebLLM'; modelId: string }
+  | { type: 'initializeLocalModel'; modelId: string }
   | { type: 'cancelLocalModelDownload'; modelId: string }
   | { type: 'preemptInference' }
   | { type: 'overrideCacheEntry'; post: string; imageUrls: string[]; shouldHide: boolean; reasoning?: string }
@@ -274,7 +277,7 @@ export type BackgroundToContentMessage =
   | { type: 'errorStatusUpdate'; errorType: string | null; subType: string | null; count: number; apiDisplayName: string | null; selectedModel: string; hasAlternativeApis: boolean }
   | { type: 'reEvaluateErrors' }
   | { type: 'queueStatusUpdate'; pendingCount: number; isLocalModel: boolean; modelInitializing: boolean }
-  | { type: 'getPositions'; postUrls: string[] }
+  | { type: 'getPositions'; postUrls: string[]; evaluationIds?: string[] }
   | { type: 'processingPost'; postUrl: string }
   | { type: 'annoyingProgress'; verified: number; total: number }
   | { type: 'authStateChanged'; authenticated: boolean }

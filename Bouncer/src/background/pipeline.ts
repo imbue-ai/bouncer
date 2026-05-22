@@ -355,7 +355,7 @@ export function isKeyPending(tabId: number, cacheKey: string): boolean {
 
 // Resolve an item AND any duplicate resolvers waiting on the same cacheKey.
 function resolveWithDuplicates(tabId: number, item: PendingEvaluation, result: PipelineResponse): void {
-  console.log('[Bouncer][diag] resolveWithDuplicates: tab=', tabId, 'evalId=', item.evaluationId, 'resultKind=', result === null ? 'null' : Object.keys(result as object).slice(0, 3).join(','));
+  console.log('[Bouncer][diag] resolveWithDuplicates: tab=', tabId, 'evalId=', item.evaluationId, 'resultKind=', result === null ? 'null' : Object.keys(result).slice(0, 3).join(','));
   item.resolve(result);
   const dupes = tabDuplicateResolvers.get(tabId);
   if (dupes && item.cacheKey && dupes.has(item.cacheKey)) {
@@ -680,44 +680,54 @@ export async function clearEvaluationCache(): Promise<void> {
 async function prioritizeByViewportDistance(queue: PendingEvaluation[]): Promise<void> {
   if (queue.length === 0) return;
 
-  // Group pending posts by tabId, using postUrl for position lookups
-  const postsByTab = new Map<number | undefined, string[]>();
+  // Group pending posts by tabId. Track postUrls for normal tweets and
+  // evaluationIds for posts without a permalink (ads, etc.) so the content
+  // script can still locate the article and report a viewport distance —
+  // otherwise ads always sort to the bottom of the queue regardless of
+  // where they actually are on screen.
+  const postsByTab = new Map<number | undefined, { postUrls: string[]; evaluationIds: string[] }>();
   queue.forEach(item => {
-    if (!item.postUrl) return; // Skip items without postUrl
     if (!postsByTab.has(item.tabId)) {
-      postsByTab.set(item.tabId, []);
+      postsByTab.set(item.tabId, { postUrls: [], evaluationIds: [] });
     }
-    postsByTab.get(item.tabId)!.push(item.postUrl);
+    const entry = postsByTab.get(item.tabId)!;
+    if (item.postUrl) {
+      entry.postUrls.push(item.postUrl);
+    } else {
+      entry.evaluationIds.push(item.evaluationId);
+    }
   });
 
   // Request positions from each tab
   const positionPromises: Promise<{ tabId: number | undefined; positions: Record<string, number> }>[] = [];
-  for (const [tabId, postUrls] of postsByTab) {
+  for (const [tabId, { postUrls, evaluationIds }] of postsByTab) {
     positionPromises.push(
-      chrome.tabs.sendMessage(tabId!, { type: 'getPositions', postUrls })
+      chrome.tabs.sendMessage(tabId!, { type: 'getPositions', postUrls, evaluationIds })
         .then((response: { positions?: Record<string, number> } | undefined) => ({ tabId, positions: response?.positions || {} }))
         .catch(() => {
-          return { tabId, positions: {} as Record<string, number> };
+          return { tabId, positions: {} };
         })
     );
   }
 
   const results = await Promise.all(positionPromises);
 
-  // Build distance map: postUrl -> distance to viewport center
+  // Combined distance map: keyed by postUrl OR evaluationId. The content
+  // script reports both flavors in the same `positions` record, so a single
+  // lookup works for tweets and ads alike.
   const distanceMap = new Map<string, number>();
   for (const { positions } of results) {
-    for (const [postUrl, distance] of Object.entries(positions)) {
-      distanceMap.set(postUrl, distance);
+    for (const [key, distance] of Object.entries(positions)) {
+      distanceMap.set(key, distance);
     }
   }
 
   // Sort by distance (closest first), posts not found in DOM go to end
-  queue.sort((a, b) => {
-    const distA = distanceMap.get(a.postUrl!) ?? Infinity;
-    const distB = distanceMap.get(b.postUrl!) ?? Infinity;
-    return distA - distB;
-  });
+  const distanceOf = (item: PendingEvaluation): number => {
+    const key = item.postUrl ?? item.evaluationId;
+    return distanceMap.get(key) ?? Infinity;
+  };
+  queue.sort((a, b) => distanceOf(a) - distanceOf(b));
 
 }
 
@@ -1204,7 +1214,7 @@ async function generateCandidatePhrases(postText: string, imageUrls: string[], c
     const suggestions = imbueResponse.suggestions || [];
     result = suggestions.slice(0, count);
   } else if (isLocalModel) {
-    // Local WebLLM models don't support image inputs — use text only
+    // Local models don't support image inputs — use text only
     const modelName = settings.selectedModel.split(':')[1];
     await localEngine.ensureLoaded(modelName);
     const rawText = await localEngine.generate([
