@@ -864,6 +864,18 @@ function updateBannerFilterVisibility() {
   if (!_deps.adapter.shouldProcessCurrentPage()) {
     filterPhrasesContainer.remove();
     filterPhrasesContainer = null;
+    return;
+  }
+  // SPA navigation between two processable pages (e.g. YT home ↔ watch)
+  // doesn't change `shouldProcessCurrentPage`, but `getFilterBoxAnchor`
+  // can return a different parent per page (drawer on home, `#secondary`
+  // on watch). When the box's current parent no longer matches the
+  // adapter's chosen anchor, tear it down so `handleDOMMutation` can
+  // re-inject at the right location.
+  const expected = _deps.adapter.getFilterBoxAnchor?.();
+  if (expected && filterPhrasesContainer.parentElement !== expected.parent) {
+    filterPhrasesContainer.remove();
+    filterPhrasesContainer = null;
   }
 }
 

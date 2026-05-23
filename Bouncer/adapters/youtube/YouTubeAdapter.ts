@@ -73,14 +73,23 @@ window.BouncerAdapter = class YouTubeAdapter implements PlatformAdapter {
   filterBoxPlacement = 'banner' as const;
 
   selectors: PlatformSelectors = {
-    post: 'ytd-rich-item-renderer',
+    // Two surfaces:
+    //   - Home: `ytd-rich-item-renderer` wraps each card in the grid.
+    //   - Watch: `yt-lockup-view-model` inside the suggested-videos
+    //     container (`ytd-watch-next-secondary-results-renderer`) is the
+    //     card itself — no rich-item wrapper on the watch sidebar.
+    // The lockup elsewhere on home is NESTED inside rich-item, so the
+    // `:not(ytd-rich-item-renderer *)` guard prevents double-matching
+    // on the home feed. (Equivalent to "only match standalone lockups.")
+    post: 'ytd-rich-item-renderer, ytd-watch-next-secondary-results-renderer yt-lockup-view-model',
     sidebar: '',
     sidebarContent: '',
     primaryColumn: '#primary',
     nav: '',
     bottomBar: '',
-    // `yt-lockup-view-model` getting added to a rich item is the signal that
-    // its data is hydrated. Used for DOM-recycling re-evaluation.
+    // `yt-lockup-view-model` getting added to a rich item is the signal
+    // that its data is hydrated. Used for DOM-recycling re-evaluation,
+    // and now also for detecting new watch-sidebar suggestions.
     mutations: 'yt-lockup-view-model',
     textContent: '.ytLockupMetadataViewModelTitle',
   };
@@ -191,7 +200,12 @@ window.BouncerAdapter = class YouTubeAdapter implements PlatformAdapter {
       && rect.bottom > 0
       && rect.top < window.innerHeight;
 
-    if (boxInViewport) {
+    // Only try to open the drawer when the box is actually inside it.
+    // On the watch page the box lives in `#secondary` (always visible),
+    // so opening the drawer would be a no-op that covers part of the
+    // page with an empty drawer.
+    const boxInDrawer = !!box && !!box.closest('tp-yt-app-drawer#guide');
+    if (boxInViewport || !boxInDrawer) {
       scrollAndFocus();
       return;
     }
@@ -246,23 +260,28 @@ window.BouncerAdapter = class YouTubeAdapter implements PlatformAdapter {
   }
 
   shouldProcessCurrentPage(): boolean {
-    // Phase 1: home feed only.
     const path = window.location.pathname;
-    return path === '/' || path === '';
+    return path === '/' || path === '' || path.startsWith('/watch');
   }
 
   getFilterBoxAnchor(): FilterBoxAnchor | null {
-    // Anchor inside the FIRST guide section's `#items` list, after the
-    // Shorts entry — so Bouncer becomes part of the same section as Home
-    // and Shorts. This matters because YT draws faint dividers between
-    // adjacent `ytd-guide-section-renderer` elements; if Bouncer were
-    // inserted between sections it would sit BELOW the divider (separated
-    // from Home/Shorts visually). Anchoring inside the section keeps the
-    // divider where YT wants it — below Bouncer, above Subscriptions.
-    //
-    // The drawer is in the DOM from page load even in "mini-only" viewport
-    // modes (it's just visually hidden until the user opens it), so we can
-    // anchor against it eagerly.
+    const path = window.location.pathname;
+
+    // Watch page: anchor at the very top of the right-hand "Up next"
+    // column (`#secondary` inside `ytd-watch-flexy`). The column is
+    // visible by default on this layout, so the box doesn't need the
+    // drawer to be opened — users see it the moment the page loads.
+    if (path.startsWith('/watch')) {
+      const secondary = document.querySelector<HTMLElement>('ytd-watch-flexy #secondary')
+        || document.querySelector<HTMLElement>('#secondary');
+      if (!secondary) return null;
+      return { parent: secondary, insertBefore: secondary.firstChild };
+    }
+
+    // Home: anchor inside the FIRST guide section's `#items` list, after
+    // the Shorts entry — so Bouncer becomes part of the same section as
+    // Home and Shorts (keeping YT's section divider below Bouncer, above
+    // Subscriptions).
     const firstSection = document.querySelector<HTMLElement>(
       'ytd-guide-renderer #sections ytd-guide-section-renderer'
     );

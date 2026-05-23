@@ -15,11 +15,41 @@
     return null;
   }
 
-  // Read the raw richItemRenderer node off the parent <ytd-rich-item-renderer>
-  // element. Same fetch path for organic videos and ads — they only diverge
-  // one level deeper, at `content.lockupViewModel` vs `content.adSlotRenderer`.
+  // Read a property that might be a signal-style lazy getter — newer YT
+  // lockup components store the lockup payload as `rawProps.data = () =>
+  // { erB(R); return R.value; }`. Plain `readObj` rejects functions, so
+  // we try calling it and unwrap the returned object.
+  function readSignalObj(holder, key) {
+    if (!holder || typeof holder !== 'object') return null;
+    try {
+      const v = holder[key];
+      if (v && typeof v === 'object') return v;
+      if (typeof v === 'function') {
+        const result = v();
+        if (result && typeof result === 'object') return result;
+      }
+    } catch { /* getter may require reactive context — skip and try fallbacks */ }
+    return null;
+  }
+
+  // Read the raw payload off a card element. Two element shapes are
+  // supported:
+  //   1. `<ytd-rich-item-renderer>` (home feed): Polymer element holding
+  //      its data directly via `.data` / `.__data` / `polymerController.data`.
+  //      Payload shape: `{ content: { lockupViewModel | adSlotRenderer | ... } }`.
+  //   2. `<yt-lockup-view-model>` (watch sidebar): newer reactive
+  //      component that exposes its payload via `rawProps.data` /
+  //      `componentProps.data`. The element's own `.data` accessor on
+  //      this shape returns a Symbol sentinel — useless to us, so we
+  //      check rawProps/componentProps first. Payload is the lockup
+  //      directly (handled by `normalize`'s "Direct lockup" branch).
   function readRichItemData(richItem) {
     if (!richItem) return null;
+
+    const fromRawProps = readSignalObj(richItem.rawProps, 'data')
+      || readSignalObj(richItem.componentProps, 'data');
+    if (fromRawProps) return fromRawProps;
+
     for (const k of DATA_PROP_FALLBACKS) {
       const v = readObj(richItem, k);
       if (v) return v;
@@ -308,9 +338,25 @@
         if (!raw) {
           if (!warnedNoData) {
             warnedNoData = true;
-            console.warn('[Bouncer][YT] No .data on ytd-rich-item-renderer.', { richItemRef: richItem });
+            const describe = (v) => v === undefined ? 'undefined'
+              : v === null ? 'null'
+              : typeof v === 'symbol' ? 'Symbol(' + (v.description || '') + ')'
+              : typeof v !== 'object' ? typeof v + '(' + String(v).slice(0, 40) + ')'
+              : 'object{' + Object.keys(v).slice(0, 8).join(',') + '}';
+            console.warn('[Bouncer][YT] No data found on', richItem.tagName.toLowerCase(), {
+              ref: richItem,
+              rawProps: describe(richItem.rawProps),
+              'rawProps.data': describe(richItem.rawProps && richItem.rawProps.data),
+              componentProps: describe(richItem.componentProps),
+              'componentProps.data': describe(richItem.componentProps && richItem.componentProps.data),
+              '.data': describe(richItem.data),
+              '.__data': describe(richItem.__data),
+              '._data': describe(richItem._data),
+              polymerController: describe(richItem.polymerController),
+              ownProps: Object.getOwnPropertyNames(richItem).slice(0, 30),
+            });
           }
-          console.log('[Bouncer][YT][bridge] no-data-property', { requestId });
+          console.log('[Bouncer][YT][bridge] no-data-property', { requestId, tag: richItem.tagName.toLowerCase() });
           document.dispatchEvent(new CustomEvent('ff-youtube-data-result', {
             detail: JSON.stringify({ requestId, success: false, error: 'no-data-property' })
           }));
