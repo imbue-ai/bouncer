@@ -157,6 +157,8 @@ window.BouncerAdapter = class YouTubeAdapter implements PlatformAdapter {
     const subsAnchor = miniItems.querySelector<HTMLElement>('a[href="/feed/subscriptions"]')
       ?.closest('ytd-mini-guide-entry-renderer') as HTMLElement | null;
     miniItems.insertBefore(entry, subsAnchor);
+    // Apply any filter count that accumulated before the entry existed.
+    this._applyCountToBadge();
     return entry;
   }
 
@@ -167,14 +169,24 @@ window.BouncerAdapter = class YouTubeAdapter implements PlatformAdapter {
   // first open, so DOM-scrape mirrors miss filter activity that happens
   // before the user touches the drawer.
   private _wireFilteredCountListener(): void {
-    document.addEventListener('bouncer:filtered-count-changed', (e) => {
-      const detail = (e as CustomEvent<{ count: number }>).detail;
-      const c = document.querySelector<HTMLElement>('.bouncer-mini-guide-entry__count');
-      if (!c) return;
-      const n = String(detail?.count ?? 0);
-      if (c.textContent !== n) c.textContent = n;
-      c.classList.toggle('bouncer-mini-guide-entry__count--nonzero', n !== '0');
+    document.addEventListener('bouncer:filtered-count-changed', () => {
+      this._applyCountToBadge();
     });
+  }
+
+  // Mirror the published filtered-post count onto the mini-guide badge.
+  // Reads from `document.documentElement.dataset.bouncerFilteredCount`,
+  // which `updateFilteredTabCount` keeps in sync with `filteredPosts.length`
+  // (the single source of truth). Idempotent — safe to call when the
+  // entry doesn't yet exist (no-op) or when the value hasn't changed
+  // (avoids dispatching a no-op DOM mutation that would re-fire the
+  // tick observer).
+  private _applyCountToBadge(): void {
+    const c = document.querySelector<HTMLElement>('.bouncer-mini-guide-entry__count');
+    if (!c) return;
+    const n = document.documentElement.dataset.bouncerFilteredCount || '0';
+    if (c.textContent !== n) c.textContent = n;
+    c.classList.toggle('bouncer-mini-guide-entry__count--nonzero', n !== '0');
   }
 
   // Click handler for the mini-guide entry. The inline box is the single
