@@ -212,12 +212,16 @@ window.BouncerAdapter = class YouTubeAdapter implements PlatformAdapter {
       && rect.bottom > 0
       && rect.top < window.innerHeight;
 
-    // Only try to open the drawer when the box is actually inside it.
-    // On the watch page the box lives in `#secondary` (always visible),
-    // so opening the drawer would be a no-op that covers part of the
-    // page with an empty drawer.
-    const boxInDrawer = !!box && !!box.closest('tp-yt-app-drawer#guide');
-    if (boxInViewport || !boxInDrawer) {
+    // Decide whether the drawer needs opening. Decisive signal: the URL,
+    // not the box's current location. On a fresh reload with the drawer
+    // collapsed, the box hasn't been injected yet (YT lazy-hydrates the
+    // guide drawer's section list on first open) — so `box` is null and
+    // we can't infer "where the box belongs" from it. The URL tells us:
+    //   - Home: anchor is inside the drawer → open drawer.
+    //   - Watch: anchor is in `#secondary` (always visible) → don't open
+    //     drawer (would cover the page with an empty overlay).
+    const anchorIsInDrawer = !window.location.pathname.startsWith('/watch');
+    if (boxInViewport || !anchorIsInDrawer) {
       scrollAndFocus();
       return;
     }
