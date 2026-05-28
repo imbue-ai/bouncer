@@ -537,7 +537,6 @@ body.site-youtube .slop-post-avatar.slop-avatar-shorts svg {
  * The default orange + 34px sizing from content.css is overridden here. */
 
 .ff-why-annoying-btn.ff-yt-under-menu,
-.ff-why-annoying-btn.ff-yt-short-menu,
 .ff-why-annoying-btn.ff-yt-inline-meta {
   width: 24px;
   height: 24px;
@@ -545,30 +544,36 @@ body.site-youtube .slop-post-avatar.slop-avatar-shorts svg {
 }
 
 html[dark] .ff-why-annoying-btn.ff-yt-under-menu,
-html[dark] .ff-why-annoying-btn.ff-yt-short-menu,
 html[dark] .ff-why-annoying-btn.ff-yt-inline-meta {
   color: #aaa;
 }
 
 .ff-why-annoying-btn.ff-yt-under-menu:hover,
-.ff-why-annoying-btn.ff-yt-short-menu:hover,
 .ff-why-annoying-btn.ff-yt-inline-meta:hover {
   color: #0f0f0f;
   background: rgba(0, 0, 0, 0.05);
 }
 
 html[dark] .ff-why-annoying-btn.ff-yt-under-menu:hover,
-html[dark] .ff-why-annoying-btn.ff-yt-short-menu:hover,
 html[dark] .ff-why-annoying-btn.ff-yt-inline-meta:hover {
   color: #f1f1f1;
   background: rgba(255, 255, 255, 0.1);
 }
 
 .ff-why-annoying-btn.ff-yt-under-menu svg,
-.ff-why-annoying-btn.ff-yt-short-menu svg,
 .ff-why-annoying-btn.ff-yt-inline-meta svg {
   width: 16px;
   height: 16px;
+}
+
+/* Sponsored ad row uses `display: flex` with default `align-items: stretch`,
+ * so the badges' text top-aligns inside the row while our 24×24 button
+ * centers its SVG — that's what pulls our icon below the "Sponsored •
+ * <advertiser>" baseline. Force the row to center its items so the
+ * trashcan vertically aligns with the text. Applied unconditionally
+ * because YT-only rows have short items and don't change visually. */
+.ytwFeedAdMetadataViewModelHostMetadataAdBadgeDetailsLineContainerStyleStandard {
+  align-items: center;
 }
 
 /* Regular videos: inline at the end of the views/age metadata row,
@@ -588,11 +593,3 @@ html[dark] .ff-why-annoying-btn.ff-yt-inline-meta:hover {
   z-index: 10;
 }
 
-/* Shorts: 3-dots sits at the right edge of the title row. Same idea — sit
- * just to the left of the menu, top-aligned with the first title row. */
-.ff-why-annoying-btn.ff-yt-short-menu {
-  position: absolute;
-  top: 4px;
-  right: 32px;
-  z-index: 10;
-}

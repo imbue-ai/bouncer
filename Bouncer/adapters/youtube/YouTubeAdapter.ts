@@ -649,28 +649,36 @@ window.BouncerAdapter = class YouTubeAdapter implements PlatformAdapter {
 
   insertActionButton(article: HTMLElement, button: HTMLElement): void {
     if (article.querySelector('.ff-why-annoying-btn')) return;
-    // Surface-specific anchors:
-    //   - Regular videos: append inline at the end of the second metadata
-    //     row (the "views • 2 years ago" line), so the button sits to the
-    //     right of the age text — `ff-yt-inline-meta` styles it inline.
-    //   - Shorts: anchor next to the 3-dots row inside
-    //     `.shortsLockupViewModelHostOutsideMetadata` (no views/age row).
-    //   - Sponsored ads: anchor inside `feed-ad-metadata-view-model`.
-    // The position class we add controls layout per surface.
+    // Surface-specific anchors, all inline at the end of an existing text
+    // row so the button reads as a native sibling of the metadata:
+    //   - Regular videos: end of the views/age row.
+    //   - Shorts: end of the views subhead.
+    //   - Sponsored ads: end of the "Sponsored • <advertiser>" row.
+    //   - Other lockups (live, playlists, etc.) with no text row to anchor
+    //     against: fall back to absolute placement next to the 3-dots menu.
     let anchor: HTMLElement | null;
     let positionClass: string;
     let inline = false;
 
-    const shortMeta = article.querySelector<HTMLElement>('.shortsLockupViewModelHostOutsideMetadata');
-    if (shortMeta) {
-      anchor = shortMeta;
-      positionClass = 'ff-yt-short-menu';
+    const shortSubhead = article.querySelector<HTMLElement>('.shortsLockupViewModelHostOutsideMetadataSubhead');
+    const adBadgeRow = article.querySelector<HTMLElement>('.ytwFeedAdMetadataViewModelHostMetadataAdBadgeDetailsLineContainerStyleStandard');
+    if (shortSubhead) {
+      anchor = shortSubhead;
+      positionClass = 'ff-yt-inline-meta';
+      inline = true;
+    } else if (adBadgeRow) {
+      anchor = adBadgeRow;
+      positionClass = 'ff-yt-inline-meta';
+      inline = true;
     } else {
-      // Regular videos: views/age is the second `.ytContentMetadataViewModelMetadataRow`
-      // (the first row is the channel name).
+      // Anchor at the LAST metadata row. For typical videos that's the
+      // views/age row (channel is row 0, views/age is row 1). For lockups
+      // with a single text row — Mix playlists, "X and more" attributions,
+      // etc. — it's that single row. Falls back to absolute placement only
+      // when the card has no metadata rows at all.
       const metaRows = article.querySelectorAll<HTMLElement>('.ytContentMetadataViewModelMetadataRow');
-      if (metaRows.length >= 2) {
-        anchor = metaRows[1];
+      if (metaRows.length >= 1) {
+        anchor = metaRows[metaRows.length - 1];
         positionClass = 'ff-yt-inline-meta';
         inline = true;
       } else {
@@ -687,12 +695,13 @@ window.BouncerAdapter = class YouTubeAdapter implements PlatformAdapter {
       // miss the first few cards on every page load.
       const mo = new MutationObserver(() => {
         if (article.querySelector('.ff-why-annoying-btn')) { mo.disconnect(); return; }
-        const hasShort = article.querySelector('.shortsLockupViewModelHostOutsideMetadata');
+        const hasShort = article.querySelector('.shortsLockupViewModelHostOutsideMetadataSubhead');
+        const hasAdBadge = article.querySelector('.ytwFeedAdMetadataViewModelHostMetadataAdBadgeDetailsLineContainerStyleStandard');
         const metaRows = article.querySelectorAll('.ytContentMetadataViewModelMetadataRow');
         const hasFallback =
           article.querySelector('.ytLockupMetadataViewModelHost')
           || article.querySelector('feed-ad-metadata-view-model');
-        if (hasShort || metaRows.length >= 2 || hasFallback) {
+        if (hasShort || hasAdBadge || metaRows.length >= 1 || hasFallback) {
           mo.disconnect();
           this.insertActionButton(article, button);
         }
