@@ -125,13 +125,15 @@ window.BouncerAdapter = class YouTubeAdapter implements PlatformAdapter {
       if (next === this._showPlaceholder) return;
       this._showPlaceholder = next;
       this._applyPlaceholderClass();
-      // Retroactively switch already-filtered cards to the new style. When
-      // turning the cover OFF we hide the cards (matching the new default
-      // for fresh hides); when turning it ON we restore the slot so CSS
-      // can render the placeholder.
+      // Retroactively switch already-filtered cards to the new style.
+      // Turning the placeholder OFF: hide the card (matching the new
+      // default for fresh hides). Turning it ON: restore the slot AND
+      // inject the placeholder DOM so CSS has something to render — the
+      // page-class toggle alone isn't enough.
       document.querySelectorAll<HTMLElement>('[data-filtered-by-extension="true"]').forEach((el) => {
         if (this._showPlaceholder) {
           el.style.display = '';
+          this._ensurePlaceholderElement(el);
         } else {
           el.style.display = 'none';
         }
@@ -140,7 +142,63 @@ window.BouncerAdapter = class YouTubeAdapter implements PlatformAdapter {
   }
 
   private _applyPlaceholderClass(): void {
-    document.documentElement.classList.toggle('bouncer-yt-placeholder', this._showPlaceholder);
+    // Distinct from the placeholder element's class — selecting `.bouncer-
+    // yt-placeholder` on its own would match both <html> and the element,
+    // and hiding the element with `display:none` would also hide <html>.
+    document.documentElement.classList.toggle('bouncer-yt-show-placeholder', this._showPlaceholder);
+  }
+
+  // Build the placeholder DOM and append it as a direct child of the card.
+  // Idempotent — bails if a placeholder is already attached. CSS gates
+  // visibility, so it's safe to leave the element in place when toggling
+  // the setting off; only fresh hides require an injection.
+  private _ensurePlaceholderElement(el: HTMLElement): void {
+    if (el.querySelector(':scope > .bouncer-yt-placeholder')) return;
+
+    // Shorts cards use a 2:3 thumbnail and a simpler byline (title + views,
+    // no avatar). Detect by descendant — the rich-item-renderer wraps a
+    // `ytm-shorts-lockup-view-model` in shelf items.
+    const isShort = !!el.querySelector('ytm-shorts-lockup-view-model, .shortsLockupViewModelHost');
+
+    const wrap = document.createElement('div');
+    wrap.className = isShort ? 'bouncer-yt-placeholder bouncer-yt-placeholder--short' : 'bouncer-yt-placeholder';
+
+    const thumb = document.createElement('div');
+    thumb.className = 'bouncer-yt-placeholder-thumb';
+    const logo = document.createElement('img');
+    logo.className = 'bouncer-yt-placeholder-logo';
+    logo.src = chrome.runtime.getURL('icons/icon48.png');
+    logo.alt = '';
+    logo.setAttribute('aria-hidden', 'true');
+    const label = document.createElement('span');
+    label.className = 'bouncer-yt-placeholder-label';
+    label.textContent = 'Filtered by Bouncer';
+    thumb.appendChild(logo);
+    thumb.appendChild(label);
+
+    const meta = document.createElement('div');
+    meta.className = 'bouncer-yt-placeholder-meta';
+    // Regular cards have an avatar circle; shorts don't.
+    if (!isShort) {
+      const avatar = document.createElement('div');
+      avatar.className = 'bouncer-yt-placeholder-avatar';
+      meta.appendChild(avatar);
+    }
+    const bars = document.createElement('div');
+    bars.className = 'bouncer-yt-placeholder-bars';
+    // Shorts get two short bars (title + views) instead of the regular
+    // three-line byline (title × 2 + channel + views).
+    const barVariants = isShort ? ['long', 'tiny'] : ['long', 'short', 'tiny'];
+    for (const variant of barVariants) {
+      const bar = document.createElement('div');
+      bar.className = `bouncer-yt-placeholder-bar ${variant}`;
+      bars.appendChild(bar);
+    }
+    meta.appendChild(bars);
+
+    wrap.appendChild(thumb);
+    wrap.appendChild(meta);
+    el.appendChild(wrap);
   }
 
   // ===== Mini-guide entry =====
@@ -408,6 +466,7 @@ window.BouncerAdapter = class YouTubeAdapter implements PlatformAdapter {
     // invisible.
     el.style.opacity = '';
     el.style.transition = '';
+    this._ensurePlaceholderElement(el);
   }
 
   extractPostContent(article: HTMLElement): PostContent {
@@ -562,6 +621,10 @@ window.BouncerAdapter = class YouTubeAdapter implements PlatformAdapter {
       c.style.opacity = '1';
       c.removeAttribute('data-filtered-by-extension');
     });
+
+    // Strip any injected placeholder DOM — the panel renders the real
+    // video, so the skeleton cover would just be cruft inside the clone.
+    el.querySelectorAll('.bouncer-yt-placeholder').forEach(p => p.remove());
 
     // Replace the thumbnail (which has lazy/blob src state) with a fresh <img>
     // so the filtered-posts panel can render it reliably.

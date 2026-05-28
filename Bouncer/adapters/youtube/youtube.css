@@ -375,41 +375,127 @@ html[dark] ytd-watch-flexy #secondary .filter-phrases-banner.filter-phrases-bann
   background-color: #0f0f0f;
 }
 
-/* ===== Filtered-video cover =====
+/* ===== Filtered-video placeholder =====
  * When the `youtubeShowPlaceholder` setting is on (controlled from the
- * popup), the YouTube adapter stamps <html> with `bouncer-yt-placeholder`.
- * These rules fire only under that class — otherwise filtered cards keep
- * the default `display: none` behavior set by `hidePost`. */
-html.bouncer-yt-placeholder ytd-rich-item-renderer[data-filtered-by-extension="true"],
-html.bouncer-yt-placeholder yt-lockup-view-model[data-filtered-by-extension="true"] {
+ * popup), the YouTube adapter stamps <html> with `bouncer-yt-show-placeholder`
+ * AND appends a `.bouncer-yt-placeholder` element into each filtered card.
+ * The mode class on <html> is intentionally distinct from the element's
+ * class — otherwise `.bouncer-yt-placeholder { display: none }` would also
+ * hit <html> and blank the whole page.
+ * These rules hide the card's real content and show the placeholder
+ * (logo + "Filtered by Bouncer" label inside a thumbnail-shaped panel,
+ * with a skeleton avatar + text bars below). Outside this class, filtered
+ * cards keep the default `display: none` set by `hidePost`. */
+
+/* Anchor the absolutely-positioned placeholder. The card retains its
+ * natural layout because children below use `visibility: hidden` (which
+ * preserves their occupied space) rather than `display: none`. */
+html.bouncer-yt-show-placeholder ytd-rich-item-renderer[data-filtered-by-extension="true"],
+html.bouncer-yt-show-placeholder yt-lockup-view-model[data-filtered-by-extension="true"] {
   position: relative;
 }
 
-html.bouncer-yt-placeholder ytd-rich-item-renderer[data-filtered-by-extension="true"] > *,
-html.bouncer-yt-placeholder yt-lockup-view-model[data-filtered-by-extension="true"] > * {
+/* Hide the original card content visually but keep it in flow so the
+ * card's intrinsic height (16:9 thumb + meta row) is preserved. The
+ * placeholder then overlays it. */
+html.bouncer-yt-show-placeholder ytd-rich-item-renderer[data-filtered-by-extension="true"] > *:not(.bouncer-yt-placeholder),
+html.bouncer-yt-show-placeholder yt-lockup-view-model[data-filtered-by-extension="true"] > *:not(.bouncer-yt-placeholder) {
   visibility: hidden;
 }
 
-html.bouncer-yt-placeholder ytd-rich-item-renderer[data-filtered-by-extension="true"]::before,
-html.bouncer-yt-placeholder yt-lockup-view-model[data-filtered-by-extension="true"]::before {
-  content: "Filtered by Bouncer";
+/* Hide the placeholder element itself by default (so it's invisible when
+ * not in placeholder mode or when the card isn't filtered). It only shows
+ * when its parent has both the page-level class and the filtered flag. */
+.bouncer-yt-placeholder { display: none; }
+html.bouncer-yt-show-placeholder ytd-rich-item-renderer[data-filtered-by-extension="true"] > .bouncer-yt-placeholder,
+html.bouncer-yt-show-placeholder yt-lockup-view-model[data-filtered-by-extension="true"] > .bouncer-yt-placeholder {
+  display: block;
   position: absolute;
   inset: 0;
+  font-family: "Roboto", "Arial", sans-serif;
+}
+
+/* Thumbnail-shaped panel: matches a real YT thumbnail's 16:9 aspect + 12px
+ * radius. Logo above the label, both centered. The logo is the Bouncer
+ * icon as-is (not forced into a circle) so its actual shape reads. */
+.bouncer-yt-placeholder-thumb {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: 12px;
+  background: #f2f2f2;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  background: #f2f2f2;
-  border-radius: 12px;
-  font-family: "Roboto", "Arial", sans-serif;
+  gap: 8px;
+  padding: 12px;
+  box-sizing: border-box;
+}
+.bouncer-yt-placeholder-logo {
+  width: 40px;
+  height: 40px;
+  display: block;
+}
+.bouncer-yt-placeholder-label {
   font-size: 14px;
-  font-weight: 400;
+  font-weight: 500;
   color: #606060;
 }
 
-html[dark].bouncer-yt-placeholder ytd-rich-item-renderer[data-filtered-by-extension="true"]::before,
-html[dark].bouncer-yt-placeholder yt-lockup-view-model[data-filtered-by-extension="true"]::before {
+/* Byline-shaped skeleton row below the thumbnail: 36px avatar circle on
+ * the left, three text bars on the right that decrease in width to mimic
+ * a real video's title (2 lines) + byline (1 line). */
+.bouncer-yt-placeholder-meta {
+  display: flex;
+  gap: 12px;
+  margin-top: 12px;
+  align-items: flex-start;
+}
+.bouncer-yt-placeholder-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: #e5e5e5;
+  flex-shrink: 0;
+}
+.bouncer-yt-placeholder-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+.bouncer-yt-placeholder-bar {
+  background: #e5e5e5;
+  border-radius: 4px;
+  height: 12px;
+}
+.bouncer-yt-placeholder-bar.long  { width: 95%; }
+.bouncer-yt-placeholder-bar.short { width: 60%; }
+.bouncer-yt-placeholder-bar.tiny  { width: 45%; height: 10px; }
+
+/* Shorts variant: tall 2:3 thumb (matches `ytThumbnailViewModelAspectRatio2By3`)
+ * and a simpler meta row with no avatar — shorts cards don't render one.
+ * Without these overrides the 16:9 thumb leaves a wide empty band at the
+ * bottom of the tall shorts cell. */
+.bouncer-yt-placeholder--short .bouncer-yt-placeholder-thumb {
+  aspect-ratio: 2 / 3;
+}
+.bouncer-yt-placeholder--short .bouncer-yt-placeholder-meta {
+  gap: 0;
+}
+
+/* Dark theme: switch to YT's dark surface colors. */
+html[dark] .bouncer-yt-placeholder-thumb {
   background: #1f1f1f;
+}
+html[dark] .bouncer-yt-placeholder-label {
   color: #aaa;
+}
+html[dark] .bouncer-yt-placeholder-avatar,
+html[dark] .bouncer-yt-placeholder-bar {
+  background: #2b2b2b;
 }
 
 /* ===== Filtered-posts panel media ===== */
