@@ -55,8 +55,7 @@
         "popup.css",
         "dist/popup.js",
         "browser-polyfill.js",
-        "adapters/twitter/fiber-extractor.js",
-        "icons/a-bouncer-2x-black.png"
+        "adapters/twitter/fiber-extractor.js"
       ],
       "matches": [
         "https://x.com/*"

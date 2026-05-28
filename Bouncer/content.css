@@ -2,6 +2,13 @@
 
 :root {
   --green-border-width: 2px;
+
+  /* Brand palette — single source of truth for Bouncer accent colors.
+   * Update these and every accent in the extension follows. */
+  --bouncer-accent: rgb(232, 153, 153);        /* #E89999 — primary pink (matches icon background) */
+  --bouncer-accent-border: rgb(212, 132, 132); /* #D48484 — outlines / card borders, slightly deeper for contrast on white */
+  --bouncer-accent-deep: rgb(196, 113, 113);   /* #C47171 — strong accents (rarely used) */
+  --bouncer-accent-soft: rgba(232, 153, 153, 0.1); /* tinted backgrounds, hover fills */
 }
 
 /* Base font for all Bouncer UI — applies directly to every child element
@@ -684,7 +691,7 @@
   width: 34px;
   border: none;
   background: transparent;
-  color: rgb(234, 133, 84);
+  color: var(--bouncer-accent);
   border-radius: 50%;
   cursor: pointer;
   padding: 0;
@@ -703,7 +710,7 @@
 }
 
 .ff-why-annoying-btn.ff-unfilter-btn:hover {
-  background: rgba(234, 133, 84, 0.1);
+  background: var(--bouncer-accent-soft);
 }
 
 .ff-why-annoying-btn svg {
@@ -786,7 +793,7 @@ article {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: rgb(234, 133, 84);
+  background: var(--bouncer-accent);
   animation: ff-bounce 1.2s infinite ease-in-out;
 }
 
@@ -826,7 +833,7 @@ article {
 .ff-progress-fill {
   height: 100%;
   width: 5%;
-  background: rgb(234, 133, 84);
+  background: var(--bouncer-accent);
   border-radius: 2px;
   transition: width 0.4s ease;
 }
@@ -860,8 +867,8 @@ article {
 }
 
 .ff-annoying-chip:hover {
-  background: rgb(234, 133, 84);
-  border-color: rgb(234, 133, 84);
+  background: var(--bouncer-accent);
+  border-color: var(--bouncer-accent);
   color: #fff;
 }
 
@@ -893,7 +900,7 @@ article {
 }
 
 .ff-annoying-custom-wrapper:focus-within {
-  border-color: rgb(234, 133, 84);
+  border-color: var(--bouncer-accent);
 }
 
 .ff-annoying-custom-input {
@@ -928,7 +935,7 @@ article {
   height: 20px;
   margin-right: 5px;
   padding: 0;
-  background: rgb(234, 133, 84);
+  background: var(--bouncer-accent);
   border: none;
   border-radius: 50%;
   cursor: pointer;
@@ -1000,9 +1007,9 @@ article {
   border-color: #cfd9de;
 }
 .twitter-light .ff-annoying-chip:hover {
-  background: rgb(234, 133, 84);
+  background: var(--bouncer-accent);
   color: #fff;
-  border-color: rgb(234, 133, 84);
+  border-color: var(--bouncer-accent);
 }
 .twitter-light .ff-annoying-thinking {
   color: #536471;
@@ -1017,7 +1024,7 @@ article {
   border-color: #cfd9de;
 }
 .twitter-light .ff-annoying-custom-wrapper:focus-within {
-  border-color: rgb(234, 133, 84);
+  border-color: var(--bouncer-accent);
 }
 .twitter-light .ff-annoying-custom-input {
   color: #0f1419;
@@ -1265,7 +1272,7 @@ article {
 .filter-phrases-container {
   padding: 12px 16px;
   background-color: rgb(0, 0, 0);
-  border: var(--green-border-width) solid rgb(234, 133, 84);
+  border: var(--green-border-width) solid var(--bouncer-accent-border);
   border-radius: 16px;
   display: flex;
   flex-direction: column
@@ -1388,7 +1395,7 @@ article {
 }
 
 .filter-phrases-container .filter-phrases-input:focus {
-  border-bottom-color: rgb(234, 133, 84) !important;
+  border-bottom-color: var(--bouncer-accent) !important;
   box-shadow: none !important;
 }
 
@@ -1574,7 +1581,7 @@ article {
 /* Light mode styles */
 .light-mode .filter-phrases-container {
   background-color: rgb(255, 255, 255);
-  border-color: rgb(200, 110, 65);
+  border-color: var(--bouncer-accent-border);
 }
 
 .light-mode .filter-phrases-label,
@@ -1719,7 +1726,7 @@ article {
   bottom: 0;
   z-index: 10000;
   background-color: rgb(0, 0, 0);
-  border: 2px solid rgb(234, 133, 84);
+  border: 2px solid var(--bouncer-accent);
   border-bottom: none;
   border-radius: 16px 16px 0 0;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -1742,7 +1749,7 @@ article {
   height: 0;
   border-left: 6px solid transparent;
   border-right: 6px solid transparent;
-  border-top: 6px solid rgb(234, 133, 84);
+  border-top: 6px solid var(--bouncer-accent);
   transition: transform 0.2s;
 }
 
@@ -1802,7 +1809,7 @@ article {
 
 .filter-phrases-mobile .filter-phrases-container {
   background-color: rgb(0, 0, 0);
-  border: 2px solid rgb(234, 133, 84);
+  border: 2px solid var(--bouncer-accent);
   border-radius: 16px;
   padding: 12px 16px;
 }
