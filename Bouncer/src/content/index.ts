@@ -525,6 +525,20 @@ import { formatPostForEvaluation } from '../shared/utils';
       if (getFilteredTabActive() || getFFPageActive()) return;
 
       for (const mutation of mutations) {
+        // SPA back-nav case: YT re-renders the inner subtree of an existing
+        // post (e.g. swaps the metadata host) WITHOUT re-adding the
+        // `yt-lockup-view-model` wrapper, so `selectors.mutations` below
+        // misses it. Walk up from the mutation target to find the
+        // containing post and re-attach the trash button if it's been
+        // wiped. The button-add call is idempotent, so this is a no-op
+        // when nothing was lost.
+        if (mutation.target instanceof Element && mutation.addedNodes.length > 0) {
+          const containerPost = mutation.target.closest<HTMLElement>(adapter.selectors.post);
+          if (containerPost && !containerPost.querySelector('.ff-why-annoying-btn')) {
+            addWhyAnnoyingButton(containerPost);
+          }
+        }
+
         for (const node of mutation.addedNodes) {
           if (node.nodeType !== Node.ELEMENT_NODE) continue;
           const el = node as HTMLElement;
@@ -542,6 +556,10 @@ import { formatPostForEvaluation } from '../shared/utils';
               const article = mutEl.closest<HTMLElement>(adapter.selectors.post);
               if (article) {
                 schedulePostReeval(article);
+                // Re-hydration may have wiped out our trash button (its anchor
+                // is a child of the freshly rendered lockup). Re-inject — the
+                // call is idempotent, so it's a no-op when the button survives.
+                addWhyAnnoyingButton(article);
               }
             });
         }
@@ -557,11 +575,36 @@ import { formatPostForEvaluation } from '../shared/utils';
   // ==================== Init ====================
 
   async function init() {
-    const data = await getStorage(['enabled', 'filterReplies']);
-    enabled = data.enabled !== false;
+    // Per-platform master switch. `adapter.siteId` is the source of truth
+    // for which storage key gates this run. Default true so installs that
+    // pre-date the toggle keep filtering as before.
+    const platformKey = adapter.siteId === 'twitter' ? 'twitterEnabled' : 'youtubeEnabled';
+    const data = await getStorage(['enabled', 'filterReplies', platformKey]);
+    let globalEnabled = data.enabled !== false;
+    const platformEnabled = data[platformKey] !== false;
+    enabled = globalEnabled && platformEnabled;
     // Treat undefined as true so users on builds released before this
     // setting existed keep their current behavior.
     filterReplies = data.filterReplies !== false;
+
+    // Platform is off — don't inject any UI, don't observe posts, don't
+    // wire up any listeners beyond the one that watches for re-enable.
+    // The adapter constructor may have already injected platform-specific
+    // chrome (e.g. YT's mini-guide entry); strip it now and let CSS
+    // (`body.bouncer-disabled`) suppress anything its observers re-add.
+    if (!platformEnabled) {
+      document.body.classList.add('bouncer-disabled');
+      document.querySelectorAll('.bouncer-mini-guide-entry, .bouncer-title-logo').forEach(el => el.remove());
+      // A full reload is the cleanest way to bring all Bouncer UI back
+      // when the user flips the toggle on — re-threading observers and
+      // injectors mid-page isn't worth the maintenance burden.
+      chrome.storage.onChanged.addListener((changes) => {
+        if (changes[platformKey] && changes[platformKey].newValue !== false) {
+          location.reload();
+        }
+      });
+      return;
+    }
 
     await checkLocalModelActive();
     await checkAuthStatus();
@@ -570,6 +613,7 @@ import { formatPostForEvaluation } from '../shared/utils';
       observePosts();
       processExistingPosts();
     }
+
 
     // Always run the import-code transform, even on pages where filter
     // classification is gated off (profiles, notifications, lists, etc.) —
@@ -613,8 +657,15 @@ import { formatPostForEvaluation } from '../shared/utils';
 
     // Listen for settings changes
     chrome.storage.onChanged.addListener((changes) => {
+      // Platform toggle flipped off — reload so the script re-runs into the
+      // disabled branch and tears everything down cleanly.
+      if (changes[platformKey] && changes[platformKey].newValue === false) {
+        location.reload();
+        return;
+      }
       if (changes.enabled) {
-        enabled = changes.enabled.newValue as boolean;
+        globalEnabled = changes.enabled.newValue !== false;
+        enabled = globalEnabled && platformEnabled;
         if (enabled) {
           observePosts();
           processExistingPosts();

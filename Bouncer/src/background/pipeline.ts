@@ -417,7 +417,7 @@ export async function getSettings(siteId?: SiteId): Promise<Settings> {
     'apiKey', 'openaiApiKey', 'openaiApiBase', 'openrouterApiKey', 'geminiApiKey',
     'anthropicApiKey', 'enabled', 'useEmbeddings', 'selectedModel',
     'customModels', 'predefinedModelKwargs', 'aiTextFilterEnabled', 'aiTextDetectionThreshold',
-    'filterReplies'
+    'filterReplies', 'twitterEnabled', 'youtubeEnabled', 'youtubeShowPlaceholder'
   ] as const;
   const [data, descriptions] = await Promise.all([
     getStorage([...settingsKeys]),
@@ -438,7 +438,10 @@ export async function getSettings(siteId?: SiteId): Promise<Settings> {
     predefinedModelKwargs: data.predefinedModelKwargs || {},
     aiTextFilterEnabled: data.aiTextFilterEnabled === true,
     aiTextDetectionThreshold: clampThreshold(data.aiTextDetectionThreshold),
-    filterReplies: data.filterReplies !== false
+    filterReplies: data.filterReplies !== false,
+    twitterEnabled: data.twitterEnabled !== false,
+    youtubeEnabled: data.youtubeEnabled !== false,
+    youtubeShowPlaceholder: data.youtubeShowPlaceholder === true
   };
 }
 

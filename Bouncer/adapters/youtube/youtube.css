@@ -14,6 +14,17 @@
  * `.filter-phrases-banner--<siteId>` selector and matching theme rules.
  * Nothing here needs to be touched. */
 
+/* When the YouTube platform toggle is off, the content script's init flow
+ * adds `body.bouncer-disabled` and removes adapter-injected chrome. The
+ * adapter's mini-guide observer keeps trying to re-add the entry on every
+ * DOM mutation — CSS hides what slips through. */
+body.bouncer-disabled .bouncer-mini-guide-entry,
+body.bouncer-disabled .bouncer-title-logo,
+body.bouncer-disabled .filter-phrases-banner,
+body.bouncer-disabled .ff-why-annoying-btn {
+  display: none !important;
+}
+
 /* ===== Mini-guide entry ===== */
 /* Matches `ytd-mini-guide-entry-renderer`: 74px square button, icon on
  * top, 10px label below. Native hover/active feedback. */
@@ -116,9 +127,9 @@ html[dark] .bouncer-mini-guide-entry__label {
 
 /* ===== Inline filter box in the full guide ===== */
 
-/* No border, no rounded card — the box reads as a flush section of the
- * guide rail (the Bouncer logo next to the title now carries the brand
- * instead). Full horizontal width to maximize input + phrase tag room. */
+/* Outlined card frame — matches the rounded card styling YouTube uses for
+ * companion ad slots and lockup cards in the watch sidebar. Same treatment
+ * on the home guide rail so both surfaces read as native YT cards. */
 .filter-phrases-banner.filter-phrases-banner--youtube {
   display: block;
   width: 100%;
@@ -129,10 +140,10 @@ html[dark] .bouncer-mini-guide-entry__label {
 }
 
 .filter-phrases-banner--youtube .filter-phrases-container {
-  padding: 8px 12px;
+  padding: 12px 16px;
   background-color: #ffffff !important;
-  border: 0 !important;
-  border-radius: 0 !important;
+  border: 1px solid rgba(0, 0, 0, 0.1) !important;
+  border-radius: 12px !important;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -140,6 +151,7 @@ html[dark] .bouncer-mini-guide-entry__label {
 
 html[dark] .filter-phrases-banner--youtube .filter-phrases-container {
   background-color: #0f0f0f !important;
+  border-color: rgba(255, 255, 255, 0.1) !important;
 }
 
 /* Title row: bold "Bouncer" header. No accent dot — the orange border
@@ -153,7 +165,7 @@ html[dark] .filter-phrases-banner--youtube .filter-phrases-container {
   align-items: center;
   gap: 8px;
   padding-bottom: 0;
-  font-family: "YouTube Sans", "Roboto", "Arial", sans-serif;
+  font-family: "Roboto", "Arial", sans-serif;
   font-size: 16px;
   font-weight: 700;
   letter-spacing: 0.1px;
@@ -339,6 +351,67 @@ html[dark] .filter-phrases-banner--youtube .google-signin-btn:hover {
   border-color: rgba(255, 255, 255, 0.25) !important;
 }
 
+/* ===== Watch-page sidebar: sticky to top of the scroll area =====
+ * The up-next column scrolls with the page on YT's watch layout. Pin the
+ * filter box just below the masthead (56px tall) so it stays in view as
+ * the user scrolls suggested videos. `z-index` keeps it above the cards
+ * while sticky. */
+ytd-watch-flexy #secondary .filter-phrases-banner.filter-phrases-banner--youtube {
+  position: sticky;
+  top: 56px;
+  /* Draw on top of anything YT renders in the up-next column (the autoplay
+   * "Next" arrow, etc.). `z-index` only takes effect on positioned
+   * elements — `position: sticky` qualifies. `isolation: isolate` forces
+   * a new stacking context so descendant contexts can't escape it, and
+   * the high value beats YT's own widget stacking. */
+  z-index: 9999;
+  isolation: isolate;
+  padding: 0;
+  margin-bottom: 12px;
+  background-color: #ffffff;
+}
+
+html[dark] ytd-watch-flexy #secondary .filter-phrases-banner.filter-phrases-banner--youtube {
+  background-color: #0f0f0f;
+}
+
+/* ===== Filtered-video cover =====
+ * When the `youtubeShowPlaceholder` setting is on (controlled from the
+ * popup), the YouTube adapter stamps <html> with `bouncer-yt-placeholder`.
+ * These rules fire only under that class — otherwise filtered cards keep
+ * the default `display: none` behavior set by `hidePost`. */
+html.bouncer-yt-placeholder ytd-rich-item-renderer[data-filtered-by-extension="true"],
+html.bouncer-yt-placeholder yt-lockup-view-model[data-filtered-by-extension="true"] {
+  position: relative;
+}
+
+html.bouncer-yt-placeholder ytd-rich-item-renderer[data-filtered-by-extension="true"] > *,
+html.bouncer-yt-placeholder yt-lockup-view-model[data-filtered-by-extension="true"] > * {
+  visibility: hidden;
+}
+
+html.bouncer-yt-placeholder ytd-rich-item-renderer[data-filtered-by-extension="true"]::before,
+html.bouncer-yt-placeholder yt-lockup-view-model[data-filtered-by-extension="true"]::before {
+  content: "Filtered by Bouncer";
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f2f2f2;
+  border-radius: 12px;
+  font-family: "Roboto", "Arial", sans-serif;
+  font-size: 14px;
+  font-weight: 400;
+  color: #606060;
+}
+
+html[dark].bouncer-yt-placeholder ytd-rich-item-renderer[data-filtered-by-extension="true"]::before,
+html[dark].bouncer-yt-placeholder yt-lockup-view-model[data-filtered-by-extension="true"]::before {
+  background: #1f1f1f;
+  color: #aaa;
+}
+
 /* ===== Filtered-posts panel media ===== */
 /* 16:9 thumbnail when we replay a hidden lockup. */
 body.site-youtube .slop-media-container {
@@ -372,22 +445,68 @@ body.site-youtube .slop-post-avatar.slop-avatar-shorts svg {
 }
 
 /* ===== "Bounce this video" action button ===== */
-/* Anchored directly below the three-dots menu on every card. Visual
- * styling is inherited from content.css; we only set positioning here. */
+/* Anchored inline with the first line of the title text, to the left of
+ * the 3-dots menu. Sized down and recolored to YT's secondary icon gray
+ * so it reads as a native sibling of the menu rather than a brand accent.
+ * The default orange + 34px sizing from content.css is overridden here. */
 
-/* Regular videos + ads: 3-dots sits at the top-right of the metadata host. */
+.ff-why-annoying-btn.ff-yt-under-menu,
+.ff-why-annoying-btn.ff-yt-short-menu,
+.ff-why-annoying-btn.ff-yt-inline-meta {
+  width: 24px;
+  height: 24px;
+  color: #606060;
+}
+
+html[dark] .ff-why-annoying-btn.ff-yt-under-menu,
+html[dark] .ff-why-annoying-btn.ff-yt-short-menu,
+html[dark] .ff-why-annoying-btn.ff-yt-inline-meta {
+  color: #aaa;
+}
+
+.ff-why-annoying-btn.ff-yt-under-menu:hover,
+.ff-why-annoying-btn.ff-yt-short-menu:hover,
+.ff-why-annoying-btn.ff-yt-inline-meta:hover {
+  color: #0f0f0f;
+  background: rgba(0, 0, 0, 0.05);
+}
+
+html[dark] .ff-why-annoying-btn.ff-yt-under-menu:hover,
+html[dark] .ff-why-annoying-btn.ff-yt-short-menu:hover,
+html[dark] .ff-why-annoying-btn.ff-yt-inline-meta:hover {
+  color: #f1f1f1;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.ff-why-annoying-btn.ff-yt-under-menu svg,
+.ff-why-annoying-btn.ff-yt-short-menu svg,
+.ff-why-annoying-btn.ff-yt-inline-meta svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* Regular videos: inline at the end of the views/age metadata row,
+ * baseline-aligned with the text so it sits right of "2 years ago". */
+.ff-why-annoying-btn.ff-yt-inline-meta {
+  display: inline-flex;
+  vertical-align: middle;
+  margin-left: 4px;
+}
+
+/* Regular videos + ads: 3-dots sits at the top-right of the metadata host.
+ * Place the trash icon just to its left, aligned with the title's first line. */
 .ff-why-annoying-btn.ff-yt-under-menu {
   position: absolute;
-  top: 40px;
-  right: 0;
+  top: 4px;
+  right: 32px;
   z-index: 10;
 }
 
-/* Shorts: 3-dots sits at the right edge of the title row, vertically
- * centered. Anchor inside the same row, below the menu. */
+/* Shorts: 3-dots sits at the right edge of the title row. Same idea — sit
+ * just to the left of the menu, top-aligned with the first title row. */
 .ff-why-annoying-btn.ff-yt-short-menu {
   position: absolute;
-  top: 40px;
-  right: 0;
+  top: 4px;
+  right: 32px;
   z-index: 10;
 }

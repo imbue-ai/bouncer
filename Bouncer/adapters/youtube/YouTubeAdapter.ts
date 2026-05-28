@@ -96,11 +96,51 @@ window.BouncerAdapter = class YouTubeAdapter implements PlatformAdapter {
 
   private _extractorReady = false;
   private _pendingStoreRequests = new Map<string, (result: StoreResult) => void>();
+  // `youtubeShowPlaceholder` mirrored locally so `hidePost` (sync) can read
+  // it without awaiting storage. Updated by `_initPlaceholderSetting` on
+  // load and on `chrome.storage.onChanged`.
+  private _showPlaceholder = false;
 
   constructor() {
     this._initLockupExtractor();
-    this._initFilteredPostObserver();
     this._initMiniGuideEntry();
+    this._initPlaceholderSetting();
+  }
+
+  // Read the placeholder setting and keep it current. The setting also
+  // toggles a class on <html> so `youtube.css` can gate the cover styling
+  // — CSS reads the class, JS reads the field, both stay in sync via the
+  // storage listener below.
+  private _initPlaceholderSetting(): void {
+    chrome.storage.local.get(['youtubeShowPlaceholder'])
+      .then((data) => {
+        this._showPlaceholder = (data as { youtubeShowPlaceholder?: boolean }).youtubeShowPlaceholder === true;
+        this._applyPlaceholderClass();
+      })
+      .catch(() => { /* storage unavailable — keep default (off) */ });
+
+    chrome.storage.onChanged.addListener((changes) => {
+      if (!changes.youtubeShowPlaceholder) return;
+      const next = changes.youtubeShowPlaceholder.newValue === true;
+      if (next === this._showPlaceholder) return;
+      this._showPlaceholder = next;
+      this._applyPlaceholderClass();
+      // Retroactively switch already-filtered cards to the new style. When
+      // turning the cover OFF we hide the cards (matching the new default
+      // for fresh hides); when turning it ON we restore the slot so CSS
+      // can render the placeholder.
+      document.querySelectorAll<HTMLElement>('[data-filtered-by-extension="true"]').forEach((el) => {
+        if (this._showPlaceholder) {
+          el.style.display = '';
+        } else {
+          el.style.display = 'none';
+        }
+      });
+    });
+  }
+
+  private _applyPlaceholderClass(): void {
+    document.documentElement.classList.toggle('bouncer-yt-placeholder', this._showPlaceholder);
   }
 
   // ===== Mini-guide entry =====
@@ -350,39 +390,24 @@ window.BouncerAdapter = class YouTubeAdapter implements PlatformAdapter {
     return article;
   }
 
+  // Two modes, gated by the `youtubeShowPlaceholder` setting:
+  //   - off (default): remove the card outright, matching Twitter.
+  //   - on: leave the slot in the home grid and cover it with a
+  //         "Filtered by Bouncer" placeholder (see youtube.css).
+  // The watch-page sidebar is always remove-only — it's a linear list, so
+  // a placeholder row would be noise between real suggestions.
   hidePost(article: HTMLElement): void {
     const el = this.getPostContainer(article);
-    const rect = el.getBoundingClientRect();
     el.dataset.filteredByExtension = 'true';
-    if (rect.bottom > 0) {
+    if (!this._showPlaceholder || window.location.pathname.startsWith('/watch')) {
       el.style.display = 'none';
+      return;
     }
-    // Above-viewport posts get faded out by the scroll handler in
-    // _initFilteredPostObserver so users don't see the layout jump.
-  }
-
-  // Same fade-on-scroll pattern as TwitterAdapter — keeps off-screen
-  // filtered items from causing a visible jump when they come into view.
-  private _initFilteredPostObserver() {
-    const fadingOut = new Set<Element>();
-    const scrollHandler = () => {
-      const marked = document.querySelectorAll('[data-filtered-by-extension="true"]');
-      for (const el of marked) {
-        if (!(el instanceof HTMLElement)) continue;
-        if (el.style.display === 'none' || fadingOut.has(el)) continue;
-        const rect = el.getBoundingClientRect();
-        if (rect.top >= 100) {
-          fadingOut.add(el);
-          el.style.transition = 'opacity 0.3s ease';
-          el.style.opacity = '0';
-          setTimeout(() => {
-            el.style.display = 'none';
-            fadingOut.delete(el);
-          }, 300);
-        }
-      }
-    };
-    window.addEventListener('scroll', scrollHandler, { passive: true });
+    // Clear the fade-out styles the shared hide flow applies before calling
+    // us — otherwise the just-installed cover inherits `opacity: 0` and is
+    // invisible.
+    el.style.opacity = '';
+    el.style.transition = '';
   }
 
   extractPostContent(article: HTMLElement): PostContent {
@@ -561,27 +586,36 @@ window.BouncerAdapter = class YouTubeAdapter implements PlatformAdapter {
 
   insertActionButton(article: HTMLElement, button: HTMLElement): void {
     if (article.querySelector('.ff-why-annoying-btn')) return;
-    // Surface-specific anchors. Each card type renders its 3-dots menu in
-    // a different container; we anchor our button to the same container so
-    // it lands directly below the menu regardless of layout.
-    //   - Regular videos: `.ytLockupMetadataViewModelHost`
-    //   - Sponsored ads:  `feed-ad-metadata-view-model`
-    //   - Shorts:         `.shortsLockupViewModelHostOutsideMetadata`
-    //     (the row that contains both the title and the menu button).
-    // The class we add (`ff-yt-under-menu` vs `ff-yt-short-menu`) lets the
-    // stylesheet apply different absolute offsets per surface.
+    // Surface-specific anchors:
+    //   - Regular videos: append inline at the end of the second metadata
+    //     row (the "views • 2 years ago" line), so the button sits to the
+    //     right of the age text — `ff-yt-inline-meta` styles it inline.
+    //   - Shorts: anchor next to the 3-dots row inside
+    //     `.shortsLockupViewModelHostOutsideMetadata` (no views/age row).
+    //   - Sponsored ads: anchor inside `feed-ad-metadata-view-model`.
+    // The position class we add controls layout per surface.
     let anchor: HTMLElement | null;
     let positionClass: string;
+    let inline = false;
 
     const shortMeta = article.querySelector<HTMLElement>('.shortsLockupViewModelHostOutsideMetadata');
     if (shortMeta) {
       anchor = shortMeta;
       positionClass = 'ff-yt-short-menu';
     } else {
-      anchor =
-        article.querySelector<HTMLElement>('.ytLockupMetadataViewModelHost')
-        || article.querySelector<HTMLElement>('feed-ad-metadata-view-model');
-      positionClass = 'ff-yt-under-menu';
+      // Regular videos: views/age is the second `.ytContentMetadataViewModelMetadataRow`
+      // (the first row is the channel name).
+      const metaRows = article.querySelectorAll<HTMLElement>('.ytContentMetadataViewModelMetadataRow');
+      if (metaRows.length >= 2) {
+        anchor = metaRows[1];
+        positionClass = 'ff-yt-inline-meta';
+        inline = true;
+      } else {
+        anchor =
+          article.querySelector<HTMLElement>('.ytLockupMetadataViewModelHost')
+          || article.querySelector<HTMLElement>('feed-ad-metadata-view-model');
+        positionClass = 'ff-yt-under-menu';
+      }
     }
 
     if (!anchor) {
@@ -590,11 +624,12 @@ window.BouncerAdapter = class YouTubeAdapter implements PlatformAdapter {
       // miss the first few cards on every page load.
       const mo = new MutationObserver(() => {
         if (article.querySelector('.ff-why-annoying-btn')) { mo.disconnect(); return; }
-        const a =
-          article.querySelector<HTMLElement>('.shortsLockupViewModelHostOutsideMetadata')
-          || article.querySelector<HTMLElement>('.ytLockupMetadataViewModelHost')
-          || article.querySelector<HTMLElement>('feed-ad-metadata-view-model');
-        if (a) {
+        const hasShort = article.querySelector('.shortsLockupViewModelHostOutsideMetadata');
+        const metaRows = article.querySelectorAll('.ytContentMetadataViewModelMetadataRow');
+        const hasFallback =
+          article.querySelector('.ytLockupMetadataViewModelHost')
+          || article.querySelector('feed-ad-metadata-view-model');
+        if (hasShort || metaRows.length >= 2 || hasFallback) {
           mo.disconnect();
           this.insertActionButton(article, button);
         }
@@ -607,7 +642,7 @@ window.BouncerAdapter = class YouTubeAdapter implements PlatformAdapter {
     }
 
     button.classList.add(positionClass);
-    if (getComputedStyle(anchor).position === 'static') {
+    if (!inline && getComputedStyle(anchor).position === 'static') {
       anchor.style.position = 'relative';
     }
     anchor.appendChild(button);

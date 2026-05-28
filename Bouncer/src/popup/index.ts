@@ -238,6 +238,23 @@ function setupStorageListener() {
       const el = document.getElementById('enableFilterReplies') as HTMLInputElement | null;
       if (el && el.checked !== checked) el.checked = checked;
     }
+    if (areaName === 'local' && changes.twitterEnabled) {
+      const checked = changes.twitterEnabled.newValue !== false;
+      const el = document.getElementById('enableTwitter') as HTMLInputElement | null;
+      if (el && el.checked !== checked) el.checked = checked;
+      document.getElementById('platformProviderTwitter')?.classList.toggle('disabled', !checked);
+    }
+    if (areaName === 'local' && changes.youtubeEnabled) {
+      const checked = changes.youtubeEnabled.newValue !== false;
+      const el = document.getElementById('enableYoutube') as HTMLInputElement | null;
+      if (el && el.checked !== checked) el.checked = checked;
+      document.getElementById('platformProviderYoutube')?.classList.toggle('disabled', !checked);
+    }
+    if (areaName === 'local' && changes.youtubeShowPlaceholder) {
+      const checked = changes.youtubeShowPlaceholder.newValue === true;
+      const el = document.getElementById('enableYoutubePlaceholder') as HTMLInputElement | null;
+      if (el && el.checked !== checked) el.checked = checked;
+    }
     if (areaName === 'local' && changes.aiTextDetectionThreshold) {
       const v = clampThreshold(changes.aiTextDetectionThreshold.newValue);
       const thresholdEl = document.getElementById('aiTextThreshold') as HTMLInputElement | null;
@@ -264,7 +281,10 @@ async function loadSettings() {
     'aiTextFilterEnabled',
     'aiTextDetectionThreshold',
     'aiTextFilterExperimental',
-    'filterReplies'
+    'filterReplies',
+    'twitterEnabled',
+    'youtubeEnabled',
+    'youtubeShowPlaceholder'
   ]);
 
   // Load predefined model kwargs overrides
@@ -287,6 +307,21 @@ async function loadSettings() {
   // key and skips reply evaluation on permalink pages when this is off.
   const filterRepliesEl = document.getElementById('enableFilterReplies') as HTMLInputElement | null;
   if (filterRepliesEl) filterRepliesEl.checked = data.filterReplies !== false;
+
+  // Platform master toggles. Default to true for backwards compatibility.
+  // The expanded/disabled visual state mirrors the toggle's value so the
+  // row reads as "Bouncer is/isn't doing anything on this platform".
+  const twitterEl = document.getElementById('enableTwitter') as HTMLInputElement | null;
+  if (twitterEl) twitterEl.checked = data.twitterEnabled !== false;
+  document.getElementById('platformProviderTwitter')?.classList.toggle('disabled', data.twitterEnabled === false);
+  const youtubeEl = document.getElementById('enableYoutube') as HTMLInputElement | null;
+  if (youtubeEl) youtubeEl.checked = data.youtubeEnabled !== false;
+  document.getElementById('platformProviderYoutube')?.classList.toggle('disabled', data.youtubeEnabled === false);
+
+  // YouTube placeholder toggle (off by default — match Twitter's "remove"
+  // behavior unless the user opts in).
+  const ytPlaceholderEl = document.getElementById('enableYoutubePlaceholder') as HTMLInputElement | null;
+  if (ytPlaceholderEl) ytPlaceholderEl.checked = data.youtubeShowPlaceholder === true;
 
   // AI-text-detection toggle (gated on auth via parent mainContainer visibility)
   const aiTextEl = document.getElementById('enableAiTextFilter') as HTMLInputElement | null;
@@ -435,9 +470,13 @@ function setupEventListeners() {
   // Model dropdown
   setupModelDropdown();
 
-  // API provider collapsible headers
+  // API provider + platform collapsible headers. Both reuse the same
+  // accordion classes. Clicks that originate inside the inline platform
+  // toggle (`.ts-inline`) must not bubble up to the header — otherwise
+  // toggling on/off would also collapse/expand the row.
   document.querySelectorAll('.api-provider-header').forEach(header => {
-    header.addEventListener('click', () => {
+    header.addEventListener('click', (e) => {
+      if ((e.target as HTMLElement | null)?.closest('.ts-inline')) return;
       const provider = header.closest('.api-provider');
       provider?.classList.toggle('expanded');
     });
@@ -626,6 +665,26 @@ function setupEventListeners() {
     const checked = (e.target as HTMLInputElement).checked;
     await setStorage({ filterReplies: checked });
   })().catch(err => console.error('[Popup] enableFilterReplies change failed:', err)); });
+
+  // Platform master toggles. Dim the body in-line so the user sees the
+  // platform's sub-settings become inert without waiting for storage to
+  // round-trip. Persisting drives the content script's gate.
+  document.getElementById('enableTwitter')?.addEventListener('change', (e) => { (async () => {
+    const checked = (e.target as HTMLInputElement).checked;
+    document.getElementById('platformProviderTwitter')?.classList.toggle('disabled', !checked);
+    await setStorage({ twitterEnabled: checked });
+  })().catch(err => console.error('[Popup] enableTwitter change failed:', err)); });
+
+  document.getElementById('enableYoutube')?.addEventListener('change', (e) => { (async () => {
+    const checked = (e.target as HTMLInputElement).checked;
+    document.getElementById('platformProviderYoutube')?.classList.toggle('disabled', !checked);
+    await setStorage({ youtubeEnabled: checked });
+  })().catch(err => console.error('[Popup] enableYoutube change failed:', err)); });
+
+  document.getElementById('enableYoutubePlaceholder')?.addEventListener('change', (e) => { (async () => {
+    const checked = (e.target as HTMLInputElement).checked;
+    await setStorage({ youtubeShowPlaceholder: checked });
+  })().catch(err => console.error('[Popup] enableYoutubePlaceholder change failed:', err)); });
 
   // AI-text-detection threshold (range slider). Live-update the percentage
   // display on `input` (every drag tick); persist only on `change` (release)

@@ -176,6 +176,16 @@ interface SettingsBase {
   // submitted for evaluation. The main timeline is unaffected either way.
   // Defaults to true to preserve historical behavior.
   filterReplies: boolean;
+  // Per-platform master switches. Default to true so existing installs
+  // keep filtering on every supported platform; the content script reads
+  // the matching key based on `adapter.siteId` and skips all processing
+  // when its platform's switch is off.
+  twitterEnabled: boolean;
+  youtubeEnabled: boolean;
+  // When true on YouTube, filtered videos are left in the grid and shown
+  // as a "Filtered by Bouncer" placeholder card (see youtube.css). Default
+  // false — remove the card outright, matching Twitter's behavior.
+  youtubeShowPlaceholder: boolean;
 }
 
 export interface Settings extends SettingsBase {

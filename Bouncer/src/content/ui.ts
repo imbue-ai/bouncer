@@ -873,9 +873,19 @@ function updateBannerFilterVisibility() {
   // adapter's chosen anchor, tear it down so `handleDOMMutation` can
   // re-inject at the right location.
   const expected = _deps.adapter.getFilterBoxAnchor?.();
-  if (expected && filterPhrasesContainer.parentElement !== expected.parent) {
+  if (!expected) return;
+  if (filterPhrasesContainer.parentElement !== expected.parent) {
     filterPhrasesContainer.remove();
     filterPhrasesContainer = null;
+    return;
+  }
+  // Adapter pointed at the same parent, but YT may have inserted its own
+  // widgets (e.g. the watch-page autoplay/next panel) above our box after
+  // injection. Re-anchor so we stay at the top — needed for the sticky
+  // positioning on the watch sidebar to land above YT's own header row.
+  if (expected.insertBefore && filterPhrasesContainer !== expected.insertBefore
+      && filterPhrasesContainer.previousElementSibling) {
+    expected.parent.insertBefore(filterPhrasesContainer, expected.insertBefore);
   }
 }
 
