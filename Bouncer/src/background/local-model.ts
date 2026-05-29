@@ -71,15 +71,27 @@ export function parseTableYesnoResponse(
     return { shouldHide: false, reasoning: 'Empty model response — model returned no output', matches: [] };
   }
   const raw = stripGemmaMarkers(rawResponse);
-  // Some checkpoints prepend a stray space or other prefix; tolerate
-  // anything up to the first `|`. If there is no `|` at all the row is junk.
-  const pipeIdx = raw.indexOf('|');
-  if (pipeIdx === -1) {
-    return { shouldHide: false, reasoning: `Malformed verdict row (no '|'): ${rawResponse}`, matches: [] };
+  // Split on `|`, trim each cell, drop leading/trailing empty cells. This
+  // tolerates the prompt's example shape (`| no | yes | no`), a bare row
+  // without leading `|` (Gemma occasionally drops it — `no|yes|no`), and a
+  // trailing `|`. Junk preamble before the first `|` is handled below.
+  let parts = raw.split('|').map(s => s.trim());
+  while (parts.length > 0 && parts[0] === '') parts.shift();
+  while (parts.length > 0 && parts[parts.length - 1] === '') parts.pop();
+
+  // Some checkpoints prepend a few words before the first `|`. If we have
+  // more cells than expected AND the overflow cells aren't valid verdicts,
+  // treat them as preamble and drop them.
+  const isVerdict = (s: string): boolean => {
+    const v = s.toLowerCase();
+    return v === 'yes' || v === 'no';
+  };
+  if (parts.length > categories.length && !isVerdict(parts[0])) {
+    const overflow = parts.length - categories.length;
+    if (parts.slice(0, overflow).every(p => !isVerdict(p))) {
+      parts = parts.slice(overflow);
+    }
   }
-  const row = raw.slice(pipeIdx);
-  const parts = row.split('|').map(s => s.trim()).slice(1);
-  if (parts.length > 0 && parts[parts.length - 1] === '') parts.pop();
 
   if (parts.length !== categories.length) {
     return {

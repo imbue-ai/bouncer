@@ -53,7 +53,7 @@ vi.mock('../../src/shared/utils.js', () => ({
   formatLocalInferenceResult: vi.fn(),
 }));
 
-import { localEngine } from '../../src/background/local-model.js';
+import { localEngine, parseTableYesnoResponse } from '../../src/background/local-model.js';
 import { InferenceQueue, inferenceQueue } from '../../src/background/inference-queue.js';
 import { isGPUDeviceLostError } from '../../src/shared/utils.js';
 import type { Mock } from 'vitest';
@@ -825,3 +825,66 @@ describe('LocalEngine generate + preempt + lifecycle', () => {
     expect(statuses['TestModel']?.error).toMatch(/GPU memory/);
   });
 });
+
+// ==================== parseTableYesnoResponse ====================
+
+describe('parseTableYesnoResponse', () => {
+  const cats = ['politics', 'sports', 'crypto'];
+
+  it('parses canonical prompt-shaped row with leading `|`', () => {
+    const r = parseTableYesnoResponse('| no | yes | no', cats);
+    expect(r.matches).toEqual(['sports']);
+    expect(r.shouldHide).toBe(true);
+  });
+
+  it('parses bare row without leading `|` (regression: was counting 2 instead of 3)', () => {
+    const r = parseTableYesnoResponse('no|yes|yes', cats);
+    expect(r.matches).toEqual(['sports', 'crypto']);
+    expect(r.shouldHide).toBe(true);
+  });
+
+  it('tolerates trailing `|`', () => {
+    const r = parseTableYesnoResponse('|no|yes|yes|', cats);
+    expect(r.matches).toEqual(['sports', 'crypto']);
+  });
+
+  it('tolerates whitespace around verdicts', () => {
+    const r = parseTableYesnoResponse('  no | yes | no  ', cats);
+    expect(r.matches).toEqual(['sports']);
+  });
+
+  it('strips non-verdict preamble before the row', () => {
+    const r = parseTableYesnoResponse('Verdict: | no | yes | no', cats);
+    expect(r.matches).toEqual(['sports']);
+  });
+
+  it('returns malformed when verdict count is wrong', () => {
+    const r = parseTableYesnoResponse('no|yes', cats);
+    expect(r.shouldHide).toBe(false);
+    expect(r.reasoning).toMatch(/expected 3 verdicts, got 2/);
+    expect(r.matches).toEqual([]);
+  });
+
+  it('returns malformed when a cell is neither yes nor no', () => {
+    const r = parseTableYesnoResponse('no|maybe|yes', cats);
+    expect(r.shouldHide).toBe(false);
+    expect(r.reasoning).toMatch(/verdict 1/);
+  });
+
+  it('returns show + empty matches when all verdicts are no', () => {
+    const r = parseTableYesnoResponse('|no|no|no', cats);
+    expect(r.shouldHide).toBe(false);
+    expect(r.matches).toEqual([]);
+  });
+
+  it('returns empty-response message on null/empty input', () => {
+    expect(parseTableYesnoResponse(null, cats).reasoning).toMatch(/Empty model response/);
+    expect(parseTableYesnoResponse('', cats).reasoning).toMatch(/Empty model response/);
+  });
+
+  it('handles single-category bare verdict', () => {
+    const r = parseTableYesnoResponse('yes', ['only']);
+    expect(r.matches).toEqual(['only']);
+  });
+});
+
