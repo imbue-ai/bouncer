@@ -2,13 +2,6 @@
 
 :root {
   --green-border-width: 2px;
-
-  /* Brand palette — single source of truth for Bouncer accent colors.
-   * Update these and every accent in the extension follows. */
-  --bouncer-accent: rgb(232, 153, 153);        /* #E89999 — primary pink (matches icon background) */
-  --bouncer-accent-border: rgb(212, 132, 132); /* #D48484 — outlines / card borders, slightly deeper for contrast on white */
-  --bouncer-accent-deep: rgb(196, 113, 113);   /* #C47171 — strong accents (rarely used) */
-  --bouncer-accent-soft: rgba(232, 153, 153, 0.1); /* tinted backgrounds, hover fills */
 }
 
 /* Base font for all Bouncer UI — applies directly to every child element
@@ -691,7 +684,7 @@
   width: 34px;
   border: none;
   background: transparent;
-  color: var(--bouncer-accent);
+  color: rgb(234, 133, 84);
   border-radius: 50%;
   cursor: pointer;
   padding: 0;
@@ -710,7 +703,7 @@
 }
 
 .ff-why-annoying-btn.ff-unfilter-btn:hover {
-  background: var(--bouncer-accent-soft);
+  background: rgba(234, 133, 84, 0.1);
 }
 
 .ff-why-annoying-btn svg {
@@ -793,7 +786,7 @@ article {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--bouncer-accent);
+  background: rgb(234, 133, 84);
   animation: ff-bounce 1.2s infinite ease-in-out;
 }
 
@@ -833,7 +826,7 @@ article {
 .ff-progress-fill {
   height: 100%;
   width: 5%;
-  background: var(--bouncer-accent);
+  background: rgb(234, 133, 84);
   border-radius: 2px;
   transition: width 0.4s ease;
 }
@@ -867,8 +860,8 @@ article {
 }
 
 .ff-annoying-chip:hover {
-  background: var(--bouncer-accent);
-  border-color: var(--bouncer-accent);
+  background: rgb(234, 133, 84);
+  border-color: rgb(234, 133, 84);
   color: #fff;
 }
 
@@ -900,7 +893,7 @@ article {
 }
 
 .ff-annoying-custom-wrapper:focus-within {
-  border-color: var(--bouncer-accent);
+  border-color: rgb(234, 133, 84);
 }
 
 .ff-annoying-custom-input {
@@ -935,7 +928,7 @@ article {
   height: 20px;
   margin-right: 5px;
   padding: 0;
-  background: var(--bouncer-accent);
+  background: rgb(234, 133, 84);
   border: none;
   border-radius: 50%;
   cursor: pointer;
@@ -1007,9 +1000,9 @@ article {
   border-color: #cfd9de;
 }
 .twitter-light .ff-annoying-chip:hover {
-  background: var(--bouncer-accent);
+  background: rgb(234, 133, 84);
   color: #fff;
-  border-color: var(--bouncer-accent);
+  border-color: rgb(234, 133, 84);
 }
 .twitter-light .ff-annoying-thinking {
   color: #536471;
@@ -1024,7 +1017,7 @@ article {
   border-color: #cfd9de;
 }
 .twitter-light .ff-annoying-custom-wrapper:focus-within {
-  border-color: var(--bouncer-accent);
+  border-color: rgb(234, 133, 84);
 }
 .twitter-light .ff-annoying-custom-input {
   color: #0f1419;
@@ -1272,7 +1265,7 @@ article {
 .filter-phrases-container {
   padding: 12px 16px;
   background-color: rgb(0, 0, 0);
-  border: var(--green-border-width) solid var(--bouncer-accent-border);
+  border: var(--green-border-width) solid rgb(234, 133, 84);
   border-radius: 16px;
   display: flex;
   flex-direction: column
@@ -1395,7 +1388,7 @@ article {
 }
 
 .filter-phrases-container .filter-phrases-input:focus {
-  border-bottom-color: var(--bouncer-accent) !important;
+  border-bottom-color: rgb(234, 133, 84) !important;
   box-shadow: none !important;
 }
 
@@ -1581,7 +1574,7 @@ article {
 /* Light mode styles */
 .light-mode .filter-phrases-container {
   background-color: rgb(255, 255, 255);
-  border-color: var(--bouncer-accent-border);
+  border-color: rgb(200, 110, 65);
 }
 
 .light-mode .filter-phrases-label,
@@ -1726,7 +1719,7 @@ article {
   bottom: 0;
   z-index: 10000;
   background-color: rgb(0, 0, 0);
-  border: 2px solid var(--bouncer-accent);
+  border: 2px solid rgb(234, 133, 84);
   border-bottom: none;
   border-radius: 16px 16px 0 0;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -1749,7 +1742,7 @@ article {
   height: 0;
   border-left: 6px solid transparent;
   border-right: 6px solid transparent;
-  border-top: 6px solid var(--bouncer-accent);
+  border-top: 6px solid rgb(234, 133, 84);
   transition: transform 0.2s;
 }
 
@@ -1809,7 +1802,7 @@ article {
 
 .filter-phrases-mobile .filter-phrases-container {
   background-color: rgb(0, 0, 0);
-  border: 2px solid var(--bouncer-accent);
+  border: 2px solid rgb(234, 133, 84);
   border-radius: 16px;
   padding: 12px 16px;
 }
@@ -2658,11 +2651,10 @@ body.ff-ios .ff-ios-page.dark-mode .ff-ios-page-header {
 .bouncer-update-banner {
   position: relative;
   margin-bottom: 10px;
-  padding: 10px 32px 10px 14px;
+  padding: 10px 32px 10px 12px;
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-left: 4px solid var(--bouncer-accent);
+  background: rgba(255, 196, 87, 0.10);
+  border: 1px solid rgba(255, 196, 87, 0.35);
   font-size: 13px;
   line-height: 1.35;
 }
@@ -2670,7 +2662,6 @@ body.ff-ios .ff-ios-page.dark-mode .ff-ios-page-header {
 .bouncer-update-banner-title {
   font-weight: 700;
   margin-bottom: 4px;
-  color: var(--bouncer-accent);
 }
 
 .bouncer-update-banner-bullets {
@@ -2703,14 +2694,9 @@ body.ff-ios .ff-ios-page.dark-mode .ff-ios-page-header {
 }
 
 .light-mode .bouncer-update-banner {
-  background: rgba(0, 0, 0, 0.025);
-  border-color: rgba(0, 0, 0, 0.08);
-  border-left-color: var(--bouncer-accent);
-  color: rgb(15, 20, 25);
-}
-
-.light-mode .bouncer-update-banner-title {
-  color: var(--bouncer-accent-deep);
+  background: rgba(190, 130, 40, 0.10);
+  border-color: rgba(190, 130, 40, 0.35);
+  color: rgb(80, 50, 0);
 }
 
 .dim-mode .bouncer-update-banner,
