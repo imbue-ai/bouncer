@@ -26,6 +26,9 @@ struct FilteredWebView: UIViewRepresentable {
         contentController.add(context.coordinator, contentWorld: Self.extensionWorld, name: "feedfilterWsSend")
         contentController.add(context.coordinator, contentWorld: Self.extensionWorld, name: "feedfilterWsClose")
         contentController.add(context.coordinator, contentWorld: Self.extensionWorld, name: "feedfilterModalClosed")
+        // Reply-style handler backing chrome.storage.local/sync with a native
+        // UserDefaults store, shared across origins (x.com, m.youtube.com).
+        contentController.addScriptMessageHandler(context.coordinator, contentWorld: Self.extensionWorld, name: "feedfilterStorage")
         injectScripts(into: contentController)
 
         let config = WKWebViewConfiguration()
@@ -68,6 +71,21 @@ struct FilteredWebView: UIViewRepresentable {
     private func injectScripts(into controller: WKUserContentController) {
         let world = Self.extensionWorld
 
+        // 0. Store extractors — injected into the PAGE world (not the extension
+        // world) at document start, because they must read JS data off the
+        // site's custom elements, which only the page world can see. On desktop
+        // the adapters inject these via chrome.runtime.getURL; that scheme can't
+        // load in a WKWebView, so we bundle + inject them natively here. They
+        // bridge data back to the content script via DOM CustomEvents.
+        if let source = loadBundledScript(named: "fiber-extractor", ext: "js", subdirectory: "adapters/twitter") {
+            controller.addUserScript(WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: .page))
+            print("[FeedFilter] Injected fiber-extractor.js (page world)")
+        } else { print("[FeedFilter] fiber-extractor.js NOT bundled") }
+        if let source = loadBundledScript(named: "lockup-extractor", ext: "js", subdirectory: "adapters/youtube") {
+            controller.addUserScript(WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: .page))
+            print("[FeedFilter] Injected lockup-extractor.js (page world)")
+        } else { print("[FeedFilter] lockup-extractor.js NOT bundled") }
+
         // 1. ChromePolyfill.js — document start
         if let source = loadBundledScript(named: "ChromePolyfill", ext: "js") {
             let version = extensionManifestVersion() ?? "0.0.0"
@@ -98,11 +116,19 @@ struct FilteredWebView: UIViewRepresentable {
             print("[FeedFilter] Injected dompurify.js")
         }
 
-        // 5. TwitterAdapter.js — document end
+        // 5. Platform adapters — document end. Both are injected on every page;
+        // each self-guards by hostname (see the adapter files), claiming
+        // `window.BouncerAdapter` only on its own site, so content.js picks the
+        // right one for x.com vs m.youtube.com.
         if let source = loadBundledScript(named: "TwitterAdapter", ext: "js", subdirectory: "dist") {
             let script = WKUserScript(source: source, injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: world)
             controller.addUserScript(script)
             print("[FeedFilter] Injected TwitterAdapter.js")
+        }
+        if let source = loadBundledScript(named: "YouTubeAdapter", ext: "js", subdirectory: "dist") {
+            let script = WKUserScript(source: source, injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: world)
+            controller.addUserScript(script)
+            print("[FeedFilter] Injected YouTubeAdapter.js")
         }
 
         // 6. content.js — document end (bundled IIFE from dist/)
@@ -205,6 +231,9 @@ struct FilteredWebView: UIViewRepresentable {
         if let twitterCSS = loadBundledScript(named: "twitter", ext: "css", subdirectory: "adapters/twitter") {
             cssContent += "\n" + twitterCSS
         }
+        if let youtubeCSS = loadBundledScript(named: "youtube", ext: "css", subdirectory: "adapters/youtube") {
+            cssContent += "\n" + youtubeCSS
+        }
 
         guard !cssContent.isEmpty else { return nil }
 
@@ -232,7 +261,7 @@ struct FilteredWebView: UIViewRepresentable {
 
     // MARK: - Coordinator
 
-    class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler, UIAdaptivePresentationControllerDelegate {
+    class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler, WKScriptMessageHandlerWithReply, UIAdaptivePresentationControllerDelegate {
 
         let sheetViewModel: FilterSheetViewModel
 
@@ -300,9 +329,10 @@ struct FilteredWebView: UIViewRepresentable {
                 DispatchQueue.main.async { [weak self] in
                     guard let vm = self?.sheetViewModel else { return }
 
-                    if let phrases = json["phrases"] as? [String] {
-                        vm.phrases = phrases
-                    }
+                    // Phrase list is driven by the sheet's platform dropdown
+                    // (viewModel.loadPhrases), not this push — the push carries
+                    // only the current site's phrases and would clobber a
+                    // cross-platform view. We still take the filtered count.
                     if let count = json["filteredCount"] as? Int {
                         vm.filteredCount = count
                     }
@@ -315,6 +345,70 @@ struct FilteredWebView: UIViewRepresentable {
                     }
                 }
                 return
+            }
+        }
+
+        // MARK: - Storage bridge (chrome.storage backing)
+
+        // Origin-independent store backing chrome.storage.local/sync for the
+        // WKWebView. Lives in UserDefaults (native, app-wide) so x.com and
+        // m.youtube.com share the same settings/keys — only the per-platform
+        // `descriptions_<site>` keys differ, by name. Values are stored as the
+        // raw JSON strings the JS polyfill sends, keyed by "ffstore_" + the
+        // polyfill's prefix ("ff_local_"/"ff_sync_") + key.
+        func userContentController(
+            _ userContentController: WKUserContentController,
+            didReceive message: WKScriptMessage,
+            replyHandler: @escaping (Any?, String?) -> Void
+        ) {
+            guard message.name == "feedfilterStorage",
+                  let body = message.body as? [String: Any],
+                  let op = body["op"] as? String,
+                  let prefix = body["prefix"] as? String else {
+                replyHandler(nil, "feedfilterStorage: malformed request")
+                return
+            }
+
+            let defaults = UserDefaults.standard
+            let storePrefix = "ffstore_" + prefix
+            func storeKey(_ key: String) -> String { storePrefix + key }
+
+            switch op {
+            case "get":
+                let keys = body["keys"] as? [String] ?? []
+                var out: [String: Any] = [:]
+                for k in keys {
+                    if let v = defaults.string(forKey: storeKey(k)) { out[k] = v }
+                }
+                replyHandler(out, nil)
+
+            case "getAll":
+                var out: [String: Any] = [:]
+                for (fullKey, value) in defaults.dictionaryRepresentation() where fullKey.hasPrefix(storePrefix) {
+                    if let v = value as? String { out[String(fullKey.dropFirst(storePrefix.count))] = v }
+                }
+                replyHandler(out, nil)
+
+            case "set":
+                let items = body["items"] as? [String: String] ?? [:]
+                var old: [String: Any] = [:]
+                for (k, v) in items {
+                    if let prev = defaults.string(forKey: storeKey(k)) { old[k] = prev }
+                    defaults.set(v, forKey: storeKey(k))
+                }
+                replyHandler(old, nil)
+
+            case "remove":
+                let keys = body["keys"] as? [String] ?? []
+                var old: [String: Any] = [:]
+                for k in keys {
+                    if let prev = defaults.string(forKey: storeKey(k)) { old[k] = prev }
+                    defaults.removeObject(forKey: storeKey(k))
+                }
+                replyHandler(old, nil)
+
+            default:
+                replyHandler(nil, "feedfilterStorage: unknown op \(op)")
             }
         }
 
@@ -344,6 +438,7 @@ struct FilteredWebView: UIViewRepresentable {
 
         private let allowedHosts: Set<String> = [
             "x.com", "twitter.com", "t.co", "twimg.com", "pbs.twimg.com", "abs.twimg.com", "video.twimg.com",
+            "youtube.com", "m.youtube.com", "youtu.be", "ytimg.com", "ggpht.com", "googlevideo.com",
             "accounts.google.com", "accounts.youtube.com", "google.com", "gstatic.com",
             "apple.com", "appleid.apple.com",
         ]

@@ -1,7 +1,7 @@
 // iOS FAB, filtered modal, native sheet bridge
 
-import type { IOSDeps } from '../types';
-import { clampThreshold } from '../shared/storage';
+import type { IOSDeps, DescriptionKey } from '../types';
+import { clampThreshold, getDescriptions, setDescriptions } from '../shared/storage';
 import { parseHTML } from '../shared/utils';
 import { shareFilterPackForIOS } from './ui';
 
@@ -11,6 +11,12 @@ import { shareFilterPackForIOS } from './ui';
 interface FFWindow {
   __ff_addPhrase?: (text: string) => Promise<boolean>;
   __ff_removePhrase?: (phrase: string) => Promise<void>;
+  // Platform-scoped phrase accessors used by the native sheet's platform
+  // dropdown — they read/write `descriptions_<siteId>` directly, so the user
+  // can view and edit any platform's phrases regardless of the current page.
+  __ff_getPhrases?: (siteId: string) => Promise<string[]>;
+  __ff_addPhraseFor?: (siteId: string, text: string) => Promise<boolean>;
+  __ff_removePhraseFor?: (siteId: string, phrase: string) => Promise<void>;
   __ff_showFilteredModal?: () => void;
   __ff_getAiTextFilterEnabled?: () => Promise<boolean>;
   __ff_setAiTextFilterEnabled?: (enabled: boolean) => Promise<void>;
@@ -59,6 +65,37 @@ export function initIOS(deps: IOSDeps) {
   w.__ff_removePhrase = async (phrase: string): Promise<void> => {
     console.log('[Bouncer][iOS] __ff_removePhrase called with:', phrase);
     await _deps.removeFilterPhrase(phrase);
+    updateIOSFilteredCount();
+  };
+
+  // Platform-scoped phrase management. Operates on `descriptions_<siteId>`
+  // directly via the shared storage helpers, so the native dropdown can show
+  // and edit X or YouTube phrases independent of the current page. Writing the
+  // current site's key triggers re-evaluation via the storage.onChanged
+  // listener in content/index.ts; writing the other site's key is simply
+  // stored and picked up when that site next loads.
+  const descKeyFor = (siteId: string): DescriptionKey | null =>
+    (siteId === 'twitter' || siteId === 'youtube') ? `descriptions_${siteId}` : null;
+
+  w.__ff_getPhrases = async (siteId: string): Promise<string[]> => {
+    const key = descKeyFor(siteId);
+    return key ? await getDescriptions(key) : [];
+  };
+  w.__ff_addPhraseFor = async (siteId: string, text: string): Promise<boolean> => {
+    const key = descKeyFor(siteId);
+    const t = (text || '').trim();
+    if (!key || !t) return false;
+    const cur = await getDescriptions(key);
+    if (cur.includes(t)) return false;
+    await setDescriptions(key, [...cur, t]);
+    updateIOSFilteredCount();
+    return true;
+  };
+  w.__ff_removePhraseFor = async (siteId: string, phrase: string): Promise<void> => {
+    const key = descKeyFor(siteId);
+    if (!key) return;
+    const cur = await getDescriptions(key);
+    await setDescriptions(key, cur.filter(p => p !== phrase));
     updateIOSFilteredCount();
   };
 

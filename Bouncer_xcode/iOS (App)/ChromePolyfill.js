@@ -18,84 +18,154 @@
     }
   }
 
+  // --- Native-backed shared storage ---
+  // chrome.storage on iOS must be shared across origins (x.com, m.youtube.com)
+  // so settings and API keys follow the user between sites — matching the
+  // desktop extension, where everything lives in one global chrome.storage and
+  // only the per-platform `descriptions_<site>` keys differ (by key name).
+  // localStorage is per-origin, so reads/writes route through a native
+  // UserDefaults store via the `feedfilterStorage` reply handler. Any values
+  // left in this origin's localStorage from before this shipped are migrated
+  // up to the native store on first access and then cleared, so nobody loses
+  // their filters/keys. If the native handler is missing we fall back to the
+  // old per-origin localStorage behavior.
+  function hasStorageBridge() {
+    return typeof webkit !== 'undefined'
+      && webkit.messageHandlers
+      && webkit.messageHandlers.feedfilterStorage;
+  }
+
+  function nativeStorageCall(op, payload) {
+    return webkit.messageHandlers.feedfilterStorage.postMessage(Object.assign({ op: op }, payload));
+  }
+
+  function parseRaw(raw) {
+    try { return JSON.parse(raw); } catch { return raw; }
+  }
+
   function makeStorageArea(prefix, areaName) {
+    function legacyRaw(key) {
+      try { return localStorage.getItem(prefix + key); } catch (e) { return null; }
+    }
+    function clearLegacy(key) {
+      try { localStorage.removeItem(prefix + key); } catch (e) {}
+    }
+
+    // Resolve { key: rawJsonString } for the requested keys (or all keys when
+    // getAll), preferring the native store and falling back to — then
+    // migrating up — any leftover legacy localStorage values.
+    async function readRaws(keyList, getAll) {
+      if (!hasStorageBridge()) {
+        const out = {};
+        if (getAll) {
+          for (let i = 0; i < localStorage.length; i++) {
+            const fk = localStorage.key(i);
+            if (fk && fk.indexOf(prefix) === 0) out[fk.slice(prefix.length)] = localStorage.getItem(fk);
+          }
+        } else {
+          for (const k of keyList) { const r = legacyRaw(k); if (r !== null) out[k] = r; }
+        }
+        return out;
+      }
+
+      let nativeRaw = {};
+      try {
+        nativeRaw = (await nativeStorageCall(getAll ? 'getAll' : 'get', getAll ? { prefix } : { prefix, keys: keyList })) || {};
+      } catch (e) { nativeRaw = {}; }
+
+      const out = {};
+      const migrate = {};
+      if (getAll) {
+        for (const k of Object.keys(nativeRaw)) out[k] = nativeRaw[k];
+        for (let i = 0; i < localStorage.length; i++) {
+          const fk = localStorage.key(i);
+          if (fk && fk.indexOf(prefix) === 0) {
+            const k = fk.slice(prefix.length);
+            if (!(k in out)) { const r = localStorage.getItem(fk); if (r !== null) { out[k] = r; migrate[k] = r; } }
+          }
+        }
+      } else {
+        for (const k of keyList) {
+          if (nativeRaw[k] != null) out[k] = nativeRaw[k];
+          else { const r = legacyRaw(k); if (r !== null) { out[k] = r; migrate[k] = r; } }
+        }
+      }
+
+      const mk = Object.keys(migrate);
+      if (mk.length) {
+        try { await nativeStorageCall('set', { prefix, items: migrate }); } catch (e) {}
+        for (const k of mk) clearLegacy(k);
+      }
+      return out;
+    }
+
     return {
       get(keys, callback) {
-        const result = {};
+        const defaults = {};
         let keyList = [];
+        let getAll = false;
+        if (keys === null || keys === undefined) getAll = true;
+        else if (typeof keys === 'string') keyList = [keys];
+        else if (Array.isArray(keys)) keyList = keys.slice();
+        else if (typeof keys === 'object') { for (const [k, v] of Object.entries(keys)) defaults[k] = v; keyList = Object.keys(keys); }
 
-        if (keys === null || keys === undefined) {
-          // Get all keys with this prefix
-          for (let i = 0; i < localStorage.length; i++) {
-            const k = localStorage.key(i);
-            if (k.startsWith(prefix)) {
-              const realKey = k.slice(prefix.length);
-              try { result[realKey] = JSON.parse(localStorage.getItem(k)); }
-              catch { result[realKey] = localStorage.getItem(k); }
-            }
-          }
-        } else if (typeof keys === 'string') {
-          keyList = [keys];
-        } else if (Array.isArray(keys)) {
-          keyList = keys;
-        } else if (typeof keys === 'object') {
-          // keys is a defaults object
-          for (const [k, v] of Object.entries(keys)) {
-            result[k] = v; // set defaults first
-          }
-          keyList = Object.keys(keys);
-        }
+        const work = readRaws(keyList, getAll).then((raws) => {
+          const result = Object.assign({}, defaults);
+          for (const k of Object.keys(raws)) result[k] = parseRaw(raws[k]);
+          return result;
+        });
 
-        for (const key of keyList) {
-          const raw = localStorage.getItem(prefix + key);
-          if (raw !== null) {
-            try { result[key] = JSON.parse(raw); }
-            catch { result[key] = raw; }
-          }
-        }
-
-        if (typeof callback === 'function') {
-          callback(result);
-          return undefined;
-        }
-        return Promise.resolve(result);
+        if (typeof callback === 'function') { work.then(callback); return undefined; }
+        return work;
       },
 
       set(items, callback) {
-        const changes = {};
-        for (const [key, value] of Object.entries(items)) {
-          const oldRaw = localStorage.getItem(prefix + key);
-          const oldValue = oldRaw !== null ? JSON.parse(oldRaw) : undefined;
-          localStorage.setItem(prefix + key, JSON.stringify(value));
-          changes[key] = { newValue: value };
-          if (oldValue !== undefined) changes[key].oldValue = oldValue;
-        }
-        fireStorageChange(changes, areaName);
-        if (typeof callback === 'function') {
-          callback();
-          return undefined;
-        }
-        return Promise.resolve();
+        const stringified = {};
+        for (const [key, value] of Object.entries(items)) stringified[key] = JSON.stringify(value);
+
+        const work = (async () => {
+          let oldRaws = {};
+          if (!hasStorageBridge()) {
+            for (const key of Object.keys(stringified)) {
+              const o = legacyRaw(key); if (o !== null) oldRaws[key] = o;
+              try { localStorage.setItem(prefix + key, stringified[key]); } catch (e) {}
+            }
+          } else {
+            try { oldRaws = (await nativeStorageCall('set', { prefix, items: stringified })) || {}; }
+            catch (e) { oldRaws = {}; }
+            for (const key of Object.keys(stringified)) clearLegacy(key);
+          }
+          const changes = {};
+          for (const key of Object.keys(items)) {
+            changes[key] = { newValue: items[key] };
+            if (oldRaws[key] != null) changes[key].oldValue = parseRaw(oldRaws[key]);
+          }
+          fireStorageChange(changes, areaName);
+        })();
+
+        if (typeof callback === 'function') { work.then(callback); return undefined; }
+        return work;
       },
 
       remove(keys, callback) {
         const keyList = typeof keys === 'string' ? [keys] : keys;
-        const changes = {};
-        for (const key of keyList) {
-          const oldRaw = localStorage.getItem(prefix + key);
-          if (oldRaw !== null) {
-            changes[key] = { oldValue: JSON.parse(oldRaw) };
-            localStorage.removeItem(prefix + key);
+
+        const work = (async () => {
+          let oldRaws = {};
+          if (!hasStorageBridge()) {
+            for (const key of keyList) { const o = legacyRaw(key); if (o !== null) oldRaws[key] = o; clearLegacy(key); }
+          } else {
+            try { oldRaws = (await nativeStorageCall('remove', { prefix, keys: keyList })) || {}; }
+            catch (e) { oldRaws = {}; }
+            for (const key of keyList) clearLegacy(key);
           }
-        }
-        if (Object.keys(changes).length > 0) {
-          fireStorageChange(changes, areaName);
-        }
-        if (typeof callback === 'function') {
-          callback();
-          return undefined;
-        }
-        return Promise.resolve();
+          const changes = {};
+          for (const key of keyList) { if (oldRaws[key] != null) changes[key] = { oldValue: parseRaw(oldRaws[key]) }; }
+          if (Object.keys(changes).length > 0) fireStorageChange(changes, areaName);
+        })();
+
+        if (typeof callback === 'function') { work.then(callback); return undefined; }
+        return work;
       }
     };
   }

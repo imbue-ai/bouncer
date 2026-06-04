@@ -196,7 +196,11 @@ import { formatPostForEvaluation } from '../shared/utils';
 
   const MAX_STORE_RETRIES = 3;
 
-  // In-app WKWebView mode: fiber-extractor can't load, use DOM extraction directly
+  // In-app WKWebView mode. The store extractors are injected into the page
+  // world natively (see FilteredWebView.swift), so the same store-based
+  // extraction desktop uses works here too. We prefer the store and fall back
+  // to DOM only for surfaces the extractor doesn't cover (e.g. mobile YouTube
+  // watch cards), rather than the desktop retry-via-observer dance.
   const isInApp = typeof chrome !== 'undefined' && chrome._polyfilled;
 
   // Evaluate a post using the background script
@@ -205,9 +209,13 @@ import { formatPostForEvaluation } from '../shared/utils';
     let content: PostContent | undefined;
 
     if (isInApp) {
-      // WKWebView: use DOM-based extraction (store extraction unavailable)
-      content = extractPostContent(article);
-      console.log('[Bouncer] DOM extraction result:', content?.text?.substring(0, 80));
+      // Prefer store extraction (same path as desktop); fall back to DOM for
+      // surfaces the page-world extractor doesn't cover (e.g. mobile watch).
+      try {
+        content = await adapter.extractPostContentFromStore(article) ?? undefined;
+      } catch { /* extractor not ready */ }
+      if (!content) content = extractPostContent(article);
+      console.log('[Bouncer] extraction (fromStore=' + (content?.fromStore === true) + '):', content?.text?.substring(0, 80));
     } else {
       // Extension: extract post content from platform store (preferred source)
       try {

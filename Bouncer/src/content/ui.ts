@@ -2866,7 +2866,20 @@ export function addWhyAnnoyingButton(article: HTMLElement) {
     const positionTooltip = () => {
       const btnRect = btn.getBoundingClientRect();
       tooltip.style.position = 'fixed';
-      tooltip.style.right = `${document.documentElement.clientWidth - btnRect.right}px`;
+      // Horizontal: default right-aligned so the tooltip extends LEFT from the
+      // button (fine on Twitter / desktop YouTube). If that would push it off
+      // the left edge — common on narrow YouTube-mobile where the button sits
+      // near the left — left-align instead so it extends rightward on-screen.
+      tooltip.style.left = '';
+      tooltip.style.right = '';
+      const edgeMargin = 8;
+      if (btnRect.right - tooltip.offsetWidth < edgeMargin) {
+        tooltip.style.left = `${Math.max(edgeMargin, btnRect.left)}px`;
+        tooltip.classList.add('ff-annoying-tooltip--align-left');
+      } else {
+        tooltip.style.right = `${document.documentElement.clientWidth - btnRect.right}px`;
+        tooltip.classList.remove('ff-annoying-tooltip--align-left');
+      }
       // Place above the button; if clipped, place below
       tooltip.style.bottom = '';
       tooltip.style.top = '';

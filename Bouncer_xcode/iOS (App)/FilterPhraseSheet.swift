@@ -42,20 +42,71 @@ class FilterSheetViewModel: ObservableObject {
     @Published var aiTextFilterEnabled: Bool = false
     @Published var aiTextDetectionThreshold: Double = 0.7
     @Published var filterReplies: Bool = true
+    // Which platform's filter phrases the sheet is currently viewing/editing.
+    // Independent of the page the WebView is on — the dropdown lets the user
+    // manage X or YouTube phrases from anywhere. "twitter" | "youtube".
+    @Published var selectedPlatform: String = "twitter"
 
     weak var webView: WKWebView?
 
     static let contentWorld = WKContentWorld.world(name: "feedfilter")
 
-    func addPhrase(_ text: String) {
+    // Default the dropdown to the platform of the page currently loaded, so
+    // opening the sheet on YouTube shows YouTube phrases and on X shows X
+    // phrases. The user can then switch platforms via the dropdown.
+    func syncPlatformToCurrentSite() {
+        let host = (URL(string: currentURL)?.host ?? "").lowercased()
+        selectedPlatform = host.contains("youtube") ? "youtube" : "twitter"
+    }
+
+    func selectPlatform(_ platform: String) {
+        guard platform != selectedPlatform else { return }
+        selectedPlatform = platform
+        loadPhrases()
+    }
+
+    // Load the selected platform's phrases from the (shared, native-backed)
+    // store via the per-platform bridge — works regardless of which site the
+    // WebView is on.
+    func loadPhrases() {
         guard let webView = webView else { return }
-        Task {
-            try? await webView.callAsyncJavaScript(
-                "return await window.__ff_addPhrase(text)",
-                arguments: ["text": text],
+        let platform = selectedPlatform
+        Task { @MainActor in
+            do {
+                let result = try await webView.callAsyncJavaScript(
+                    "return await window.__ff_getPhrases(siteId)",
+                    arguments: ["siteId": platform],
+                    in: nil,
+                    contentWorld: Self.contentWorld
+                )
+                // Ignore a stale response if the user switched platforms mid-flight.
+                guard platform == self.selectedPlatform else { return }
+                if let arr = result as? [String] {
+                    self.phrases = arr
+                } else if let arr = result as? [Any] {
+                    self.phrases = arr.compactMap { $0 as? String }
+                }
+            } catch {
+                print("[FeedFilter] loadPhrases error: \(error)")
+            }
+        }
+    }
+
+    func addPhrase(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return }
+        // Optimistic insert for snappiness; loadPhrases reconciles afterward.
+        if !phrases.contains(trimmed) { phrases.append(trimmed) }
+        guard let webView = webView else { return }
+        let platform = selectedPlatform
+        Task { @MainActor in
+            _ = try? await webView.callAsyncJavaScript(
+                "return await window.__ff_addPhraseFor(siteId, text)",
+                arguments: ["siteId": platform, "text": trimmed],
                 in: nil,
                 contentWorld: Self.contentWorld
             )
+            self.loadPhrases()
         }
     }
 
@@ -64,10 +115,11 @@ class FilterSheetViewModel: ObservableObject {
             phrases.removeAll { $0 == phrase }
         }
         guard let webView = webView else { return }
-        Task {
-            try? await webView.callAsyncJavaScript(
-                "return await window.__ff_removePhrase(phrase)",
-                arguments: ["phrase": phrase],
+        let platform = selectedPlatform
+        Task { @MainActor in
+            _ = try? await webView.callAsyncJavaScript(
+                "return await window.__ff_removePhraseFor(siteId, phrase)",
+                arguments: ["siteId": platform, "phrase": phrase],
                 in: nil,
                 contentWorld: Self.contentWorld
             )
@@ -256,7 +308,9 @@ class FilterSheetViewModel: ObservableObject {
     @MainActor
     func getStorage(keys: [String]) async -> [String: Any] {
         guard let webView = webView else { return [:] }
-        await ensureOnX(webView: webView)
+        // No ensureOnX: chrome.storage is now a native store shared across
+        // origins, and the __ff_* bridge is present on whatever site (x.com /
+        // m.youtube.com) the WebView is currently showing.
         do {
             let result = try await webView.callAsyncJavaScript(
                 "return await window.__ff_getStorage(keys)",
@@ -274,7 +328,8 @@ class FilterSheetViewModel: ObservableObject {
     @MainActor
     func setStorage(_ items: [String: Any]) async {
         guard let webView = webView else { return }
-        await ensureOnX(webView: webView)
+        // No ensureOnX — see getStorage. Writing the current site's key fires
+        // chrome.storage.onChanged in-page so content.js re-evaluates.
         do {
             let _ = try await webView.callAsyncJavaScript(
                 "return await window.__ff_setStorage(items)",
@@ -552,6 +607,25 @@ struct FilterPhraseSheet: View {
             .navigationTitle("Filter out")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Menu {
+                        Picker("Platform", selection: Binding(
+                            get: { viewModel.selectedPlatform },
+                            set: { viewModel.selectPlatform($0) }
+                        )) {
+                            Text("X (Twitter)").tag("twitter")
+                            Text("YouTube").tag("youtube")
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text(viewModel.selectedPlatform == "youtube" ? "YouTube" : "X")
+                                .font(.system(size: 17, weight: .semibold))
+                            Image(systemName: "chevron.down")
+                                .font(.system(size: 12, weight: .semibold))
+                        }
+                    }
+                    .accessibilityLabel("Select platform for filter phrases")
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         viewModel.shareFilterPack()
@@ -576,6 +650,8 @@ struct FilterPhraseSheet: View {
         .scrollDismissesKeyboard(.interactively)
         .onAppear {
             viewModel.loadAiTextFilterEnabled()
+            viewModel.syncPlatformToCurrentSite()
+            viewModel.loadPhrases()
         }
     }
 
@@ -638,6 +714,9 @@ struct BouncerSettingsView: View {
                 }
             }
 
+            // Site-specific settings, mirroring the desktop popup's per-platform
+            // accordions. Unlike desktop, iOS intentionally omits the per-site
+            // "enable Bouncer" master toggles — filtering is always on per site.
             Section {
                 Toggle(isOn: Binding(
                     get: { viewModel.filterReplies },
@@ -645,7 +724,12 @@ struct BouncerSettingsView: View {
                 )) {
                     Text("Filter replies in conversations")
                 }
+            } header: {
+                Text("X (Twitter)")
             }
+
+            // Note: YouTube's "show placeholder" toggle is intentionally omitted
+            // on iOS — filtered videos are always removed (hidden) on mobile.
 
             if hasImbueBackend {
                 Section {

@@ -26,7 +26,11 @@ interface StoreResult {
   error?: string;
 }
 
-window.BouncerAdapter = class TwitterAdapter implements PlatformAdapter {
+// Assigned to `window.BouncerAdapter` only when running on an X/Twitter host
+// (see the guarded assignment at the bottom of this file). On iOS both the
+// Twitter and YouTube adapters are injected into every page, so each must
+// claim the global slot only for its own site or they'd clobber each other.
+const BouncerTwitterAdapter = class TwitterAdapter implements PlatformAdapter {
   siteId = 'twitter' as const;
   filterBoxPlacement = 'sidebar' as const;
 
@@ -555,3 +559,7 @@ window.BouncerAdapter = class TwitterAdapter implements PlatformAdapter {
     return document.querySelector('form[aria-label="Search"]');
   }
 };
+
+if (/(^|\.)(x|twitter)\.com$/i.test(location.hostname)) {
+  window.BouncerAdapter = BouncerTwitterAdapter;
+}

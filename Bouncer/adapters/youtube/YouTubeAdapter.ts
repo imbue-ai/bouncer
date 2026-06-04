@@ -68,30 +68,52 @@ function buildThumbnailUrls(
   return { imageUrls: [], displayImageUrls: undefined };
 }
 
-window.BouncerAdapter = class YouTubeAdapter implements PlatformAdapter {
+// Assigned to `window.BouncerAdapter` only when running on a YouTube host (see
+// the guarded assignment at the bottom of this file). On iOS both the Twitter
+// and YouTube adapters are injected into every page, so each must claim the
+// global slot only for its own site or they'd clobber each other.
+const BouncerYouTubeAdapter = class YouTubeAdapter implements PlatformAdapter {
   siteId = 'youtube' as const;
   filterBoxPlacement = 'banner' as const;
 
+  // Mobile web (`m.youtube.com`, e.g. inside the iOS WKWebView) ships a
+  // different component tree from desktop. The home feed still uses the
+  // shared `yt-lockup-view-model` (wrapped in `ytm-rich-item-renderer`), so
+  // the desktop extraction works there verbatim; the watch page renders
+  // mobile-only `ytm-*` cards (`ytm-video-with-context-renderer` →
+  // `ytm-media-item`) that need their own extraction path. The DOM-facing
+  // members below branch on this flag. All the desktop chrome (banner box,
+  // mini-guide, per-post action button) is skipped on mobile — on iOS the
+  // entire Bouncer UI lives in the native filtered-posts tab, so the adapter
+  // only needs to make matching videos disappear.
+  private _mobile = location.hostname === 'm.youtube.com';
+
   selectors: PlatformSelectors = {
-    // Two surfaces:
+    // Desktop — two surfaces:
     //   - Home: `ytd-rich-item-renderer` wraps each card in the grid.
     //   - Watch: `yt-lockup-view-model` inside the suggested-videos
     //     container (`ytd-watch-next-secondary-results-renderer`) is the
     //     card itself — no rich-item wrapper on the watch sidebar.
-    // The lockup elsewhere on home is NESTED inside rich-item, so the
-    // `:not(ytd-rich-item-renderer *)` guard prevents double-matching
-    // on the home feed. (Equivalent to "only match standalone lockups.")
-    post: 'ytd-rich-item-renderer, ytd-watch-next-secondary-results-renderer yt-lockup-view-model',
+    // Mobile — `ytm-rich-item-renderer` wraps each home-grid lockup, and the
+    // watch related feed is a list of `ytm-video-with-context-renderer`
+    // cards (each wrapping one `ytm-media-item`, so matching the outer
+    // renderer avoids double-counting).
+    // Mobile Shorts live in a grid shelf (`grid-shelf-view-model`), NOT in a
+    // rich-item, so `ytm-shorts-lockup-view-model` must be matched directly.
+    post: this._mobile
+      ? 'ytm-rich-item-renderer, ytm-video-with-context-renderer, ytm-shorts-lockup-view-model'
+      : 'ytd-rich-item-renderer, ytd-watch-next-secondary-results-renderer yt-lockup-view-model',
     sidebar: '',
     sidebarContent: '',
     primaryColumn: '#primary',
     nav: '',
     bottomBar: '',
-    // `yt-lockup-view-model` getting added to a rich item is the signal
-    // that its data is hydrated. Used for DOM-recycling re-evaluation,
-    // and now also for detecting new watch-sidebar suggestions.
-    mutations: 'yt-lockup-view-model',
-    textContent: '.ytLockupMetadataViewModelTitle',
+    // A `yt-lockup-view-model` (home), `ytm-media-item` (watch) or
+    // `ytm-shorts-lockup-view-model` (shorts shelf) getting added is the
+    // signal that a card's data is hydrated. Used for DOM-recycling
+    // re-evaluation and detecting new suggestions/shorts on scroll.
+    mutations: this._mobile ? 'yt-lockup-view-model, ytm-media-item, ytm-shorts-lockup-view-model' : 'yt-lockup-view-model',
+    textContent: this._mobile ? '.ytLockupMetadataViewModelTitle, .media-item-headline, .shortsLockupViewModelHostMetadataTitle' : '.ytLockupMetadataViewModelTitle',
   };
 
   private _extractorReady = false;
@@ -103,7 +125,10 @@ window.BouncerAdapter = class YouTubeAdapter implements PlatformAdapter {
 
   constructor() {
     this._initLockupExtractor();
-    this._initMiniGuideEntry();
+    // The mini-guide entry and inline filter box are desktop-only UI. On
+    // mobile the iOS app surfaces everything through its native tab, so we
+    // skip them (and `getFilterBoxAnchor`/`insertActionButton` no-op too).
+    if (!this._mobile) this._initMiniGuideEntry();
     this._initPlaceholderSetting();
   }
 
@@ -379,6 +404,9 @@ window.BouncerAdapter = class YouTubeAdapter implements PlatformAdapter {
   }
 
   getFilterBoxAnchor(): FilterBoxAnchor | null {
+    // No inline filter box on mobile — the iOS native tab owns the UI.
+    if (this._mobile) return null;
+
     const path = window.location.pathname;
 
     // Watch page: anchor at the very top of the right-hand "Up next"
@@ -406,13 +434,22 @@ window.BouncerAdapter = class YouTubeAdapter implements PlatformAdapter {
   }
 
   getThemeMode(): 'light' | 'dim' | 'dark' {
-    if (document.documentElement.hasAttribute('dark')) return 'dark';
-    const bg = window.getComputedStyle(document.body).backgroundColor;
-    const match = bg.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
-    if (match) {
-      const [, r, g, b] = match.map(Number);
-      if (r < 50 && g < 50 && b < 50) return 'dark';
+    const html = document.documentElement;
+    // Desktop marks dark mode with a `dark` attribute; mobile (m.youtube.com)
+    // uses `darker-dark-theme` and paints the dark background on <html> while
+    // <body> stays transparent — so on mobile sniff <html>, not <body>.
+    if (html.hasAttribute('dark') || html.hasAttribute('darker-dark-theme')) return 'dark';
+    const root = this._mobile ? html : document.body;
+    // Accept rgb()/rgba(); ignore fully-transparent backgrounds (alpha 0).
+    const m = window.getComputedStyle(root).backgroundColor
+      .match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/);
+    if (m) {
+      const r = Number(m[1]), g = Number(m[2]), b = Number(m[3]);
+      const a = m[4] !== undefined ? Number(m[4]) : 1;
+      if (a > 0 && r < 50 && g < 50 && b < 50) return 'dark';
     }
+    // Last resort on mobile: follow the device color scheme.
+    if (this._mobile && window.matchMedia?.('(prefers-color-scheme: dark)').matches) return 'dark';
     return 'light';
   }
 
@@ -425,26 +462,43 @@ window.BouncerAdapter = class YouTubeAdapter implements PlatformAdapter {
   isPermalinkView(): boolean { return false; }
 
   getPostUrl(article: HTMLElement): string | null {
-    const id = getVideoIdFromContentIdClass(article);
+    const id = getVideoIdFromContentIdClass(article) || this._videoIdFromHref(article);
     if (id) return 'https://www.youtube.com/watch?v=' + id;
-    const a = article.querySelector<HTMLAnchorElement>('a.ytLockupViewModelContentImage[href*="/watch?v="]');
-    if (a) {
-      try {
-        const u = new URL(a.href, location.origin);
-        const v = u.searchParams.get('v');
-        if (v) return 'https://www.youtube.com/watch?v=' + v;
-      } catch { /* malformed href */ }
-    }
     return null;
   }
 
+  // Mobile watch cards carry no `content-id-*` class — derive the video id
+  // from the card's `/watch?v=` link instead. Also used as a fallback for
+  // any lockup whose content-id class hasn't hydrated yet.
+  private _videoIdFromHref(article: HTMLElement): string | null {
+    const a = article.querySelector<HTMLAnchorElement>(
+      'a.ytLockupViewModelContentImage[href*="/watch?v="], a.media-item-thumbnail-container[href*="/watch?v="], a[href*="/watch?v="], a[href*="/shorts/"]'
+    );
+    if (!a) return null;
+    try {
+      const u = new URL(a.href, location.origin);
+      const v = u.searchParams.get('v');
+      if (v) return v;
+      const m = u.pathname.match(/^\/shorts\/([^/?]+)/);
+      return m ? m[1] : null;
+    } catch {
+      return null;
+    }
+  }
+
   getPostContentKey(article: HTMLElement): string {
-    const id = getVideoIdFromContentIdClass(article);
+    const id = getVideoIdFromContentIdClass(article) || this._videoIdFromHref(article);
     if (id) return 'yt:' + id;
     return article.querySelector(this.selectors.textContent)?.textContent?.slice(0, 200) || '';
   }
 
   getPostContainer(article: HTMLElement): HTMLElement {
+    // Mobile Shorts are cells in a horizontal grid shelf — hide the whole
+    // grid-shelf cell so there's no empty gap left behind.
+    if (this._mobile) {
+      const shortsCell = article.closest<HTMLElement>('.ytGridShelfViewModelGridShelfItem');
+      if (shortsCell) return shortsCell;
+    }
     return article;
   }
 
@@ -457,7 +511,11 @@ window.BouncerAdapter = class YouTubeAdapter implements PlatformAdapter {
   hidePost(article: HTMLElement): void {
     const el = this.getPostContainer(article);
     el.dataset.filteredByExtension = 'true';
-    if (!this._showPlaceholder || window.location.pathname.startsWith('/watch')) {
+    // Mobile always removes the card outright — the placeholder is a
+    // desktop-only affordance (and `youtubeShowPlaceholder` is a shared
+    // setting that may be `true` from a desktop session). The watch sidebar
+    // also always removes (a placeholder row would be noise between results).
+    if (this._mobile || !this._showPlaceholder || window.location.pathname.startsWith('/watch')) {
       el.style.display = 'none';
       return;
     }
@@ -470,26 +528,54 @@ window.BouncerAdapter = class YouTubeAdapter implements PlatformAdapter {
   }
 
   extractPostContent(article: HTMLElement): PostContent {
+    if (this._mobile) {
+      // Mobile watch-page card: `ytm-video-with-context-renderer` / `ytm-media-item`.
+      if (article.querySelector('.media-item-headline')) {
+        return this._extractMobileWatchCard(article);
+      }
+      // Mobile Shorts shelf card.
+      if (article.matches?.('ytm-shorts-lockup-view-model') || article.querySelector('.shortsLockupViewModelHostMetadataTitle')) {
+        return this._extractMobileShort(article);
+      }
+    }
+    // Mobile home cards are standard lockups, so they fall through to the
+    // desktop lockup path below unchanged.
+
     const titleEl = article.querySelector<HTMLElement>('.ytLockupMetadataViewModelTitle');
     const text = (titleEl?.textContent || '').replace(/\s+/g, ' ').trim();
     const textHtml = titleEl?.innerHTML || '';
 
-    // First metadata row is channel; subsequent rows are views/age.
+    // Desktop: channel is metadata row 0 (an <a>); views/age are later rows.
     const rows = article.querySelectorAll<HTMLElement>('.ytContentMetadataViewModelMetadataRow');
     const channelLink = rows[0]?.querySelector<HTMLAnchorElement>('a');
-    const author = (channelLink?.textContent || '').replace(/\s+/g, ' ').trim();
+    let author = (channelLink?.textContent || '').replace(/\s+/g, ' ').trim();
     const handle = channelLink?.getAttribute('href') || '';
 
     const avatarImg = article.querySelector<HTMLImageElement>('.ytSpecAvatarShapeImage');
     const avatarSrc = avatarImg?.src || '';
     const avatarUrl = avatarSrc && !avatarSrc.startsWith('data:') ? avatarSrc : null;
 
-    const rowTexts: string[] = [];
+    let rowTexts: string[] = [];
     rows.forEach((r, i) => {
       if (i === 0) return;
       const t = r.textContent?.replace(/\s+/g, ' ').trim();
       if (t) rowTexts.push(t);
     });
+
+    // Mobile home lockups pack channel + views + age into a single metadata
+    // row with no channel anchor, so the desktop row-0/row-1 split finds
+    // nothing. Fall back to the metadata-text spans in document order:
+    // [0] = channel, the rest = views / age. (Desktop keeps its anchor author,
+    // so this only kicks in when the row-based extraction came up empty.)
+    if (!author) {
+      const spans = Array.from(article.querySelectorAll<HTMLElement>('.ytContentMetadataViewModelMetadataText'));
+      author = (spans[0]?.textContent || '').replace(/\s+/g, ' ').trim();
+      if (rowTexts.length === 0) {
+        rowTexts = spans.slice(1)
+          .map(s => (s.textContent || '').replace(/\s+/g, ' ').trim())
+          .filter(Boolean);
+      }
+    }
     const timeText = rowTexts.join(' • ') || null;
 
     const videoId = getVideoIdFromContentIdClass(article);
@@ -505,6 +591,86 @@ window.BouncerAdapter = class YouTubeAdapter implements PlatformAdapter {
       textHtml,
       quote: null,
       postUrl: this.getPostUrl(article),
+      imageUrls,
+      displayImageUrls,
+      hasMediaContainer: imageUrls.length > 0,
+    };
+  }
+
+  // Mobile watch-page card extraction. Layout (see mobile-youtube-dom-notes):
+  //   ytm-video-with-context-renderer > ytm-media-item
+  //     a.media-item-thumbnail-container[href="/watch?v="]  (+ ytm-thumbnail-cover img)
+  //     .media-item-details
+  //       .media-channel a[href^="/@"]  (avatar img.ytProfileIconImage)
+  //       h3.media-item-headline  (title)
+  //       ytm-badge-and-byline-renderer  (channel name, then views/age/badges)
+  private _extractMobileWatchCard(article: HTMLElement): PostContent {
+    const titleEl = article.querySelector<HTMLElement>('.media-item-headline');
+    const text = (titleEl?.textContent || '').replace(/\s+/g, ' ').trim();
+    const textHtml = titleEl?.innerHTML || '';
+
+    // Byline items: the first is the channel name; later ones are views / age
+    // (and the occasional "New" badge, which carries no text byline).
+    const bylineItems = article.querySelectorAll<HTMLElement>(
+      'ytm-badge-and-byline-renderer .YtmBadgeAndBylineRendererItemByline'
+    );
+    const author = (bylineItems[0]?.textContent || '').replace(/\s+/g, ' ').trim();
+    const rowTexts: string[] = [];
+    bylineItems.forEach((r, i) => {
+      if (i === 0) return;
+      const t = r.textContent?.replace(/\s+/g, ' ').trim();
+      if (t) rowTexts.push(t);
+    });
+    const timeText = rowTexts.join(' • ') || null;
+
+    const channelLink = article.querySelector<HTMLAnchorElement>('.media-channel a[href^="/@"]');
+    const handle = channelLink?.getAttribute('href') || '';
+
+    const avatarImg = article.querySelector<HTMLImageElement>('img.ytProfileIconImage');
+    const avatarSrc = avatarImg?.src || '';
+    const avatarUrl = avatarSrc && !avatarSrc.startsWith('data:') ? avatarSrc : null;
+
+    const videoId = this._videoIdFromHref(article);
+    const thumbImg = article.querySelector<HTMLImageElement>('ytm-thumbnail-cover img.ytCoreImageHost');
+    const { imageUrls, displayImageUrls } = buildThumbnailUrls(videoId, thumbImg?.src);
+
+    return {
+      text,
+      author,
+      handle,
+      avatarUrl,
+      timeText,
+      textHtml,
+      quote: null,
+      postUrl: this.getPostUrl(article),
+      imageUrls,
+      displayImageUrls,
+      hasMediaContainer: imageUrls.length > 0,
+    };
+  }
+
+  // Mobile Shorts shelf card (`ytm-shorts-lockup-view-model`). DOM fallback for
+  // when store extraction is unavailable — the title lives in
+  // `.shortsLockupViewModelHostMetadataTitle`, the id in the `/shorts/<id>`
+  // href. Shorts carry no channel on the lockup (matches normalizeShort).
+  private _extractMobileShort(article: HTMLElement): PostContent {
+    const titleEl = article.querySelector<HTMLElement>('.shortsLockupViewModelHostMetadataTitle');
+    const text = (titleEl?.textContent || '').replace(/\s+/g, ' ').trim();
+    const textHtml = titleEl?.innerHTML || '';
+
+    const videoId = this._videoIdFromHref(article);
+    const thumbImg = article.querySelector<HTMLImageElement>('yt-thumbnail-view-model img.ytCoreImageHost');
+    const { imageUrls, displayImageUrls } = buildThumbnailUrls(videoId, thumbImg?.src);
+
+    return {
+      text,
+      author: 'Short',
+      handle: '',
+      avatarUrl: null,
+      timeText: null,
+      textHtml,
+      quote: null,
+      postUrl: videoId ? 'https://www.youtube.com/shorts/' + videoId : null,
       imageUrls,
       displayImageUrls,
       hasMediaContainer: imageUrls.length > 0,
@@ -614,8 +780,12 @@ window.BouncerAdapter = class YouTubeAdapter implements PlatformAdapter {
   }
 
   cleanupFilteredPostHtml(el: HTMLElement, imageUrls: string[]): void {
-    // Reset filtered-state styling on the re-injected snippet.
-    const containers = el.querySelectorAll<HTMLElement>('ytd-rich-item-renderer');
+    // Reset filtered-state styling on the re-injected snippet. Covers both
+    // desktop (`ytd-rich-item-renderer`) and mobile (`ytm-rich-item-renderer`
+    // home grid, `ytm-video-with-context-renderer` / `ytm-media-item` watch).
+    const containers = el.querySelectorAll<HTMLElement>(
+      'ytd-rich-item-renderer, ytm-rich-item-renderer, ytm-video-with-context-renderer, ytm-media-item, ytm-shorts-lockup-view-model'
+    );
     containers.forEach(c => {
       c.style.display = '';
       c.style.opacity = '1';
@@ -626,9 +796,14 @@ window.BouncerAdapter = class YouTubeAdapter implements PlatformAdapter {
     // video, so the skeleton cover would just be cruft inside the clone.
     el.querySelectorAll('.bouncer-yt-placeholder').forEach(p => p.remove());
 
+    // Strip our injected trash button — otherwise the filtered-posts panel
+    // renders it inside the cloned card (e.g. inside a Short's title).
+    el.querySelectorAll('.ff-why-annoying-btn').forEach(b => b.remove());
+
     // Replace the thumbnail (which has lazy/blob src state) with a fresh <img>
-    // so the filtered-posts panel can render it reliably.
-    const thumb = el.querySelector<HTMLElement>('yt-thumbnail-view-model');
+    // so the filtered-posts panel can render it reliably. Desktop/home cards
+    // use `yt-thumbnail-view-model`; mobile watch cards use `ytm-thumbnail-cover`.
+    const thumb = el.querySelector<HTMLElement>('yt-thumbnail-view-model, ytm-thumbnail-cover');
     if (thumb && imageUrls.length > 0) {
       const container = document.createElement('div');
       container.className = 'slop-media-container';
@@ -651,8 +826,9 @@ window.BouncerAdapter = class YouTubeAdapter implements PlatformAdapter {
     if (article.querySelector('.ff-why-annoying-btn')) return;
     // Surface-specific anchors, all inline at the end of an existing text
     // row so the button reads as a native sibling of the metadata:
-    //   - Regular videos: end of the views/age row.
-    //   - Shorts: end of the views subhead.
+    //   - Regular videos (incl. mobile home lockup): end of the views/age row.
+    //   - Mobile watch cards: end of the views byline.
+    //   - Shorts: end of the views subhead (desktop) / title (mobile).
     //   - Sponsored ads: end of the "Sponsored • <advertiser>" row.
     //   - Other lockups (live, playlists, etc.) with no text row to anchor
     //     against: fall back to absolute placement next to the 3-dots menu.
@@ -662,12 +838,25 @@ window.BouncerAdapter = class YouTubeAdapter implements PlatformAdapter {
 
     const shortSubhead = article.querySelector<HTMLElement>('.shortsLockupViewModelHostOutsideMetadataSubhead');
     const adBadgeRow = article.querySelector<HTMLElement>('.ytwFeedAdMetadataViewModelHostMetadataAdBadgeDetailsLineContainerStyleStandard');
+    // Mobile Shorts: the title is overlaid on the thumbnail (so injecting into
+    // it pollutes the filtered-view title); place the trash absolutely under
+    // the 3-dot menu (a direct child of the shorts host) instead.
+    const mobileShort = this._mobile && article.matches?.('ytm-shorts-lockup-view-model') ? article : null;
+    const mobileAnchor = (this._mobile && !mobileShort) ? this._mobileActionAnchor(article) : null;
     if (shortSubhead) {
       anchor = shortSubhead;
       positionClass = 'ff-yt-inline-meta';
       inline = true;
     } else if (adBadgeRow) {
       anchor = adBadgeRow;
+      positionClass = 'ff-yt-inline-meta';
+      inline = true;
+    } else if (mobileShort) {
+      anchor = mobileShort;
+      positionClass = 'ff-yt-short-menu';
+      inline = false;
+    } else if (mobileAnchor) {
+      anchor = mobileAnchor;
       positionClass = 'ff-yt-inline-meta';
       inline = true;
     } else {
@@ -701,7 +890,8 @@ window.BouncerAdapter = class YouTubeAdapter implements PlatformAdapter {
         const hasFallback =
           article.querySelector('.ytLockupMetadataViewModelHost')
           || article.querySelector('feed-ad-metadata-view-model');
-        if (hasShort || hasAdBadge || metaRows.length >= 1 || hasFallback) {
+        const hasMobile = this._mobile && (article.matches?.('ytm-shorts-lockup-view-model') || this._mobileActionAnchor(article));
+        if (hasShort || hasAdBadge || metaRows.length >= 1 || hasFallback || hasMobile) {
           mo.disconnect();
           this.insertActionButton(article, button);
         }
@@ -719,4 +909,17 @@ window.BouncerAdapter = class YouTubeAdapter implements PlatformAdapter {
     }
     anchor.appendChild(button);
   }
+
+  // Mobile inline anchor for the trash button: the end of the views byline on
+  // watch cards. (Home lockups use the shared
+  // `.ytContentMetadataViewModelMetadataRow` path; Shorts use absolute
+  // placement under the 3-dot menu — both handled in insertActionButton.)
+  private _mobileActionAnchor(article: HTMLElement): HTMLElement | null {
+    const bylines = article.querySelectorAll<HTMLElement>('.media-item-metadata ytm-badge-and-byline-renderer');
+    return bylines.length ? bylines[bylines.length - 1] : null;
+  }
 };
+
+if (/(^|\.)youtube\.com$/i.test(location.hostname)) {
+  window.BouncerAdapter = BouncerYouTubeAdapter;
+}

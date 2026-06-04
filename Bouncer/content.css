@@ -768,6 +768,13 @@ article {
   border-top: 1px solid rgb(47, 51, 54);
 }
 
+/* Left-aligned: tooltip extends rightward from the button, so move the arrow
+ * to the left edge to keep it pointing at the button. */
+.ff-annoying-tooltip--align-left::after {
+  right: auto;
+  left: 12px;
+}
+
 @media (prefers-color-scheme: light) {
   .ff-annoying-tooltip::after {
     background: #ffffff;

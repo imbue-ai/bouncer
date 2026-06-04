@@ -486,7 +486,9 @@ html.bouncer-yt-show-placeholder yt-lockup-view-model[data-filtered-by-extension
   gap: 0;
 }
 
-/* Dark theme: switch to YT's dark surface colors. */
+/* Dark theme: switch to YT's dark surface colors. Desktop-only (`html[dark]`):
+ * the placeholder is never shown on mobile/iOS (filtered videos are removed
+ * outright there), and desktop carries `darker-dark-theme` even in light mode. */
 html[dark] .bouncer-yt-placeholder-thumb {
   background: #1f1f1f;
 }
@@ -543,8 +545,14 @@ body.site-youtube .slop-post-avatar.slop-avatar-shorts svg {
   color: #606060;
 }
 
+/* Dark trash icon. Desktop marks dark mode with `html[dark]`. Mobile
+ * (m.youtube.com, inside the iOS app) uses `html[darker-dark-theme]` instead —
+ * but desktop ALSO carries that attribute even in light mode, so the mobile
+ * override is scoped to `body.ff-ios` to avoid recoloring the desktop icon. */
 html[dark] .ff-why-annoying-btn.ff-yt-under-menu,
-html[dark] .ff-why-annoying-btn.ff-yt-inline-meta {
+html[dark] .ff-why-annoying-btn.ff-yt-inline-meta,
+html[darker-dark-theme] body.ff-ios .ff-why-annoying-btn.ff-yt-under-menu,
+html[darker-dark-theme] body.ff-ios .ff-why-annoying-btn.ff-yt-inline-meta {
   color: #aaa;
 }
 
@@ -555,7 +563,9 @@ html[dark] .ff-why-annoying-btn.ff-yt-inline-meta {
 }
 
 html[dark] .ff-why-annoying-btn.ff-yt-under-menu:hover,
-html[dark] .ff-why-annoying-btn.ff-yt-inline-meta:hover {
+html[dark] .ff-why-annoying-btn.ff-yt-inline-meta:hover,
+html[darker-dark-theme] body.ff-ios .ff-why-annoying-btn.ff-yt-under-menu:hover,
+html[darker-dark-theme] body.ff-ios .ff-why-annoying-btn.ff-yt-inline-meta:hover {
   color: #f1f1f1;
   background: rgba(255, 255, 255, 0.1);
 }
@@ -591,5 +601,30 @@ html[dark] .ff-why-annoying-btn.ff-yt-inline-meta:hover {
   top: 4px;
   right: 32px;
   z-index: 10;
+}
+
+/* Mobile Shorts: the title is overlaid on the thumbnail, so the trash can't be
+ * inline in it. Place it absolutely just under the 3-dot menu (a top-right
+ * overlay on the shorts host), with a scrim so it's legible over any
+ * thumbnail — hence theme-independent white-on-dark rather than the inherited
+ * metadata color. */
+.ff-why-annoying-btn.ff-yt-short-menu {
+  position: absolute;
+  top: 40px;
+  right: 6px;
+  z-index: 10;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+}
+.ff-why-annoying-btn.ff-yt-short-menu:hover {
+  background: rgba(0, 0, 0, 0.75);
+  color: #fff;
+}
+.ff-why-annoying-btn.ff-yt-short-menu svg {
+  width: 16px;
+  height: 16px;
 }
 

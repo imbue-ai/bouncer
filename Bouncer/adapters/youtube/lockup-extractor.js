@@ -101,6 +101,13 @@
     return '';
   }
 
+  // Classic InnerTube text shape: `{ runs: [{ text }, ...] }`. Used by the
+  // mobile watch page's videoWithContextRenderer.
+  function runsText(o) {
+    if (!o || !Array.isArray(o.runs)) return '';
+    return o.runs.map(r => (r && r.text) || '').join('').trim();
+  }
+
   // Pick a thumbnail roughly sized for the filtered-panel card (~300-500px wide).
   // Prefer the smallest source that's still >= TARGET_WIDTH; fall back to the
   // largest if every source is undersized. Avoids fetching multi-megabyte ad
@@ -121,12 +128,23 @@
   function pickLargestThumb(lockup) {
     return pickThumbFromSources(lockup?.contentImage?.thumbnailViewModel?.image?.sources);
   }
+  // Playlists / podcasts / mixes / albums stack their thumbnail under a
+  // collectionThumbnailViewModel instead of a plain thumbnailViewModel.
+  function pickCollectionThumb(lockup) {
+    return pickThumbFromSources(
+      lockup?.contentImage?.collectionThumbnailViewModel?.primaryThumbnail?.thumbnailViewModel?.image?.sources
+    );
+  }
 
   function normalizeVideo(lockup, videoId) {
     if (!lockup) return null;
     const contentType = lockup.contentType;
-    if (contentType && contentType !== 'LOCKUP_CONTENT_TYPE_VIDEO') {
-      // Skip Shorts, playlists, channel cards.
+    const isVideo = !contentType || contentType === 'LOCKUP_CONTENT_TYPE_VIDEO';
+    // Collections (playlists, podcasts, mixes, albums) carry a
+    // collectionThumbnailViewModel and are filterable by their title/owner just
+    // like videos. Other non-video lockups (channel cards, etc.) are skipped.
+    const isCollection = !!lockup.contentImage?.collectionThumbnailViewModel;
+    if (!isVideo && !isCollection) {
       return { skip: true, reason: 'contentType=' + contentType };
     }
 
@@ -162,9 +180,10 @@
     const avatarSources = meta.image?.decoratedAvatarViewModel?.avatar?.avatarViewModel?.image?.sources || [];
     const avatarUrl = avatarSources[0]?.url || null;
 
-    const thumbUrl = pickLargestThumb(lockup);
+    const thumbUrl = pickLargestThumb(lockup) || pickCollectionThumb(lockup);
 
-    // Duration badge (also serves as a video-vs-other discriminator).
+    // Duration badge (also serves as a video-vs-other discriminator). Absent
+    // for collections (they show an episode/video count instead).
     const overlays = lockup.contentImage?.thumbnailViewModel?.overlays || [];
     let duration = null;
     for (const o of overlays) {
@@ -173,11 +192,22 @@
     }
 
     const id = lockup.contentId || videoId;
-    const postUrl = id ? 'https://www.youtube.com/watch?v=' + id : null;
+    let outVideoId, postUrl;
+    if (isVideo) {
+      outVideoId = id;
+      postUrl = id ? 'https://www.youtube.com/watch?v=' + id : null;
+    } else {
+      // Collection: leave videoId null so the real collection thumbnail is
+      // used as-is (not rewritten to a canonical single-video mqdefault), and
+      // link to the playlist. `id` may carry a `VL` browse prefix.
+      outVideoId = null;
+      const listId = (id || '').replace(/^VL/, '');
+      postUrl = listId ? 'https://www.youtube.com/playlist?list=' + listId : null;
+    }
 
     return {
       kind: 'video',
-      videoId: id,
+      videoId: outVideoId,
       title,
       channelName,
       channelHandle,
@@ -271,12 +301,75 @@
     };
   }
 
+  // Mobile watch-page suggestions render from the classic
+  // `videoWithContextRenderer` (InnerTube) shape, not a lockupViewModel — the
+  // `ytm-video-with-context-renderer` element's own `.data` is this renderer.
+  // Shape (see mobile-youtube-dom notes):
+  //   headline.runs[].text                                  // title
+  //   shortBylineText.runs[0].text + .navigationEndpoint    // channel + handle/browseId
+  //   lengthText.runs[].text / shortViewCountText / publishedTimeText
+  //   thumbnail.thumbnails[]                                // video thumbnail
+  //   channelThumbnail.channelThumbnailWithLinkRenderer.thumbnail.thumbnails[] // avatar
+  function normalizeVideoWithContext(v, videoId) {
+    if (!v) return null;
+    const id = v.videoId || videoId;
+    const title = runsText(v.headline) || runsText(v.title);
+
+    const byline = v.shortBylineText || v.longBylineText;
+    const channelName = runsText(byline);
+    let channelHandle = '';
+    let channelBrowseId = '';
+    const browse = byline?.runs?.[0]?.navigationEndpoint?.browseEndpoint;
+    if (browse) {
+      channelHandle = browse.canonicalBaseUrl || '';
+      channelBrowseId = browse.browseId || '';
+    }
+
+    const views = runsText(v.shortViewCountText) || runsText(v.viewCountText);
+    const age = runsText(v.publishedTimeText);
+    const duration = runsText(v.lengthText) || null;
+
+    const thumbUrl = pickThumbFromSources(v.thumbnail?.thumbnails);
+    const avatarUrl =
+      v.channelThumbnail?.channelThumbnailWithLinkRenderer?.thumbnail?.thumbnails?.[0]?.url
+      || v.channelThumbnail?.thumbnails?.[0]?.url
+      || null;
+
+    const postUrl = id ? 'https://www.youtube.com/watch?v=' + id : null;
+
+    return {
+      kind: 'video',
+      videoId: id,
+      title,
+      channelName,
+      channelHandle,
+      channelBrowseId,
+      avatarUrl,
+      thumbnailUrl: thumbUrl,
+      duration,
+      metadataRows: [channelName, views, age].filter(Boolean),
+      postUrl,
+    };
+  }
+
   function normalize(richData, videoId) {
     if (!richData) return null;
     const content = richData.content || richData;
     if (content.lockupViewModel) return normalizeVideo(content.lockupViewModel, videoId);
     if (content.adSlotRenderer) return normalizeAd(content.adSlotRenderer, videoId);
     if (content.shortsLockupViewModel) return normalizeShort(content.shortsLockupViewModel, videoId);
+    // Mobile Shorts shelf: the `ytm-shorts-lockup-view-model` element's own
+    // `.data` IS the shortsLockupViewModel (overlayMetadata + onTap/entityId),
+    // not wrapped under `content`.
+    if (richData.overlayMetadata && (richData.onTap || richData.entityId)) {
+      return normalizeShort(richData, videoId);
+    }
+    // Mobile watch suggestions: classic videoWithContextRenderer (the card
+    // element's own `.data`, or occasionally wrapped under the key).
+    const vwc = richData.videoWithContextRenderer
+      || content.videoWithContextRenderer
+      || ((richData.videoId && (richData.headline || richData.shortBylineText)) ? richData : null);
+    if (vwc) return normalizeVideoWithContext(vwc, videoId);
     // Direct lockup (e.g. the inner element's own .data).
     if (richData.contentId || richData.contentType) return normalizeVideo(richData, videoId);
     return { skip: true, reason: 'unknown shape: ' + Object.keys(content).slice(0, 3).join(',') };
