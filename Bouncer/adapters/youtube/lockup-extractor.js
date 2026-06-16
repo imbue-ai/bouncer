@@ -352,12 +352,70 @@
     };
   }
 
+  // Classic InnerTube `videoRenderer`. Shape (see live capture):
+  //   videoId
+  //   title.runs[].text (fallback .simpleText)
+  //   ownerText/shortBylineText.runs[0].text (+ navigationEndpoint.browseEndpoint)
+  //   thumbnail.thumbnails[] ({url,width})  — lh3.googleusercontent for Movies
+  //   lengthText.simpleText
+  //   avatar.decoratedAvatarViewModel{.a11yLabel, .avatar.avatarViewModel.image.sources}
+  // Movies cards put a genre/year string in the byline and carry the real owner
+  // ("YouTube Movies") only in the avatar a11y label, with no view/age text.
+  function normalizeVideoRenderer(v, videoId) {
+    if (!v) return null;
+    const id = v.videoId || videoId;
+    const title = runsText(v.title) || v.title?.simpleText || '';
+
+    // Channel: prefer the byline when it links to a real channel; else fall back
+    // to the avatar's "Go to channel <name>" a11y label (the Movies case).
+    const ownerRun = v.ownerText?.runs?.[0] || v.shortBylineText?.runs?.[0];
+    const browse = ownerRun?.navigationEndpoint?.browseEndpoint;
+    const a11yChannel = (v.avatar?.decoratedAvatarViewModel?.a11yLabel || '')
+      .replace(/^Go to channel\s+/i, '').trim();
+    const channelName = browse ? (ownerRun.text || '').trim() : (a11yChannel || (ownerRun?.text || '').trim());
+
+    const avatarUrl =
+      v.avatar?.decoratedAvatarViewModel?.avatar?.avatarViewModel?.image?.sources?.[0]?.url
+      || v.channelThumbnailSupportedRenderers?.channelThumbnailWithLinkRenderer?.thumbnail?.thumbnails?.[0]?.url
+      || null;
+
+    // Views / age when present (normal videos); for Movies neither exists, so
+    // surface the genre/year byline instead (when it isn't already the channel).
+    const metadataRows = [];
+    const views = v.viewCountText?.simpleText || runsText(v.viewCountText);
+    if (views) metadataRows.push(views);
+    const age = v.publishedTimeText?.simpleText || runsText(v.publishedTimeText);
+    if (age) metadataRows.push(age);
+    if (!browse) {
+      const byline = runsText(v.shortBylineText) || runsText(v.ownerText);
+      if (byline && byline !== channelName) metadataRows.push(byline);
+    }
+
+    return {
+      kind: 'video',
+      videoId: id,
+      title,
+      channelName,
+      channelHandle: browse?.canonicalBaseUrl || '',
+      channelBrowseId: browse?.browseId || '',
+      avatarUrl,
+      thumbnailUrl: pickThumbFromSources(v.thumbnail?.thumbnails),
+      duration: v.lengthText?.simpleText || runsText(v.lengthText) || null,
+      metadataRows,
+      postUrl: id ? 'https://www.youtube.com/watch?v=' + id : null,
+    };
+  }
+
   function normalize(richData, videoId) {
     if (!richData) return null;
     const content = richData.content || richData;
     if (content.lockupViewModel) return normalizeVideo(content.lockupViewModel, videoId);
     if (content.adSlotRenderer) return normalizeAd(content.adSlotRenderer, videoId);
     if (content.shortsLockupViewModel) return normalizeShort(content.shortsLockupViewModel, videoId);
+    // Classic `videoRenderer` (YouTube Movies "Free with ads" cards in the home
+    // grid, and some legacy/search surfaces) — not a lockup, so it needs its own
+    // branch or it falls through to "unknown shape" and never classifies.
+    if (content.videoRenderer) return normalizeVideoRenderer(content.videoRenderer, videoId);
     // Mobile Shorts shelf: the `ytm-shorts-lockup-view-model` element's own
     // `.data` IS the shortsLockupViewModel (overlayMetadata + onTap/entityId),
     // not wrapped under `content`.
