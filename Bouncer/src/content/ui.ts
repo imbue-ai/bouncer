@@ -292,9 +292,9 @@ function injectPlaceholderKeyframes() {
   for (let i = 0; i < n; i++) {
     const start = step * i;
     const holdEnd = start + step * holdPct;
-    frames.push(`${start}%, ${holdEnd}% { transform: translateY(calc(-1.2em * ${i})); }`);
+    frames.push(`${start}%, ${holdEnd}% { transform: translateY(calc(-1.5em * ${i})); }`);
   }
-  frames.push(`100% { transform: translateY(calc(-1.2em * ${n})); }`);
+  frames.push(`100% { transform: translateY(calc(-1.5em * ${n})); }`);
   const style = document.createElement('style');
   const duration = (PLACEHOLDER_DURATION / 5) * n; // scale with phrase count
   style.textContent = `
@@ -530,6 +530,10 @@ export function injectFilterPhrasesInput() {
   filterPhrasesContainer.className = usingWrapper
     ? 'filter-phrases-sidebar filter-phrases-sidebar--in-wrapper'
     : 'filter-phrases-sidebar';
+  // linkedin adaptation: raise z-index so LinkedIn ads/promoted cards don't overlap.
+  if (_deps.adapter.siteId === 'linkedin') {
+    filterPhrasesContainer.classList.add('filter-phrases-sidebar--linkedin');
+  }
 
   if (process.env.HAS_IMBUE_BACKEND === 'true' && !isAuthenticated) {
     filterPhrasesContainer.replaceChildren(parseHTML(getSignInHTML()));
@@ -1825,6 +1829,10 @@ export function toggleFilteredTab(active: boolean) {
 
       filteredViewContainer = document.createElement('div');
       filteredViewContainer.className = 'filtered-view-container';
+      // linkedin adaptation: tag the panel so post cards adopt LinkedIn visual style.
+      if (_deps.adapter.siteId === 'linkedin') {
+        filteredViewContainer.classList.add('filtered-view-container--linkedin');
+      }
 
       const header = document.createElement('div');
       header.className = 'filtered-modal-header';
@@ -1877,6 +1885,49 @@ export function toggleFilteredTab(active: boolean) {
   }
 }
 
+// linkedin adaptation: static SVG icons used in the filtered-posts panel header.
+function _liLinkedInBadge(): SVGElement {
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('width', '16'); svg.setAttribute('height', '16');
+  svg.setAttribute('viewBox', '0 0 16 16');
+  svg.setAttribute('aria-label', 'LinkedIn'); svg.setAttribute('role', 'img');
+  svg.classList.add('slop-li-badge-icon');
+  const bg = document.createElementNS(ns, 'rect');
+  bg.setAttribute('width', '16'); bg.setAttribute('height', '16');
+  bg.setAttribute('rx', '3'); bg.setAttribute('fill', '#0A66C2');
+  svg.appendChild(bg);
+  // "i" — stem + dot
+  const iStem = document.createElementNS(ns, 'rect');
+  iStem.setAttribute('x', '2.5'); iStem.setAttribute('y', '6');
+  iStem.setAttribute('width', '2'); iStem.setAttribute('height', '7');
+  iStem.setAttribute('fill', 'white');
+  svg.appendChild(iStem);
+  const iDot = document.createElementNS(ns, 'circle');
+  iDot.setAttribute('cx', '3.5'); iDot.setAttribute('cy', '4'); iDot.setAttribute('r', '1.2');
+  iDot.setAttribute('fill', 'white');
+  svg.appendChild(iDot);
+  // "n"
+  const n = document.createElementNS(ns, 'path');
+  n.setAttribute('fill', 'white');
+  n.setAttribute('d', 'M6.5 6h2v1.1C8.8 6.4 9.5 6 10.5 6 12.2 6 12.5 7.2 12.5 8.8V13h-2V9.3c0-.8-.2-1.4-1-1.4-.9 0-1 .6-1 1.5V13H6.5V6z');
+  svg.appendChild(n);
+  return svg;
+}
+function _liGlobeIcon(): SVGElement {
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('width', '14'); svg.setAttribute('height', '14');
+  svg.setAttribute('viewBox', '0 0 16 16');
+  svg.setAttribute('aria-hidden', 'true');
+  svg.classList.add('slop-li-globe-icon');
+  const p = document.createElementNS(ns, 'path');
+  p.setAttribute('fill', 'currentColor');
+  p.setAttribute('d', 'M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zM3.1 8.5h2.1c.1.9.3 1.8.6 2.5A5.5 5.5 0 0 1 3.1 8.5zm0-1A5.5 5.5 0 0 1 5.8 5c-.3.7-.5 1.6-.6 2.5H3.1zM8 13c-.5 0-1.4-1.6-1.6-3.5h3.2C9.4 11.4 8.5 13 8 13zm-1.6-4.5c.1-1.1.4-2 .8-2.7.2-.3.5-.5.8-.5s.6.2.8.5c.4.7.7 1.6.8 2.7H6.4zm4.5 0c-.1-.9-.3-1.8-.6-2.5A5.5 5.5 0 0 1 12.9 8.5h-2zm2 1a5.5 5.5 0 0 1-2.8 2.5c.3-.7.5-1.6.6-2.5h2.2z');
+  svg.appendChild(p);
+  return svg;
+}
+
 export function renderFilteredPostsView(container: Element) {
   if (filteredPosts.length === 0) {
     container.replaceChildren(parseHTML(`
@@ -1900,7 +1951,7 @@ export function renderFilteredPostsView(container: Element) {
     const wrapper = document.createElement('div');
     wrapper.className = 'slop-post-wrapper';
 
-    // Main post row: avatar + body
+    // Main post row: avatar + body (layout differs per platform)
     const postRow = document.createElement('div');
     postRow.className = 'slop-post';
 
@@ -1912,14 +1963,12 @@ export function renderFilteredPostsView(container: Element) {
       img.src = postContent.avatarUrl;
       avatar.appendChild(img);
     } else {
-      // Fallback: show first letter of display name or handle
       const initial = (postContent.author?.[0] || postContent.handle?.[1] || '?').toUpperCase();
       const fallback = document.createElement('span');
       fallback.className = 'slop-avatar-initial';
       fallback.textContent = initial;
       avatar.appendChild(fallback);
     }
-    postRow.appendChild(avatar);
 
     // Body
     const body = document.createElement('div');
@@ -1931,25 +1980,74 @@ export function renderFilteredPostsView(container: Element) {
 
     const meta = document.createElement('div');
     meta.className = 'slop-post-meta';
-    if (postContent.author) {
-      // Extract display name — author field has "DisplayName@handle · time" concatenated
-      // Use handle to split if available, otherwise use full author string
-      let displayName = postContent.author;
-      if (postContent.handle) {
-        const handleIdx = displayName.indexOf(postContent.handle);
-        if (handleIdx > 0) displayName = displayName.substring(0, handleIdx);
-      }
+
+    // linkedin adaptation: structured header matching LinkedIn's native card.
+    // Shows: [name bold] [in badge] • [degree]
+    //        [headline, truncated with ellipsis]
+    //        [timestamp] • [globe icon]
+    if (_deps.adapter.siteId === 'linkedin') {
+      // Row 1: name + LinkedIn badge + degree
+      const nameRow = document.createElement('div');
+      nameRow.className = 'slop-post-name-row';
       const nameSpan = document.createElement('span');
       nameSpan.className = 'slop-post-name';
-      nameSpan.textContent = displayName;
-      meta.appendChild(nameSpan);
-    }
-    if (postContent.handle || postContent.timeText) {
-      const handleSpan = document.createElement('span');
-      handleSpan.className = 'slop-post-handle';
-      const parts = [postContent.handle, postContent.timeText].filter(Boolean);
-      handleSpan.textContent = parts.join(' · ');
-      meta.appendChild(handleSpan);
+      nameSpan.textContent = postContent.author;
+      nameRow.appendChild(nameSpan);
+      nameRow.appendChild(_liLinkedInBadge());
+      if (postContent.degree) {
+        const sep = document.createElement('span');
+        sep.className = 'slop-post-degree-sep';
+        sep.setAttribute('aria-hidden', 'true');
+        sep.textContent = ' • ';
+        nameRow.appendChild(sep);
+        const degSpan = document.createElement('span');
+        degSpan.className = 'slop-post-degree';
+        degSpan.textContent = postContent.degree;
+        nameRow.appendChild(degSpan);
+      }
+      meta.appendChild(nameRow);
+
+      // Row 2: headline (biography)
+      if (postContent.handle) {
+        const headline = document.createElement('span');
+        headline.className = 'slop-post-handle slop-post-linkedin-headline';
+        headline.textContent = postContent.handle;
+        meta.appendChild(headline);
+      }
+
+      // Row 3: timestamp + globe icon
+      if (postContent.timeText) {
+        const timeRow = document.createElement('div');
+        timeRow.className = 'slop-post-time-row';
+        const timeSpan = document.createElement('span');
+        timeSpan.textContent = postContent.timeText;
+        timeRow.appendChild(timeSpan);
+        const sep = document.createElement('span');
+        sep.setAttribute('aria-hidden', 'true');
+        sep.textContent = ' • ';
+        timeRow.appendChild(sep);
+        timeRow.appendChild(_liGlobeIcon());
+        meta.appendChild(timeRow);
+      }
+    } else {
+      // Twitter: name + @handle · time inline
+      if (postContent.author) {
+        let displayName = postContent.author;
+        if (postContent.handle) {
+          const handleIdx = displayName.indexOf(postContent.handle);
+          if (handleIdx > 0) displayName = displayName.substring(0, handleIdx);
+        }
+        const nameSpan = document.createElement('span');
+        nameSpan.className = 'slop-post-name';
+        nameSpan.textContent = displayName;
+        meta.appendChild(nameSpan);
+      }
+      if (postContent.handle || postContent.timeText) {
+        const handleSpan = document.createElement('span');
+        handleSpan.className = 'slop-post-handle';
+        handleSpan.textContent = [postContent.handle, postContent.timeText].filter(Boolean).join(' · ');
+        meta.appendChild(handleSpan);
+      }
     }
     top.appendChild(meta);
 
@@ -1978,17 +2076,37 @@ export function renderFilteredPostsView(container: Element) {
     }
     body.appendChild(top);
 
-    // Tweet text — use sanitized HTML to preserve links/emojis/formatting
+    // Post text — use sanitized HTML to preserve links/emojis/formatting
+    let textDiv: HTMLElement | null = null;
     if (postContent.textHtml) {
-      const textDiv = document.createElement('div');
+      textDiv = document.createElement('div');
       textDiv.className = 'slop-post-text';
       textDiv.replaceChildren(DOMPurify.sanitize(postContent.textHtml, { RETURN_DOM_FRAGMENT: true }));
       body.appendChild(textDiv);
     } else if (post.evaluationText) {
-      const textDiv = document.createElement('div');
+      textDiv = document.createElement('div');
       textDiv.className = 'slop-post-text';
       textDiv.textContent = post.evaluationText;
       body.appendChild(textDiv);
+    }
+
+    // linkedin adaptation: collapse long posts to ~5 lines with a "...more" button,
+    // matching LinkedIn's own expandable post behaviour.
+    if (_deps.adapter.siteId === 'linkedin' && textDiv) {
+      const textLen = textDiv.textContent?.length ?? 0;
+      if (textLen > 280) {
+        textDiv.classList.add('slop-post-text--collapsible');
+        const expandBtn = document.createElement('button');
+        expandBtn.className = 'slop-post-expand-btn';
+        expandBtn.textContent = '…more';
+        expandBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          textDiv.classList.remove('slop-post-text--collapsible');
+          expandBtn.remove();
+        });
+        body.appendChild(expandBtn);
+      }
     }
 
     // Quote tweet — render as a mini-card with avatar, author, and text
@@ -2086,7 +2204,15 @@ export function renderFilteredPostsView(container: Element) {
       // Try to unhide original article in the feed
       for (const article of _deps.findPosts()) {
         const postUrl = _deps.adapter.getPostUrl(article);
-        if (postUrl && postContent.postUrl && postUrl.includes(postContent.postUrl)) {
+        const urlMatch = postUrl && postContent.postUrl && postUrl.includes(postContent.postUrl);
+        // linkedin adaptation: home-feed posts have no postUrl; match by stored
+        // text content against the article's expandable text box instead.
+        const textMatch = !postContent.postUrl && !postUrl && (() => {
+          const textEl = article.querySelector('[data-testid="expandable-text-box"]');
+          const articleText = textEl?.textContent?.substring(0, 150).trim() ?? '';
+          return articleText.length > 0 && articleText === postContent.text.substring(0, 150).trim();
+        })();
+        if (urlMatch || textMatch) {
           const container = _deps.adapter.getPostContainer(article);
           container.style.display = '';
           container.style.visibility = '';
@@ -2116,7 +2242,21 @@ export function renderFilteredPostsView(container: Element) {
     actions.appendChild(restoreBtn);
     body.appendChild(actions);
 
-    postRow.appendChild(body);
+    // linkedin adaptation: header row (avatar + meta) sits above full-width body.
+    // Twitter keeps the original side-by-side layout (avatar beside body).
+    if (_deps.adapter.siteId === 'linkedin') {
+      const liHeader = document.createElement('div');
+      liHeader.className = 'slop-post-linkedin-header';
+      liHeader.appendChild(avatar);
+      body.removeChild(top);    // move top from body into the header
+      liHeader.appendChild(top);
+      postRow.classList.add('slop-post--linkedin');
+      postRow.appendChild(liHeader);
+      postRow.appendChild(body);
+    } else {
+      postRow.insertBefore(avatar, postRow.firstChild);
+      postRow.appendChild(body);
+    }
 
     // Wrap in a real <a> so middle-click / ctrl-click open in new tab natively
     if (postContent.postUrl) {

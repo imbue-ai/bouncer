@@ -1395,13 +1395,19 @@ article {
 /* Animated cycling placeholder */
 .filter-placeholder-cycle {
   position: absolute;
-  top: 0;
+  top: calc(50% - 2px);
+  transform: translateY(-50%);
   left: 4px;
   right: 4px;
-  height: 1.2em;
+  /* Pin font-size so all em units inside (height, line-height, keyframe calc)
+     resolve to the same base regardless of the host page's inherited font-size. */
+  font-size: 15px;
+  height: 1.5em;
   overflow: hidden;
   pointer-events: none;
   transition: opacity 0.15s;
+  -webkit-mask-image: linear-gradient(to right, black 60%, transparent 100%);
+  mask-image: linear-gradient(to right, black 60%, transparent 100%);
 }
 
 .filter-placeholder-cycle.hidden {
@@ -1416,8 +1422,8 @@ article {
 
 .filter-placeholder-track > span {
   display: block;
-  height: 1.2em;
-  line-height: 1.2em;
+  height: 1.5em;
+  line-height: 1.5em;
   color: rgb(80, 85, 90);
   font-weight: 400;
   font-size: 15px;
@@ -2667,10 +2673,12 @@ body.ff-ios .ff-ios-page.dark-mode .ff-ios-page-header {
 .bouncer-update-banner-bullets {
   margin: 0;
   padding-left: 18px;
+  list-style-type: disc !important;
 }
 
 .bouncer-update-banner-bullets li {
   margin: 2px 0;
+  list-style: disc !important;
 }
 
 .bouncer-update-banner-close {
@@ -2771,5 +2779,264 @@ body.ff-ios .ff-ios-page.dark-mode .ff-ios-page-header {
 .ff-capture .filter-settings-btn,
 .ff-capture .filter-signout-btn {
   display: none;
+}
+
+/* ======================================
+   linkedin adaptation: sidebar z-index + filtered-posts card style
+   ====================================== */
+
+/* linkedin adaptation: LinkedIn's promoted cards and "People also viewed" rails
+   can have very high z-index values. Raise the filter sidebar as high as
+   possible so it always floats above them. The Twitter in-wrapper constraint
+   (stay below z=2 search bar) does not apply to LinkedIn. */
+.filter-phrases-sidebar--linkedin {
+  /* linkedin adaptation: 9999 beats native LinkedIn ads/modals but stays below
+     the filtered-modal-backdrop (z-index: 10000) so the sidebar appears behind
+     the "View filtered" popup rather than floating on top of it. */
+  z-index: 9999;
+}
+
+/* linkedin adaptation: hide the Twitter-specific "Share filters" button. */
+.filter-phrases-sidebar--linkedin .filter-pack-share-btn {
+  display: none;
+}
+
+/* linkedin adaptation: the ::before fill is a Twitter-specific hack that masks
+   "Subscribe to Premium" content scrolling under the fixed box. LinkedIn has
+   no such element and the fill bleeds into the nav bar — disable it entirely. */
+.filter-phrases-sidebar--linkedin::before {
+  display: none;
+}
+
+/* ---- LinkedIn-style filtered posts panel ---- */
+
+/* linkedin adaptation: column layout — header row (avatar+meta) above full-width body. */
+.slop-post--linkedin {
+  flex-direction: column;
+  padding: 0;
+  gap: 0;
+}
+.slop-post-linkedin-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 12px 16px 6px;
+}
+
+/* Name row: [name] [badge] • [degree] — all inline, centered. */
+.slop-post-name-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.slop-li-badge-icon {
+  flex-shrink: 0;
+  vertical-align: middle;
+}
+.slop-post-degree-sep,
+.slop-post-degree {
+  font-size: 13px;
+  color: rgba(0, 0, 0, 0.55);
+}
+
+/* Headline: truncate with ellipsis to keep the header compact. */
+.slop-post-linkedin-headline {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: normal !important;
+}
+
+/* Timestamp row: [time] • [globe] */
+.slop-post-time-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 12px;
+  color: rgba(0, 0, 0, 0.55);
+  margin-top: 2px;
+}
+.slop-li-globe-icon {
+  color: rgba(0, 0, 0, 0.55);
+  flex-shrink: 0;
+}
+
+/* linkedin adaptation: feed background matches LinkedIn's off-white (#f3f2ef). */
+.filtered-view-container--linkedin .slop-posts-container {
+  background: #f3f2ef;
+  padding: 8px;
+  gap: 0;
+}
+
+/* linkedin adaptation: each post is a white card with rounded corners and a
+   subtle shadow — identical to LinkedIn's feed card appearance. */
+.filtered-view-container--linkedin .slop-post-wrapper {
+  background: #fff;
+  border: none;
+  border-radius: 8px;
+  margin-bottom: 8px;
+  overflow: hidden;
+}
+.filtered-view-container--linkedin .slop-post-link {
+  color: inherit;
+}
+.filtered-view-container--linkedin .slop-post-link:hover {
+  background: rgba(0, 0, 0, 0.02);
+}
+
+/* linkedin adaptation: 48px avatar, no circular crop (LinkedIn uses square with
+   rounded corners for company logos; circular for people). Keep circle. */
+.filtered-view-container--linkedin .slop-post-avatar {
+  width: 48px;
+  height: 48px;
+  flex-shrink: 0;
+}
+.filtered-view-container--linkedin .slop-avatar-initial {
+  font-size: 20px;
+}
+
+/* linkedin adaptation: post row padding matches LinkedIn's card inner spacing. */
+.filtered-view-container--linkedin .slop-post {
+  padding: 12px 16px 0;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+/* linkedin adaptation: author name + timestamp stacked vertically.
+   LinkedIn shows name, then headline, then "Xd •" timestamp — no @handle. */
+.filtered-view-container--linkedin .slop-post-meta {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0;
+}
+.filtered-view-container--linkedin .slop-post-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: rgba(0, 0, 0, 0.9);
+  line-height: 1.4;
+}
+/* The "handle" slot holds headline + timestamp on LinkedIn. */
+.filtered-view-container--linkedin .slop-post-handle {
+  font-size: 12px;
+  color: rgba(0, 0, 0, 0.6);
+  white-space: normal;
+  line-height: 1.3;
+}
+
+/* linkedin adaptation: post body text — LinkedIn uses 14px, black, with
+   natural paragraph spacing. */
+.filtered-view-container--linkedin .slop-post-text {
+  font-size: 14px;
+  color: rgba(0, 0, 0, 0.9);
+  line-height: 1.5;
+  margin-bottom: 0;
+  padding: 8px 16px 0;
+}
+.filtered-view-container--linkedin .slop-post-body {
+  padding-bottom: 0;
+}
+
+/* linkedin adaptation: truncation — collapse to ~5 lines and fade the bottom. */
+.filtered-view-container--linkedin .slop-post-text--collapsible {
+  max-height: 7.5em;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(to bottom, black 55%, transparent 100%);
+  mask-image: linear-gradient(to bottom, black 55%, transparent 100%);
+}
+
+/* linkedin adaptation: "...more" expand button styled like LinkedIn's inline link. */
+.slop-post-expand-btn {
+  display: block;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px 16px 0;
+  font-size: 14px;
+  font-weight: 400;
+  color: rgba(0, 0, 0, 0.6);
+}
+.slop-post-expand-btn:hover {
+  color: rgba(0, 0, 0, 0.9);
+  text-decoration: underline;
+}
+
+/* linkedin adaptation: LinkedIn blue links. */
+.filtered-view-container--linkedin .slop-post-text a,
+.filtered-view-container--linkedin .slop-quote-text a {
+  color: #0a66c2;
+}
+
+/* linkedin adaptation: reasoning box inside the card, full-width. */
+.filtered-view-container--linkedin .slop-post-reasoning {
+  margin: 8px 16px 0;
+  border-left-color: rgba(0, 0, 0, 0.12);
+  background: rgba(0, 0, 0, 0.03);
+  color: rgba(0, 0, 0, 0.55);
+}
+
+/* linkedin adaptation: actions row padding. */
+.filtered-view-container--linkedin .slop-post-actions {
+  padding: 6px 16px 12px;
+}
+.filtered-view-container--linkedin .slop-restore {
+  color: rgba(0, 0, 0, 0.55);
+  font-size: 14px;
+}
+.filtered-view-container--linkedin .slop-restore:hover {
+  color: rgba(0, 0, 0, 0.9);
+}
+
+/* ---- Dark-mode overrides for the LinkedIn panel ---- */
+.filtered-view-container--linkedin.dark-mode .slop-posts-container {
+  background: #1b1f23;
+}
+.filtered-view-container--linkedin.dark-mode .slop-post-wrapper {
+  background: #1d2226;
+}
+.filtered-view-container--linkedin.dark-mode .slop-post-name {
+  color: rgba(255, 255, 255, 0.9);
+}
+.filtered-view-container--linkedin.dark-mode .slop-post-handle {
+  color: rgba(255, 255, 255, 0.6);
+}
+.filtered-view-container--linkedin.dark-mode .slop-post-text {
+  color: rgba(255, 255, 255, 0.9);
+}
+.filtered-view-container--linkedin.dark-mode .slop-post-reasoning {
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.55);
+  border-left-color: rgba(255, 255, 255, 0.12);
+}
+.filtered-view-container--linkedin.dark-mode .slop-restore {
+  color: rgba(255, 255, 255, 0.55);
+}
+.filtered-view-container--linkedin.dark-mode .slop-restore:hover {
+  color: rgba(255, 255, 255, 0.9);
+}
+.filtered-view-container--linkedin.dark-mode .slop-post-text a,
+.filtered-view-container--linkedin.dark-mode .slop-quote-text a {
+  color: #70b5f9;
+}
+.filtered-view-container--linkedin.dark-mode .slop-post-link:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+.filtered-view-container--linkedin.dark-mode .slop-post-expand-btn {
+  color: rgba(255, 255, 255, 0.6);
+}
+.filtered-view-container--linkedin.dark-mode .slop-post-expand-btn:hover {
+  color: rgba(255, 255, 255, 0.9);
+}
+.filtered-view-container--linkedin.dark-mode .slop-post-degree-sep,
+.filtered-view-container--linkedin.dark-mode .slop-post-degree {
+  color: rgba(255, 255, 255, 0.55);
+}
+.filtered-view-container--linkedin.dark-mode .slop-post-time-row {
+  color: rgba(255, 255, 255, 0.55);
+}
+.filtered-view-container--linkedin.dark-mode .slop-li-globe-icon {
+  color: rgba(255, 255, 255, 0.55);
 }
 

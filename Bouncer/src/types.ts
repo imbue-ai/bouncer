@@ -1,7 +1,8 @@
 // ==================== Site IDs ====================
 
 /** Known platform adapter identifiers. Add new entries when adding adapters. */
-export type SiteId = 'twitter';
+// linkedin adaptation: added 'linkedin' alongside the original 'twitter'.
+export type SiteId = 'twitter' | 'linkedin';
 
 // ==================== Core Evaluation ====================
 
@@ -81,6 +82,8 @@ export interface PostContent {
   hasMediaContainer: boolean;
   fromStore?: boolean;
   mediaBlurred?: boolean;
+  /** linkedin adaptation: connection degree indicator ("2nd", "3rd+", etc.). */
+  degree?: string;
 }
 
 /** Stored for the "filtered posts" panel — includes captured display data for re-rendering. */

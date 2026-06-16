@@ -105,6 +105,11 @@ const litertlmStub = { '@litert-lm/core': path.join(__dirname, 'litertlm-stub.js
 const adapterTsPath = path.join(__dirname, 'adapters/twitter/TwitterAdapter.ts');
 const hasAdapterTs = fs.existsSync(adapterTsPath);
 
+// linkedin adaptation: type-strip the LinkedIn adapter the same way as the
+// Twitter one (standalone, unbundled content script → dist/LinkedInAdapter.js).
+const linkedinAdapterTsPath = path.join(__dirname, 'adapters/linkedin/LinkedInAdapter.ts');
+const hasLinkedinAdapterTs = fs.existsSync(linkedinAdapterTsPath);
+
 // Copy LiteRT-LM's wasm loader + binaries into dist/litertlm-wasm/ so the
 // offscreen document can resolve them via chrome.runtime.getURL(...). The
 // runtime feature-detects relaxed-SIMD and loads either litertlm_wasm_internal
@@ -242,6 +247,20 @@ async function build() {
       target: 'es2020',
     });
     contexts.push(adapterCtx);
+  }
+
+  // linkedin adaptation: build dist/LinkedInAdapter.js (additive — does not
+  // affect the Twitter adapter build above).
+  if (hasLinkedinAdapterTs) {
+    const linkedinAdapterCtx = await esbuild.context({
+      entryPoints: [linkedinAdapterTsPath],
+      outfile: path.join(__dirname, 'dist/LinkedInAdapter.js'),
+      bundle: false,
+      format: 'iife',
+      platform: 'browser',
+      target: 'es2020',
+    });
+    contexts.push(linkedinAdapterCtx);
   }
 
   if (isWatch) {

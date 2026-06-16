@@ -1,0 +1,10 @@
+/* linkedin adaptation
+ *
+ * LinkedIn-specific styles for Bouncer. The shared content.css already covers
+ * both `.light-mode` and `.dark-mode` UI surfaces, and LinkedInAdapter only
+ * ever reports 'light' | 'dark' (LinkedIn has no Twitter-style "dim" theme),
+ * so no per-theme overrides are needed here — unlike adapters/twitter/twitter.css
+ * which carries an extra dim-mode palette.
+ *
+ * Add LinkedIn-only layout tweaks below (e.g. hiding promoted rails, spacing
+ * fixes for the injected filter box). Keep selectors scoped to LinkedIn DOM. */
