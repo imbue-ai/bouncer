@@ -25,6 +25,15 @@ body.bouncer-disabled .ff-why-annoying-btn {
   display: none !important;
 }
 
+/* The left-edge "processing" bar (grey pulse while a post is classified) is a
+ * Twitter affordance — it reads as a stray grey line down the side of a
+ * YouTube video card, which doesn't have a tweet's left gutter. Suppress it on
+ * YouTube; the post still dims while pending via the shared [data-ff-pending]
+ * rule. */
+body.site-youtube .post-verification-bar {
+  display: none;
+}
+
 /* ===== Mini-guide entry ===== */
 /* Matches `ytd-mini-guide-entry-renderer`: 74px square button, icon on
  * top, 10px label below. Native hover/active feedback. */
