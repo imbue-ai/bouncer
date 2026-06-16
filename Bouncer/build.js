@@ -100,57 +100,32 @@ const imbueStubPlugin = {
 };
 const imbuePlugins = hasImbue ? [] : [imbueStubPlugin];
 
-const webllmStub = { '@mlc-ai/web-llm': path.join(__dirname, 'webllm-stub.js') };
+const litertlmStub = { '@litert-lm/core': path.join(__dirname, 'litertlm-stub.js') };
 
 const adapters = [
   { name: 'TwitterAdapter', path: path.join(__dirname, 'adapters/twitter/TwitterAdapter.ts') },
   { name: 'YouTubeAdapter', path: path.join(__dirname, 'adapters/youtube/YouTubeAdapter.ts') },
 ].filter((a) => fs.existsSync(a.path));
 
-// esbuild plugin: rewrites `@mlc-ai/web-llm` imports to the pre-built
-// `./webllm.js` bundle so it stays external and background.js stays small.
-const externalizeWebLLM = {
-  name: 'externalize-webllm',
-  setup(build) {
-    build.onResolve({ filter: /^@mlc-ai\/web-llm$/ }, () => ({
-      path: './webllm.js',
-      external: true,
-    }));
-  },
-};
-
-// Post-process dist/webllm.js: web-llm embeds large base64-encoded WASM
-// binaries as inline data-URIs.  AMO rejects JS files over 5 MB, so we
-// extract each blob into its own small module and import it back in.
-function extractWebLLMWasmBlobs() {
-  const webllmPath = path.join(__dirname, 'dist/webllm.js');
-  let src = fs.readFileSync(webllmPath, 'utf8');
-
-  // Match: wasmBinaryFile = "data:application/octet-stream;base64,<huge>"\n
-  const re = /wasmBinaryFile\s*=\s*"(data:application\/octet-stream;base64,[A-Za-z0-9+/=]+)"/g;
-  const imports = [];
-  let i = 0;
-
-  src = src.replace(re, (match, dataUri) => {
-    // Only bother extracting blobs large enough to matter (> 100 KB).
-    if (match.length < 100_000) return match;
-
-    const varName = `__wasm_data_${i}`;
-    const blobFile = `webllm-wasm-${i}.js`;
-    fs.writeFileSync(
-      path.join(__dirname, 'dist', blobFile),
-      `export default "${dataUri}";\n`,
-    );
-    imports.push(`import ${varName} from "./${blobFile}";`);
-    i++;
-    return `wasmBinaryFile = ${varName}`;
-  });
-
-  if (imports.length) {
-    src = imports.join('\n') + '\n' + src;
-    fs.writeFileSync(webllmPath, src);
-    console.log(`Extracted ${imports.length} WASM blob(s) from webllm.js`);
+// Copy LiteRT-LM's wasm loader + binaries into dist/litertlm-wasm/ so the
+// offscreen document can resolve them via chrome.runtime.getURL(...). The
+// runtime feature-detects relaxed-SIMD and loads either litertlm_wasm_internal
+// or litertlm_wasm_compat_internal; each .js fetches its sibling .wasm, so
+// all four files need to sit at the same URL prefix. By default the package
+// resolves these from a jsdelivr CDN URL, which the extension CSP blocks —
+// loadLiteRtLm() in the runtime points at this local directory instead.
+function copyLitertlmAssets() {
+  const srcDir = path.join(__dirname, 'node_modules/@litert-lm/core/wasm');
+  const dstDir = path.join(__dirname, 'dist/litertlm-wasm');
+  if (!fs.existsSync(srcDir)) {
+    console.warn('@litert-lm/core wasm dir not found — skipping copy');
+    return;
   }
+  fs.mkdirSync(dstDir, { recursive: true });
+  for (const name of fs.readdirSync(srcDir)) {
+    fs.copyFileSync(path.join(srcDir, name), path.join(dstDir, name));
+  }
+  console.log('Copied LiteRT-LM wasm assets into dist/litertlm-wasm/');
 }
 
 async function build() {
@@ -161,23 +136,13 @@ async function build() {
   // 0. Regenerate manifest.json from manifest.base.json + manifest.<target>.json.
   generateManifest(target);
 
-  // 1. Bundle web-llm into dist/webllm.js, then extract the large inline
-  //    base64-encoded WASM blobs into separate files so every file stays under
-  //    AMO's 5 MB parse limit.  background.js imports webllm.js via a static
-  //    ESM import (dynamic import() is disallowed in service workers).
-  await esbuild.build({
-    stdin: { contents: 'export * from "@mlc-ai/web-llm";', resolveDir: __dirname },
-    outfile: path.join(__dirname, 'dist/webllm.js'),
-    bundle: true,
-    format: 'esm',
-    platform: 'browser',
-    target: 'es2020',
-    minify: false,
-    external: ['url'],
-  });
-  extractWebLLMWasmBlobs();
+  copyLitertlmAssets();
 
-  // 2. Background: web-llm is externalized → resolved to dist/webllm.js at runtime.
+  // 1. Background: bundles the LiteRT-LM SDK directly so the SW-side proxy can
+  //    ship its message protocol without a second chunk. The actual Engine
+  //    runtime only executes in the offscreen document (bundle 2), but
+  //    importing the module from the SW is safe — nothing wasm-loads until
+  //    you call Engine.create().
   const bgCtx = await esbuild.context({
     entryPoints: [path.join(__dirname, 'background.js')],
     outdir: path.join(__dirname, 'dist'),
@@ -189,7 +154,24 @@ async function build() {
     sourcemap: false,
     external: ['url'],
     define,
-    plugins: [externalizeWebLLM, ...imbuePlugins],
+    plugins: imbuePlugins,
+  });
+
+  // 2. Offscreen document bundle. Hosts LiteRT-LM's Engine; the SW opens
+  //    this page on demand because the LiteRT-LM wasm loader uses script-tag
+  //    injection (via @litertjs/wasm-utils), which is not available in MV3
+  //    ESM service workers.
+  const offscreenCtx = await esbuild.context({
+    entryPoints: [path.join(__dirname, 'offscreen.js')],
+    outdir: path.join(__dirname, 'dist'),
+    bundle: true,
+    format: 'esm',
+    platform: 'browser',
+    target: 'es2020',
+    minify: false,
+    sourcemap: false,
+    external: ['url'],
+    define,
   });
 
   // 3. Popup & content: fully self-contained (no external imports).
@@ -223,8 +205,8 @@ async function build() {
     define,
   });
 
-  // 5. iOS app builds (IIFE, webllm stubbed). Injected into a WKWebView that
-  // has no WebGPU — iOS uses a native CoreML bridge instead, so stubbing
+  // 5. iOS app builds (IIFE, LiteRT-LM stubbed). Injected into a WKWebView
+  // that has no WebGPU — iOS uses a native CoreML bridge instead, so stubbing
   // keeps these bundles small.
   const stubbedIifeEntries = {
     'background-app': 'background.js',
@@ -243,13 +225,13 @@ async function build() {
         sourcemap: false,
         external: ['url'],
         define,
-        alias: webllmStub,
+        alias: { ...litertlmStub },
         plugins: imbuePlugins,
       })
     )
   );
 
-  const contexts = [bgCtx, otherCtx, signinBridgeCtx, ...stubbedIifeCtxs];
+  const contexts = [bgCtx, offscreenCtx, otherCtx, signinBridgeCtx, ...stubbedIifeCtxs];
 
   // Type-strip each platform adapter (unbundled, standalone content script).
   // Each adapter ships as its own dist/<Name>.js and is loaded by the manifest
@@ -274,7 +256,7 @@ async function build() {
     await Promise.all(contexts.map(c => c.dispose()));
 
     const adapterOutputs = adapters.map((a) => `dist/${a.name}.js`).join(', ');
-    console.log(`Build complete (env: ${env}): dist/background.js, dist/popup.js, dist/content.js, dist/background-app.js, dist/popup-app.js` +
+    console.log(`Build complete (env: ${env}): dist/background.js, dist/offscreen.js, dist/popup.js, dist/content.js, dist/background-app.js, dist/popup-app.js` +
       (adapterOutputs ? `, ${adapterOutputs}` : ''));
   }
 }

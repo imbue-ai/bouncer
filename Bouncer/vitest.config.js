@@ -5,10 +5,5 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     setupFiles: ['./tests/setup.ts'],
-    server: {
-      deps: {
-        inline: ['@mlc-ai/web-llm'],
-      },
-    },
   },
 });

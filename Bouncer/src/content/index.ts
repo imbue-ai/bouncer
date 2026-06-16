@@ -696,7 +696,13 @@ import { formatPostForEvaluation } from '../shared/utils';
         // Sync each filter box's checkbox to the new value, then re-evaluate
         // all posts since the cache has been invalidated by the background.
         const checked = changes.aiTextFilterEnabled.newValue === true;
-        document.querySelectorAll<HTMLInputElement>('.filter-ai-text-toggle-input')
+        document.querySelectorAll<HTMLInputElement>('.filter-ai-text-toggle-input:not(.filter-ai-image-toggle-input)')
+          .forEach(el => { if (el.checked !== checked) el.checked = checked; });
+        reEvaluateAllPosts();
+      }
+      if (changes.aiImageFilterEnabled) {
+        const checked = changes.aiImageFilterEnabled.newValue === true;
+        document.querySelectorAll<HTMLInputElement>('.filter-ai-image-toggle-input')
           .forEach(el => { if (el.checked !== checked) el.checked = checked; });
         reEvaluateAllPosts();
       }
@@ -872,20 +878,32 @@ import { formatPostForEvaluation } from '../shared/utils';
         const positions: Record<string, number> = {};
         const viewportCenter = window.innerHeight / 2;
         const postUrlsSet = new Set<string>(message.postUrls || []);
+        const evaluationIds = message.evaluationIds || [];
+
+        const distanceFor = (article: HTMLElement) => {
+          const rect = article.getBoundingClientRect();
+          const postCenter = rect.top + rect.height / 2;
+          return Math.abs(postCenter - viewportCenter);
+        };
 
         const allPosts = findPosts();
         allPosts.forEach(article => {
           const content = extractPostContent(article);
           if (!content.postUrl) return;
-
-          const rect = article.getBoundingClientRect();
-          const postCenter = rect.top + rect.height / 2;
-          const distance = Math.abs(postCenter - viewportCenter);
-
           if (postUrlsSet.has(content.postUrl)) {
-            positions[content.postUrl] = distance;
+            positions[content.postUrl] = distanceFor(article);
           }
         });
+
+        // Ads have no permalink so they don't appear in postUrls. Look them up
+        // by evaluationId instead — without this, the queue prioritization
+        // gives them Infinity distance and processes them dead last.
+        for (const id of evaluationIds) {
+          const article = articleForEvaluation(id);
+          if (article && article.isConnected) {
+            positions[id] = distanceFor(article);
+          }
+        }
 
         sendResponse({ positions });
         break;

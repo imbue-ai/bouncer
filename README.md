@@ -27,7 +27,7 @@
 
 | Provider | Models                                     | Requires |
 |----------|--------------------------------------------|----------|
-| **Local (WebGPU)** | Qwen3-4B, Qwen3.5-4B, Qwen3.5-4B Vision    | WebGPU-capable browser |
+| **Local (WebGPU)** | Gemma 4 E4B (Instruct)                     | WebGPU-capable browser |
 | **OpenAI** | GPT-5 Nano, gpt-oss-20b                    | API key |
 | **Google Gemini** | 2.5 Flash Lite, 2.5 Flash, 3 Flash Preview | API key |
 | **Anthropic** | Claude Haiku 4.5 | API key |

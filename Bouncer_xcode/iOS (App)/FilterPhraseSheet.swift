@@ -41,6 +41,8 @@ class FilterSheetViewModel: ObservableObject {
     @Published var isFilteredModalOpen = false
     @Published var aiTextFilterEnabled: Bool = false
     @Published var aiTextDetectionThreshold: Double = 0.7
+    @Published var aiImageFilterEnabled: Bool = false
+    @Published var aiImageDetectionThreshold: Double = 0.7
     @Published var filterReplies: Bool = true
     // Which platform's filter phrases the sheet is currently viewing/editing.
     // Independent of the page the WebView is on — the dropdown lets the user
@@ -239,6 +241,73 @@ class FilterSheetViewModel: ObservableObject {
         Task {
             try? await webView.callAsyncJavaScript(
                 "return await window.__ff_setAiTextDetectionThreshold(value)",
+                arguments: ["value": clamped],
+                in: nil,
+                contentWorld: Self.contentWorld
+            )
+        }
+    }
+
+    func loadAiImageFilterEnabled() {
+        guard let webView = webView else { return }
+        Task { @MainActor in
+            do {
+                let result = try await webView.callAsyncJavaScript(
+                    "return await window.__ff_getAiImageFilterEnabled()",
+                    arguments: [:],
+                    in: nil,
+                    contentWorld: Self.contentWorld
+                )
+                if let value = result as? Bool {
+                    self.aiImageFilterEnabled = value
+                }
+            } catch {
+                print("[FeedFilter] loadAiImageFilterEnabled error: \(error)")
+            }
+        }
+    }
+
+    func setAiImageFilterEnabled(_ enabled: Bool) {
+        aiImageFilterEnabled = enabled
+        guard let webView = webView else { return }
+        Task {
+            try? await webView.callAsyncJavaScript(
+                "return await window.__ff_setAiImageFilterEnabled(enabled)",
+                arguments: ["enabled": enabled],
+                in: nil,
+                contentWorld: Self.contentWorld
+            )
+        }
+    }
+
+    func loadAiImageDetectionThreshold() {
+        guard let webView = webView else { return }
+        Task { @MainActor in
+            do {
+                let result = try await webView.callAsyncJavaScript(
+                    "return await window.__ff_getAiImageDetectionThreshold()",
+                    arguments: [:],
+                    in: nil,
+                    contentWorld: Self.contentWorld
+                )
+                if let value = result as? Double {
+                    self.aiImageDetectionThreshold = value
+                } else if let value = result as? NSNumber {
+                    self.aiImageDetectionThreshold = value.doubleValue
+                }
+            } catch {
+                print("[FeedFilter] loadAiImageDetectionThreshold error: \(error)")
+            }
+        }
+    }
+
+    func setAiImageDetectionThreshold(_ value: Double) {
+        let clamped = min(1.0, max(0.0, value))
+        aiImageDetectionThreshold = clamped
+        guard let webView = webView else { return }
+        Task {
+            try? await webView.callAsyncJavaScript(
+                "return await window.__ff_setAiImageDetectionThreshold(value)",
                 arguments: ["value": clamped],
                 in: nil,
                 contentWorld: Self.contentWorld
@@ -674,8 +743,15 @@ struct BouncerSettingsView: View {
     @State private var draftThreshold: Double = 0.7
     @State private var isDragging: Bool = false
 
+    @State private var draftImageThreshold: Double = 0.7
+    @State private var isDraggingImage: Bool = false
+
     private var displayThreshold: Double {
         isDragging ? draftThreshold : viewModel.aiTextDetectionThreshold
+    }
+
+    private var displayImageThreshold: Double {
+        isDraggingImage ? draftImageThreshold : viewModel.aiImageDetectionThreshold
     }
 
     // AI text detection routes through the Imbue WebSocket gateway, which
@@ -684,6 +760,26 @@ struct BouncerSettingsView: View {
     // section.
     private var hasImbueBackend: Bool {
         AppCheckBridge.shared.isAvailable
+    }
+
+    // Load a brand logo PNG out of the bundled icons/ folder reference (same
+    // files the desktop popup uses) and render it as a template image so it
+    // tints with the row's foreground color — mirrors the desktop's
+    // `filter: invert(1)` dark-mode rule.
+    @ViewBuilder
+    private func contactRow(icon: String, text: String) -> some View {
+        HStack(spacing: 12) {
+            if let url = Bundle.main.url(forResource: icon, withExtension: "png", subdirectory: "icons"),
+               let data = try? Data(contentsOf: url),
+               let ui = UIImage(data: data) {
+                Image(uiImage: ui.withRenderingMode(.alwaysTemplate))
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 20, height: 20)
+                    .foregroundStyle(.primary)
+            }
+            Text(text)
+        }
     }
 
     var body: some View {
@@ -778,6 +874,75 @@ struct BouncerSettingsView: View {
                 } footer: {
                     Text("Hide posts whose text appears to be written by AI. Posts at or above this confidence are hidden.")
                 }
+
+                Section {
+                    Toggle(isOn: Binding(
+                        get: { viewModel.aiImageFilterEnabled },
+                        set: { viewModel.setAiImageFilterEnabled($0) }
+                    )) {
+                        Text("Filter AI-generated images")
+                    }
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text("Confidence threshold")
+                            Spacer()
+                            Text("\(Int(round(displayImageThreshold * 100)))%")
+                                .foregroundStyle(.secondary)
+                                .monospacedDigit()
+                        }
+                        Slider(
+                            value: Binding(
+                                get: { displayImageThreshold },
+                                set: { draftImageThreshold = $0 }
+                            ),
+                            in: 0...1
+                        ) {
+                            Text("Confidence threshold")
+                        } minimumValueLabel: {
+                            Text("0%").font(.caption2).foregroundStyle(.secondary)
+                        } maximumValueLabel: {
+                            Text("100%").font(.caption2).foregroundStyle(.secondary)
+                        } onEditingChanged: { editing in
+                            if editing {
+                                draftImageThreshold = viewModel.aiImageDetectionThreshold
+                                isDraggingImage = true
+                            } else {
+                                isDraggingImage = false
+                                viewModel.setAiImageDetectionThreshold(draftImageThreshold)
+                            }
+                        }
+                    }
+                    .padding(.vertical, 4)
+                    .disabled(!viewModel.aiImageFilterEnabled)
+                    .opacity(viewModel.aiImageFilterEnabled ? 1.0 : 0.5)
+                } header: {
+                    Text("AI Image Detection")
+                } footer: {
+                    Text("Hide posts whose images appear to be AI-generated. Posts whose most-suspect image is at or above this confidence are hidden.")
+                }
+            }
+
+            Section {
+                Link(destination: URL(string: "https://x.com/Millanphilipose")!) {
+                    contactRow(icon: "x-logo", text: "X (@Millanphilipose)")
+                }
+                Link(destination: URL(string: "https://github.com/imbue-ai/bouncer")!) {
+                    contactRow(icon: "github-logo", text: "GitHub")
+                }
+                Link(destination: URL(string: "https://discord.gg/bcG87mkdN9")!) {
+                    contactRow(icon: "discord-logo", text: "Discord")
+                }
+            } header: {
+                Text("Contact us")
+            }
+
+            Section {
+                Link(destination: URL(string: "https://apps.apple.com/us/app/bouncer-heal-your-feed/id6759466393")!) {
+                    Label("Rate us on the App Store", systemImage: "star.fill")
+                }
+            } footer: {
+                Text("Enjoying Bouncer? Leave a review — it really helps.")
             }
         }
         .navigationTitle("Settings")
@@ -787,6 +952,8 @@ struct BouncerSettingsView: View {
             if hasImbueBackend {
                 viewModel.loadAiTextFilterEnabled()
                 viewModel.loadAiTextDetectionThreshold()
+                viewModel.loadAiImageFilterEnabled()
+                viewModel.loadAiImageDetectionThreshold()
             }
         }
     }

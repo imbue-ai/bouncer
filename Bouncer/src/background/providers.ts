@@ -3,7 +3,7 @@
 import { convertSystemToUserMessages } from '../shared/utils';
 import { API_BASE_URLS } from '../shared/models';
 import { imbueWebSocket } from './ws-manager';
-import type { ChatMessage, APIConfig, DirectAPIResponse, ImbueFilterResponse, ImbueSuggestResponse, ImbueAiTextResponse, EvaluationPostData } from '../types';
+import type { ChatMessage, APIConfig, DirectAPIResponse, ImbueFilterResponse, ImbueSuggestResponse, ImbueAiTextResponse, ImbueAiImageResponse, EvaluationPostData } from '../types';
 
 // Call an OpenAI-compatible API directly from the extension via fetch
 // Used for OpenAI, OpenRouter, and Gemini models
@@ -214,7 +214,19 @@ export async function callImbueAPI(
     reason: reason || 'unknown',
   };
 
-  return imbueWebSocket.send(message) as unknown as Promise<ImbueFilterResponse | ImbueSuggestResponse>;
+  console.log('[Filter] → request:', message);
+  const startedAt = Date.now();
+
+  try {
+    const response = await imbueWebSocket.send(message) as unknown as ImbueFilterResponse | ImbueSuggestResponse;
+    const wallMs = Date.now() - startedAt;
+    console.log(`[Filter] ← response (wallMs=${wallMs}):`, response);
+    return response;
+  } catch (err) {
+    const wallMs = Date.now() - startedAt;
+    console.warn(`[Filter] ✗ error after ${wallMs}ms:`, err);
+    throw err;
+  }
 }
 
 // Call the Imbue AI-text-detection worker via the same WebSocket gateway.
@@ -239,6 +251,33 @@ export async function callImbueAiTextDetection(
   } catch (err) {
     const wallMs = Date.now() - startedAt;
     console.warn(`[AiDetect] ✗ error after ${wallMs}ms:`, err);
+    throw err;
+  }
+}
+
+// Call the Imbue AI-image-detection worker via the same WebSocket gateway.
+// Routes to a dedicated worker via the `detectAiImage` action; threshold is
+// applied client-side against confidence = max(scores).
+export async function callImbueAiImageDetection(
+  imageUrls: string[],
+): Promise<ImbueAiImageResponse> {
+  const message: Record<string, unknown> = {
+    action: 'detectAiImage',
+    tweetData: { imageUrls },
+    version: chrome.runtime.getManifest().version,
+  };
+
+  console.log('[AiImageDetect] → request:', message);
+  const startedAt = Date.now();
+
+  try {
+    const response = await imbueWebSocket.send(message) as unknown as ImbueAiImageResponse;
+    const wallMs = Date.now() - startedAt;
+    console.log(`[AiImageDetect] ← response (wallMs=${wallMs}):`, response);
+    return response;
+  } catch (err) {
+    const wallMs = Date.now() - startedAt;
+    console.warn(`[AiImageDetect] ✗ error after ${wallMs}ms:`, err);
     throw err;
   }
 }

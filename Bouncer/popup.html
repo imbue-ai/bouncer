@@ -233,7 +233,7 @@
       <div class="local-models-toggle" style="display: none;">
         <label class="checkbox-label">
           <input type="checkbox" id="enableLocalModels">
-          <span>Enable local models using WebLLM (Experimental)</span>
+          <span>Enable local models (Experimental)</span>
         </label>
       </div>
 
@@ -241,7 +241,7 @@
       <div class="experimental-toggle">
         <label class="checkbox-label">
           <input type="checkbox" id="enableAiTextExperimental">
-          <span>Enable AI text filtering (Experimental)</span>
+          <span>Enable AI Slop Filtering (Experimental)</span>
         </label>
       </div>
     </section>
@@ -268,6 +268,27 @@
         </div>
         <p class="hint ai-text-threshold-hint">Posts at or above this confidence are hidden. Lower values catch more, higher values catch only obvious cases.</p>
       </div>
+
+      <label class="toggle-switch">
+        <input type="checkbox" id="enableAiImageFilter">
+        <span class="toggle-switch-slider" aria-hidden="true"></span>
+        <span class="toggle-switch-text">
+          <span class="toggle-switch-label">Filter AI-generated images</span>
+          <span class="toggle-switch-sub">Hide posts whose images appear to be AI-generated.</span>
+        </span>
+      </label>
+      <div class="ai-text-threshold-block" id="aiImageThresholdBlock">
+        <div class="ai-text-threshold-header">
+          <span>Confidence threshold</span>
+          <span class="ai-text-threshold-value" id="aiImageThresholdValue">70%</span>
+        </div>
+        <input type="range" id="aiImageThreshold" min="0" max="1" step="0.01" value="0.7">
+        <div class="ai-text-threshold-scale">
+          <span>0%</span>
+          <span>100%</span>
+        </div>
+        <p class="hint ai-text-threshold-hint">Posts whose most-suspect image is at or above this confidence are hidden.</p>
+      </div>
       </div>
     </section>
 
@@ -287,6 +308,9 @@
         <a class="contact-icon-link" href="https://discord.gg/bcG87mkdN9" target="_blank" rel="noopener" aria-label="Contact us on Discord">
           <img class="contact-icon" src="icons/discord-logo.png" alt="Discord" width="16" height="16">
         </a>
+      </p>
+      <p class="hint rate-us-text">
+        Enjoying Bouncer? <a id="rateUsLink" href="https://chromewebstore.google.com/detail/bouncer-heal-your-feed-on/bkijmhafoocfloemhancbgadknkgdkcm/reviews" target="_blank" rel="noopener">Rate us</a>
       </p>
     </footer>
   </div>

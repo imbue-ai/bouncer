@@ -15,7 +15,7 @@ vi.mock('../../src/background/auth.js', () => ({
   getAuthToken: vi.fn().mockResolvedValue(null),
 }));
 
-// Mock local-model.js to avoid WebLLM dependencies
+// Mock local-model.js to avoid LiteRT-LM runtime dependencies
 vi.mock('../../src/background/local-model.js', () => ({
   callLocalInference: vi.fn(),
   localEngine: {

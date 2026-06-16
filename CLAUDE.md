@@ -16,7 +16,7 @@ npm run build        # one-time build
 
 Then load the unpacked extension from the `Bouncer/` folder at `chrome://extensions`.
 
-Dependencies: esbuild, dompurify, vendored web-llm
+Dependencies: esbuild, dompurify, @litert-lm/core
 
 Pre-commit checks:
 ```bash
@@ -24,6 +24,12 @@ cd Bouncer
 npm run lint
 npm run test
 ```
+
+## Conventions
+
+### No `innerHTML`
+
+Never assign to `.innerHTML` in this codebase. All dynamic HTML must go through `parseHTML(...)` from `src/shared/utils.ts`, which wraps `DOMPurify.sanitize(html, { RETURN_DOM_FRAGMENT: true })`. Apply it via `element.replaceChildren(parseHTML(html))` (or `element.replaceChildren()` for empty clears). Reading `.innerHTML` is fine — only writes are banned. This prevents accidental XSS sinks when string interpolation creeps into template literals.
 
 ## Architecture
 
