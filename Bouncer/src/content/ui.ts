@@ -2193,207 +2193,209 @@ export function renderFilteredPostsView(container: Element) {
 
   const isYouTube = _deps.adapter.siteId === 'youtube';
 
-  // Render posts in reverse order (newest first)
+  // Render posts in reverse order (newest first); YouTube uses video lockups,
+  // every other platform uses the tweet-style card.
   [...filteredPosts].reverse().forEach((post) => {
-    // YouTube renders as video lockups (thumbnail-first) rather than tweets.
-    if (isYouTube) {
-      postsContainer.appendChild(buildYouTubeCard(post));
-      return;
-    }
-
-    const { post: postContent } = post;
-    const wrapper = document.createElement('div');
-    wrapper.className = 'slop-post-wrapper';
-
-    // Main post row: avatar + body
-    const postRow = document.createElement('div');
-    postRow.className = 'slop-post';
-
-    // Avatar — show image if available, otherwise show initial as fallback
-    const avatar = document.createElement('div');
-    avatar.className = 'slop-post-avatar';
-    const isShort = !!postContent.postUrl?.includes('/shorts/');
-    if (postContent.avatarUrl) {
-      const img = document.createElement('img');
-      img.src = postContent.avatarUrl;
-      avatar.appendChild(img);
-    } else if (isShort) {
-      // Shorts don't expose channel info in the lockup payload, so an avatar
-      // initial would just be "?". Render the Shorts glyph instead.
-      avatar.classList.add('slop-avatar-shorts');
-      avatar.replaceChildren(parseHTML(
-        '<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
-        '<path d="M17.77 10.32l-1.2-.5L18 9.06a3.74 3.74 0 0 0-3.5-6.62L6.18 6.83a3.74 3.74 0 0 0 .04 6.62l1.2.5L6 14.94a3.74 3.74 0 0 0 3.5 6.62l8.32-4.39a3.74 3.74 0 0 0-.04-6.85zM10 15.5v-7l6 3.5-6 3.5z" fill="currentColor"/>' +
-        '</svg>'
-      ));
-    } else {
-      // Fallback: show first letter of display name or handle
-      const initial = (postContent.author?.[0] || postContent.handle?.[1] || '?').toUpperCase();
-      const fallback = document.createElement('span');
-      fallback.className = 'slop-avatar-initial';
-      fallback.textContent = initial;
-      avatar.appendChild(fallback);
-    }
-    postRow.appendChild(avatar);
-
-    // Body
-    const body = document.createElement('div');
-    body.className = 'slop-post-body';
-
-    // Top row: meta + category tag
-    const top = document.createElement('div');
-    top.className = 'slop-post-top';
-
-    const meta = document.createElement('div');
-    meta.className = 'slop-post-meta';
-    if (postContent.author) {
-      // Extract display name — author field has "DisplayName@handle · time" concatenated
-      // Use handle to split if available, otherwise use full author string
-      let displayName = postContent.author;
-      if (postContent.handle) {
-        const handleIdx = displayName.indexOf(postContent.handle);
-        if (handleIdx > 0) displayName = displayName.substring(0, handleIdx);
-      }
-      const nameSpan = document.createElement('span');
-      nameSpan.className = 'slop-post-name';
-      nameSpan.textContent = displayName;
-      meta.appendChild(nameSpan);
-    }
-    // YouTube's `handle` (e.g. "/@channel") and `timeText` (e.g. "1.2M views • 3 months ago")
-    // aren't meaningful identity in the filtered card the way Twitter's `@handle` / "2h" are.
-    if ((postContent.handle || postContent.timeText) && _deps.adapter.siteId !== 'youtube') {
-      const handleSpan = document.createElement('span');
-      handleSpan.className = 'slop-post-handle';
-      const parts = [postContent.handle, postContent.timeText].filter(Boolean);
-      handleSpan.textContent = parts.join(' · ');
-      meta.appendChild(handleSpan);
-    }
-    top.appendChild(meta);
-
-    if (post.category) {
-      // table_yesno (LiteRT-LM local Gemma) produces a comma-joined list of
-      // matched categories; the single-category XML path stores one name.
-      // Either way, split + render one badge per match. Wrap the tags in a
-      // flex group so `.slop-post-top`'s `justify-content: space-between`
-      // doesn't distribute siblings across the right column — keep them
-      // 5px apart instead.
-      const names = post.category.split(',').map(s => s.trim()).filter(Boolean);
-      if (names.length > 0) {
-        const tagGroup = document.createElement('div');
-        tagGroup.style.display = 'flex';
-        tagGroup.style.gap = '5px';
-        tagGroup.style.marginLeft = '8px';
-        for (const name of names) {
-          const tag = document.createElement('span');
-          tag.className = 'slop-category-tag';
-          tag.style.marginLeft = '0';
-          tag.textContent = name.toUpperCase();
-          tagGroup.appendChild(tag);
-        }
-        top.appendChild(tagGroup);
-      }
-    }
-    body.appendChild(top);
-
-    // Tweet text — use sanitized HTML to preserve links/emojis/formatting
-    if (postContent.textHtml) {
-      const textDiv = document.createElement('div');
-      textDiv.className = 'slop-post-text';
-      textDiv.replaceChildren(DOMPurify.sanitize(postContent.textHtml, { RETURN_DOM_FRAGMENT: true }));
-      body.appendChild(textDiv);
-    } else if (post.evaluationText) {
-      const textDiv = document.createElement('div');
-      textDiv.className = 'slop-post-text';
-      textDiv.textContent = post.evaluationText;
-      body.appendChild(textDiv);
-    }
-
-    // Quote tweet — render as a mini-card with avatar, author, and text
-    if (postContent.quote) {
-      const quoteBox = document.createElement('div');
-      quoteBox.className = 'slop-quote-box';
-
-      // Quote header: avatar + author info
-      const quoteHeader = document.createElement('div');
-      quoteHeader.className = 'slop-quote-header';
-
-      if (postContent.quote.avatarUrl) {
-        const qAvatar = document.createElement('img');
-        qAvatar.className = 'slop-quote-avatar';
-        qAvatar.src = postContent.quote.avatarUrl;
-        quoteHeader.appendChild(qAvatar);
-      }
-
-      if (postContent.quote.author) {
-        let qDisplayName = postContent.quote.author;
-        if (postContent.quote.handle) {
-          const idx = qDisplayName.indexOf(postContent.quote.handle);
-          if (idx > 0) qDisplayName = qDisplayName.substring(0, idx);
-        }
-        const qName = document.createElement('span');
-        qName.className = 'slop-quote-name';
-        qName.textContent = qDisplayName;
-        quoteHeader.appendChild(qName);
-      }
-      if (postContent.quote.handle || postContent.quote.timeText) {
-        const qMeta = document.createElement('span');
-        qMeta.className = 'slop-quote-handle';
-        const parts = [postContent.quote.handle, postContent.quote.timeText].filter(Boolean);
-        qMeta.textContent = parts.join(' · ');
-        quoteHeader.appendChild(qMeta);
-      }
-      quoteBox.appendChild(quoteHeader);
-
-      // Quote text
-      if (postContent.quote.textHtml) {
-        const quoteText = document.createElement('div');
-        quoteText.className = 'slop-quote-text';
-        quoteText.replaceChildren(DOMPurify.sanitize(postContent.quote.textHtml, { RETURN_DOM_FRAGMENT: true }));
-        quoteBox.appendChild(quoteText);
-      }
-
-      body.appendChild(quoteBox);
-    }
-
-    // Images (skip if media was blurred/age-restricted on the platform).
-    // Prefer the adapter's higher-quality display URLs when present
-    // (e.g. YouTube's original AVIF/JPEG lockup thumb); fall back to the
-    // classifier payload (smaller, JPEG-only).
-    const displayUrls = postContent.displayImageUrls?.length
-      ? postContent.displayImageUrls
-      : postContent.imageUrls;
-    if (displayUrls && displayUrls.length > 0 && !postContent.mediaBlurred) {
-      const mediaContainer = document.createElement('div');
-      mediaContainer.className = 'slop-media-container';
-      displayUrls.forEach(url => {
-        const img = document.createElement('img');
-        img.src = url;
-        img.className = 'slop-media-image';
-        img.loading = 'lazy';
-        mediaContainer.appendChild(img);
-      });
-      body.appendChild(mediaContainer);
-    }
-
-    // Reasoning
-    const reasoning = document.createElement('div');
-    reasoning.className = 'slop-post-reasoning';
-    reasoning.textContent = cleanReasoning(post.reasoning) || 'Filtered';
-    body.appendChild(reasoning);
-
-    // Actions row
-    const actions = document.createElement('div');
-    actions.className = 'slop-post-actions';
-    actions.appendChild(createRestoreButton(post, postContent));
-    body.appendChild(actions);
-
-    postRow.appendChild(body);
-
-    // Wrap in a real <a> so middle-click / ctrl-click open in new tab natively
-    wrapper.appendChild(wrapInPostLink(postRow, postContent.postUrl));
-
-    postsContainer.appendChild(wrapper);
+    postsContainer.appendChild(isYouTube ? buildYouTubeCard(post) : buildTwitterCard(post));
   });
+}
+
+// Twitter-style filtered-post card: avatar + body (name/handle, text, optional
+// quote, media, reasoning). See buildYouTubeCard for the thumbnail-first
+// YouTube layout.
+function buildTwitterCard(post: FilteredPost): HTMLElement {
+  const { post: postContent } = post;
+  const wrapper = document.createElement('div');
+  wrapper.className = 'slop-post-wrapper';
+
+  // Main post row: avatar + body
+  const postRow = document.createElement('div');
+  postRow.className = 'slop-post';
+
+  // Avatar — show image if available, otherwise show initial as fallback
+  const avatar = document.createElement('div');
+  avatar.className = 'slop-post-avatar';
+  const isShort = !!postContent.postUrl?.includes('/shorts/');
+  if (postContent.avatarUrl) {
+    const img = document.createElement('img');
+    img.src = postContent.avatarUrl;
+    avatar.appendChild(img);
+  } else if (isShort) {
+    // Shorts don't expose channel info in the lockup payload, so an avatar
+    // initial would just be "?". Render the Shorts glyph instead.
+    avatar.classList.add('slop-avatar-shorts');
+    avatar.replaceChildren(parseHTML(
+      '<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
+      '<path d="M17.77 10.32l-1.2-.5L18 9.06a3.74 3.74 0 0 0-3.5-6.62L6.18 6.83a3.74 3.74 0 0 0 .04 6.62l1.2.5L6 14.94a3.74 3.74 0 0 0 3.5 6.62l8.32-4.39a3.74 3.74 0 0 0-.04-6.85zM10 15.5v-7l6 3.5-6 3.5z" fill="currentColor"/>' +
+      '</svg>'
+    ));
+  } else {
+    // Fallback: show first letter of display name or handle
+    const initial = (postContent.author?.[0] || postContent.handle?.[1] || '?').toUpperCase();
+    const fallback = document.createElement('span');
+    fallback.className = 'slop-avatar-initial';
+    fallback.textContent = initial;
+    avatar.appendChild(fallback);
+  }
+  postRow.appendChild(avatar);
+
+  // Body
+  const body = document.createElement('div');
+  body.className = 'slop-post-body';
+
+  // Top row: meta + category tag
+  const top = document.createElement('div');
+  top.className = 'slop-post-top';
+
+  const meta = document.createElement('div');
+  meta.className = 'slop-post-meta';
+  if (postContent.author) {
+    // Extract display name — author field has "DisplayName@handle · time" concatenated
+    // Use handle to split if available, otherwise use full author string
+    let displayName = postContent.author;
+    if (postContent.handle) {
+      const handleIdx = displayName.indexOf(postContent.handle);
+      if (handleIdx > 0) displayName = displayName.substring(0, handleIdx);
+    }
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'slop-post-name';
+    nameSpan.textContent = displayName;
+    meta.appendChild(nameSpan);
+  }
+  // YouTube's `handle` (e.g. "/@channel") and `timeText` (e.g. "1.2M views • 3 months ago")
+  // aren't meaningful identity in the filtered card the way Twitter's `@handle` / "2h" are.
+  if ((postContent.handle || postContent.timeText) && _deps.adapter.siteId !== 'youtube') {
+    const handleSpan = document.createElement('span');
+    handleSpan.className = 'slop-post-handle';
+    const parts = [postContent.handle, postContent.timeText].filter(Boolean);
+    handleSpan.textContent = parts.join(' · ');
+    meta.appendChild(handleSpan);
+  }
+  top.appendChild(meta);
+
+  if (post.category) {
+    // table_yesno (LiteRT-LM local Gemma) produces a comma-joined list of
+    // matched categories; the single-category XML path stores one name.
+    // Either way, split + render one badge per match. Wrap the tags in a
+    // flex group so `.slop-post-top`'s `justify-content: space-between`
+    // doesn't distribute siblings across the right column — keep them
+    // 5px apart instead.
+    const names = post.category.split(',').map(s => s.trim()).filter(Boolean);
+    if (names.length > 0) {
+      const tagGroup = document.createElement('div');
+      tagGroup.style.display = 'flex';
+      tagGroup.style.gap = '5px';
+      tagGroup.style.marginLeft = '8px';
+      for (const name of names) {
+        const tag = document.createElement('span');
+        tag.className = 'slop-category-tag';
+        tag.style.marginLeft = '0';
+        tag.textContent = name.toUpperCase();
+        tagGroup.appendChild(tag);
+      }
+      top.appendChild(tagGroup);
+    }
+  }
+  body.appendChild(top);
+
+  // Tweet text — use sanitized HTML to preserve links/emojis/formatting
+  if (postContent.textHtml) {
+    const textDiv = document.createElement('div');
+    textDiv.className = 'slop-post-text';
+    textDiv.replaceChildren(DOMPurify.sanitize(postContent.textHtml, { RETURN_DOM_FRAGMENT: true }));
+    body.appendChild(textDiv);
+  } else if (post.evaluationText) {
+    const textDiv = document.createElement('div');
+    textDiv.className = 'slop-post-text';
+    textDiv.textContent = post.evaluationText;
+    body.appendChild(textDiv);
+  }
+
+  // Quote tweet — render as a mini-card with avatar, author, and text
+  if (postContent.quote) {
+    const quoteBox = document.createElement('div');
+    quoteBox.className = 'slop-quote-box';
+
+    // Quote header: avatar + author info
+    const quoteHeader = document.createElement('div');
+    quoteHeader.className = 'slop-quote-header';
+
+    if (postContent.quote.avatarUrl) {
+      const qAvatar = document.createElement('img');
+      qAvatar.className = 'slop-quote-avatar';
+      qAvatar.src = postContent.quote.avatarUrl;
+      quoteHeader.appendChild(qAvatar);
+    }
+
+    if (postContent.quote.author) {
+      let qDisplayName = postContent.quote.author;
+      if (postContent.quote.handle) {
+        const idx = qDisplayName.indexOf(postContent.quote.handle);
+        if (idx > 0) qDisplayName = qDisplayName.substring(0, idx);
+      }
+      const qName = document.createElement('span');
+      qName.className = 'slop-quote-name';
+      qName.textContent = qDisplayName;
+      quoteHeader.appendChild(qName);
+    }
+    if (postContent.quote.handle || postContent.quote.timeText) {
+      const qMeta = document.createElement('span');
+      qMeta.className = 'slop-quote-handle';
+      const parts = [postContent.quote.handle, postContent.quote.timeText].filter(Boolean);
+      qMeta.textContent = parts.join(' · ');
+      quoteHeader.appendChild(qMeta);
+    }
+    quoteBox.appendChild(quoteHeader);
+
+    // Quote text
+    if (postContent.quote.textHtml) {
+      const quoteText = document.createElement('div');
+      quoteText.className = 'slop-quote-text';
+      quoteText.replaceChildren(DOMPurify.sanitize(postContent.quote.textHtml, { RETURN_DOM_FRAGMENT: true }));
+      quoteBox.appendChild(quoteText);
+    }
+
+    body.appendChild(quoteBox);
+  }
+
+  // Images (skip if media was blurred/age-restricted on the platform).
+  // Prefer the adapter's higher-quality display URLs when present
+  // (e.g. YouTube's original AVIF/JPEG lockup thumb); fall back to the
+  // classifier payload (smaller, JPEG-only).
+  const displayUrls = postContent.displayImageUrls?.length
+    ? postContent.displayImageUrls
+    : postContent.imageUrls;
+  if (displayUrls && displayUrls.length > 0 && !postContent.mediaBlurred) {
+    const mediaContainer = document.createElement('div');
+    mediaContainer.className = 'slop-media-container';
+    displayUrls.forEach(url => {
+      const img = document.createElement('img');
+      img.src = url;
+      img.className = 'slop-media-image';
+      img.loading = 'lazy';
+      mediaContainer.appendChild(img);
+    });
+    body.appendChild(mediaContainer);
+  }
+
+  // Reasoning
+  const reasoning = document.createElement('div');
+  reasoning.className = 'slop-post-reasoning';
+  reasoning.textContent = cleanReasoning(post.reasoning) || 'Filtered';
+  body.appendChild(reasoning);
+
+  // Actions row
+  const actions = document.createElement('div');
+  actions.className = 'slop-post-actions';
+  actions.appendChild(createRestoreButton(post, postContent));
+  body.appendChild(actions);
+
+  postRow.appendChild(body);
+
+  // Wrap in a real <a> so middle-click / ctrl-click open in new tab natively
+  wrapper.appendChild(wrapInPostLink(postRow, postContent.postUrl));
+
+  return wrapper;
 }
 
 // ==================== Filtered Post Storage ====================
