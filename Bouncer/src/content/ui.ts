@@ -2002,6 +2002,7 @@ function createRestoreButton(post: FilteredPost, postContent: PostContent): HTML
     chrome.runtime.sendMessage({
       type: 'sendFeedback',
       siteId: _deps.adapter.siteId,
+      postUrl: postContent.postUrl || null,
       tweetData: { text: post.evaluationText, imageUrls: postContent.imageUrls || [] },
       rawResponse: post.rawResponse || '',
       reasoning: post.reasoning || '',
@@ -2035,6 +2036,8 @@ function createRestoreButton(post: FilteredPost, postContent: PostContent): HTML
       type: 'overrideCacheEntry',
       post: post.evaluationText,
       imageUrls: postContent.imageUrls || [],
+      postUrl: postContent.postUrl || null,
+      siteId: _deps.adapter.siteId,
       shouldHide: false,
       reasoning: 'User reported: false positive'
     }).catch(err => console.error('[Bouncer] Override cache error:', err));
@@ -2955,7 +2958,9 @@ async function fetchReasoningIfNeeded(article: HTMLElement) {
     let response: { found?: boolean; shouldHide?: boolean; reasoning?: string; rawResponse?: string } | undefined = await chrome.runtime.sendMessage({
       type: 'getReasoning',
       post: formatPostForEvaluation(content),
-      imageUrls: content.imageUrls || []
+      imageUrls: content.imageUrls || [],
+      postUrl: content.postUrl || null,
+      siteId: _deps.adapter.siteId
     });
 
     // If not found, try with plain text (DOM re-renders may change HTML but not text)
@@ -2963,7 +2968,9 @@ async function fetchReasoningIfNeeded(article: HTMLElement) {
       response = await chrome.runtime.sendMessage({
         type: 'getReasoning',
         post: content.text,
-        imageUrls: content.imageUrls || []
+        imageUrls: content.imageUrls || [],
+        postUrl: content.postUrl || null,
+        siteId: _deps.adapter.siteId
       });
     }
 
@@ -3137,6 +3144,7 @@ export function addWhyAnnoyingButton(article: HTMLElement) {
         chrome.runtime.sendMessage({
           type: 'sendFeedback',
           siteId: _deps.adapter.siteId,
+          postUrl: content.postUrl || null,
           tweetData: { text: formatPostForEvaluation(content), imageUrls: content.imageUrls || [] },
           rawResponse: reasoning?.rawResponse || '',
           reasoning: reasoning?.reasoning || '',
@@ -3151,6 +3159,8 @@ export function addWhyAnnoyingButton(article: HTMLElement) {
           type: 'overrideCacheEntry',
           post: formatPostForEvaluation(content),
           imageUrls: content.imageUrls || [],
+          postUrl: content.postUrl || null,
+          siteId: _deps.adapter.siteId,
           shouldHide: true,
           reasoning: 'User reported: should have been filtered'
         }).catch(err => console.error('[Bouncer] Override cache error:', err));
@@ -3222,6 +3232,8 @@ export function addWhyAnnoyingButton(article: HTMLElement) {
           type: 'overrideCacheEntry',
           post: formatPostForEvaluation(content),
           imageUrls: content.imageUrls || [],
+          postUrl: content.postUrl || null,
+          siteId: _deps.adapter.siteId,
           shouldHide: true,
           reasoning
         }).catch(err => console.error('[Bouncer] Override cache error:', err));
@@ -3260,6 +3272,7 @@ export function addWhyAnnoyingButton(article: HTMLElement) {
         chrome.runtime.sendMessage({
           type: 'sendFeedback',
           siteId: _deps.adapter.siteId,
+          postUrl: content.postUrl || null,
           tweetData: { text: formatPostForEvaluation(content), imageUrls: content.imageUrls || [] },
           rawResponse: reasoning?.rawResponse || '',
           reasoning: reasoning?.reasoning || '',
@@ -3274,6 +3287,8 @@ export function addWhyAnnoyingButton(article: HTMLElement) {
           type: 'overrideCacheEntry',
           post: formatPostForEvaluation(content),
           imageUrls: content.imageUrls || [],
+          postUrl: content.postUrl || null,
+          siteId: _deps.adapter.siteId,
           shouldHide: true,
           reasoning: 'User reported: should have been filtered'
         }).catch(err => console.error('[Bouncer] Override cache error:', err));

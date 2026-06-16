@@ -290,16 +290,16 @@ export type ContentToBackgroundMessage =
   | { type: 'evaluatePost'; evaluationId: string; post: string; rawText: string; imageUrls: string[]; postUrl: string | null; siteId: SiteId }
   | { type: 'suggestAnnoyingReasons'; post: string; imageUrls: string[]; siteId?: SiteId }
   | { type: 'clearCache' }
-  | { type: 'clearSinglePost'; post: string; imageUrls: string[] }
+  | { type: 'clearSinglePost'; post: string; imageUrls: string[]; postUrl?: string | null; siteId?: SiteId }
   | { type: 'getStats' }
-  | { type: 'getReasoning'; post: string; imageUrls: string[] }
+  | { type: 'getReasoning'; post: string; imageUrls: string[]; postUrl?: string | null; siteId?: SiteId }
   | { type: 'getErrorStatus' }
   | { type: 'getAllLocalModelStatuses' }
   | { type: 'initializeLocalModel'; modelId: string }
   | { type: 'cancelLocalModelDownload'; modelId: string }
   | { type: 'preemptInference' }
-  | { type: 'overrideCacheEntry'; post: string; imageUrls: string[]; shouldHide: boolean; reasoning?: string }
-  | { type: 'sendFeedback'; decision: string; tweetData: { text: string; imageUrls: string[] }; reasoning?: string; rawResponse?: string; siteId?: SiteId }
+  | { type: 'overrideCacheEntry'; post: string; imageUrls: string[]; shouldHide: boolean; reasoning?: string; postUrl?: string | null; siteId?: SiteId }
+  | { type: 'sendFeedback'; decision: string; tweetData: { text: string; imageUrls: string[] }; reasoning?: string; rawResponse?: string; siteId?: SiteId; postUrl?: string | null }
   | { type: 'getAuthStatus' }
   | { type: 'launchAuth' }
   | { type: 'appleSignIn'; idToken: string; rawNonce: string }

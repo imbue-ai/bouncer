@@ -1,7 +1,6 @@
 // Post processing pipeline: queue, cache, error/latency state
 
 import {
-  generateCacheKey,
   parseAPIResponse, checkRateLimitError, checkApiError, checkAuthenticationError,
   RATE_LIMIT_TYPE_CONFIG, API_ERROR_TYPE_CONFIG,
 } from '../shared/utils';
@@ -826,9 +825,10 @@ async function processBatch(): Promise<void> {
   const aiToggleOn = settings.aiTextFilterEnabled;
   const aiImageToggleOn = settings.aiImageFilterEnabled;
 
-  // Check cache
+  // Check cache. Use the key computed at enqueue time (cacheKeyFor) rather than
+  // recomputing — for YouTube that key is video-id based, not text+image.
   const imageUrls = item.imageUrls || [];
-  const cacheKey = generateCacheKey(item.post, imageUrls);
+  const cacheKey = item.cacheKey;
   if (evaluationCache.has(cacheKey)) {
     const cached = evaluationCache.get(cacheKey)!;
     replayDetectorStates(batchTabId, item.evaluationId, cached);

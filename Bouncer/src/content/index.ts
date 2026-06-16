@@ -187,7 +187,9 @@ import { formatPostForEvaluation } from '../shared/utils';
     await chrome.runtime.sendMessage({
       type: 'clearSinglePost',
       post: formatPostForEvaluation(content),
-      imageUrls: content.imageUrls || []
+      imageUrls: content.imageUrls || [],
+      postUrl: content.postUrl || null,
+      siteId: adapter.siteId
     });
 
     postReasonings.delete(article);

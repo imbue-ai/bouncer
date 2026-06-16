@@ -1,7 +1,7 @@
 // Background script entry point: message handler, storage listener, startup, tab tracking
 
 import { PREDEFINED_MODELS } from '../shared/models';
-import { generateCacheKey } from '../shared/utils';
+import { cacheKeyFor } from '../shared/utils';
 import { getStorage, setStorage, removeStorage } from '../shared/storage';
 import type { ContentToBackgroundMessage, LocalModelStatus } from '../types';
 import { localEngine } from './local-model';
@@ -199,7 +199,7 @@ async function handleMessage(
 
       await loadCache();
       const imageUrls = message.imageUrls || [];
-      const cacheKey = generateCacheKey(message.post, imageUrls);
+      const cacheKey = cacheKeyFor(message.siteId, message.post, imageUrls, message.postUrl);
 
       // Check main cache
       if (evaluationCache.has(cacheKey)) {
@@ -257,7 +257,7 @@ async function handleMessage(
 
     case 'clearSinglePost': {
       await loadCache();
-      const cacheKey = generateCacheKey(message.post, message.imageUrls || []);
+      const cacheKey = cacheKeyFor(message.siteId, message.post, message.imageUrls || [], message.postUrl);
       if (evaluationCache.has(cacheKey)) {
         evaluationCache.delete(cacheKey);
         await saveCache();
@@ -272,7 +272,7 @@ async function handleMessage(
         // Look up cached evaluation to get the actual rawResponse and parsed reasoning
         const postText = message.tweetData?.text || '';
         const imageUrls = message.tweetData?.imageUrls || [];
-        const cacheKey = generateCacheKey(postText, imageUrls);
+        const cacheKey = cacheKeyFor(message.siteId, postText, imageUrls, message.postUrl);
         const cached = evaluationCache.get(cacheKey);
 
         const feedbackMessage = {
@@ -296,7 +296,7 @@ async function handleMessage(
 
     case 'overrideCacheEntry': {
       await loadCache();
-      const cacheKey = generateCacheKey(message.post, message.imageUrls || []);
+      const cacheKey = cacheKeyFor(message.siteId, message.post, message.imageUrls || [], message.postUrl);
       evaluationCache.set(cacheKey, {
         shouldHide: message.shouldHide,
         reasoning: message.reasoning || 'User override',
@@ -312,7 +312,7 @@ async function handleMessage(
 
     case 'getReasoning': {
       await loadCache();
-      const cacheKey = generateCacheKey(message.post, message.imageUrls || []);
+      const cacheKey = cacheKeyFor(message.siteId, message.post, message.imageUrls || [], message.postUrl);
       if (evaluationCache.has(cacheKey)) {
         const cached = evaluationCache.get(cacheKey)!;
         return {

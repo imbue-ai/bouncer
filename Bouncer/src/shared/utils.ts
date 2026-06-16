@@ -1,6 +1,6 @@
 // Shared pure utility functions used by background, content, and popup scripts
 
-import type { ChatMessage, PostContent } from '../types';
+import type { ChatMessage, PostContent, SiteId } from '../types';
 
 // Format a post's content into the string sent to the AI for evaluation.
 // This is also the basis for cache keys and feedback payloads.
@@ -52,6 +52,38 @@ export function generateCacheKey(post: string, imageUrls: string[] | null | unde
   // Use spread to avoid mutating the original array
   const imageHash = [...imageUrls].sort().join('|').substring(0, 100);
   return `${textPart}|imgs:${imageHash}`;
+}
+
+// Parse the canonical 11-ish-char video id out of a YouTube URL — both
+// `/watch?v=<id>` and `/shorts/<id>` forms. Returns null for anything else.
+export function youtubeVideoIdFromUrl(url: string | null | undefined): string | null {
+  if (!url) return null;
+  try {
+    const u = new URL(url);
+    const v = u.searchParams.get('v');
+    if (v) return v;
+    const m = u.pathname.match(/^\/shorts\/([^/?]+)/);
+    return m ? m[1] : null;
+  } catch {
+    return null;
+  }
+}
+
+// Cache key for a classified post. YouTube keys purely on the video id (via
+// `postUrl`) so the same video always hits cache regardless of title/thumbnail
+// churn or A/B variants; every other platform keys on text + image URLs.
+// Falls back to the text/image key when the video id can't be derived.
+export function cacheKeyFor(
+  siteId: SiteId | undefined,
+  post: string,
+  imageUrls: string[] | null | undefined,
+  postUrl: string | null | undefined,
+): string {
+  if (siteId === 'youtube') {
+    const id = youtubeVideoIdFromUrl(postUrl);
+    if (id) return 'yt:' + id;
+  }
+  return generateCacheKey(post, imageUrls);
 }
 
 interface RateLimitTypeConfig {
