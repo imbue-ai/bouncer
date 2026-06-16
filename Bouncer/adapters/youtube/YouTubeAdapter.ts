@@ -438,7 +438,10 @@ const BouncerYouTubeAdapter = class YouTubeAdapter implements PlatformAdapter {
     // Desktop marks dark mode with a `dark` attribute; mobile (m.youtube.com)
     // uses `darker-dark-theme` and paints the dark background on <html> while
     // <body> stays transparent — so on mobile sniff <html>, not <body>.
-    if (html.hasAttribute('dark') || html.hasAttribute('darker-dark-theme')) return 'dark';
+    // NOTE: desktop carries `darker-dark-theme` even in LIGHT mode, so that
+    // attribute is only a dark-mode signal on mobile — gating it on `_mobile`
+    // is what keeps the desktop filtered panel from going dark in light mode.
+    if (html.hasAttribute('dark') || (this._mobile && html.hasAttribute('darker-dark-theme'))) return 'dark';
     const root = this._mobile ? html : document.body;
     // Accept rgb()/rgba(); ignore fully-transparent backgrounds (alpha 0).
     const m = window.getComputedStyle(root).backgroundColor

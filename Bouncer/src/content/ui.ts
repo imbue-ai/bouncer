@@ -1913,7 +1913,7 @@ export function toggleFilteredTab(active: boolean) {
         <button class="filtered-modal-close" aria-label="Close">
           <svg viewBox="0 0 24 24"><path d="M10.59 12L4.54 5.96l1.42-1.42L12 10.59l6.04-6.05 1.42 1.42L13.41 12l6.05 6.04-1.42 1.42L12 13.41l-6.04 6.05-1.42-1.42L10.59 12z"></path></svg>
         </button>
-        <span class="filtered-modal-title">Filtered posts</span>
+        <span class="filtered-modal-title">${_deps.adapter.siteId === 'youtube' ? 'Filtered videos' : 'Filtered posts'}</span>
       `));
 
       const content = document.createElement('div');
@@ -1958,13 +1958,199 @@ export function toggleFilteredTab(active: boolean) {
   }
 }
 
+// Builds the "Restore" button shared by every filtered-post layout. Clicking
+// it reports a false positive, removes the post from the panel, unhides the
+// original article in the feed, and overrides the cache so re-evaluation keeps
+// the post visible.
+function createRestoreButton(post: FilteredPost, postContent: PostContent): HTMLButtonElement {
+  const restoreBtn = document.createElement('button');
+  restoreBtn.className = 'slop-restore';
+  restoreBtn.textContent = 'Restore';
+  restoreBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    chrome.runtime.sendMessage({
+      type: 'sendFeedback',
+      siteId: _deps.adapter.siteId,
+      tweetData: { text: post.evaluationText, imageUrls: postContent.imageUrls || [] },
+      rawResponse: post.rawResponse || '',
+      reasoning: post.reasoning || '',
+      decision: 'false_positive'
+    }).catch(err => console.error('[Bouncer] Undo feedback error:', err));
+
+    // Remove from filtered posts list
+    const key = postContent.postUrl || post.evaluationText.substring(0, 200);
+    const idx = filteredPosts.findIndex(p => (p.post.postUrl || p.evaluationText.substring(0, 200)) === key);
+    if (idx !== -1) filteredPosts.splice(idx, 1);
+    filteredPostKeys.delete(key);
+
+    // Try to unhide original article in the feed
+    for (const article of _deps.findPosts()) {
+      const postUrl = _deps.adapter.getPostUrl(article);
+      if (postUrl && postContent.postUrl && postUrl.includes(postContent.postUrl)) {
+        const container = _deps.adapter.getPostContainer(article);
+        container.style.display = '';
+        container.style.visibility = '';
+        delete container.dataset.filteredByExtension;
+        article.style.opacity = '';
+        article.style.transition = '';
+        _deps.processedPosts.delete(article);
+        markPostVerified(article);
+        break;
+      }
+    }
+
+    // Override cache so re-evaluation keeps post visible
+    chrome.runtime.sendMessage({
+      type: 'overrideCacheEntry',
+      post: post.evaluationText,
+      imageUrls: postContent.imageUrls || [],
+      shouldHide: false,
+      reasoning: 'User reported: false positive'
+    }).catch(err => console.error('[Bouncer] Override cache error:', err));
+
+    updateFilteredTabCount();
+    const outerContainer = restoreBtn.closest('.filtered-view-container') || restoreBtn.closest('.ff-ios-filtered-modal-backdrop');
+    const innerContainer = outerContainer?.querySelector('.filtered-modal-content') || outerContainer?.querySelector('.ff-ios-filtered-modal-content');
+    if (innerContainer) renderFilteredPostsView(innerContainer);
+  });
+  return restoreBtn;
+}
+
+// Wraps a built card in an <a> (so middle-click / ctrl-click open natively)
+// while keeping clicks on buttons/actions from navigating.
+function wrapInPostLink(card: HTMLElement, postUrl: string | null | undefined): HTMLElement {
+  if (!postUrl) return card;
+  const link = document.createElement('a');
+  link.href = postUrl;
+  link.className = 'slop-post-link';
+  link.addEventListener('click', (e) => {
+    if ((e.target as Element).closest('button, [role="button"], .slop-restore, .slop-post-actions')) {
+      e.preventDefault();
+    }
+  });
+  link.appendChild(card);
+  return link;
+}
+
+// YouTube-specific filtered-post card: thumbnail on top, then a channel-avatar
+// row with the video title, channel name and view/age metadata — mirroring
+// YouTube's own grid video lockups rather than the Twitter tweet layout.
+function buildYouTubeCard(post: FilteredPost): HTMLElement {
+  const { post: postContent } = post;
+  const isShort = !!postContent.postUrl?.includes('/shorts/');
+
+  const wrapper = document.createElement('div');
+  wrapper.className = 'slop-post-wrapper yt-card';
+
+  const card = document.createElement('div');
+  card.className = 'yt-card-inner';
+
+  // Category tag sits in its own right-aligned row above the thumbnail.
+  if (post.category) {
+    const tagRow = document.createElement('div');
+    tagRow.className = 'yt-card-tag-row';
+    const tag = document.createElement('span');
+    tag.className = 'slop-category-tag yt-card-tag';
+    tag.textContent = post.category.toUpperCase();
+    tagRow.appendChild(tag);
+    card.appendChild(tagRow);
+  }
+
+  // Thumbnail (prefer the adapter's higher-quality display URL)
+  const displayUrls = postContent.displayImageUrls?.length
+    ? postContent.displayImageUrls
+    : postContent.imageUrls;
+  const thumb = document.createElement('div');
+  thumb.className = 'yt-card-thumb';
+  if (isShort) thumb.classList.add('yt-card-thumb-short');
+  if (displayUrls && displayUrls.length > 0 && !postContent.mediaBlurred) {
+    const img = document.createElement('img');
+    img.src = displayUrls[0];
+    img.loading = 'lazy';
+    thumb.appendChild(img);
+  } else {
+    thumb.classList.add('yt-card-thumb-empty');
+  }
+  card.appendChild(thumb);
+
+  // Info row: channel avatar + text column
+  const info = document.createElement('div');
+  info.className = 'yt-card-info';
+
+  const avatar = document.createElement('div');
+  avatar.className = 'yt-card-avatar';
+  if (postContent.avatarUrl) {
+    const img = document.createElement('img');
+    img.src = postContent.avatarUrl;
+    avatar.appendChild(img);
+  } else if (isShort) {
+    avatar.classList.add('slop-avatar-shorts');
+    avatar.replaceChildren(parseHTML(
+      '<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
+      '<path d="M17.77 10.32l-1.2-.5L18 9.06a3.74 3.74 0 0 0-3.5-6.62L6.18 6.83a3.74 3.74 0 0 0 .04 6.62l1.2.5L6 14.94a3.74 3.74 0 0 0 3.5 6.62l8.32-4.39a3.74 3.74 0 0 0-.04-6.85zM10 15.5v-7l6 3.5-6 3.5z" fill="currentColor"/>' +
+      '</svg>'
+    ));
+  } else {
+    const initial = (postContent.author?.[0] || '?').toUpperCase();
+    const fallback = document.createElement('span');
+    fallback.className = 'slop-avatar-initial';
+    fallback.textContent = initial;
+    avatar.appendChild(fallback);
+  }
+  info.appendChild(avatar);
+
+  const textCol = document.createElement('div');
+  textCol.className = 'yt-card-text';
+
+  const title = document.createElement('div');
+  title.className = 'yt-card-title';
+  if (postContent.textHtml) {
+    title.replaceChildren(DOMPurify.sanitize(postContent.textHtml, { RETURN_DOM_FRAGMENT: true }));
+  } else {
+    title.textContent = postContent.text || post.evaluationText;
+  }
+  textCol.appendChild(title);
+
+  if (postContent.author) {
+    const channel = document.createElement('div');
+    channel.className = 'yt-card-channel';
+    channel.textContent = postContent.author;
+    textCol.appendChild(channel);
+  }
+  if (postContent.timeText) {
+    const meta = document.createElement('div');
+    meta.className = 'yt-card-meta';
+    meta.textContent = postContent.timeText;
+    textCol.appendChild(meta);
+  }
+  info.appendChild(textCol);
+  card.appendChild(info);
+
+  // Reasoning
+  const reasoning = document.createElement('div');
+  reasoning.className = 'slop-post-reasoning yt-card-reasoning';
+  reasoning.textContent = cleanReasoning(post.reasoning) || 'Filtered';
+  card.appendChild(reasoning);
+
+  // Actions
+  const actions = document.createElement('div');
+  actions.className = 'slop-post-actions';
+  actions.appendChild(createRestoreButton(post, postContent));
+  card.appendChild(actions);
+
+  wrapper.appendChild(wrapInPostLink(card, postContent.postUrl));
+  return wrapper;
+}
+
 export function renderFilteredPostsView(container: Element) {
+  const noun = _deps.adapter.siteId === 'youtube' ? 'videos' : 'posts';
   if (filteredPosts.length === 0) {
     container.replaceChildren(parseHTML(`
       <div class="filtered-posts-container">
         <div class="filtered-posts-empty">
-          No posts have been filtered out in this session.<br>
-          Removed posts will appear here.
+          No ${noun} have been filtered out in this session.<br>
+          Removed ${noun} will appear here.
         </div>
       </div>
     `));
@@ -1975,8 +2161,16 @@ export function renderFilteredPostsView(container: Element) {
   container.replaceChildren(parseHTML('<div class="slop-posts-container"></div>'));
   const postsContainer = container.querySelector('.slop-posts-container')!;
 
+  const isYouTube = _deps.adapter.siteId === 'youtube';
+
   // Render posts in reverse order (newest first)
   [...filteredPosts].reverse().forEach((post) => {
+    // YouTube renders as video lockups (thumbnail-first) rather than tweets.
+    if (isYouTube) {
+      postsContainer.appendChild(buildYouTubeCard(post));
+      return;
+    }
+
     const { post: postContent } = post;
     const wrapper = document.createElement('div');
     wrapper.className = 'slop-post-wrapper';
@@ -2143,78 +2337,13 @@ export function renderFilteredPostsView(container: Element) {
     // Actions row
     const actions = document.createElement('div');
     actions.className = 'slop-post-actions';
-
-    const restoreBtn = document.createElement('button');
-    restoreBtn.className = 'slop-restore';
-    restoreBtn.textContent = 'Restore';
-    restoreBtn.addEventListener('click', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      chrome.runtime.sendMessage({
-        type: 'sendFeedback',
-        siteId: _deps.adapter.siteId,
-        tweetData: { text: post.evaluationText, imageUrls: postContent.imageUrls || [] },
-        rawResponse: post.rawResponse || '',
-        reasoning: post.reasoning || '',
-        decision: 'false_positive'
-      }).catch(err => console.error('[Bouncer] Undo feedback error:', err));
-
-      // Remove from filtered posts list
-      const key = postContent.postUrl || post.evaluationText.substring(0, 200);
-      const idx = filteredPosts.findIndex(p => (p.post.postUrl || p.evaluationText.substring(0, 200)) === key);
-      if (idx !== -1) filteredPosts.splice(idx, 1);
-      filteredPostKeys.delete(key);
-
-      // Try to unhide original article in the feed
-      for (const article of _deps.findPosts()) {
-        const postUrl = _deps.adapter.getPostUrl(article);
-        if (postUrl && postContent.postUrl && postUrl.includes(postContent.postUrl)) {
-          const container = _deps.adapter.getPostContainer(article);
-          container.style.display = '';
-          container.style.visibility = '';
-          delete container.dataset.filteredByExtension;
-          article.style.opacity = '';
-          article.style.transition = '';
-          _deps.processedPosts.delete(article);
-          markPostVerified(article);
-          break;
-        }
-      }
-
-      // Override cache so re-evaluation keeps post visible
-      chrome.runtime.sendMessage({
-        type: 'overrideCacheEntry',
-        post: post.evaluationText,
-        imageUrls: postContent.imageUrls || [],
-        shouldHide: false,
-        reasoning: 'User reported: false positive'
-      }).catch(err => console.error('[Bouncer] Override cache error:', err));
-
-      updateFilteredTabCount();
-      const outerContainer = restoreBtn.closest('.filtered-view-container') || restoreBtn.closest('.ff-ios-filtered-modal-backdrop');
-      const innerContainer = outerContainer?.querySelector('.filtered-modal-content') || outerContainer?.querySelector('.ff-ios-filtered-modal-content');
-      if (innerContainer) renderFilteredPostsView(innerContainer);
-    });
-    actions.appendChild(restoreBtn);
+    actions.appendChild(createRestoreButton(post, postContent));
     body.appendChild(actions);
 
     postRow.appendChild(body);
 
     // Wrap in a real <a> so middle-click / ctrl-click open in new tab natively
-    if (postContent.postUrl) {
-      const link = document.createElement('a');
-      link.href = postContent.postUrl;
-      link.className = 'slop-post-link';
-      link.addEventListener('click', (e) => {
-        if ((e.target as Element).closest('button, [role="button"], .slop-restore, .slop-post-actions')) {
-          e.preventDefault();
-        }
-      });
-      link.appendChild(postRow);
-      wrapper.appendChild(link);
-    } else {
-      wrapper.appendChild(postRow);
-    }
+    wrapper.appendChild(wrapInPostLink(postRow, postContent.postUrl));
 
     postsContainer.appendChild(wrapper);
   });
