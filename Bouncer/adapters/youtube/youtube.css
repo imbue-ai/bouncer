@@ -530,7 +530,7 @@ body.site-youtube .yt-card-thumb {
   background: rgba(0, 0, 0, 0.1);
 }
 
-body.site-youtube .filtered-view-container.dark-mode .yt-card-thumb {
+body.site-youtube .dark-mode .yt-card-thumb {
   background: rgba(255, 255, 255, 0.1);
 }
 
@@ -575,7 +575,7 @@ body.site-youtube .yt-card-avatar {
   background: rgba(0, 0, 0, 0.1);
 }
 
-body.site-youtube .filtered-view-container.dark-mode .yt-card-avatar {
+body.site-youtube .dark-mode .yt-card-avatar {
   background: rgba(255, 255, 255, 0.1);
 }
 
@@ -633,12 +633,12 @@ body.site-youtube .yt-card-meta {
 }
 
 /* Dark-mode text colors (YouTube's own light-on-dark grays). */
-body.site-youtube .filtered-view-container.dark-mode .yt-card-title {
+body.site-youtube .dark-mode .yt-card-title {
   color: #f1f1f1;
 }
 
-body.site-youtube .filtered-view-container.dark-mode .yt-card-channel,
-body.site-youtube .filtered-view-container.dark-mode .yt-card-meta {
+body.site-youtube .dark-mode .yt-card-channel,
+body.site-youtube .dark-mode .yt-card-meta {
   color: #aaa;
 }
 
