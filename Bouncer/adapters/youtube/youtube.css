@@ -662,41 +662,58 @@ body.site-youtube .yt-card-reasoning {
  * The default orange + 34px sizing from content.css is overridden here. */
 
 .ff-why-annoying-btn.ff-yt-under-menu,
-.ff-why-annoying-btn.ff-yt-inline-meta {
+.ff-why-annoying-btn.ff-yt-inline-meta,
+.ff-why-annoying-btn.ff-yt-next-to-menu {
   width: 24px;
   height: 24px;
   color: #606060;
 }
 
-/* Dark trash icon. Desktop marks dark mode with `html[dark]`. Mobile
+/* Dark icon. Desktop marks dark mode with `html[dark]`. Mobile
  * (m.youtube.com, inside the iOS app) uses `html[darker-dark-theme]` instead —
  * but desktop ALSO carries that attribute even in light mode, so the mobile
  * override is scoped to `body.ff-ios` to avoid recoloring the desktop icon. */
 html[dark] .ff-why-annoying-btn.ff-yt-under-menu,
 html[dark] .ff-why-annoying-btn.ff-yt-inline-meta,
+html[dark] .ff-why-annoying-btn.ff-yt-next-to-menu,
 html[darker-dark-theme] body.ff-ios .ff-why-annoying-btn.ff-yt-under-menu,
-html[darker-dark-theme] body.ff-ios .ff-why-annoying-btn.ff-yt-inline-meta {
+html[darker-dark-theme] body.ff-ios .ff-why-annoying-btn.ff-yt-inline-meta,
+html[darker-dark-theme] body.ff-ios .ff-why-annoying-btn.ff-yt-next-to-menu {
   color: #aaa;
 }
 
 .ff-why-annoying-btn.ff-yt-under-menu:hover,
-.ff-why-annoying-btn.ff-yt-inline-meta:hover {
+.ff-why-annoying-btn.ff-yt-inline-meta:hover,
+.ff-why-annoying-btn.ff-yt-next-to-menu:hover {
   color: #0f0f0f;
   background: rgba(0, 0, 0, 0.05);
 }
 
 html[dark] .ff-why-annoying-btn.ff-yt-under-menu:hover,
 html[dark] .ff-why-annoying-btn.ff-yt-inline-meta:hover,
+html[dark] .ff-why-annoying-btn.ff-yt-next-to-menu:hover,
 html[darker-dark-theme] body.ff-ios .ff-why-annoying-btn.ff-yt-under-menu:hover,
-html[darker-dark-theme] body.ff-ios .ff-why-annoying-btn.ff-yt-inline-meta:hover {
+html[darker-dark-theme] body.ff-ios .ff-why-annoying-btn.ff-yt-inline-meta:hover,
+html[darker-dark-theme] body.ff-ios .ff-why-annoying-btn.ff-yt-next-to-menu:hover {
   color: #f1f1f1;
   background: rgba(255, 255, 255, 0.1);
 }
 
 .ff-why-annoying-btn.ff-yt-under-menu svg,
-.ff-why-annoying-btn.ff-yt-inline-meta svg {
+.ff-why-annoying-btn.ff-yt-inline-meta svg,
+.ff-why-annoying-btn.ff-yt-next-to-menu svg {
   width: 16px;
   height: 16px;
+}
+
+/* Sits as an inline sibling immediately before the 3-dot "More actions"
+ * button, matching its 24×24 hit box so the row reads as one visual unit. */
+.ff-why-annoying-btn.ff-yt-next-to-menu {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 4px;
+  vertical-align: middle;
 }
 
 /* Sponsored ad row uses `display: flex` with default `align-items: stretch`,

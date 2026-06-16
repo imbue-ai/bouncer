@@ -10,6 +10,18 @@ import type {
 // Keep the hostname check inline. Must match the `youtube` entry in
 // src/shared/platforms.ts (PLATFORM_RUNTIME.youtube.hostPattern).
 
+// Adapter is built unbundled (`bundle: false` in build.js) and runs as a
+// standalone content script, so we can't import shared helpers — they would
+// become `require(...)` calls at runtime. `DOMPurify` is loaded as a sibling
+// content script (see `dompurify.js` ahead of this file in manifest.json), so
+// it's available as a runtime global.
+declare const DOMPurify: { sanitize(html: string, opts: { RETURN_DOM_FRAGMENT: true }): DocumentFragment };
+
+// YouTube-native "not interested" glyph (circle with diagonal slash). Replaces
+// the shared trash SVG so the affordance reads as a YT-style action rather
+// than a destructive delete. Sized via the `.ff-yt-* svg` rule in youtube.css.
+const CANCEL_SVG = '<svg xmlns="http://www.w3.org/2000/svg" height="24" viewBox="0 0 24 24" width="24" focusable="false" aria-hidden="true" style="pointer-events: none; display: inherit; width: 100%; height: 100%;"><path d="M12 1C5.925 1 1 5.925 1 12s4.925 11 11 11 11-4.925 11-11S18.075 1 12 1Zm0 2a9 9 0 018.246 12.605L4.755 6.661A8.99 8.99 0 0112 3ZM3.754 8.393l15.491 8.944A9 9 0 013.754 8.393Z"></path></svg>';
+
 interface LockupStoreData {
   kind?: 'video' | 'ad' | 'short';
   videoId: string | null;
@@ -842,8 +854,23 @@ const BouncerYouTubeAdapter = class YouTubeAdapter implements PlatformAdapter {
 
   insertActionButton(article: HTMLElement, button: HTMLElement): void {
     if (article.querySelector('.ff-why-annoying-btn')) return;
-    // Surface-specific anchors, all inline at the end of an existing text
-    // row so the button reads as a native sibling of the metadata:
+    // Swap the shared trash glyph for the YT-native cancel glyph before
+    // placement, so every YouTube surface reads with consistent iconography.
+    button.replaceChildren(DOMPurify.sanitize(CANCEL_SVG, { RETURN_DOM_FRAGMENT: true }));
+    // Preferred anchor on cards that expose a per-video overflow menu
+    // ("More actions"): sit immediately to its left. This lines up with
+    // YouTube's own action column instead of riding the metadata text.
+    const moreActions = article.querySelector<HTMLElement>('button[aria-label="More actions"]');
+    if (moreActions) {
+      const wrapper = moreActions.closest<HTMLElement>('yt-button-shape') || moreActions;
+      wrapper.insertAdjacentElement('beforebegin', button);
+      button.classList.add('ff-yt-next-to-menu');
+      return;
+    }
+    // Fallbacks for surfaces without a More-actions button (Shorts, mobile
+    // m.youtube.com cards, some ad treatments). Inline anchors at the end of
+    // an existing text row so the button reads as a native sibling of the
+    // metadata:
     //   - Regular videos (incl. mobile home lockup): end of the views/age row.
     //   - Mobile watch cards: end of the views byline.
     //   - Shorts: end of the views subhead (desktop) / title (mobile).
@@ -898,10 +925,12 @@ const BouncerYouTubeAdapter = class YouTubeAdapter implements PlatformAdapter {
 
     if (!anchor) {
       // Anchor not hydrated yet — observe the card and retry when YT
-      // finishes rendering the metadata row. Without this we'd silently
-      // miss the first few cards on every page load.
+      // finishes rendering the metadata row or the More-actions button.
+      // Without this we'd silently miss the first few cards on every page
+      // load.
       const mo = new MutationObserver(() => {
         if (article.querySelector('.ff-why-annoying-btn')) { mo.disconnect(); return; }
+        const hasMoreActions = article.querySelector('button[aria-label="More actions"]');
         const hasShort = article.querySelector('.shortsLockupViewModelHostOutsideMetadataSubhead');
         const hasAdBadge = article.querySelector('.ytwFeedAdMetadataViewModelHostMetadataAdBadgeDetailsLineContainerStyleStandard');
         const metaRows = article.querySelectorAll('.ytContentMetadataViewModelMetadataRow');
@@ -909,7 +938,7 @@ const BouncerYouTubeAdapter = class YouTubeAdapter implements PlatformAdapter {
           article.querySelector('.ytLockupMetadataViewModelHost')
           || article.querySelector('feed-ad-metadata-view-model');
         const hasMobile = this._mobile && (article.matches?.('ytm-shorts-lockup-view-model') || this._mobileActionAnchor(article));
-        if (hasShort || hasAdBadge || metaRows.length >= 1 || hasFallback || hasMobile) {
+        if (hasMoreActions || hasShort || hasAdBadge || metaRows.length >= 1 || hasFallback || hasMobile) {
           mo.disconnect();
           this.insertActionButton(article, button);
         }
