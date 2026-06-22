@@ -26,6 +26,8 @@ struct FilteredWebView: UIViewRepresentable {
         contentController.add(context.coordinator, contentWorld: Self.extensionWorld, name: "feedfilterWsSend")
         contentController.add(context.coordinator, contentWorld: Self.extensionWorld, name: "feedfilterWsClose")
         contentController.add(context.coordinator, contentWorld: Self.extensionWorld, name: "feedfilterModalClosed")
+        contentController.add(context.coordinator, contentWorld: Self.extensionWorld, name: "feedfilterLocalClassify")
+        contentController.add(context.coordinator, contentWorld: Self.extensionWorld, name: "feedfilterLocalAiTextDetect")
         injectScripts(into: contentController)
 
         let config = WKWebViewConfiguration()
@@ -242,6 +244,34 @@ struct FilteredWebView: UIViewRepresentable {
         return version
     }
 
+    // MARK: - Local-classify resolver
+
+    // Calls window.__ff_resolveLocalClassify(callbackId, ok, b64Payload). The
+    // payload is base64-encoded so JS strings with quotes/newlines round-trip
+    // safely through evaluateJavaScript.
+    static func resolveLocalClassify(webView: WKWebView?, callbackId: String, ok: Bool, payload: String) async {
+        guard let webView = webView else { return }
+        let b64 = Data(payload.utf8).base64EncodedString()
+        let escapedId = callbackId.replacingOccurrences(of: "'", with: "\\'")
+        let js = "window.__ff_resolveLocalClassify('\(escapedId)', \(ok ? "true" : "false"), '\(b64)');"
+        await webView.evaluateJavaScript(js, in: nil, in: FilteredWebView.extensionWorld)
+    }
+
+    // Calls window.__ff_resolveLocalAiTextDetect(callbackId, ok, b64Payload).
+    // Payload is the same base64-encoded JSON convention as the classify
+    // bridge above. On success the JSON is
+    //     {"logits": [f,f,f,f], "aiConfidence": f}
+    // where aiConfidence = softmax(logits)[2] + softmax(logits)[3] (i.e.
+    // probability of the trained "medium-AI" + "AI" buckets). On error it's
+    // a string error message.
+    static func resolveLocalAiTextDetect(webView: WKWebView?, callbackId: String, ok: Bool, payload: String) async {
+        guard let webView = webView else { return }
+        let b64 = Data(payload.utf8).base64EncodedString()
+        let escapedId = callbackId.replacingOccurrences(of: "'", with: "\\'")
+        let js = "window.__ff_resolveLocalAiTextDetect('\(escapedId)', \(ok ? "true" : "false"), '\(b64)');"
+        await webView.evaluateJavaScript(js, in: nil, in: FilteredWebView.extensionWorld)
+    }
+
     // MARK: - Coordinator
 
     class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler, UIAdaptivePresentationControllerDelegate {
@@ -275,6 +305,69 @@ struct FilteredWebView: UIViewRepresentable {
                     let escaped = token.replacingOccurrences(of: "'", with: "\\'")
                     let js = "window.__ff_resolveAppCheckToken('\(callbackId)', '\(escaped)');"
                     await webView?.evaluateJavaScript(js, in: nil, in: FilteredWebView.extensionWorld)
+                }
+                return
+            }
+
+            if message.name == "feedfilterLocalClassify" {
+                guard let jsonString = message.body as? String,
+                      let data = jsonString.data(using: .utf8),
+                      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let callbackId = json["callbackId"] as? String,
+                      let systemMessage = json["systemMessage"] as? String,
+                      let userMessage = json["userMessage"] as? String else {
+                    print("[FeedFilter] Failed to parse feedfilterLocalClassify payload")
+                    return
+                }
+                let imageUrls = (json["imageUrls"] as? [String]) ?? []
+                let webView = message.webView
+                Task { @MainActor in
+                    do {
+                        let response = try await LocalInferenceService.shared.classify(
+                            systemMessage: systemMessage,
+                            userMessage: userMessage,
+                            imageUrls: imageUrls,
+                        )
+                        await FilteredWebView.resolveLocalClassify(webView: webView, callbackId: callbackId, ok: true, payload: response)
+                    } catch {
+                        let nsError = error as NSError
+                        let payload = "\(type(of: error))[\(nsError.domain)#\(nsError.code)]: \(error.localizedDescription) | images=\(imageUrls.count) sysLen=\(systemMessage.count) userLen=\(userMessage.count)"
+                        print("[FeedFilter] classify error → JS: \(payload)")
+                        await FilteredWebView.resolveLocalClassify(webView: webView, callbackId: callbackId, ok: false, payload: payload)
+                    }
+                }
+                return
+            }
+
+            if message.name == "feedfilterLocalAiTextDetect" {
+                guard let jsonString = message.body as? String,
+                      let data = jsonString.data(using: .utf8),
+                      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let callbackId = json["callbackId"] as? String,
+                      let text = json["text"] as? String else {
+                    print("[FeedFilter] Failed to parse feedfilterLocalAiTextDetect payload")
+                    return
+                }
+                let webView = message.webView
+                Task { @MainActor in
+                    do {
+                        let logits = try await LocalInferenceService.shared.classifyText(text)
+                        let confidence = LocalInferenceService.aiConfidence(fromLogits: logits)
+                        let responseJson: [String: Any] = [
+                            "logits": logits.map { Double($0) },
+                            "aiConfidence": Double(confidence),
+                        ]
+                        let payloadData = try JSONSerialization.data(withJSONObject: responseJson)
+                        let payload = String(data: payloadData, encoding: .utf8) ?? "{}"
+                        await FilteredWebView.resolveLocalAiTextDetect(
+                            webView: webView, callbackId: callbackId, ok: true, payload: payload)
+                    } catch {
+                        let nsError = error as NSError
+                        let payload = "\(type(of: error))[\(nsError.domain)#\(nsError.code)]: \(error.localizedDescription) | textLen=\(text.count)"
+                        print("[FeedFilter] classifyText error → JS: \(payload)")
+                        await FilteredWebView.resolveLocalAiTextDetect(
+                            webView: webView, callbackId: callbackId, ok: false, payload: payload)
+                    }
                 }
                 return
             }

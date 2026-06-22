@@ -241,7 +241,6 @@ import { formatPostForEvaluation } from '../shared/utils';
     const evaluationId = crypto.randomUUID();
     registerEvaluation(evaluationId, article);
     try {
-      console.log('[Bouncer] Sending evaluatePost message for:', content.text?.substring(0, 60));
       const evaluatePromise = chrome.runtime.sendMessage({
           type: 'evaluatePost',
           evaluationId,
@@ -253,7 +252,6 @@ import { formatPostForEvaluation } from '../shared/utils';
         });
       const response = await evaluatePromise as PipelineResponse;
       releaseEvaluation(evaluationId);
-      console.log('[Bouncer] evaluatePost response:', JSON.stringify(response)?.substring(0, 200));
 
       // Clear processing tracker when this post's evaluation completes
       if (content.postUrl && content.postUrl === currentlyProcessingPostUrl) {
@@ -804,14 +802,26 @@ import { formatPostForEvaluation } from '../shared/utils';
       }
       case 'getPositions': {
         const positions: Record<string, number> = {};
-        const viewportCenter = window.innerHeight / 2;
+        // Anchor on viewport bottom so "about to be seen" tweets get top
+        // priority (classify before the user scrolls them into view) and
+        // already-scrolled-past tweets are heavily deprioritized — hiding
+        // them after the user has already read them provides no UX benefit.
+        const ABOVE_VIEWPORT_PENALTY = 1e6;
         const postUrlsSet = new Set<string>(message.postUrls || []);
         const evaluationIds = message.evaluationIds || [];
 
         const distanceFor = (article: HTMLElement) => {
           const rect = article.getBoundingClientRect();
+          if (rect.bottom <= 0) {
+            // Fully above viewport (scrolled past) — penalize.
+            return ABOVE_VIEWPORT_PENALTY + (-rect.bottom);
+          }
+          // In viewport or below — distance from the bottom edge. Tweets
+          // just below the fold score ~0 (highest priority); tweets at the
+          // top of the viewport score ~vh (still get classified, but after
+          // upcoming tweets).
           const postCenter = rect.top + rect.height / 2;
-          return Math.abs(postCenter - viewportCenter);
+          return Math.abs(postCenter - window.innerHeight);
         };
 
         const allPosts = findPosts();

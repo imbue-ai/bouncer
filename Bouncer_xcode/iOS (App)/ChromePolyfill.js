@@ -209,7 +209,6 @@
     tabs: {
       sendMessage(tabId, msg) {
         // Same-page context: dispatch to onMessage listeners
-        console.log('[ChromePolyfill] tabs.sendMessage (routed to runtime):', msg?.type);
         return chrome.runtime.sendMessage(msg);
       },
       query() {

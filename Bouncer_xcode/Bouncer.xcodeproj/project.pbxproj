@@ -52,6 +52,10 @@
 		SF00000800000000000000SF /* dist in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BCF2F3EB56D00F8BF65 /* dist */; };
 		SF00000900000000000000SF /* icons in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BD92F3EB56D00F8BF65 /* icons */; };
 		SF00001000000000000000SF /* adapters in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BD62F3EB56D00F8BF65 /* adapters */; };
+		DA00LITERTLM000000DA002 /* LiteRTLM in Frameworks */ = {isa = PBXBuildFile; productRef = DA00LITERTLM000000DA001 /* LiteRTLM */; };
+		DA00LISBUILD0000000DA004 /* LocalInferenceService.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA00LISFILE00000000DA003 /* LocalInferenceService.swift */; };
+		DA00MDBUILD000000000DA006 /* ModelDownloader.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA00MDFILE0000000000DA005 /* ModelDownloader.swift */; };
+		DA00HEADRES000000000DA008 /* linear_v3_head.bin in Resources */ = {isa = PBXBuildFile; fileRef = DA00HEADBIN000000000DA007 /* linear_v3_head.bin */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -116,6 +120,9 @@
 		AA00003100000000000000AA /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
 		AA00004100000000000000AA /* filterphrases.mp4 */ = {isa = PBXFileReference; lastKnownFileType = file; path = filterphrases.mp4; sourceTree = "<group>"; };
 		EE00000100000000000000EE /* manifest.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = manifest.json; sourceTree = "<group>"; };
+		DA00LISFILE00000000DA003 /* LocalInferenceService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalInferenceService.swift; sourceTree = "<group>"; };
+		DA00MDFILE0000000000DA005 /* ModelDownloader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelDownloader.swift; sourceTree = "<group>"; };
+		DA00HEADBIN000000000DA007 /* linear_v3_head.bin */ = {isa = PBXFileReference; lastKnownFileType = file; path = linear_v3_head.bin; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -152,6 +159,7 @@
 			files = (
 				4E38A4D32F721C2500496A14 /* FirebaseAppCheck in Frameworks */,
 				971D84C92FB271A2006BC538 /* FirebaseCrashlytics in Frameworks */,
+				DA00LITERTLM000000DA002 /* LiteRTLM in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -198,6 +206,9 @@
 				AA00002100000000000000AA /* WebSocketBridge.swift */,
 				AA00000700000000000000AA /* FilterPhraseSheet.swift */,
 				AA00003100000000000000AA /* OnboardingView.swift */,
+				DA00LISFILE00000000DA003 /* LocalInferenceService.swift */,
+				DA00MDFILE0000000000DA005 /* ModelDownloader.swift */,
+				DA00HEADBIN000000000DA007 /* linear_v3_head.bin */,
 				AA00004100000000000000AA /* filterphrases.mp4 */,
 				AA00000400000000000000AA /* ChromePolyfill.js */,
 				AA00000600000000000000AA /* Bouncer.entitlements */,
@@ -338,6 +349,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				4E38A4C92F7218D300496A14 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */,
+				DA00LITERTPKG00000DA000 /* XCRemoteSwiftPackageReference "LiteRT-LM" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 97BD3B7E2F3EB56C00F8BF65 /* Products */;
@@ -404,6 +416,7 @@
 				97BD3BF22F3EB56D00F8BF65 /* content.js in Resources */,
 				97BD3BF32F3EB56D00F8BF65 /* dompurify.js in Resources */,
 				AA00004000000000000000AA /* filterphrases.mp4 in Resources */,
+				DA00HEADRES000000000DA008 /* linear_v3_head.bin in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -518,6 +531,8 @@
 				4E38A4CE2F72199A00496A14 /* AppCheckBridge.swift in Sources */,
 				4E38A4CF2F72199A00496A14 /* AppCheckProviderFactory.swift in Sources */,
 				AA00003000000000000000AA /* OnboardingView.swift in Sources */,
+				DA00LISBUILD0000000DA004 /* LocalInferenceService.swift in Sources */,
+				DA00MDBUILD000000000DA006 /* ModelDownloader.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -981,6 +996,14 @@
 				minimumVersion = 12.11.0;
 			};
 		};
+		DA00LITERTPKG00000DA000 /* XCRemoteSwiftPackageReference "LiteRT-LM" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/millanatimbue/LiteRT-LM.git";
+			requirement = {
+				kind = revision;
+				revision = d94cd536b01ac8644248d4318bba11eae598dc93;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -993,6 +1016,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 4E38A4C92F7218D300496A14 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
 			productName = FirebaseCrashlytics;
+		};
+		DA00LITERTLM000000DA001 /* LiteRTLM */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = DA00LITERTPKG00000DA000 /* XCRemoteSwiftPackageReference "LiteRT-LM" */;
+			productName = LiteRTLM;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

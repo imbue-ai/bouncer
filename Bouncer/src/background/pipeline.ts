@@ -10,6 +10,7 @@ import { buildAPIMessages } from '../shared/prompts';
 import { callDirectAPI, callAnthropicAPI, callImbueAPI, callImbueAiTextDetection, callImbueAiImageDetection } from './providers';
 import { runDetectors, type Detector, type DetectorResult } from './detectors';
 import { callLocalInference, localEngine } from './local-model';
+import { iosLocalClassify, iosLocalAiTextDetect } from './ios-local-bridge';
 import { getStorage, setStorage, removeStorage, getDescriptions, clampThreshold, clampImageThreshold, DEFAULT_AI_TEXT_DETECTION_THRESHOLD, DEFAULT_AI_IMAGE_DETECTION_THRESHOLD } from '../shared/storage';
 export { DEFAULT_AI_TEXT_DETECTION_THRESHOLD, DEFAULT_AI_IMAGE_DETECTION_THRESHOLD };
 import type {
@@ -195,7 +196,11 @@ async function runDetectorsAndCaptureSnapshots(
 }
 
 // Construct the live detector list from settings + per-post gates. Filter is
-// index 0 (highest priority); AI is index 1 when it'll actually run.
+// index 0 (highest priority); AI is index 1 when it'll actually run. When the
+// user has selected the iosLocal on-device model, the aiText detector goes
+// through `iosLocalAiTextDetect` (LoRA + classifier head running locally)
+// instead of the imbue WebSocket worker — same toggle that already routes
+// phrase filtering to the device.
 function buildLiveDetectors(args: {
   filterEnabled: boolean;
   aiEnabled: boolean;
@@ -205,6 +210,7 @@ function buildLiveDetectors(args: {
   imageUrls: string[];
   aiThreshold: number;
   aiImageThreshold: number;
+  useIosLocalAiText: boolean;
 }): Detector[] {
   const detectors: Detector[] = [];
   if (args.filterEnabled) {
@@ -215,16 +221,24 @@ function buildLiveDetectors(args: {
       name: 'aiText',
       promise: (async (): Promise<DetectorResult> => {
         // AI detection sees only the post content — no "Author: " prefix.
-        const aiResp = await callImbueAiTextDetection(
-          { text: args.rawText, imageUrls: args.imageUrls },
-        );
-        const isAi = aiResp.confidence >= args.aiThreshold;
-        const pct = `${(aiResp.confidence * 100).toFixed(0)}%`;
+        let confidence: number;
+        if (args.useIosLocalAiText) {
+          const localResp = await iosLocalAiTextDetect(args.rawText);
+          confidence = localResp.aiConfidence;
+        } else {
+          const aiResp = await callImbueAiTextDetection(
+            { text: args.rawText, imageUrls: args.imageUrls },
+          );
+          confidence = aiResp.confidence;
+        }
+        const isAi = confidence >= args.aiThreshold;
+        const pct = `${(confidence * 100).toFixed(0)}%`;
+        const source = args.useIosLocalAiText ? 'on-device' : 'cloud';
         return {
           shouldHide: isAi,
           reasoning: isAi
-            ? `AI-generated text detected (confidence ${pct})`
-            : `Text not detected as AI-generated (confidence ${pct})`,
+            ? `AI-generated text detected (${source}, confidence ${pct})`
+            : `Text not detected as AI-generated (${source}, confidence ${pct})`,
           category: isAi ? 'AI-generated' : null,
           rawResponse: null,
         };
@@ -785,18 +799,20 @@ async function processBatch(): Promise<void> {
 
   const settings = await getSettings(pendingEvaluations[0]?.siteId);
   const isLocalModel = settings.selectedModel?.startsWith('local:');
+  const isIosLocalModel = settings.selectedModel?.startsWith('iosLocal:');
 
   // Local models serialize inference, so limit to 1 in-flight batch to ensure
   // viewport prioritization stays fresh (re-sorted before each dequeue).
   // Don't schedule a deferred retry here — the current in-flight batch will
   // call scheduleBatch() when it completes, which re-sorts by viewport.
-  if (isLocalModel && inFlightBatches > 1) {
+  if ((isLocalModel || isIosLocalModel) && inFlightBatches > 1) {
     inFlightBatches--;
     return;
   }
 
-  // For local models, prioritize posts closest to viewport center
-  if (isLocalModel && pendingEvaluations.length > 0) {
+  // For local models (WebGPU or iOS Gemma), prioritize posts closest to viewport
+  // center — both serialize to one in-flight inference, so order matters.
+  if ((isLocalModel || isIosLocalModel) && pendingEvaluations.length > 0) {
     await prioritizeByViewportDistance(pendingEvaluations);
   }
 
@@ -862,6 +878,10 @@ async function processBatch(): Promise<void> {
     const modelName = settings.selectedModel.split(':')[1];
     const modelConfig = PREDEFINED_MODELS.local?.find(m => m.name === modelName) || {} as LocalModelDef;
     apiConfig = { modelName, apiName: 'local', modelConfig };
+  } else if (settings.selectedModel?.startsWith('iosLocal:')) {
+    const modelName = settings.selectedModel.split(':')[1];
+    const modelConfig = PREDEFINED_MODELS.iosLocal?.find(m => m.name === modelName) || {} as LocalModelDef;
+    apiConfig = { modelName, apiName: 'iosLocal', apiKey: null, modelConfig };
   } else {
     const [apiName, ...nameParts] = settings.selectedModel.split(':');
     const modelName = nameParts.join(':');
@@ -898,6 +918,8 @@ async function processBatch(): Promise<void> {
           ? () => { void sendToTab(batchTabId, { type: 'processingPost', postUrl }); }
           : undefined;
         return await callLocalInference(postData, settings.descriptions, apiConfig.modelConfig as LocalModelDef | null, apiConfig.modelName, { onInferenceStart });
+      } else if (apiConfig.apiName === 'iosLocal') {
+        return await iosLocalClassify(postData, settings.descriptions, apiConfig.modelConfig as LocalModelDef | null);
       } else if (apiConfig.apiName === 'imbue') {
         const imbueResponse = await callImbueAPI(postData, settings.descriptions, 'filterPost');
         return {
@@ -938,6 +960,7 @@ async function processBatch(): Promise<void> {
       imageUrls,
       aiThreshold: settings.aiTextDetectionThreshold,
       aiImageThreshold: settings.aiImageDetectionThreshold,
+      useIosLocalAiText: apiConfig.apiName === 'iosLocal',
     });
 
     if (detectors.length === 0) {
@@ -1170,6 +1193,7 @@ export function handlePageLoad(tabId: number): void {
 async function validateFilterPhrase(postText: string, imageUrls: string[], phrase: string, settings: Settings): Promise<boolean> {
   const postData = { text: postText, imageUrls: imageUrls || [] };
   const isLocalModel = settings.selectedModel?.startsWith('local:');
+  const isIosLocalModel = settings.selectedModel?.startsWith('iosLocal:');
 
   if (process.env.HAS_IMBUE_BACKEND === 'true' && settings.selectedModel === 'imbue') {
     const imbueResponse = await callImbueAPI(postData, [phrase], 'validatePhrase');
@@ -1179,6 +1203,11 @@ async function validateFilterPhrase(postText: string, imageUrls: string[], phras
     const modelConfig = PREDEFINED_MODELS.local?.find(m => m.name === modelName) || {} as LocalModelDef;
     const localResult = await callLocalInference(postData, [phrase], modelConfig, modelName, { priority: 1 });
     return localResult.shouldHide === true;
+  } else if (isIosLocalModel) {
+    const iosModelName = settings.selectedModel.split(':')[1];
+    const iosModelConfig = PREDEFINED_MODELS.iosLocal?.find(m => m.name === iosModelName) ?? null;
+    const result = await iosLocalClassify(postData, [phrase], iosModelConfig);
+    return result.shouldHide === true;
   } else {
     const [apiName, ...nameParts] = settings.selectedModel.split(':');
     const modelName = nameParts.join(':');
@@ -1198,6 +1227,13 @@ async function validateFilterPhrase(postText: string, imageUrls: string[], phras
 // Generate candidate filter phrases using the configured model
 async function generateCandidatePhrases(postText: string, imageUrls: string[], count: number, rejectPhrases: string[], settings: Settings): Promise<string[]> {
   const isLocalModel = settings.selectedModel?.startsWith('local:');
+
+  // The iOS local bridge only handles classify-shaped prompts, not freeform
+  // generation. Callers should disable phrase suggestions when iosLocal is the
+  // active model.
+  if (settings.selectedModel?.startsWith('iosLocal:')) {
+    throw new Error('Phrase suggestions are not supported on the iOS on-device model.');
+  }
 
   const rejected = rejectPhrases.length > 0
     ? ` Do NOT suggest any of these: ${rejectPhrases.join(', ')}.`

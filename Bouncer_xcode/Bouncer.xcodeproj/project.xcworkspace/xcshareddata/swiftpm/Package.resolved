@@ -101,6 +101,14 @@
       }
     },
     {
+      "identity" : "litert-lm",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/millanatimbue/LiteRT-LM.git",
+      "state" : {
+        "revision" : "d94cd536b01ac8644248d4318bba11eae598dc93"
+      }
+    },
+    {
       "identity" : "nanopb",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/firebase/nanopb.git",
