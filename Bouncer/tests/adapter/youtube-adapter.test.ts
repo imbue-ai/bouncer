@@ -241,6 +241,23 @@ describe('insertActionButton', () => {
     expect(svg.querySelector('path')?.getAttribute('d')).toMatch(/^M12 1C5\.925 1 1 5\.925/);
   });
 
+  it('clones YT button-shape classes and wrapper so YT styling drives the look', () => {
+    const adapter = makeAdapter('https://www.youtube.com/');
+    const article = desktopVideoLockupWithMenu();
+    const btn = makeBouncerBtn();
+
+    adapter.insertActionButton(article, btn);
+
+    // Outer carries YT's icon-button host class.
+    expect(btn.classList.contains('ytSpecButtonShapeNextHost')).toBe(true);
+    expect(btn.classList.contains('ytSpecButtonShapeNextIconButton')).toBe(true);
+    // Inner structure mirrors YT's More-actions button so currentcolor and
+    // sizing propagate the same way.
+    expect(btn.querySelector('.ytSpecButtonShapeNextIcon')).not.toBeNull();
+    expect(btn.querySelector('.ytIconWrapperHost')).not.toBeNull();
+    expect(btn.querySelector('.yt-icon-shape.ytSpecIconShapeHost')).not.toBeNull();
+  });
+
   it('falls back to the metadata-row anchor when no More actions button is present', () => {
     const adapter = makeAdapter('https://www.youtube.com/');
     const article = desktopVideoLockup();

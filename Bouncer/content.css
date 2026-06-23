@@ -2,6 +2,12 @@
 
 :root {
   --green-border-width: 2px;
+  /* Bouncer brand accent — stored as raw rgb channels so the same value can
+   * back both `rgb(var(--bouncer-brand-rgb))` and faded
+   * `rgba(var(--bouncer-brand-rgb), <alpha>)` usages without duplicating the
+   * literal. Update here to retheme the panel outline, CTA buttons, focus
+   * rings, and per-card cancel icon together. */
+  --bouncer-brand-rgb: 234, 133, 84;
 }
 
 /* Base font for all Bouncer UI — applies directly to every child element
@@ -687,7 +693,7 @@
   width: 34px;
   border: none;
   background: transparent;
-  color: rgb(234, 133, 84);
+  color: rgb(var(--bouncer-brand-rgb));
   border-radius: 50%;
   cursor: pointer;
   padding: 0;
@@ -706,7 +712,7 @@
 }
 
 .ff-why-annoying-btn.ff-unfilter-btn:hover {
-  background: rgba(234, 133, 84, 0.1);
+  background: rgba(var(--bouncer-brand-rgb), 0.1);
 }
 
 .ff-why-annoying-btn svg {
@@ -796,7 +802,7 @@ article {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: rgb(234, 133, 84);
+  background: rgb(var(--bouncer-brand-rgb));
   animation: ff-bounce 1.2s infinite ease-in-out;
 }
 
@@ -836,7 +842,7 @@ article {
 .ff-progress-fill {
   height: 100%;
   width: 5%;
-  background: rgb(234, 133, 84);
+  background: rgb(var(--bouncer-brand-rgb));
   border-radius: 2px;
   transition: width 0.4s ease;
 }
@@ -870,8 +876,8 @@ article {
 }
 
 .ff-annoying-chip:hover {
-  background: rgb(234, 133, 84);
-  border-color: rgb(234, 133, 84);
+  background: rgb(var(--bouncer-brand-rgb));
+  border-color: rgb(var(--bouncer-brand-rgb));
   color: #fff;
 }
 
@@ -903,7 +909,7 @@ article {
 }
 
 .ff-annoying-custom-wrapper:focus-within {
-  border-color: rgb(234, 133, 84);
+  border-color: rgb(var(--bouncer-brand-rgb));
 }
 
 .ff-annoying-custom-input {
@@ -938,7 +944,7 @@ article {
   height: 20px;
   margin-right: 5px;
   padding: 0;
-  background: rgb(234, 133, 84);
+  background: rgb(var(--bouncer-brand-rgb));
   border: none;
   border-radius: 50%;
   cursor: pointer;
@@ -1010,9 +1016,9 @@ article {
   border-color: #cfd9de;
 }
 .twitter-light .ff-annoying-chip:hover {
-  background: rgb(234, 133, 84);
+  background: rgb(var(--bouncer-brand-rgb));
   color: #fff;
-  border-color: rgb(234, 133, 84);
+  border-color: rgb(var(--bouncer-brand-rgb));
 }
 .twitter-light .ff-annoying-thinking {
   color: #536471;
@@ -1027,7 +1033,7 @@ article {
   border-color: #cfd9de;
 }
 .twitter-light .ff-annoying-custom-wrapper:focus-within {
-  border-color: rgb(234, 133, 84);
+  border-color: rgb(var(--bouncer-brand-rgb));
 }
 .twitter-light .ff-annoying-custom-input {
   color: #0f1419;
@@ -1275,7 +1281,7 @@ article {
 .filter-phrases-container {
   padding: 12px 16px;
   background-color: rgb(0, 0, 0);
-  border: var(--green-border-width) solid rgb(234, 133, 84);
+  border: var(--green-border-width) solid rgb(var(--bouncer-brand-rgb));
   border-radius: 16px;
   display: flex;
   flex-direction: column
@@ -1398,7 +1404,7 @@ article {
 }
 
 .filter-phrases-container .filter-phrases-input:focus {
-  border-bottom-color: rgb(234, 133, 84) !important;
+  border-bottom-color: rgb(var(--bouncer-brand-rgb)) !important;
   box-shadow: none !important;
 }
 
@@ -1735,7 +1741,7 @@ article {
   bottom: 0;
   z-index: 10000;
   background-color: rgb(0, 0, 0);
-  border: 2px solid rgb(234, 133, 84);
+  border: 2px solid rgb(var(--bouncer-brand-rgb));
   border-bottom: none;
   border-radius: 16px 16px 0 0;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -1758,7 +1764,7 @@ article {
   height: 0;
   border-left: 6px solid transparent;
   border-right: 6px solid transparent;
-  border-top: 6px solid rgb(234, 133, 84);
+  border-top: 6px solid rgb(var(--bouncer-brand-rgb));
   transition: transform 0.2s;
 }
 
@@ -1818,7 +1824,7 @@ article {
 
 .filter-phrases-mobile .filter-phrases-container {
   background-color: rgb(0, 0, 0);
-  border: 2px solid rgb(234, 133, 84);
+  border: 2px solid rgb(var(--bouncer-brand-rgb));
   border-radius: 16px;
   padding: 12px 16px;
 }
