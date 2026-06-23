@@ -43,6 +43,12 @@ class FilterSheetViewModel: ObservableObject {
     @Published var aiTextDetectionThreshold: Double = 0.7
     @Published var aiImageFilterEnabled: Bool = false
     @Published var aiImageDetectionThreshold: Double = 0.7
+    // Mirrors chrome.storage.local["selectedModel"]. Settings views need
+    // this on the main settings page to gate AI-text-detection UI: the
+    // on-device classifier path doesn't require an Imbue backend, so the
+    // toggle has to appear whenever EITHER Imbue is configured OR the user
+    // has the on-device model selected.
+    @Published var selectedModel: String = ""
     @Published var filterReplies: Bool = true
 
     weak var webView: WKWebView?
@@ -144,6 +150,25 @@ class FilterSheetViewModel: ObservableObject {
                 }
             } catch {
                 print("[FeedFilter] loadAiTextFilterEnabled error: \(error)")
+            }
+        }
+    }
+
+    func loadSelectedModel() {
+        guard let webView = webView else { return }
+        Task { @MainActor in
+            do {
+                let result = try await webView.callAsyncJavaScript(
+                    "const d = await window.__ff_getStorage(['selectedModel']); return d.selectedModel || '';",
+                    arguments: [:],
+                    in: nil,
+                    contentWorld: Self.contentWorld
+                )
+                if let value = result as? String {
+                    self.selectedModel = value
+                }
+            } catch {
+                print("[FeedFilter] loadSelectedModel error: \(error)")
             }
         }
     }
@@ -743,7 +768,7 @@ struct BouncerSettingsView: View {
                 }
             }
 
-            if hasImbueBackend {
+            if hasImbueBackend || viewModel.selectedModel == kIosLocalGemmaModelKey {
                 Section {
                     Toggle(isOn: Binding(
                         get: { viewModel.aiTextFilterEnabled },
@@ -790,7 +815,11 @@ struct BouncerSettingsView: View {
                 } footer: {
                     Text("Hide posts whose text appears to be written by AI. Posts at or above this confidence are hidden.")
                 }
+            }
 
+            // No on-device image classifier yet — image-detection UI stays
+            // gated on the Imbue backend.
+            if hasImbueBackend {
                 Section {
                     Toggle(isOn: Binding(
                         get: { viewModel.aiImageFilterEnabled },
@@ -865,9 +894,13 @@ struct BouncerSettingsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
             viewModel.loadFilterReplies()
+            viewModel.loadSelectedModel()
+            // Text-detection settings load whenever the toggle can appear:
+            // Imbue available OR on-device model selected. Image-detection
+            // settings stay gated on Imbue (no on-device image classifier).
+            viewModel.loadAiTextFilterEnabled()
+            viewModel.loadAiTextDetectionThreshold()
             if hasImbueBackend {
-                viewModel.loadAiTextFilterEnabled()
-                viewModel.loadAiTextDetectionThreshold()
                 viewModel.loadAiImageFilterEnabled()
                 viewModel.loadAiImageDetectionThreshold()
             }
@@ -1232,6 +1265,7 @@ struct ProvidersSettingsView: View {
         } else {
             self.selectedModel = stored
         }
+        viewModel.selectedModel = self.selectedModel
         self.isLoaded = true
     }
 
@@ -1248,6 +1282,7 @@ struct ProvidersSettingsView: View {
             let fallback = hasImbueBackend ? imbueModelKey : ""
             await viewModel.setStorage(["selectedModel": fallback])
             selectedModel = fallback
+            viewModel.selectedModel = fallback
         }
         await viewModel.clearModelCache()
     }
@@ -1256,6 +1291,7 @@ struct ProvidersSettingsView: View {
     private func selectModel(_ modelKey: String) async {
         await viewModel.setStorage(["selectedModel": modelKey])
         selectedModel = modelKey
+        viewModel.selectedModel = modelKey
         await viewModel.clearModelCache()
     }
 }
