@@ -12,17 +12,22 @@ Output your reasoning and the best matching category in this format:
 <category>category or "no match"</category>
 `;
 
-// System prompt for local models — newline-per-verdict over categories.
-// Originally a pipe-delimited row (ported from imbue-ai/bouncer-evals-and-
-// results' table_yesno.parse), but Gemma 4 IT at 4B routinely drifts into
-// markdown-table form when it sees `|` (header row + `|---|` separator),
-// because the pipe character's training prior is overwhelmingly markdown
-// tables. Newline-per-verdict avoids that prior entirely.
+// System prompt for local models — pipe-delimited yes/no row over
+// categories. Ported from imbue-ai/bouncer-evals-and-results' table_yesno.
+// The model emits one verdict per category in the order given.
 //
-// Note: the Python eval pipeline pairs this with outlines-constrained
-// decoding so the FSM rejects any non-conforming output. The LiteRT-LM JS
-// API exposes a `enableConstrainedDecoding` flag but we don't wire it yet,
-// so callers must parse leniently and fall back to SHOW on a malformed row.
+// Known weakness on Gemma 4 IT at 4B: the pipe character has a strong
+// markdown-table prior in the training distribution, so the model
+// occasionally drifts into `| Category | Verdict | \n|---|` form. The
+// parser below (`parseTableYesnoResponse`) tolerates this drift by
+// surfacing a malformed-row reasoning and falling back to SHOW (no
+// false-positive hides). For a hard guarantee, see the LiteRT-LM
+// LlGuidance regex constraint wired through `iosLocalClassify` — when
+// enabled, the FSM rejects any token outside the regex's language
+// during decode.
+//
+// Note: the Python eval pipeline pairs this same prompt with outlines-
+// constrained decoding so the FSM rejects any non-conforming output.
 export const LOCAL_SYSTEM_PROMPT = `You will see a social media post and a list of candidate categories. For each category, decide whether the post matches that category.
 
 Output exactly one row of pipe-delimited verdicts, one per category, in the order they were given. Each verdict is \`yes\` or \`no\`. Output nothing else.
@@ -67,13 +72,16 @@ function stripGemmaMarkers(raw: string): string {
 // View-Filtered popup can show one badge per match.
 //
 // Primary shape (what LOCAL_SYSTEM_PROMPT asks for):
-//   `no\nyes\nno`  — one verdict per line, in the same order as categories.
+//   `| yes | no | yes |`  — one pipe-delimited row, one cell per category.
 //
-// Tolerated drift shapes (Gemma sometimes ignores the format instruction):
-//   `| yes | no | yes |`, `yes|no|yes`, `| yes | no` (missing trailing pipe)
-//   `Verdict: | yes | no` (junk preamble cells dropped if they don't look like
-//                          `yes`/`no` and there's enough overflow)
-//   bare `yes` / `no` for single-category packs (with optional filler text)
+// Also tolerated, in this precedence order:
+//   `no\nyes\nno` — newline-per-verdict (first scan: lines starting with
+//                   yes/no), useful when the model emits one verdict per
+//                   line despite the prompt asking for a pipe row.
+//   `yes|no|yes`, `| yes | no` — missing leading or trailing pipe.
+//   `Verdict: | yes | no` — junk preamble cells dropped if they don't look
+//                           like `yes`/`no` and there's enough overflow.
+//   bare `yes` / `no` for single-category packs (with optional filler text).
 //   markdown-table headers like `| Category | Verdict |\n|---|` — fails to
 //     parse and surfaces a malformed-row reasoning so callers fall back to
 //     "show post" (no false-positive hides on parse failures).

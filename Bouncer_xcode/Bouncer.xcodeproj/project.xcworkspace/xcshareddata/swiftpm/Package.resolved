@@ -1,5 +1,5 @@
 {
-  "originHash" : "a1569f9895aa2be8e24832f98525d5da4eb90b5d158a82691c15b47eb72a13d7",
+  "originHash" : "74df40f2a88da2428d82a04d44e8f1adfdd16535d4048f5d6dc1e921156db90d",
   "pins" : [
     {
       "identity" : "abseil-cpp-binary",
@@ -105,7 +105,7 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/millanatimbue/LiteRT-LM.git",
       "state" : {
-        "revision" : "d94cd536b01ac8644248d4318bba11eae598dc93"
+        "revision" : "4e05601aa0e197016b54f2f4246feba9513b1169"
       }
     },
     {

@@ -159,12 +159,14 @@ final class LocalInferenceService: ObservableObject {
     // on the chat decode "logits" aux output, so no per-model classifier
     // signature is needed.
     private static let modelURL = URL(string:
-        // Pinned to the HF revision millan/gemmaonios was successfully tested
-        // against. The later 28299f30 'main' revision adds MTP / verify
-        // speculative-decoding subgraphs whose ops Metal can't compile,
-        // breaking CompiledModel::Create with status 504. The earlier upload
-        // is ~5MB smaller and has only decode + prefill_* sigs.
-        "https://huggingface.co/litert-community/gemma-4-E4B-it-litert-lm/resolve/9695417f2481/gemma-4-E4B-it.litertlm"
+        // TEMPORARILY unpinned to test whether the format-drift on iOS is
+        // tied to the older 9695417f2481 revision's tokenizer/stop-tokens
+        // metadata. The pinning comment claimed `main` adds MTP / verify
+        // speculative-decoding subgraphs that fail Metal compile with
+        // status 504 — if that's still true, engine create will fail on
+        // first launch and we revert to the pin. If it loads, we keep
+        // the unpinned URL for upstream metadata improvements.
+        "https://huggingface.co/litert-community/gemma-4-E4B-it-litert-lm/resolve/main/gemma-4-E4B-it.litertlm"
     )!
 
     private let downloader: ModelDownloader
@@ -180,6 +182,7 @@ final class LocalInferenceService: ObservableObject {
 
     private var baseConversation: Conversation?
     private var baseSystemMessage: String?
+    private var baseRegexConstraint: String?
 
     private let inferenceQueue = AsyncSerialQueue()
     private init() {
@@ -190,17 +193,19 @@ final class LocalInferenceService: ObservableObject {
 
     // MARK: - Public API
 
-    func classify(systemMessage: String, userMessage: String, imageUrls: [String] = []) async throws -> String {
+    func classify(systemMessage: String, userMessage: String, imageUrls: [String] = [], regexConstraint: String? = nil) async throws -> String {
         return try await classifyInternal(
             tag: "Filter", systemMessage: systemMessage,
-            userMessage: userMessage, imageUrls: imageUrls)
+            userMessage: userMessage, imageUrls: imageUrls,
+            regexConstraint: regexConstraint)
     }
 
     /// Run the full inference path: image fetch → queue → base build/clone
     /// → sendMessage → response. `tag` is the log prefix (e.g. "Filter" for
     /// production calls).
     private func classifyInternal(
-        tag: String, systemMessage: String, userMessage: String, imageUrls: [String] = []
+        tag: String, systemMessage: String, userMessage: String, imageUrls: [String] = [],
+        regexConstraint: String? = nil
     ) async throws -> String {
         try await ensureReady()
         let wallStart = Date()
@@ -220,7 +225,8 @@ final class LocalInferenceService: ObservableObject {
                 else { throw LocalInferenceError.engineNotLoaded }
                 let baseStart = Date()
                 let (base, rebuiltBase) = try await self.getOrBuildBase(
-                    systemMessage: systemMessage, sampler: sampler, engine: engine)
+                    systemMessage: systemMessage, regexConstraint: regexConstraint,
+                    sampler: sampler, engine: engine)
                 let baseSec = Date().timeIntervalSince(baseStart)
                 let cloneStart = Date()
                 let convo = try base.clone()
@@ -275,31 +281,39 @@ final class LocalInferenceService: ObservableObject {
     }
 
     private func getOrBuildBase(
-        systemMessage: String, sampler: SamplerConfig, engine: Engine
+        systemMessage: String, regexConstraint: String?,
+        sampler: SamplerConfig, engine: Engine
     ) async throws -> (Conversation, Bool) {
         if let base = self.baseConversation,
            self.baseSystemMessage == systemMessage,
+           self.baseRegexConstraint == regexConstraint,
            base.isAlive {
             return (base, false)
         }
-        // Verdicts are pipe-delimited yes/no rows (e.g. "no|no", "yes|yes")
-        // — fewer than 8 tokens even with 4 categories. Capping here cuts
-        // chat decode time roughly proportionally vs the old 32-token default.
+        // Verdicts are pipe-delimited yes/no rows (e.g. "no|no", "yes|yes").
+        // With the regex constraint enabled, Gemma also burns tokens on
+        // optional whitespace cells in the regex — pad max_output_tokens to
+        // 24 so a 4-category pack has slack for delimiter+space tokenization
+        // variation. Without the constraint the unconstrained budget would
+        // still cap chat decode time vs the old 32-token default.
         let config = ConversationConfig(
             systemMessage: Message(systemMessage, role: .system),
             samplerConfig: sampler,
             prefillPrefaceOnInit: true,
-            maxOutputTokens: 8
+            maxOutputTokens: 24,
+            regexConstraint: regexConstraint
         )
         let base = try await engine.createConversation(with: config)
         self.baseConversation = base
         self.baseSystemMessage = systemMessage
+        self.baseRegexConstraint = regexConstraint
         return (base, true)
     }
 
     private func dropBaseConversation() {
         self.baseConversation = nil
         self.baseSystemMessage = nil
+        self.baseRegexConstraint = nil
     }
 
     private static func fetchImageData(_ urls: [String]) async -> [Data] {
@@ -403,6 +417,13 @@ final class LocalInferenceService: ObservableObject {
         return headOut
     }
 
+    /// Normalized expected bucket index over the softmax of the 4-class
+    /// classifier head's logits — matches the EditLens training-pipeline
+    /// scoring formula `(probs @ arange(n_buckets)) / (n_buckets - 1)`.
+    /// For n=4: `(0·p0 + 1·p1 + 2·p2 + 3·p3) / 3`. Range [0, 1] where
+    /// 0 = all mass on class 0 (clearly human), 1 = all mass on class 3
+    /// (clearly AI). Continuous interpolation between buckets — not the
+    /// discrete `P(class>=2)` reduction.
     nonisolated static func aiConfidence(fromLogits logits: [Float]) -> Float {
         guard !logits.isEmpty else { return 0 }
         let m = logits.max() ?? 0

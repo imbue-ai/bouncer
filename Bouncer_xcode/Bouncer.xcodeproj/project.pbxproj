@@ -1001,7 +1001,7 @@
 			repositoryURL = "https://github.com/millanatimbue/LiteRT-LM.git";
 			requirement = {
 				kind = revision;
-				revision = d94cd536b01ac8644248d4318bba11eae598dc93;
+				revision = 4e05601aa0e197016b54f2f4246feba9513b1169;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */

@@ -261,9 +261,12 @@ struct FilteredWebView: UIViewRepresentable {
     // Payload is the same base64-encoded JSON convention as the classify
     // bridge above. On success the JSON is
     //     {"logits": [f,f,f,f], "aiConfidence": f}
-    // where aiConfidence = softmax(logits)[2] + softmax(logits)[3] (i.e.
-    // probability of the trained "medium-AI" + "AI" buckets). On error it's
-    // a string error message.
+    // where aiConfidence is the normalized expected bucket index:
+    //     aiConfidence = (softmax(logits) · [0, 1, 2, 3]) / 3
+    // matching the EditLens training-pipeline scoring formula
+    //     (probs @ arange(n_buckets)) / (n_buckets - 1).
+    // Ranges in [0, 1]: 0 = clearly human, 1 = clearly AI. On error the
+    // payload is a string error message.
     static func resolveLocalAiTextDetect(webView: WKWebView?, callbackId: String, ok: Bool, payload: String) async {
         guard let webView = webView else { return }
         let b64 = Data(payload.utf8).base64EncodedString()
@@ -320,6 +323,7 @@ struct FilteredWebView: UIViewRepresentable {
                     return
                 }
                 let imageUrls = (json["imageUrls"] as? [String]) ?? []
+                let regexConstraint = json["regexConstraint"] as? String
                 let webView = message.webView
                 Task { @MainActor in
                     do {
@@ -327,6 +331,7 @@ struct FilteredWebView: UIViewRepresentable {
                             systemMessage: systemMessage,
                             userMessage: userMessage,
                             imageUrls: imageUrls,
+                            regexConstraint: regexConstraint
                         )
                         await FilteredWebView.resolveLocalClassify(webView: webView, callbackId: callbackId, ok: true, payload: response)
                     } catch {

@@ -90,14 +90,17 @@ export function isIosLocalAiTextDetectAvailable(): boolean {
 }
 
 /**
- * Result of calling the on-device classifier head + LoRA.
+ * Result of calling the on-device classifier head.
  *
- * - `aiConfidence` is `P(class>=2)` from the trained 4-class softmax — a
- *   probability in [0, 1] that the input is at least "medium-AI" on the
- *   cosine-score bucketing the model was trained on.
+ * - `aiConfidence` is the **normalized expected bucket index** from the
+ *   trained 4-class softmax, i.e. `(probs · [0,1,2,3]) / 3`, matching the
+ *   EditLens scoring formula `(probs @ arange(n)) / (n-1)` used in the
+ *   training pipeline (classify_tweets.py, inference.py, eval_v2_buckets.py).
+ *   Ranges continuously in [0, 1]: 0 = all mass on class 0 ("clearly
+ *   human"), 1 = all mass on class 3 ("clearly AI"), 0.5 = uniform over the
+ *   middle buckets. **Not** `P(class>=2)` — that's a different reduction.
  * - `logits` is the raw 4-vector (class 0 = clearly human ... class 3 =
- *   clearly AI), exposed for callers that want to apply their own threshold
- *   or examine class-2/3 splits separately.
+ *   clearly AI), exposed for callers that want a different reduction.
  */
 export interface IosLocalAiTextDetectResponse {
   aiConfidence: number;
@@ -180,19 +183,31 @@ export async function iosLocalClassify(
   // per post.
   const systemMessage = LOCAL_SYSTEM_PROMPT;
   const userMessage = buildTableYesnoUserMessage(postData.text, bannedCategories, hasImages);
+  // LlGuidance FSM-constrained decoding regex: forces N pipe-delimited yes/no
+  // cells with optional leading/trailing pipes and tight ` ?` (zero or one
+  // space) padding. We deliberately avoid `\s*` here because that includes
+  // newlines and tabs — Gemma can otherwise spend its maxOutputTokens budget
+  // on whitespace tokens and never reach the Nth verdict.
+  //
+  // For N=3: `^\|? ?(yes|no)( ?\| ?(yes|no)){2}\|? ?$`
+  const n = bannedCategories.length;
+  const cell = '(yes|no)';
+  const regexConstraint = n === 1
+    ? `^\\|? ?${cell} ?\\|? ?$`
+    : `^\\|? ?${cell}( ?\\| ?${cell}){${n - 1}}\\|? ?$`;
 
   const callbackId = `iosLocal-${++nextId}-${Date.now()}`;
   const start = Date.now();
   const postPreview = postData.text.replace(/\s+/g, ' ').trim().slice(0, 60);
 
-  console.log(`[Filter] req cats=${bannedCategories.length} imgs=${imageUrls.length} text="${postPreview}"`);
+  console.log(`[Filter] req cats=${bannedCategories.length} imgs=${imageUrls.length} text="${postPreview}" regex="${regexConstraint}"`);
 
   let rawResponse: string;
   try {
     rawResponse = await new Promise<string>((resolve, reject) => {
       pending.set(callbackId, { resolve, reject });
       try {
-        const payload: Record<string, unknown> = { callbackId, systemMessage, userMessage };
+        const payload: Record<string, unknown> = { callbackId, systemMessage, userMessage, regexConstraint };
         if (hasImages) payload.imageUrls = imageUrls;
         webkit.messageHandlers.feedfilterLocalClassify.postMessage(JSON.stringify(payload));
       } catch (err) {
