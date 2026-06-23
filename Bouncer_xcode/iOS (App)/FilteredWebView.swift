@@ -325,6 +325,7 @@ struct FilteredWebView: UIViewRepresentable {
                 let imageUrls = (json["imageUrls"] as? [String]) ?? []
                 let regexConstraint = json["regexConstraint"] as? String
                 let webView = message.webView
+                let tweetStart = Date()
                 Task { @MainActor in
                     do {
                         let response = try await LocalInferenceService.shared.classify(
@@ -333,10 +334,20 @@ struct FilteredWebView: UIViewRepresentable {
                             imageUrls: imageUrls,
                             regexConstraint: regexConstraint
                         )
+                        let elapsed = Date().timeIntervalSince(tweetStart)
+                        print(String(
+                            format: "[Tweet] processed cb=%@ in %.2fs ok userLen=%d imgs=%d",
+                            callbackId, elapsed, userMessage.count, imageUrls.count
+                        ))
                         await FilteredWebView.resolveLocalClassify(webView: webView, callbackId: callbackId, ok: true, payload: response)
                     } catch {
                         let nsError = error as NSError
                         let payload = "\(type(of: error))[\(nsError.domain)#\(nsError.code)]: \(error.localizedDescription) | images=\(imageUrls.count) sysLen=\(systemMessage.count) userLen=\(userMessage.count)"
+                        let elapsed = Date().timeIntervalSince(tweetStart)
+                        print(String(
+                            format: "[Tweet] processed cb=%@ in %.2fs err userLen=%d imgs=%d",
+                            callbackId, elapsed, userMessage.count, imageUrls.count
+                        ))
                         print("[FeedFilter] classify error → JS: \(payload)")
                         await FilteredWebView.resolveLocalClassify(webView: webView, callbackId: callbackId, ok: false, payload: payload)
                     }
