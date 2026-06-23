@@ -7,6 +7,7 @@ import { initializeApp } from 'firebase/app';
 import {
   getAuth,
   signInWithCredential,
+  signInAnonymously,
   GoogleAuthProvider,
   OAuthProvider,
   onAuthStateChanged,
@@ -88,6 +89,22 @@ export async function launchAuthFlow(_method?: string): Promise<string | null> {
     return launchHostedAuthFlow();
   }
   return launchGoogleAuthFlow();
+}
+
+// Sign in anonymously ("skip for now"). Lets users access Bouncer without a
+// Google/Apple account. Firebase creates a throwaway anonymous user; its ID
+// token works against the backend just like a real one and persists across
+// restarts. Requires Anonymous auth to be enabled in the Firebase console.
+export async function signInAnon(): Promise<string | null> {
+  try {
+    const userCredential = await signInAnonymously(auth);
+    const token = await userCredential.user.getIdToken();
+    console.log('[Auth] Anonymous sign-in succeeded');
+    return token;
+  } catch (err) {
+    console.error('[Auth] Anonymous sign-in failed:', (err as Error).message);
+    return null;
+  }
 }
 
 // Safari sign-in — opens a hosted page on BOUNCER_SIGNIN_DOMAIN

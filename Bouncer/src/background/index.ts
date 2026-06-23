@@ -16,7 +16,7 @@ import {
 } from './pipeline';
 import { sendFeedback } from './providers';
 import { imbueWebSocket } from './ws-manager';
-import { launchAuthFlow, refreshAuthToken, getAuthToken, handleAppleSignIn, signOut, IS_SAFARI } from './auth';
+import { launchAuthFlow, signInAnon, refreshAuthToken, getAuthToken, handleAppleSignIn, signOut, IS_SAFARI } from './auth';
 
 // ==================== Tab tracking ====================
 
@@ -410,6 +410,26 @@ async function handleMessage(
         return { success: !!token };
       } catch (err) {
         console.error('[Auth] On-demand auth flow error:', err);
+        return { success: false, error: (err as Error).message };
+      }
+    }
+
+    case 'skipAuth': {
+      // "Skip for now" — sign in anonymously so the user can use Bouncer
+      // without a Google/Apple account.
+      if (process.env.HAS_IMBUE_BACKEND !== 'true') {
+        return { success: false, error: 'Imbue backend not configured' };
+      }
+      try {
+        const token = await signInAnon();
+        if (token) {
+          for (const tid of activeContentTabs) {
+            void sendToTab(tid, { type: 'authStateChanged', authenticated: true });
+          }
+        }
+        return { success: !!token };
+      } catch (err) {
+        console.error('[Auth] Anonymous auth flow error:', err);
         return { success: false, error: (err as Error).message };
       }
     }

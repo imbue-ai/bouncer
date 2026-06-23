@@ -311,6 +311,7 @@ export type ContentToBackgroundMessage =
   | { type: 'sendFeedback'; decision: string; tweetData: { text: string; imageUrls: string[] }; reasoning?: string; rawResponse?: string; siteId?: SiteId; postUrl?: string | null }
   | { type: 'getAuthStatus' }
   | { type: 'launchAuth' }
+  | { type: 'skipAuth' }
   | { type: 'appleSignIn'; idToken: string; rawNonce: string }
   | { type: 'nativeAppleSignIn' }
   | { type: 'signOut' }

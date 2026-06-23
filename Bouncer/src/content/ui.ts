@@ -139,6 +139,21 @@ async function launchSignIn() {
   }
 }
 
+// "Skip for now" — sign in anonymously via the background script so the user
+// can use Bouncer without a Google/Apple account.
+async function skipSignIn() {
+  try {
+    console.log('[Bouncer] Skipping sign-in (anonymous auth)...');
+    const response: { success?: boolean } = await chrome.runtime.sendMessage({ type: 'skipAuth' });
+    if (response?.success) {
+      isAuthenticated = true;
+      refreshAllFilterBoxes();
+    }
+  } catch (err) {
+    console.error('[Bouncer] Anonymous sign-in failed:', err);
+  }
+}
+
 // Destroy and re-create all filter box UIs (after auth state change).
 // Query the DOM directly instead of relying on module-local references so we
 // also clean up stale nodes left by a previous content-script injection
@@ -178,6 +193,7 @@ function getSignInHTML() {
             Activate Bouncer
           </button>
           <p class="ff-signin-explanation">Sign in to start filtering your feed</p>
+          <button class="skip-signin-btn">Skip for now</button>
         </div>
       </div>
     `;
@@ -196,6 +212,7 @@ function getSignInHTML() {
           Activate Bouncer
         </button>
         <p class="ff-signin-explanation">Google sign-in helps us prevent abuse</p>
+        <button class="skip-signin-btn">Skip for now</button>
       </div>
     </div>
   `;
@@ -216,6 +233,10 @@ function setupSignInButton(container: HTMLElement) {
     if (btn) {
       btn.addEventListener('click', asyncHandler(launchSignIn));
     }
+  }
+  const skipBtn = container.querySelector('.skip-signin-btn');
+  if (skipBtn) {
+    skipBtn.addEventListener('click', asyncHandler(skipSignIn));
   }
 }
 
