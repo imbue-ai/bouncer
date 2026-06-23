@@ -16,7 +16,7 @@ import {
 } from './pipeline';
 import { sendFeedback } from './providers';
 import { imbueWebSocket } from './ws-manager';
-import { launchAuthFlow, signInAnon, refreshAuthToken, getAuthToken, handleAppleSignIn, signOut, IS_SAFARI } from './auth';
+import { launchAuthFlow, signInAnon, isAnonymousUser, refreshAuthToken, getAuthToken, handleAppleSignIn, signOut, IS_SAFARI } from './auth';
 
 // ==================== Tab tracking ====================
 
@@ -380,7 +380,7 @@ async function handleMessage(
         return { authenticated: true, isSafari: IS_SAFARI };
       }
       const token = await getAuthToken();
-      return { authenticated: !!token, isSafari: IS_SAFARI };
+      return { authenticated: !!token, isSafari: IS_SAFARI, isAnonymous: isAnonymousUser() };
     }
 
     case 'launchAuth': {
@@ -404,7 +404,7 @@ async function handleMessage(
         const token = await launchAuthFlow(method);
         if (token) {
           for (const tid of activeContentTabs) {
-            void sendToTab(tid, { type: 'authStateChanged', authenticated: true });
+            void sendToTab(tid, { type: 'authStateChanged', authenticated: true, isAnonymous: isAnonymousUser() });
           }
         }
         return { success: !!token };
@@ -424,7 +424,7 @@ async function handleMessage(
         const token = await signInAnon();
         if (token) {
           for (const tid of activeContentTabs) {
-            void sendToTab(tid, { type: 'authStateChanged', authenticated: true });
+            void sendToTab(tid, { type: 'authStateChanged', authenticated: true, isAnonymous: true });
           }
         }
         return { success: !!token };

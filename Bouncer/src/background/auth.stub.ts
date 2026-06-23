@@ -21,6 +21,10 @@ export function signInAnon(): Promise<string | null> {
   return Promise.resolve(null);
 }
 
+export function isAnonymousUser(): boolean {
+  return false;
+}
+
 export function handleAppleSignIn(
   _idToken: string,
   _rawNonce: string,

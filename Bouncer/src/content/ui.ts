@@ -2,7 +2,7 @@
 
 import { toBlob } from 'html-to-image';
 import { asyncHandler } from '../shared/async';
-import { cleanReasoning, escapeHtml, formatPostForEvaluation, parseHTML } from '../shared/utils';
+import { cleanReasoning, escapeHtml, formatPostForEvaluation, parseHTML, GUEST_FILTER_LIMIT } from '../shared/utils';
 import { init as initPopup } from '../popup/index';
 import {
   encodeFilterPackCode, decodeFilterPackCode, buildFilterPackShareUrl,
@@ -40,12 +40,26 @@ export function initUI(deps: ContentUIDeps) {
     if (message.type === 'authStateChanged') {
       console.log('[Bouncer] authStateChanged received:', message);
       isAuthenticated = message.authenticated;
+      if (typeof message.isAnonymous === 'boolean') {
+        isAnonymous = message.isAnonymous;
+      }
+      // A real (non-anonymous) sign-in lifts the guest gate; dismiss any popup.
+      if (isAuthenticated && !isAnonymous) {
+        guestLimitReached = false;
+        dismissGuestLimitPopup();
+      }
       if (isAuthenticated) {
         console.log('[Bouncer] Calling refreshAllFilterBoxes after auth');
         refreshAllFilterBoxes();
       } else {
         console.log('[Bouncer] authenticated=false, skipping refresh');
       }
+    } else if (message.type === 'guestLimitReached') {
+      console.log('[Bouncer] guestLimitReached received');
+      guestLimitReached = true;
+      showGuestLimitPopup();
+      // Re-render boxes into the gated state behind the popup.
+      refreshAllFilterBoxes();
     }
   });
 }
@@ -93,6 +107,29 @@ let apiKeyWarningShown = false;
 // can't drop us back onto it.
 let isAuthenticated = process.env.HAS_IMBUE_BACKEND !== 'true';
 
+// Guest trial state. `isAnonymous` is true when the user chose "Skip for now"
+// (Firebase anonymous auth) rather than signing in with Google/Apple.
+// `guestLimitReached` gates the UI and post processing once an anonymous user
+// has filtered GUEST_FILTER_LIMIT posts (counted persistently in the
+// background as `anonFilterCount`).
+let isAnonymous = false;
+let guestLimitReached = false;
+
+// Whether the guest trial is exhausted — read by the content script to stop
+// submitting posts for evaluation.
+export function isGuestLimitReached() { return guestLimitReached; }
+
+// Recompute `guestLimitReached` from the persistent count. Only anonymous
+// desktop users are ever gated; iOS is always anonymous by design and excluded.
+async function refreshGuestLimitState() {
+  if (process.env.HAS_IMBUE_BACKEND !== 'true' || !isAnonymous || _deps.IS_IOS) {
+    guestLimitReached = false;
+    return;
+  }
+  const { anonFilterCount } = await getStorage(['anonFilterCount']);
+  guestLimitReached = (anonFilterCount || 0) >= GUEST_FILTER_LIMIT;
+}
+
 // Check auth status from background and cache it
 async function checkAuthStatus() {
   if (process.env.HAS_IMBUE_BACKEND !== 'true') {
@@ -100,11 +137,14 @@ async function checkAuthStatus() {
     return isAuthenticated;
   }
   try {
-    const response: { authenticated?: boolean; isSafari?: boolean } = await chrome.runtime.sendMessage({ type: 'getAuthStatus' });
+    const response: { authenticated?: boolean; isSafari?: boolean; isAnonymous?: boolean } = await chrome.runtime.sendMessage({ type: 'getAuthStatus' });
     isAuthenticated = response?.authenticated ?? false;
+    isAnonymous = response?.isAnonymous ?? false;
   } catch {
     isAuthenticated = false;
+    isAnonymous = false;
   }
+  await refreshGuestLimitState();
   return isAuthenticated;
 }
 
@@ -119,6 +159,27 @@ const isSafari = /^((?!chrome|android|crios|fxios|edg|opr).)*safari/i.test(navig
 // lowercase "dev" — case-insensitive compare covers both.
 const IS_DEV_BUILD = (process.env.BOUNCER_ENV || '').toLowerCase() === 'dev';
 
+// Shown when an anonymous guest exhausts their free filters.
+const GUEST_LIMIT_MESSAGE = "You've reached the guest limit — sign in to keep using Bouncer.";
+
+// Markup for the Google (Chrome) / Apple (Safari) sign-in button, shared by the
+// initial prompt, the guest-limit prompt, and the guest-limit popup.
+function signinButtonHTML(label: string) {
+  if (isSafari) {
+    return `<button class="google-signin-btn">${escapeHtml(label)}</button>`;
+  }
+  return `
+    <button class="google-signin-btn">
+      <svg class="google-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#4285F4"/>
+        <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+        <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
+        <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+      </svg>
+      ${escapeHtml(label)}
+    </button>`;
+}
+
 // Launch sign-in via background script (Google on Chrome, Apple on Safari)
 async function launchSignIn() {
   try {
@@ -131,7 +192,11 @@ async function launchSignIn() {
     console.log('[Bouncer] Launching Google sign-in...');
     const response: { success?: boolean } = await chrome.runtime.sendMessage({ type: 'launchAuth' });
     if (response?.success) {
+      // Real Google sign-in — clears the guest gate permanently.
       isAuthenticated = true;
+      isAnonymous = false;
+      guestLimitReached = false;
+      dismissGuestLimitPopup();
       refreshAllFilterBoxes();
     }
   } catch (err) {
@@ -147,6 +212,7 @@ async function skipSignIn() {
     const response: { success?: boolean } = await chrome.runtime.sendMessage({ type: 'skipAuth' });
     if (response?.success) {
       isAuthenticated = true;
+      isAnonymous = true;
       refreshAllFilterBoxes();
     }
   } catch (err) {
@@ -176,46 +242,85 @@ function refreshAllFilterBoxes() {
     injectMobileFilterBox();
   }
 
-  // Trigger post processing now that we're authenticated
-  if (isAuthenticated && _deps.processExistingPosts) {
+  // Trigger post processing now that we're authenticated (but not while the
+  // guest trial is exhausted — filtering stays paused until sign-in).
+  if (isAuthenticated && !guestLimitReached && _deps.processExistingPosts) {
     _deps.processExistingPosts();
   }
 }
 
-// HTML for the sign-in state shown inside filter boxes
+// HTML for the initial sign-in state shown inside filter boxes (with the
+// "Skip for now" guest option).
 function getSignInHTML() {
-  if (isSafari) {
-    return `
-      <div class="filter-phrases-container">
-        <span class="filter-phrases-box-name">Bouncer</span>
-        <div class="filter-signin-prompt">
-          <button class="google-signin-btn">
-            Activate Bouncer
-          </button>
-          <p class="ff-signin-explanation">Sign in to start filtering your feed</p>
-          <button class="skip-signin-btn">Skip for now</button>
-        </div>
-      </div>
-    `;
-  }
+  const explanation = isSafari
+    ? 'Sign in to start filtering your feed'
+    : 'Google sign-in helps us prevent abuse';
   return `
     <div class="filter-phrases-container">
       <span class="filter-phrases-box-name">Bouncer</span>
       <div class="filter-signin-prompt">
-        <button class="google-signin-btn">
-          <svg class="google-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-            <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#4285F4"/>
-            <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
-            <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
-            <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
-          </svg>
-          Activate Bouncer
-        </button>
-        <p class="ff-signin-explanation">Google sign-in helps us prevent abuse</p>
+        ${signinButtonHTML('Activate Bouncer')}
+        <p class="ff-signin-explanation">${explanation}</p>
         <button class="skip-signin-btn">Skip for now</button>
       </div>
     </div>
   `;
+}
+
+// HTML for the guest-limit state — shown after an anonymous user hits the
+// trial limit. Same sign-in button, but no "Skip for now" (trial is used).
+function getGuestLimitHTML() {
+  return `
+    <div class="filter-phrases-container">
+      <span class="filter-phrases-box-name">Bouncer</span>
+      <div class="filter-signin-prompt">
+        <p class="ff-signin-explanation ff-guest-limit-msg">${escapeHtml(GUEST_LIMIT_MESSAGE)}</p>
+        ${signinButtonHTML(isSafari ? 'Sign in with Apple' : 'Sign in with Google')}
+      </div>
+    </div>
+  `;
+}
+
+// The appropriate gate screen for the current state.
+function getGateHTML() {
+  return guestLimitReached ? getGuestLimitHTML() : getSignInHTML();
+}
+
+// ==================== Guest-limit popup ====================
+
+let guestLimitPopup: HTMLElement | null = null;
+
+function dismissGuestLimitPopup() {
+  if (guestLimitPopup) {
+    guestLimitPopup.remove();
+    guestLimitPopup = null;
+  }
+}
+
+// Centered modal shown the moment an anonymous user crosses the trial limit.
+// The X dismisses the popup (the filter box stays gated underneath); the
+// sign-in button runs the normal Google/Apple flow.
+function showGuestLimitPopup() {
+  if (guestLimitPopup && guestLimitPopup.isConnected) return; // idempotent
+  dismissGuestLimitPopup();
+
+  const theme = _deps.adapter.getThemeMode();
+  const backdrop = document.createElement('div');
+  backdrop.className = `bouncer-guest-popup-backdrop ${theme}-mode`;
+  backdrop.replaceChildren(parseHTML(`
+    <div class="bouncer-guest-popup" role="dialog" aria-modal="true">
+      <button class="bouncer-guest-popup-close" aria-label="Close">×</button>
+      <p class="bouncer-guest-popup-msg">${escapeHtml(GUEST_LIMIT_MESSAGE)}</p>
+      ${signinButtonHTML(isSafari ? 'Sign in with Apple' : 'Sign in with Google')}
+    </div>
+  `));
+  document.body.appendChild(backdrop);
+  guestLimitPopup = backdrop;
+
+  backdrop.querySelector('.bouncer-guest-popup-close')
+    ?.addEventListener('click', () => dismissGuestLimitPopup());
+  backdrop.querySelector('.google-signin-btn')
+    ?.addEventListener('click', asyncHandler(launchSignIn));
 }
 
 // Wire up the sign-in button click handler inside a container
@@ -561,8 +666,8 @@ export function injectFilterPhrasesInput() {
     filterPhrasesContainer.classList.add('filter-phrases-sidebar--linkedin');
   }
 
-  if (process.env.HAS_IMBUE_BACKEND === 'true' && !isAuthenticated) {
-    filterPhrasesContainer.replaceChildren(parseHTML(getSignInHTML()));
+  if (process.env.HAS_IMBUE_BACKEND === 'true' && (!isAuthenticated || guestLimitReached)) {
+    filterPhrasesContainer.replaceChildren(parseHTML(getGateHTML()));
     insertParent.insertBefore(filterPhrasesContainer, insertBeforeRef);
     if (usingWrapper && wrapper) setupFixedInWrapper(filterPhrasesContainer, wrapper);
     updateTheme();
@@ -787,12 +892,12 @@ export function injectBottomFilterBox() {
   bottomFilterContainer = document.createElement('div');
   bottomFilterContainer.className = 'filter-phrases-bottom expanded';
 
-  if (process.env.HAS_IMBUE_BACKEND === 'true' && !isAuthenticated) {
+  if (process.env.HAS_IMBUE_BACKEND === 'true' && (!isAuthenticated || guestLimitReached)) {
     bottomFilterContainer.replaceChildren(parseHTML(`
       <div class="filter-collapse-handle">
         <span class="filter-collapse-chevron"></span>
       </div>
-      ${getSignInHTML()}
+      ${getGateHTML()}
     `));
     document.body.appendChild(bottomFilterContainer);
     updateBottomFilterPosition();
@@ -881,8 +986,8 @@ export function injectMobileFilterBox() {
   mobileFilterContainer = document.createElement('div');
   mobileFilterContainer.className = 'filter-phrases-mobile';
 
-  if (process.env.HAS_IMBUE_BACKEND === 'true' && !isAuthenticated) {
-    mobileFilterContainer.replaceChildren(parseHTML(getSignInHTML()));
+  if (process.env.HAS_IMBUE_BACKEND === 'true' && (!isAuthenticated || guestLimitReached)) {
+    mobileFilterContainer.replaceChildren(parseHTML(getGateHTML()));
     nav.parentNode!.insertBefore(mobileFilterContainer, nav);
     updateTheme();
     setupSignInButton(mobileFilterContainer);

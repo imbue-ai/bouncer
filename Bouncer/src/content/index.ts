@@ -31,6 +31,7 @@ import {
   setupSearchBarHide,
   initDetectorStates,
   updateDetectorState,
+  isGuestLimitReached,
 } from './ui';
 
 import { formatPostForEvaluation } from '../shared/utils';
@@ -209,6 +210,9 @@ import { formatPostForEvaluation } from '../shared/utils';
   // Evaluate a post using the background script
   async function evaluatePost(article: HTMLElement) {
     console.log('[Bouncer] evaluatePost called, isInApp:', isInApp);
+    // Guest trial exhausted — stop filtering until the user signs in.
+    if (isGuestLimitReached()) return;
+
     let content: PostContent | undefined;
 
     if (isInApp) {

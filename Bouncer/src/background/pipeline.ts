@@ -2,8 +2,9 @@
 
 import {
   parseAPIResponse, checkRateLimitError, checkApiError, checkAuthenticationError,
-  RATE_LIMIT_TYPE_CONFIG, API_ERROR_TYPE_CONFIG,
+  RATE_LIMIT_TYPE_CONFIG, API_ERROR_TYPE_CONFIG, GUEST_FILTER_LIMIT,
 } from '../shared/utils';
+import { isAnonymousUser } from './auth';
 import { PREDEFINED_MODELS, API_DISPLAY_NAMES, DEFAULT_MODEL } from '../shared/models';
 import { buildAPIMessages } from '../shared/prompts';
 import { callDirectAPI, callAnthropicAPI, callImbueAPI, callImbueAiTextDetection, callImbueAiImageDetection } from './providers';
@@ -1008,13 +1009,29 @@ async function processBatch(): Promise<void> {
     }
 
     // Update stats
-    const statsData = await getStorage(['stats']);
+    const statsData = await getStorage(['stats', 'anonFilterCount']);
     const stats = statsData.stats || { filtered: 0, evaluated: 0, totalCost: 0 };
     stats.evaluated++;
     if (evalResult.shouldHide) {
       stats.filtered++;
     }
     await setStorage({ stats });
+
+    // Guest trial: count posts filtered while signed in anonymously, lifetime
+    // across all sessions. iOS is permanently anonymous by design (App Check)
+    // and has no Google sign-in path, so it's excluded. When the guest crosses
+    // the limit, prompt every content tab to sign in.
+    const isIOS = typeof window !== 'undefined'
+      && typeof (window as unknown as Record<string, unknown>).__ff_getAppCheckToken === 'function';
+    if (evalResult.shouldHide && !isIOS && isAnonymousUser()) {
+      const prev = statsData.anonFilterCount || 0;
+      const next = prev + 1;
+      await setStorage({ anonFilterCount: next });
+      if (prev < GUEST_FILTER_LIMIT && next >= GUEST_FILTER_LIMIT) {
+        broadcastToTabs({ type: 'guestLimitReached' });
+      }
+    }
+
     await saveCache();
 
     const wallTime = ((Date.now() - startTime) / 1000).toFixed(2);

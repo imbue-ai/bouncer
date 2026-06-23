@@ -70,6 +70,12 @@ export async function getAuthToken(): Promise<string | null> {
   }
 }
 
+// True when the signed-in user is a Firebase anonymous ("Skip for now") user.
+// Used to gate the guest trial — real Google/Apple users are never gated.
+export function isAnonymousUser(): boolean {
+  return currentUser?.isAnonymous ?? false;
+}
+
 // ==================== Interactive sign-in ====================
 
 // Sign out
