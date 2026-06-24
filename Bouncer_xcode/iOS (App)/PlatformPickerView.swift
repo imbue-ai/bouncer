@@ -37,11 +37,15 @@ struct PlatformPickerView: View {
                     .padding(.bottom, 44)
 
                 VStack(spacing: 0) {
-                    row(label: "X", platformId: "twitter")
-                    divider
-                    row(label: "YouTube", platformId: "youtube")
-                    divider
-                    row(label: "LinkedIn", platformId: "linkedin")
+                    // Rows come from the platform registry — adding a new
+                    // platform doesn't require touching this view.
+                    ForEach(Platforms.all.indices, id: \.self) { idx in
+                        if idx > 0 { divider }
+                        row(
+                            label: Platforms.all[idx].displayName,
+                            platformId: Platforms.all[idx].id
+                        )
+                    }
                 }
 
                 Spacer()

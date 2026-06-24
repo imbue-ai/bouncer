@@ -1,4 +1,5 @@
 import type { PlatformAdapter, PlatformSelectors, PostContent, QuoteContent } from '../../src/types';
+import { platformById } from '../../src/shared/platforms';
 
 /** Shape of the tweet data returned by the fiber-extractor main-world script. */
 interface TweetStoreData {
@@ -571,6 +572,9 @@ const BouncerTwitterAdapter = class TwitterAdapter implements PlatformAdapter {
   }
 };
 
-if (/(^|\.)(x|twitter)\.com$/i.test(location.hostname)) {
+// Self-guard via the shared platform registry so adding a new platform or
+// adjusting the host pattern is a one-line registry edit, not a per-adapter
+// regex tweak.
+if (platformById('twitter')?.hostPattern.test(location.hostname)) {
   window.BouncerAdapter = BouncerTwitterAdapter;
 }

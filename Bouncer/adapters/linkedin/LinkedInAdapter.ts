@@ -22,6 +22,7 @@
 // This file is fully additive — it does not touch the Twitter adapter.
 
 import type { PlatformAdapter, PlatformSelectors, PostContent, QuoteContent } from '../../src/types';
+import { platformById } from '../../src/shared/platforms';
 
 const BouncerLinkedInAdapter = class LinkedInAdapter implements PlatformAdapter {
   siteId = 'linkedin' as const;
@@ -681,10 +682,10 @@ const BouncerLinkedInAdapter = class LinkedInAdapter implements PlatformAdapter 
   }
 };
 
-// Self-guard: only claim window.BouncerAdapter on linkedin.com. On iOS all
-// three platform adapter scripts inject on every page, so without this guard
-// LinkedIn would clobber Twitter's and YouTube's assignments on their hosts
-// and the content script would try to extract posts with the wrong selectors.
-if (/(^|\.)linkedin\.com$/i.test(location.hostname)) {
+// Self-guard via the shared platform registry. On iOS all platform adapter
+// scripts inject on every page; without this guard LinkedIn would clobber
+// Twitter's and YouTube's assignments and the content script would try to
+// extract posts using the wrong selectors.
+if (platformById('linkedin')?.hostPattern.test(location.hostname)) {
   window.BouncerAdapter = BouncerLinkedInAdapter;
 }

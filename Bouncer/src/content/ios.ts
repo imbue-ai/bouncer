@@ -1,7 +1,8 @@
 // iOS FAB, filtered modal, native sheet bridge
 
-import type { IOSDeps, DescriptionKey } from '../types';
+import type { IOSDeps, DescriptionKey, SiteId } from '../types';
 import { clampThreshold, clampImageThreshold, getDescriptions, setDescriptions } from '../shared/storage';
+import { platformById, descriptionsStorageKey } from '../shared/platforms';
 import { parseHTML } from '../shared/utils';
 import { shareFilterPackForIOS } from './ui';
 
@@ -78,10 +79,11 @@ export function initIOS(deps: IOSDeps) {
   // current site's key triggers re-evaluation via the storage.onChanged
   // listener in content/index.ts; writing the other site's key is simply
   // stored and picked up when that site next loads.
+  // Resolves a SiteId-shaped string to the matching descriptions_<id> storage
+  // key. Returns null for ids the registry doesn't know about so the bridge
+  // can safely no-op instead of writing to a typo'd key.
   const descKeyFor = (siteId: string): DescriptionKey | null =>
-    (siteId === 'twitter' || siteId === 'youtube' || siteId === 'linkedin')
-      ? `descriptions_${siteId}`
-      : null;
+    platformById(siteId) ? descriptionsStorageKey(siteId as SiteId) : null;
 
   w.__ff_getPhrases = async (siteId: string): Promise<string[]> => {
     const key = descKeyFor(siteId);

@@ -64,16 +64,11 @@ class FilterSheetViewModel: ObservableObject {
     static let contentWorld = WKContentWorld.world(name: "feedfilter")
 
     // Default the sheet's phrase list to the platform of the page currently
-    // loaded, so opening the sheet on YouTube shows YouTube phrases, etc.
+    // loaded — registry-driven so adding a new platform doesn't require a new
+    // host-substring branch here.
     func syncPlatformToCurrentSite() {
         let host = (URL(string: currentURL)?.host ?? "").lowercased()
-        if host.contains("youtube") {
-            selectedPlatform = "youtube"
-        } else if host.contains("linkedin") {
-            selectedPlatform = "linkedin"
-        } else {
-            selectedPlatform = "twitter"
-        }
+        selectedPlatform = Platforms.fromHost(host)?.id ?? "twitter"
     }
 
     func selectPlatform(_ platform: String) {
@@ -84,22 +79,14 @@ class FilterSheetViewModel: ObservableObject {
 
     // Called by the PlatformPickerView when the user picks a platform. Updates
     // the active platform AND navigates the WebView to that platform's feed
-    // URL — the URL change will also re-trigger syncPlatformToCurrentSite on
-    // the next sheet open, so the two stay coherent.
+    // URL — registry lookup keeps this in sync with the picker / WebView
+    // initial-URL logic without separate hardcoded switches.
     func selectPlatformAndNavigate(_ platform: String) {
         selectedPlatform = platform
         loadPhrases()
-        guard let webView = webView else { return }
-        let urlString: String
-        switch platform {
-        case "youtube": urlString = "https://www.youtube.com/"
-        case "linkedin": urlString = "https://www.linkedin.com/feed/"
-        case "twitter": urlString = "https://x.com/home"
-        default: return
-        }
-        if let url = URL(string: urlString) {
-            webView.load(URLRequest(url: url))
-        }
+        guard let webView = webView, let def = Platforms.byId(platform),
+              let url = URL(string: def.feedURL) else { return }
+        webView.load(URLRequest(url: url))
     }
 
     // Load the selected platform's phrases from the (shared, native-backed)

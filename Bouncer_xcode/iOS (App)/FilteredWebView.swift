@@ -53,17 +53,17 @@ struct FilteredWebView: UIViewRepresentable {
         }
 
         // Initial URL follows whichever platform the user picked on the
-        // PlatformPickerView. The X path keeps the legacy login-flow branch
-        // (since the container gates first-mount until the user has picked,
-        // selectedPlatform is always set by the time we get here).
-        let urlString: String
-        switch sheetViewModel.selectedPlatform {
-        case "youtube":  urlString = "https://www.youtube.com/"
-        case "linkedin": urlString = "https://www.linkedin.com/feed/"
-        default:
-            let hasLoggedIn = UserDefaults.standard.bool(forKey: "hasLoggedIn")
-            urlString = hasLoggedIn ? "https://x.com" : "https://x.com/i/flow/login"
-        }
+        // PlatformPickerView. Registry-driven; falls back to X's home/login
+        // pair so first-run sign-in still surfaces the right page.
+        let def = Platforms.byId(sheetViewModel.selectedPlatform)
+            ?? Platforms.byId("twitter")
+        let urlString: String = {
+            if let def = def, let login = def.loginURL,
+               !UserDefaults.standard.bool(forKey: "hasLoggedIn") {
+                return login
+            }
+            return def?.feedURL ?? "https://x.com"
+        }()
         if let url = URL(string: urlString) {
             webView.load(URLRequest(url: url))
         }
@@ -132,21 +132,15 @@ struct FilteredWebView: UIViewRepresentable {
         // 5. Platform adapters — document end. All are injected on every page;
         // each self-guards by hostname (see the adapter files), claiming
         // `window.BouncerAdapter` only on its own site, so content.js picks the
-        // right one for x.com vs m.youtube.com vs linkedin.com.
-        if let source = loadBundledScript(named: "TwitterAdapter", ext: "js", subdirectory: "dist") {
+        // right one based on current location. Registry-driven so adding a
+        // platform here is one entry in Platforms.swift.
+        for platform in Platforms.all {
+            guard let source = loadBundledScript(
+                named: platform.adapterScriptName, ext: "js", subdirectory: "dist"
+            ) else { continue }
             let script = WKUserScript(source: source, injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: world)
             controller.addUserScript(script)
-            print("[FeedFilter] Injected TwitterAdapter.js")
-        }
-        if let source = loadBundledScript(named: "YouTubeAdapter", ext: "js", subdirectory: "dist") {
-            let script = WKUserScript(source: source, injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: world)
-            controller.addUserScript(script)
-            print("[FeedFilter] Injected YouTubeAdapter.js")
-        }
-        if let source = loadBundledScript(named: "LinkedInAdapter", ext: "js", subdirectory: "dist") {
-            let script = WKUserScript(source: source, injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: world)
-            controller.addUserScript(script)
-            print("[FeedFilter] Injected LinkedInAdapter.js")
+            print("[FeedFilter] Injected \(platform.adapterScriptName).js")
         }
 
         // 6. content.js — document end (bundled IIFE from dist/)
@@ -246,14 +240,12 @@ struct FilteredWebView: UIViewRepresentable {
         if let contentCSS = loadBundledScript(named: "content", ext: "css") {
             cssContent += contentCSS
         }
-        if let twitterCSS = loadBundledScript(named: "twitter", ext: "css", subdirectory: "adapters/twitter") {
-            cssContent += "\n" + twitterCSS
-        }
-        if let youtubeCSS = loadBundledScript(named: "youtube", ext: "css", subdirectory: "adapters/youtube") {
-            cssContent += "\n" + youtubeCSS
-        }
-        if let linkedinCSS = loadBundledScript(named: "linkedin", ext: "css", subdirectory: "adapters/linkedin") {
-            cssContent += "\n" + linkedinCSS
+        // Platform stylesheets — registry-driven so adding a platform here
+        // is one entry in Platforms.swift.
+        for platform in Platforms.all {
+            if let css = loadBundledScript(named: platform.cssFile, ext: "css", subdirectory: platform.cssSubdir) {
+                cssContent += "\n" + css
+            }
         }
 
         guard !cssContent.isEmpty else { return nil }
@@ -564,13 +556,15 @@ struct FilteredWebView: UIViewRepresentable {
             }
         }
 
-        private let allowedHosts: Set<String> = [
-            "x.com", "twitter.com", "t.co", "twimg.com", "pbs.twimg.com", "abs.twimg.com", "video.twimg.com",
-            "youtube.com", "m.youtube.com", "youtu.be", "ytimg.com", "ggpht.com", "googlevideo.com",
-            "linkedin.com", "licdn.com", "static.licdn.com", "media.licdn.com",
-            "accounts.google.com", "accounts.youtube.com", "google.com", "gstatic.com",
-            "apple.com", "appleid.apple.com",
-        ]
+        // Platform-owned hosts come from the registry; system/auth hosts are
+        // hand-listed because they're shared across platforms (Google sign-in,
+        // Apple ID) and don't belong to any one platform.
+        private let allowedHosts: Set<String> = Set(
+            Platforms.allHostRoots + [
+                "accounts.google.com", "google.com", "gstatic.com",
+                "apple.com", "appleid.apple.com",
+            ]
+        )
 
         func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
             guard let url = navigationAction.request.url, let host = url.host?.lowercased() else {

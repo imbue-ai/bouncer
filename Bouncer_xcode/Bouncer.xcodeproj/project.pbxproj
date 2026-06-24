@@ -44,6 +44,7 @@
 		AA00003000000000000000AA /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00003100000000000000AA /* OnboardingView.swift */; };
 		AA00004000000000000000AA /* filterphrases.mp4 in Resources */ = {isa = PBXBuildFile; fileRef = AA00004100000000000000AA /* filterphrases.mp4 */; };
 		AA00005000000000000000AA /* PlatformPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00005100000000000000AA /* PlatformPickerView.swift */; };
+		AA00006000000000000000AA /* Platforms.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00006100000000000000AA /* Platforms.swift */; };
 		DA00HEADRES000000000DA008 /* linear_v3_head.bin in Resources */ = {isa = PBXBuildFile; fileRef = DA00HEADBIN000000000DA007 /* linear_v3_head.bin */; };
 		DA00LISBUILD0000000DA004 /* LocalInferenceService.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA00LISFILE00000000DA003 /* LocalInferenceService.swift */; };
 		DA00LITERTLM000000DA002 /* LiteRTLM in Frameworks */ = {isa = PBXBuildFile; productRef = DA00LITERTLM000000DA001 /* LiteRTLM */; };
@@ -125,6 +126,7 @@
 		AA00003100000000000000AA /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
 		AA00004100000000000000AA /* filterphrases.mp4 */ = {isa = PBXFileReference; lastKnownFileType = file; path = filterphrases.mp4; sourceTree = "<group>"; };
 		AA00005100000000000000AA /* PlatformPickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlatformPickerView.swift; sourceTree = "<group>"; };
+		AA00006100000000000000AA /* Platforms.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Platforms.swift; sourceTree = "<group>"; };
 		DA00HEADBIN000000000DA007 /* linear_v3_head.bin */ = {isa = PBXFileReference; lastKnownFileType = archive.macbinary; path = linear_v3_head.bin; sourceTree = "<group>"; };
 		DA00LISFILE00000000DA003 /* LocalInferenceService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalInferenceService.swift; sourceTree = "<group>"; };
 		DA00MDFILE0000000000DA005 /* ModelDownloader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelDownloader.swift; sourceTree = "<group>"; };
@@ -213,6 +215,7 @@
 				AA00000700000000000000AA /* FilterPhraseSheet.swift */,
 				AA00003100000000000000AA /* OnboardingView.swift */,
 				AA00005100000000000000AA /* PlatformPickerView.swift */,
+				AA00006100000000000000AA /* Platforms.swift */,
 				DA00LISFILE00000000DA003 /* LocalInferenceService.swift */,
 				DA00MDFILE0000000000DA005 /* ModelDownloader.swift */,
 				DA00HEADBIN000000000DA007 /* linear_v3_head.bin */,
@@ -543,6 +546,7 @@
 				4E38A4CF2F72199A00496A14 /* AppCheckProviderFactory.swift in Sources */,
 				AA00003000000000000000AA /* OnboardingView.swift in Sources */,
 				AA00005000000000000000AA /* PlatformPickerView.swift in Sources */,
+				AA00006000000000000000AA /* Platforms.swift in Sources */,
 				DA00LISBUILD0000000DA004 /* LocalInferenceService.swift in Sources */,
 				DA00MDBUILD000000000DA006 /* ModelDownloader.swift in Sources */,
 			);

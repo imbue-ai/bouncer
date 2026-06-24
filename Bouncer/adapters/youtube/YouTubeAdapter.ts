@@ -4,6 +4,7 @@ import type {
   PlatformSelectors,
   PostContent,
 } from '../../src/types';
+import { platformById } from '../../src/shared/platforms';
 
 interface LockupStoreData {
   kind?: 'video' | 'ad' | 'short';
@@ -933,6 +934,8 @@ const BouncerYouTubeAdapter = class YouTubeAdapter implements PlatformAdapter {
   }
 };
 
-if (/(^|\.)youtube\.com$/i.test(location.hostname)) {
+// Self-guard via the shared platform registry — covers both
+// www.youtube.com and m.youtube.com.
+if (platformById('youtube')?.hostPattern.test(location.hostname)) {
   window.BouncerAdapter = BouncerYouTubeAdapter;
 }

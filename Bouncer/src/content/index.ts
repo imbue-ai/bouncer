@@ -3,6 +3,7 @@
 
 import type { PlatformAdapter, PostContent, PipelineResponse, BackgroundToContentMessage, DescriptionKey } from '../types';
 import { getStorage, removeStorage, getDescriptions, setDescriptions } from '../shared/storage';
+import { enabledStorageKey } from '../shared/platforms';
 import { FILTER_PACK_CODE_PREFIX } from '../shared/share-encoding';
 
 import {
@@ -585,16 +586,9 @@ import { formatPostForEvaluation } from '../shared/utils';
   async function init() {
     // Per-platform master switch. `adapter.siteId` is the source of truth
     // for which storage key gates this run. Default true so installs that
-    // pre-date the toggle keep filtering as before.
-    // Map each adapter to its master-switch storage key. Using `as const`
-    // gives TS a literal-union type for `platformKey` so it lines up with
-    // the typed StorageSchema keys getStorage accepts.
-    const platformKeyMap = {
-      twitter: 'twitterEnabled',
-      youtube: 'youtubeEnabled',
-      linkedin: 'linkedinEnabled',
-    } as const;
-    const platformKey = platformKeyMap[adapter.siteId];
+    // pre-date the toggle keep filtering as before. The {id}Enabled naming
+    // convention is centralized in the platform registry.
+    const platformKey = enabledStorageKey(adapter.siteId);
     const data = await getStorage(['enabled', 'filterReplies', platformKey]);
     let globalEnabled = data.enabled !== false;
     const platformEnabled = data[platformKey] !== false;
