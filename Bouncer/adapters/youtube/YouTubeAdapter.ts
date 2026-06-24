@@ -4,7 +4,11 @@ import type {
   PlatformSelectors,
   PostContent,
 } from '../../src/types';
-import { platformById } from '../../src/shared/platforms';
+// NOTE: adapters are built with esbuild bundle:false (standalone IIFE per
+// manifest content_scripts entry), so we CANNOT import shared/platforms
+// here — esbuild would leave `require(...)` calls that fail in the browser.
+// Keep the hostname check inline. Must match the `youtube` entry in
+// src/shared/platforms.ts (PLATFORM_RUNTIME.youtube.hostPattern).
 
 interface LockupStoreData {
   kind?: 'video' | 'ad' | 'short';
@@ -934,8 +938,8 @@ const BouncerYouTubeAdapter = class YouTubeAdapter implements PlatformAdapter {
   }
 };
 
-// Self-guard via the shared platform registry — covers both
-// www.youtube.com and m.youtube.com.
-if (platformById('youtube')?.hostPattern.test(location.hostname)) {
+// Self-guard by hostname — covers both www.youtube.com and m.youtube.com.
+// Regex mirrors src/shared/platforms.ts PLATFORM_RUNTIME.youtube.hostPattern.
+if (/(^|\.)(m\.)?youtube\.com$/i.test(location.hostname)) {
   window.BouncerAdapter = BouncerYouTubeAdapter;
 }

@@ -22,7 +22,11 @@
 // This file is fully additive — it does not touch the Twitter adapter.
 
 import type { PlatformAdapter, PlatformSelectors, PostContent, QuoteContent } from '../../src/types';
-import { platformById } from '../../src/shared/platforms';
+// NOTE: adapters are built with esbuild bundle:false (standalone IIFE per
+// manifest content_scripts entry), so we CANNOT import shared/platforms
+// here — esbuild would leave `require(...)` calls that fail in the browser.
+// Keep the hostname check inline. Must match the `linkedin` entry in
+// src/shared/platforms.ts (PLATFORM_RUNTIME.linkedin.hostPattern).
 
 const BouncerLinkedInAdapter = class LinkedInAdapter implements PlatformAdapter {
   siteId = 'linkedin' as const;
@@ -682,10 +686,11 @@ const BouncerLinkedInAdapter = class LinkedInAdapter implements PlatformAdapter 
   }
 };
 
-// Self-guard via the shared platform registry. On iOS all platform adapter
-// scripts inject on every page; without this guard LinkedIn would clobber
-// Twitter's and YouTube's assignments and the content script would try to
-// extract posts using the wrong selectors.
-if (platformById('linkedin')?.hostPattern.test(location.hostname)) {
+// Self-guard by hostname. On iOS all platform adapter scripts inject on
+// every page; without this guard LinkedIn would clobber Twitter's and
+// YouTube's assignments and the content script would try to extract posts
+// using the wrong selectors.
+// Regex mirrors src/shared/platforms.ts PLATFORM_RUNTIME.linkedin.hostPattern.
+if (/(^|\.)linkedin\.com$/i.test(location.hostname)) {
   window.BouncerAdapter = BouncerLinkedInAdapter;
 }
