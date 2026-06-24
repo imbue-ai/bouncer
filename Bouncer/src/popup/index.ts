@@ -1,10 +1,63 @@
 // Bouncer - Popup Script
 
-import type { ModelDef, LocalModelStatus, StorageSchema } from '../types';
+import type { ModelDef, LocalModelStatus, StorageSchema, SiteId } from '../types';
 import { PREDEFINED_MODELS, DEFAULT_MODEL } from '../shared/models';
 import { escapeHtml, parseHTML } from '../shared/utils';
 import { getStorage, setStorage, removeStorage, clampThreshold, clampImageThreshold } from '../shared/storage';
 import { asyncHandler } from '../shared/async';
+import { PLATFORMS, enabledStorageKey } from '../shared/platforms';
+
+// DOM id helpers — keep these in one place so the render path, hydration,
+// and change-handlers all agree on the naming convention.
+const platformRowId    = (id: SiteId) => `platformProvider${id.charAt(0).toUpperCase()}${id.slice(1)}`;
+const platformToggleId = (id: SiteId) => `enable${id.charAt(0).toUpperCase()}${id.slice(1)}`;
+
+// Platform-specific accordion sub-content (Twitter's "Filter replies",
+// YouTube's "Show placeholder", etc.). Add an entry here when a platform
+// needs its own row-nested toggle; LinkedIn-style platforms (no sub-row)
+// just return ''.
+function platformSubContentHTML(id: SiteId): string {
+  switch (id) {
+    case 'twitter':
+      return '<div class="api-provider-content"><label class="checkbox-label">'
+        + '<input type="checkbox" id="enableFilterReplies" checked>'
+        + '<span>Filter replies</span></label></div>';
+    case 'youtube':
+      return '<div class="api-provider-content"><label class="checkbox-label">'
+        + '<input type="checkbox" id="enableYoutubePlaceholder">'
+        + '<span>Show "Filtered by Bouncer" placeholder instead of removing</span>'
+        + '</label></div>';
+    default:
+      return '';
+  }
+}
+
+// Render the per-platform master-toggle rows into #platformsContainer. The
+// accordion expand/collapse handler in this file targets data-platform, so
+// the rendered DOM exposes that attribute on each row's header.
+function renderPlatformRows(): void {
+  const container = document.getElementById('platformsContainer');
+  if (!container) return;
+  const html = PLATFORMS.map(p => {
+    const hasSub = platformSubContentHTML(p.id).length > 0;
+    return `
+      <div class="api-provider platform-provider" id="${platformRowId(p.id)}">
+        <div class="api-provider-header" data-platform="${p.id}">
+          <span class="api-provider-name">${escapeHtml(p.displayName)}</span>
+          <div class="api-provider-header-right">
+            <label class="ts-inline" title="Enable Bouncer on ${escapeHtml(p.displayName)}">
+              <input type="checkbox" id="${platformToggleId(p.id)}" checked>
+              <span class="ts-inline-slider" aria-hidden="true"></span>
+            </label>
+            ${hasSub ? '<span class="api-provider-arrow">&#9662;</span>' : ''}
+          </div>
+        </div>
+        ${platformSubContentHTML(p.id)}
+      </div>
+    `;
+  }).join('');
+  container.replaceChildren(parseHTML(html));
+}
 
 // Storage key for predefined model API kwargs overrides
 // Format: { "api:modelName": { key: value, ... }, ... }
@@ -98,6 +151,9 @@ document.addEventListener('DOMContentLoaded', () => { init().catch(err => consol
 export async function init() {
   console.log('[Popup] init() called');
   try {
+  // Render the registry-driven platform rows into #platformsContainer
+  // before any handler tries to find them by id.
+  renderPlatformRows();
   const isModal = window.self !== window.top;
 
   // Detect if we're in an iframe (modal mode)
@@ -238,23 +294,17 @@ function setupStorageListener() {
       const el = document.getElementById('enableFilterReplies') as HTMLInputElement | null;
       if (el && el.checked !== checked) el.checked = checked;
     }
-    if (areaName === 'local' && changes.twitterEnabled) {
-      const checked = changes.twitterEnabled.newValue !== false;
-      const el = document.getElementById('enableTwitter') as HTMLInputElement | null;
-      if (el && el.checked !== checked) el.checked = checked;
-      document.getElementById('platformProviderTwitter')?.classList.toggle('disabled', !checked);
-    }
-    if (areaName === 'local' && changes.youtubeEnabled) {
-      const checked = changes.youtubeEnabled.newValue !== false;
-      const el = document.getElementById('enableYoutube') as HTMLInputElement | null;
-      if (el && el.checked !== checked) el.checked = checked;
-      document.getElementById('platformProviderYoutube')?.classList.toggle('disabled', !checked);
-    }
-    if (areaName === 'local' && changes.linkedinEnabled) {
-      const checked = changes.linkedinEnabled.newValue !== false;
-      const el = document.getElementById('enableLinkedin') as HTMLInputElement | null;
-      if (el && el.checked !== checked) el.checked = checked;
-      document.getElementById('platformProviderLinkedin')?.classList.toggle('disabled', !checked);
+    // Per-platform master-toggle storage-change handlers — iterated.
+    if (areaName === 'local') {
+      for (const p of PLATFORMS) {
+        const key = enabledStorageKey(p.id);
+        const change = changes[key];
+        if (!change) continue;
+        const checked = change.newValue !== false;
+        const el = document.getElementById(platformToggleId(p.id)) as HTMLInputElement | null;
+        if (el && el.checked !== checked) el.checked = checked;
+        document.getElementById(platformRowId(p.id))?.classList.toggle('disabled', !checked);
+      }
     }
     if (areaName === 'local' && changes.youtubeShowPlaceholder) {
       const checked = changes.youtubeShowPlaceholder.newValue === true;
@@ -303,10 +353,9 @@ async function loadSettings() {
     'aiImageDetectionThreshold',
     'aiTextFilterExperimental',
     'filterReplies',
-    'twitterEnabled',
-    'youtubeEnabled',
-    'linkedinEnabled',
-    'youtubeShowPlaceholder'
+    'youtubeShowPlaceholder',
+    // Per-platform master-switch keys come from the registry.
+    ...PLATFORMS.map(p => enabledStorageKey(p.id)),
   ]);
 
   // Load predefined model kwargs overrides
@@ -333,15 +382,15 @@ async function loadSettings() {
   // Platform master toggles. Default to true for backwards compatibility.
   // The expanded/disabled visual state mirrors the toggle's value so the
   // row reads as "Bouncer is/isn't doing anything on this platform".
-  const twitterEl = document.getElementById('enableTwitter') as HTMLInputElement | null;
-  if (twitterEl) twitterEl.checked = data.twitterEnabled !== false;
-  document.getElementById('platformProviderTwitter')?.classList.toggle('disabled', data.twitterEnabled === false);
-  const youtubeEl = document.getElementById('enableYoutube') as HTMLInputElement | null;
-  if (youtubeEl) youtubeEl.checked = data.youtubeEnabled !== false;
-  document.getElementById('platformProviderYoutube')?.classList.toggle('disabled', data.youtubeEnabled === false);
-  const linkedinEl = document.getElementById('enableLinkedin') as HTMLInputElement | null;
-  if (linkedinEl) linkedinEl.checked = data.linkedinEnabled !== false;
-  document.getElementById('platformProviderLinkedin')?.classList.toggle('disabled', data.linkedinEnabled === false);
+  // Per-platform master-toggle initial hydration — iterated from the
+  // registry. Defaults to "checked" (treat missing as true) for backwards
+  // compatibility with installs predating this toggle.
+  for (const p of PLATFORMS) {
+    const enabled = data[enabledStorageKey(p.id)] !== false;
+    const el = document.getElementById(platformToggleId(p.id)) as HTMLInputElement | null;
+    if (el) el.checked = enabled;
+    document.getElementById(platformRowId(p.id))?.classList.toggle('disabled', !enabled);
+  }
 
   // YouTube placeholder toggle (off by default — match Twitter's "remove"
   // behavior unless the user opts in).
@@ -721,26 +770,19 @@ function setupEventListeners() {
     await setStorage({ filterReplies: checked });
   })().catch(err => console.error('[Popup] enableFilterReplies change failed:', err)); });
 
-  // Platform master toggles. Dim the body in-line so the user sees the
+  // Platform master toggles. Iterate the registry instead of one
+  // handler-per-platform. Dim the body in-line so the user sees the
   // platform's sub-settings become inert without waiting for storage to
   // round-trip. Persisting drives the content script's gate.
-  document.getElementById('enableTwitter')?.addEventListener('change', (e) => { (async () => {
-    const checked = (e.target as HTMLInputElement).checked;
-    document.getElementById('platformProviderTwitter')?.classList.toggle('disabled', !checked);
-    await setStorage({ twitterEnabled: checked });
-  })().catch(err => console.error('[Popup] enableTwitter change failed:', err)); });
-
-  document.getElementById('enableYoutube')?.addEventListener('change', (e) => { (async () => {
-    const checked = (e.target as HTMLInputElement).checked;
-    document.getElementById('platformProviderYoutube')?.classList.toggle('disabled', !checked);
-    await setStorage({ youtubeEnabled: checked });
-  })().catch(err => console.error('[Popup] enableYoutube change failed:', err)); });
-
-  document.getElementById('enableLinkedin')?.addEventListener('change', (e) => { (async () => {
-    const checked = (e.target as HTMLInputElement).checked;
-    document.getElementById('platformProviderLinkedin')?.classList.toggle('disabled', !checked);
-    await setStorage({ linkedinEnabled: checked });
-  })().catch(err => console.error('[Popup] enableLinkedin change failed:', err)); });
+  for (const p of PLATFORMS) {
+    document.getElementById(platformToggleId(p.id))?.addEventListener('change', (e) => {
+      (async () => {
+        const checked = (e.target as HTMLInputElement).checked;
+        document.getElementById(platformRowId(p.id))?.classList.toggle('disabled', !checked);
+        await setStorage({ [enabledStorageKey(p.id)]: checked });
+      })().catch(err => console.error(`[Popup] ${platformToggleId(p.id)} change failed:`, err));
+    });
+  }
 
   document.getElementById('enableYoutubePlaceholder')?.addEventListener('change', (e) => { (async () => {
     const checked = (e.target as HTMLInputElement).checked;

@@ -11,6 +11,7 @@ import { runDetectors, type Detector, type DetectorResult } from './detectors';
 import { callLocalInference, localEngine } from './local-model';
 import { iosLocalClassify, iosLocalAiTextDetect } from './ios-local-bridge';
 import { getStorage, setStorage, removeStorage, getDescriptions, clampThreshold, clampImageThreshold, DEFAULT_AI_TEXT_DETECTION_THRESHOLD, DEFAULT_AI_IMAGE_DETECTION_THRESHOLD } from '../shared/storage';
+import { PLATFORMS, enabledStorageKey } from '../shared/platforms';
 export { DEFAULT_AI_TEXT_DETECTION_THRESHOLD, DEFAULT_AI_IMAGE_DETECTION_THRESHOLD };
 import type {
   EvaluationResult, PipelineResponse, PipelineError, PendingEvaluation,
@@ -470,17 +471,25 @@ function broadcastToTabs(message: BackgroundToContentMessage): void {
 // siteId is optional - if provided, fetches site-specific descriptions
 export async function getSettings(siteId?: SiteId): Promise<Settings> {
   const descriptionsKey = siteId ? `descriptions_${siteId}` as const : undefined;
+  // Per-platform `${id}Enabled` storage keys come from the registry — no
+  // need to extend this list when a new platform is added.
+  const platformEnabledKeys = PLATFORMS.map(p => enabledStorageKey(p.id));
   const settingsKeys = [
     'apiKey', 'openaiApiKey', 'openaiApiBase', 'openrouterApiKey', 'geminiApiKey',
     'anthropicApiKey', 'enabled', 'useEmbeddings', 'selectedModel',
     'customModels', 'predefinedModelKwargs', 'aiTextFilterEnabled', 'aiTextDetectionThreshold',
     'aiImageFilterEnabled', 'aiImageDetectionThreshold',
-    'filterReplies', 'twitterEnabled', 'youtubeEnabled', 'linkedinEnabled', 'youtubeShowPlaceholder'
+    'filterReplies', 'youtubeShowPlaceholder',
+    ...platformEnabledKeys,
   ] as const;
   const [data, descriptions] = await Promise.all([
     getStorage([...settingsKeys]),
     descriptionsKey ? getDescriptions(descriptionsKey) : Promise.resolve([] as string[])
   ]);
+  const platformEnabled: Partial<Record<SiteId, boolean>> = {};
+  for (const p of PLATFORMS) {
+    platformEnabled[p.id] = data[enabledStorageKey(p.id)] !== false;
+  }
   return {
     apiKey: data.apiKey || '',
     openaiApiKey: data.openaiApiKey || '',
@@ -499,9 +508,7 @@ export async function getSettings(siteId?: SiteId): Promise<Settings> {
     aiImageFilterEnabled: data.aiImageFilterEnabled === true,
     aiImageDetectionThreshold: clampImageThreshold(data.aiImageDetectionThreshold),
     filterReplies: data.filterReplies !== false,
-    twitterEnabled: data.twitterEnabled !== false,
-    youtubeEnabled: data.youtubeEnabled !== false,
-    linkedinEnabled: data.linkedinEnabled !== false,
+    platformEnabled,
     youtubeShowPlaceholder: data.youtubeShowPlaceholder === true
   };
 }

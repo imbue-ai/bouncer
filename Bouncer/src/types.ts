@@ -1,7 +1,11 @@
 // ==================== Site IDs ====================
 
-/** Known platform adapter identifiers. Add new entries when adding adapters. */
-export type SiteId = 'twitter' | 'youtube' | 'linkedin';
+/** Known platform adapter identifiers — derived from the PLATFORMS literal
+ *  in shared/platforms.ts. Adding a new platform there automatically extends
+ *  this union. Re-exported here so existing `import { SiteId } from '../types'`
+ *  call sites keep working without touching every consumer. */
+import type { SiteId } from './shared/platforms';
+export type { SiteId };
 
 /** Where the filter box is rendered on a platform.
  *  - `sidebar`: Twitter-style — pinned in the right-hand column, with companion
@@ -188,10 +192,10 @@ interface SettingsBase {
   // Per-platform master switches. Default to true so existing installs
   // keep filtering on every supported platform; the content script reads
   // the matching key based on `adapter.siteId` and skips all processing
-  // when its platform's switch is off.
-  twitterEnabled: boolean;
-  youtubeEnabled: boolean;
-  linkedinEnabled: boolean;
+  // when its platform's switch is off. Stored in chrome.storage.local under
+  // `${siteId}Enabled` keys (see enabledStorageKey in shared/platforms.ts);
+  // this map is derived from those keys at settings-read time.
+  platformEnabled: Partial<Record<SiteId, boolean>>;
   // When true on YouTube, filtered videos are left in the grid and shown
   // as a "Filtered by Bouncer" placeholder card (see youtube.css). Default
   // false — remove the card outright, matching Twitter's behavior.
@@ -373,6 +377,10 @@ export interface IOSDeps {
 /** Per-site description keys, derived from SiteId. */
 type DescriptionKeys = { [K in SiteId as `descriptions_${K}`]: string[] };
 
+/** Per-platform master-switch keys, derived from SiteId. Adding a new
+ *  platform automatically extends this map. */
+type PlatformEnabledKeys = { [K in SiteId as `${K}Enabled`]: boolean };
+
 /** Valid storage keys for site-specific descriptions. */
 export type DescriptionKey = `descriptions_${SiteId}`;
 
@@ -387,7 +395,7 @@ export type StorageSchema = SettingsBase & {
   googleAuthToken: string;
   openrouterCodeVerifier: string;
   lastSeenVersion: string;
-} & DescriptionKeys;
+} & DescriptionKeys & PlatformEnabledKeys;
 
 // ==================== API Response Types ====================
 

@@ -1,59 +1,83 @@
 // Platform registry — single source of truth for everything Bouncer needs
-// to know about a supported site. Adding a new platform should be one entry
-// here (plus the adapter implementation itself); other call sites read from
-// the registry instead of hardcoding ids.
+// to know about a supported site. Adding a new platform is:
+//   - one entry in PLATFORM_IDS + PLATFORM_RUNTIME below
+//   - one entry in platforms.config.json (consumed by both the TS bundle
+//     and the build-time manifest generator)
+//   - the adapter implementation itself
 //
-// Phase 1 of the registry refactor keeps `SiteId` declared in types.ts so
-// the rest of the codebase keeps importing it from the same place. A later
-// phase will derive `SiteId` from the registry literal so the union and the
-// registry can't drift.
+// `platforms.config.json` is the JSON-safe slice (id + manifest host +
+// asset paths) so build.js can read the same data without parsing TS.
+// `PLATFORM_RUNTIME` here adds the runtime-only fields (RegExp, display
+// name, feed URL) and the two are joined into the public `PLATFORMS`
+// array via a registry-id lookup.
 
-import type { SiteId } from '../types';
+import platformsConfig from './platforms.config.json';
 
-export interface PlatformDef {
-  /** Canonical short identifier used as the storage-key suffix and the
-   *  `adapter.siteId` value. */
+/** Literal-tuple of every supported platform id. SiteId is derived from
+ *  this, so adding a new platform automatically extends the union — there
+ *  is no longer a separate type alias to keep in sync. */
+export const PLATFORM_IDS = ['twitter', 'youtube', 'linkedin'] as const;
+
+export type SiteId = typeof PLATFORM_IDS[number];
+
+/** Build-time data each platform contributes to the manifest. Lives in
+ *  platforms.config.json so generate-manifests.mjs can read it without
+ *  needing a TS toolchain. */
+export interface PlatformBuildConfig {
   readonly id: SiteId;
+  /** Pattern used in host_permissions, content_scripts, and
+   *  web_accessible_resources matches. */
+  readonly manifestHost: string;
+  /** Path to the bundled adapter JS, relative to the extension root. */
+  readonly adapterScript: string;
+  /** Path to the platform's stylesheet, relative to the extension root. */
+  readonly cssPath: string;
+  /** Additional web-accessible files this platform's adapter loads via
+   *  chrome.runtime.getURL (page-world helper scripts, etc.). */
+  readonly extraWebAccessible: readonly string[];
+}
+
+/** Runtime-only fields — RegExp can't live in JSON; everything else is
+ *  purely for the in-app code paths and not needed at manifest-gen time. */
+interface PlatformRuntimeOnly {
   /** Human-facing display name (popup labels, picker rows). */
   readonly displayName: string;
   /** Regex matched against `location.hostname` for self-guarding adapters. */
   readonly hostPattern: RegExp;
-  /** Pattern used in `manifest.base.json` host_permissions / content_scripts /
-   *  web_accessible_resources. Kept here for documentation; the manifest itself
-   *  is still hand-edited (a later phase will generate it from this field). */
-  readonly manifestHost: string;
-  /** Where the platform's feed lives. The iOS WebView navigates here when the
-   *  user picks the platform; some flows also use it as a "go to feed" target. */
+  /** Where the platform's feed lives. */
   readonly feedUrl: string;
-  /** Optional alternate URL for first-launch on the platform when the user is
-   *  not signed in (X has a login flow; YouTube/LinkedIn don't gate this way). */
+  /** Optional alternate URL for first-launch when the user is not signed
+   *  in (X has a login flow; YouTube/LinkedIn don't gate this way). */
   readonly loginUrl?: string;
 }
 
-export const PLATFORMS: readonly PlatformDef[] = [
-  {
-    id: 'twitter',
+const PLATFORM_RUNTIME: Record<SiteId, PlatformRuntimeOnly> = {
+  twitter: {
     displayName: 'X (Twitter)',
     hostPattern: /(^|\.)(x|twitter)\.com$/i,
-    manifestHost: 'https://x.com/*',
     feedUrl: 'https://x.com/home',
     loginUrl: 'https://x.com/i/flow/login',
   },
-  {
-    id: 'youtube',
+  youtube: {
     displayName: 'YouTube',
     hostPattern: /(^|\.)(m\.)?youtube\.com$/i,
-    manifestHost: 'https://www.youtube.com/*',
     feedUrl: 'https://www.youtube.com/',
   },
-  {
-    id: 'linkedin',
+  linkedin: {
     displayName: 'LinkedIn',
     hostPattern: /(^|\.)linkedin\.com$/i,
-    manifestHost: 'https://www.linkedin.com/*',
     feedUrl: 'https://www.linkedin.com/feed/',
   },
-];
+};
+
+export type PlatformDef = PlatformBuildConfig & PlatformRuntimeOnly;
+
+/** Joined registry: build-config (from JSON) + runtime fields. */
+export const PLATFORMS: readonly PlatformDef[] =
+  (platformsConfig as readonly PlatformBuildConfig[]).map(cfg => ({
+    ...cfg,
+    ...PLATFORM_RUNTIME[cfg.id],
+  }));
 
 // ---------------------------------------------------------------------------
 // Lookup helpers

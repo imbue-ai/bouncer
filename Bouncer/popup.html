@@ -91,58 +91,10 @@
     <section>
       <label>Platforms</label>
 
-      <!-- X (Twitter) -->
-      <div class="api-provider platform-provider" id="platformProviderTwitter">
-        <div class="api-provider-header" data-platform="twitter">
-          <span class="api-provider-name">X (Twitter)</span>
-          <div class="api-provider-header-right">
-            <label class="ts-inline" title="Enable Bouncer on X">
-              <input type="checkbox" id="enableTwitter" checked>
-              <span class="ts-inline-slider" aria-hidden="true"></span>
-            </label>
-            <span class="api-provider-arrow">&#9662;</span>
-          </div>
-        </div>
-        <div class="api-provider-content">
-          <label class="checkbox-label">
-            <input type="checkbox" id="enableFilterReplies" checked>
-            <span>Filter replies</span>
-          </label>
-        </div>
-      </div>
-
-      <!-- YouTube -->
-      <div class="api-provider platform-provider" id="platformProviderYoutube">
-        <div class="api-provider-header" data-platform="youtube">
-          <span class="api-provider-name">YouTube</span>
-          <div class="api-provider-header-right">
-            <label class="ts-inline" title="Enable Bouncer on YouTube">
-              <input type="checkbox" id="enableYoutube" checked>
-              <span class="ts-inline-slider" aria-hidden="true"></span>
-            </label>
-            <span class="api-provider-arrow">&#9662;</span>
-          </div>
-        </div>
-        <div class="api-provider-content">
-          <label class="checkbox-label">
-            <input type="checkbox" id="enableYoutubePlaceholder">
-            <span>Show "Filtered by Bouncer" placeholder instead of removing</span>
-          </label>
-        </div>
-      </div>
-
-      <!-- LinkedIn -->
-      <div class="api-provider platform-provider" id="platformProviderLinkedin">
-        <div class="api-provider-header" data-platform="linkedin">
-          <span class="api-provider-name">LinkedIn</span>
-          <div class="api-provider-header-right">
-            <label class="ts-inline" title="Enable Bouncer on LinkedIn">
-              <input type="checkbox" id="enableLinkedin" checked>
-              <span class="ts-inline-slider" aria-hidden="true"></span>
-            </label>
-          </div>
-        </div>
-      </div>
+      <!-- Platform rows are rendered by popup/index.ts from
+           src/shared/platforms.config.json. Adding a new platform doesn't
+           require editing this file. -->
+      <div id="platformsContainer"></div>
     </section>
 
     <section>

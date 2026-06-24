@@ -1,0 +1,23 @@
+[
+  {
+    "id": "twitter",
+    "manifestHost": "https://x.com/*",
+    "adapterScript": "dist/TwitterAdapter.js",
+    "cssPath": "adapters/twitter/twitter.css",
+    "extraWebAccessible": ["adapters/twitter/fiber-extractor.js"]
+  },
+  {
+    "id": "youtube",
+    "manifestHost": "https://www.youtube.com/*",
+    "adapterScript": "dist/YouTubeAdapter.js",
+    "cssPath": "adapters/youtube/youtube.css",
+    "extraWebAccessible": ["adapters/youtube/lockup-extractor.js"]
+  },
+  {
+    "id": "linkedin",
+    "manifestHost": "https://www.linkedin.com/*",
+    "adapterScript": "dist/LinkedInAdapter.js",
+    "cssPath": "adapters/linkedin/linkedin.css",
+    "extraWebAccessible": []
+  }
+]
