@@ -1156,16 +1156,23 @@ struct ProvidersSettingsView: View {
                 localService.startDownload()
             }
         case .downloading:
+            // .borderless button style: without it, both buttons share
+            // one row-wide hit region in Form/List and a single tap fires
+            // every action closure in the row.
             HStack {
                 Button("Pause") { localService.pauseDownload() }
+                    .buttonStyle(.borderless)
                 Spacer()
                 Button("Cancel", role: .destructive) { localService.cancelDownload() }
+                    .buttonStyle(.borderless)
             }
         case .paused:
             HStack {
                 Button("Resume") { localService.startDownload() }
+                    .buttonStyle(.borderless)
                 Spacer()
                 Button("Cancel", role: .destructive) { localService.cancelDownload() }
+                    .buttonStyle(.borderless)
             }
         case .downloaded, .ready, .loading:
             Button("Delete model", role: .destructive) {

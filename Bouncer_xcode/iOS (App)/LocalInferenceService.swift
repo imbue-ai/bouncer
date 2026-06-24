@@ -186,9 +186,15 @@ final class LocalInferenceService: ObservableObject {
 
     private let inferenceQueue = AsyncSerialQueue()
     private init() {
-        self.downloader = ModelDownloader()
+        // Background-session singleton: AppDelegate forwards relaunch
+        // events through ModelDownloader.shared, so this service must use
+        // the same instance.
+        self.downloader = ModelDownloader.shared
         refreshStatusFromDisk()
         observeDownloader()
+        // Pick up any download iOS continued while the app was suspended
+        // or killed; also reflect persisted resume data into the UI.
+        Task { await self.downloader.reconcileWithSession() }
     }
 
     // MARK: - Public API
@@ -525,6 +531,12 @@ final class LocalInferenceService: ObservableObject {
             guard let self else { return }
             do {
                 try await self.downloader.download(from: Self.modelURL)
+            } catch is CancellationError {
+                // User-initiated pause/cancel — not a failure. The
+                // downloader's own status (.paused or .notStarted) is
+                // already authoritative; the 0.5s status timer will
+                // pick it up. Mirroring it here would race the timer
+                // and briefly flash "Download failed" in the UI.
             } catch {
                 await MainActor.run {
                     self.modelStatus = .error("Download failed: \(error.localizedDescription)")
@@ -535,6 +547,13 @@ final class LocalInferenceService: ObservableObject {
 
     func pauseDownload() {
         downloader.pause()
+    }
+
+    // Reconcile with the background URLSession — call from app foreground
+    // and from settings-view onAppear so UI matches whatever iOS did
+    // while we were suspended.
+    func reconcileDownload() {
+        Task { await downloader.reconcileWithSession() }
     }
 
     func cancelDownload() {

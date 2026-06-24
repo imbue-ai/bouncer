@@ -20,4 +20,10 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         window.makeKeyAndVisible()
         self.window = window
     }
+
+    func sceneWillEnterForeground(_ scene: UIScene) {
+        // Catch up to anything the background URLSession did while we
+        // were suspended: completed downloads, persisted pauses, etc.
+        LocalInferenceService.shared.reconcileDownload()
+    }
 }
