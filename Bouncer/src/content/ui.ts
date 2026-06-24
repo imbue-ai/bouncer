@@ -261,7 +261,7 @@ function getSignInHTML() {
       <div class="filter-signin-prompt">
         ${signinButtonHTML('Activate Bouncer')}
         <p class="ff-signin-explanation">${explanation}</p>
-        <button class="skip-signin-btn">Skip for now</button>
+        <button class="skip-signin-btn">Trial without signing in<span class="skip-signin-arrow" aria-hidden="true">→</span></button>
       </div>
     </div>
   `;

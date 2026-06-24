@@ -1353,7 +1353,16 @@ article {
 
 .skip-signin-btn:hover {
   color: rgba(255, 255, 255, 0.65);
-  text-decoration: underline;
+}
+
+.skip-signin-arrow {
+  margin-left: 4px;
+  font-size: 11px;
+  transition: transform 0.15s;
+}
+
+.skip-signin-btn:hover .skip-signin-arrow {
+  transform: translateX(2px);
 }
 
 .light-mode .skip-signin-btn {

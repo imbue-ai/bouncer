@@ -19,6 +19,16 @@ interface PendingRequest {
   submissionTime: number | null;
 }
 
+/** Out-of-band server push instructing the client to force a sign-in (e.g. the
+ *  anonymous tweet limit was reached server-side). Not part of the ack/result
+ *  routing — handled before validation since `requestId` may be null. */
+export interface ForceLoginMessage {
+  type: 'forceLogin';
+  reason?: string;
+  message?: string;
+  requestId?: string | null;
+}
+
 /** Server ack message — confirms job submission. */
 interface WSAckMessage {
   requestId?: string;
@@ -84,12 +94,16 @@ class ImbueWebSocket {
   unackedRequests: Map<string, PendingRequest>;
   // Requests that have been acked (have a jobId) but waiting for result
   pendingRequests: Map<string, PendingRequest>;
+  // Invoked when the backend pushes a `forceLogin` message. Set by the
+  // background entry point to broadcast the guest-limit gate to content tabs.
+  onForceLogin: ((msg: ForceLoginMessage) => void) | null;
 
   constructor() {
     this.ws = null;
     this.connectPromise = null;
     this.unackedRequests = new Map();
     this.pendingRequests = new Map();
+    this.onForceLogin = null;
   }
 
   // Returns a connected WebSocket, reusing existing or creating new
@@ -155,6 +169,12 @@ class ImbueWebSocket {
       ws.onmessage = (event: MessageEvent) => {
         try {
           const parsed: unknown = JSON.parse(event.data as string);
+          // forceLogin is an out-of-band push (requestId may be null) — handle
+          // it before validation, which would otherwise drop it.
+          if (parsed && typeof parsed === 'object' && (parsed as { type?: unknown }).type === 'forceLogin') {
+            this._handleForceLogin(parsed as ForceLoginMessage);
+            return;
+          }
           const message = validateWSMessage(parsed);
           if (!message) {
             console.warn('[WS Manager] Invalid message shape, ignoring');
@@ -269,6 +289,39 @@ class ImbueWebSocket {
     // Move to pendingRequests keyed by jobId
     if (data.jobId) {
       this.pendingRequests.set(data.jobId, request);
+    }
+  }
+
+  // Handle a forceLogin push: notify the listener (which gates the UI), then
+  // settle the request that triggered it so it doesn't hang until timeout.
+  private _handleForceLogin(msg: ForceLoginMessage): void {
+    console.log('[WS Manager] forceLogin received, reason:', msg.reason);
+    this.onForceLogin?.(msg);
+
+    const reqId = typeof msg.requestId === 'string' ? msg.requestId : null;
+    if (!reqId) return;
+
+    // Resolve as a benign "not hidden" filter result — the post stays visible,
+    // no error banner, and the gate prompt is what the user sees instead.
+    const benign = {
+      shouldHide: false, reasoning: null, category: null,
+      rawResponse: '', processingTime: 0, jobId: '',
+    } as unknown as ImbueAPIResponse;
+
+    const unacked = this.unackedRequests.get(reqId);
+    if (unacked) {
+      clearTimeout(unacked.timeoutId);
+      unacked.resolve(benign);
+      this.unackedRequests.delete(reqId);
+      return;
+    }
+    for (const [jobId, pending] of this.pendingRequests) {
+      if (pending.requestId === reqId) {
+        clearTimeout(pending.timeoutId);
+        pending.resolve(benign);
+        this.pendingRequests.delete(jobId);
+        return;
+      }
     }
   }
 

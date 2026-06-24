@@ -3,11 +3,20 @@
 
 import type { ImbueAPIResponse } from '../types';
 
+// Mirrors ws-manager.ts's ForceLoginMessage so type-only imports resolve.
+export interface ForceLoginMessage {
+  type: 'forceLogin';
+  reason?: string;
+  message?: string;
+  requestId?: string | null;
+}
+
 export const imbueWebSocket = {
   ws: null as WebSocket | null,
   connectPromise: null as Promise<WebSocket> | null,
   unackedRequests: new Map(),
   pendingRequests: new Map(),
+  onForceLogin: null as ((msg: ForceLoginMessage) => void) | null,
 
   disconnect(): void {},
 

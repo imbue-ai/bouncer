@@ -1,7 +1,7 @@
 // Background script entry point: message handler, storage listener, startup, tab tracking
 
 import { PREDEFINED_MODELS } from '../shared/models';
-import { cacheKeyFor } from '../shared/utils';
+import { cacheKeyFor, GUEST_FILTER_LIMIT } from '../shared/utils';
 import { getStorage, setStorage, removeStorage } from '../shared/storage';
 import type { ContentToBackgroundMessage, LocalModelStatus } from '../types';
 import { localEngine } from './local-model';
@@ -15,7 +15,7 @@ import {
   replayDetectorStates,
 } from './pipeline';
 import { sendFeedback } from './providers';
-import { imbueWebSocket } from './ws-manager';
+import { imbueWebSocket, type ForceLoginMessage } from './ws-manager';
 import { launchAuthFlow, signInAnon, isAnonymousUser, refreshAuthToken, getAuthToken, handleAppleSignIn, signOut, IS_SAFARI } from './auth';
 
 // ==================== Tab tracking ====================
@@ -76,6 +76,25 @@ chrome.tabs.onRemoved.addListener((tabId) => {
     });
   }
 });
+
+// ==================== Backend-forced sign-in ====================
+
+// The backend can push a `forceLogin` message (e.g. the anonymous tweet limit
+// was reached server-side). Mirror the local guest-limit gate: persist it via
+// `anonFilterCount` so it survives reloads, then prompt every content tab with
+// the same `guestLimitReached` signal the local path uses.
+imbueWebSocket.onForceLogin = (msg: ForceLoginMessage) => {
+  if (msg.reason && msg.reason !== 'anonymous_tweet_limit') return;
+  void (async () => {
+    const { anonFilterCount } = await getStorage(['anonFilterCount']);
+    if ((anonFilterCount || 0) < GUEST_FILTER_LIMIT) {
+      await setStorage({ anonFilterCount: GUEST_FILTER_LIMIT });
+    }
+  })();
+  for (const tid of activeContentTabs) {
+    void sendToTab(tid, { type: 'guestLimitReached' });
+  }
+};
 
 // ==================== Startup ====================
 
