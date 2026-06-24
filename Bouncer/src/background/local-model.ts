@@ -5,9 +5,11 @@ import type { LocalModelDef, LocalModelStatus, EvaluationPostData, ChatMessage }
 import { PREDEFINED_MODELS } from '../shared/models';
 import { isGPUDeviceLostError, isNetworkError, formatLocalInferenceResult } from '../shared/utils';
 import {
-  TABLE_YESNO_SYSTEM_PROMPT,
+  LOCAL_SYSTEM_PROMPT,
   buildTableYesnoUserMessage,
+  parseTableYesnoResponse,
 } from '../shared/prompts';
+export { parseTableYesnoResponse } from '../shared/prompts';
 import { inferenceQueue } from './inference-queue';
 import { getStorage, setStorage } from '../shared/storage';
 import type { LocalBackend } from './backends/types';
@@ -45,78 +47,6 @@ function selectBackend(_modelDef: LocalModelDef): LocalBackend {
 // Probe whether a model's weights are already on disk, without loading them.
 async function backendIsCached(modelDef: LocalModelDef): Promise<boolean> {
   return isLitertlmCached(modelDef);
-}
-
-// Lenient port of bouncer-evals-and-results' table_yesno.parse(). The model
-// is asked for `| yes | no | yes | …` — one verdict per category in order.
-// Without outlines-style constrained decoding we have to handle malformed
-// output gracefully: any deviation falls back to SHOW with the raw response
-// in the reasoning so users can debug from the popup.
-// Gemma 4 .task builds sometimes leak the chat-template terminator into the
-// generated text instead of suppressing it. Trim a leading echoed
-// <start_of_turn>... and truncate at the first <end_of_turn> so the parser
-// doesn't see those markers as extra verdict cells.
-function stripGemmaMarkers(raw: string): string {
-  let s = raw.replace(/^<start_of_turn>\w*\s*/m, '');
-  const stopIdx = s.indexOf('<end_of_turn>');
-  if (stopIdx !== -1) s = s.slice(0, stopIdx);
-  return s.replace(/<(?:eos|bos|pad)>/gi, '').trim();
-}
-
-export function parseTableYesnoResponse(
-  rawResponse: string | null,
-  categories: string[],
-): { shouldHide: boolean; reasoning: string; matches: string[] } {
-  if (!rawResponse) {
-    return { shouldHide: false, reasoning: 'Empty model response — model returned no output', matches: [] };
-  }
-  const raw = stripGemmaMarkers(rawResponse);
-  // Split on `|`, trim each cell, drop leading/trailing empty cells. This
-  // tolerates the prompt's example shape (`| no | yes | no`), a bare row
-  // without leading `|` (Gemma occasionally drops it — `no|yes|no`), and a
-  // trailing `|`. Junk preamble before the first `|` is handled below.
-  let parts = raw.split('|').map(s => s.trim());
-  while (parts.length > 0 && parts[0] === '') parts.shift();
-  while (parts.length > 0 && parts[parts.length - 1] === '') parts.pop();
-
-  // Some checkpoints prepend a few words before the first `|`. If we have
-  // more cells than expected AND the overflow cells aren't valid verdicts,
-  // treat them as preamble and drop them.
-  const isVerdict = (s: string): boolean => {
-    const v = s.toLowerCase();
-    return v === 'yes' || v === 'no';
-  };
-  if (parts.length > categories.length && !isVerdict(parts[0])) {
-    const overflow = parts.length - categories.length;
-    if (parts.slice(0, overflow).every(p => !isVerdict(p))) {
-      parts = parts.slice(overflow);
-    }
-  }
-
-  if (parts.length !== categories.length) {
-    return {
-      shouldHide: false,
-      reasoning: `Malformed verdict row (expected ${categories.length} verdicts, got ${parts.length}): ${rawResponse}`,
-      matches: [],
-    };
-  }
-  const matches: string[] = [];
-  for (let i = 0; i < parts.length; i++) {
-    const v = parts[i].toLowerCase();
-    if (v !== 'yes' && v !== 'no') {
-      return {
-        shouldHide: false,
-        reasoning: `Malformed verdict row (verdict ${i} = ${JSON.stringify(parts[i])}): ${rawResponse}`,
-        matches: [],
-      };
-    }
-    if (v === 'yes') matches.push(categories[i]);
-  }
-  const shouldHide = matches.length > 0;
-  const reasoning = shouldHide
-    ? `${rawResponse} (Matched: ${matches.join(', ')})`
-    : rawResponse;
-  return { shouldHide, reasoning, matches };
 }
 
 // ==================== LocalEngine ====================
@@ -698,7 +628,7 @@ export async function callLocalInference(
     ];
   };
   const buildMessages = (postText: string, includeImages: boolean): ChatMessage[] => [
-    { role: 'system', content: TABLE_YESNO_SYSTEM_PROMPT },
+    { role: 'system', content: LOCAL_SYSTEM_PROMPT },
     { role: 'user', content: buildUserContent(postText, includeImages) },
   ];
 

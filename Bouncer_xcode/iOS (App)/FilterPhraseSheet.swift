@@ -43,6 +43,12 @@ class FilterSheetViewModel: ObservableObject {
     @Published var aiTextDetectionThreshold: Double = 0.7
     @Published var aiImageFilterEnabled: Bool = false
     @Published var aiImageDetectionThreshold: Double = 0.7
+    // Mirrors chrome.storage.local["selectedModel"]. Settings views need
+    // this on the main settings page to gate AI-text-detection UI: the
+    // on-device classifier path doesn't require an Imbue backend, so the
+    // toggle has to appear whenever EITHER Imbue is configured OR the user
+    // has the on-device model selected.
+    @Published var selectedModel: String = ""
     @Published var filterReplies: Bool = true
     // Which platform's filter phrases the sheet is currently viewing/editing.
     // Independent of the page the WebView is on — the dropdown lets the user
@@ -225,6 +231,25 @@ class FilterSheetViewModel: ObservableObject {
                 }
             } catch {
                 print("[FeedFilter] loadAiTextFilterEnabled error: \(error)")
+            }
+        }
+    }
+
+    func loadSelectedModel() {
+        guard let webView = webView else { return }
+        Task { @MainActor in
+            do {
+                let result = try await webView.callAsyncJavaScript(
+                    "const d = await window.__ff_getStorage(['selectedModel']); return d.selectedModel || '';",
+                    arguments: [:],
+                    in: nil,
+                    contentWorld: Self.contentWorld
+                )
+                if let value = result as? String {
+                    self.selectedModel = value
+                }
+            } catch {
+                print("[FeedFilter] loadSelectedModel error: \(error)")
             }
         }
     }
@@ -851,7 +876,9 @@ struct BouncerSettingsView: View {
             // Note: YouTube's "show placeholder" toggle is intentionally omitted
             // on iOS — filtered videos are always removed (hidden) on mobile.
 
-            if hasImbueBackend {
+            // AI text/image detection is available when either Imbue is configured
+            // OR the on-device classifier model has been picked.
+            if hasImbueBackend || viewModel.selectedModel == kIosLocalGemmaModelKey {
                 Section {
                     Toggle(isOn: Binding(
                         get: { viewModel.aiTextFilterEnabled },
@@ -898,7 +925,11 @@ struct BouncerSettingsView: View {
                 } footer: {
                     Text("Hide posts whose text appears to be written by AI. Posts at or above this confidence are hidden.")
                 }
+            }
 
+            // No on-device image classifier yet — image-detection UI stays
+            // gated on the Imbue backend.
+            if hasImbueBackend {
                 Section {
                     Toggle(isOn: Binding(
                         get: { viewModel.aiImageFilterEnabled },
@@ -973,9 +1004,13 @@ struct BouncerSettingsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
             viewModel.loadFilterReplies()
+            viewModel.loadSelectedModel()
+            // Text-detection settings load whenever the toggle can appear:
+            // Imbue available OR on-device model selected. Image-detection
+            // settings stay gated on Imbue (no on-device image classifier).
+            viewModel.loadAiTextFilterEnabled()
+            viewModel.loadAiTextDetectionThreshold()
             if hasImbueBackend {
-                viewModel.loadAiTextFilterEnabled()
-                viewModel.loadAiTextDetectionThreshold()
                 viewModel.loadAiImageFilterEnabled()
                 viewModel.loadAiImageDetectionThreshold()
             }
@@ -984,6 +1019,8 @@ struct BouncerSettingsView: View {
 }
 
 // MARK: - Providers Settings
+
+private let kIosLocalGemmaModelKey = "iosLocal:gemma-4-e4b"
 
 private struct ProviderSpec: Identifiable {
     let id: String              // "openai", "anthropic", ...
@@ -1057,6 +1094,7 @@ private let imbueModelKey = "imbue"
 
 struct ProvidersSettingsView: View {
     @ObservedObject var viewModel: FilterSheetViewModel
+    @ObservedObject private var localService = LocalInferenceService.shared
 
     // provider id -> current key text in the field
     @State private var keys: [String: String] = [:]
@@ -1095,6 +1133,8 @@ struct ProvidersSettingsView: View {
                 imbueSection
             }
 
+            onDeviceSection
+
             ForEach(providerSpecs) { spec in
                 providerSection(spec)
             }
@@ -1108,6 +1148,7 @@ struct ProvidersSettingsView: View {
 
     private var currentProviderLabel: String {
         if selectedModel == imbueModelKey { return "Imbue" }
+        if selectedModel == kIosLocalGemmaModelKey { return "On-device" }
         guard let colon = selectedModel.firstIndex(of: ":") else { return "" }
         let providerId = String(selectedModel[..<colon])
         return providerSpecs.first(where: { $0.id == providerId })?.displayName ?? providerId
@@ -1115,6 +1156,7 @@ struct ProvidersSettingsView: View {
 
     private var currentModelLabel: String {
         if selectedModel == imbueModelKey { return "Imbue (default)" }
+        if selectedModel == kIosLocalGemmaModelKey { return "Gemma 4 E4B (on-device)" }
         guard let colon = selectedModel.firstIndex(of: ":") else { return selectedModel }
         let providerId = String(selectedModel[..<colon])
         let modelId = String(selectedModel[selectedModel.index(after: colon)...])
@@ -1146,6 +1188,109 @@ struct ProvidersSettingsView: View {
             .buttonStyle(.plain)
         } header: {
             Text("Imbue")
+        }
+    }
+
+    @ViewBuilder
+    private var onDeviceSection: some View {
+        Section {
+            Button {
+                guard isOnDeviceReady else { return }
+                Task { await selectModel(kIosLocalGemmaModelKey) }
+            } label: {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Gemma 4 E4B (on-device)")
+                            .foregroundStyle(isOnDeviceReady ? .primary : .secondary)
+                        Text(onDeviceStatusText)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if selectedModel == kIosLocalGemmaModelKey {
+                        Image(systemName: "checkmark")
+                            .foregroundStyle(.tint)
+                    }
+                }
+            }
+            .buttonStyle(.plain)
+            .disabled(!isOnDeviceReady)
+
+            if case .downloading(let progress) = localService.modelStatus {
+                ProgressView(value: progress)
+            } else if case .paused(let progress) = localService.modelStatus {
+                ProgressView(value: progress)
+            }
+
+            onDeviceActionButtons
+        } header: {
+            Text("On-device")
+        } footer: {
+            Text("Runs Gemma 4 E4B locally for phrase-filter classification and AI-text detection — no posts leave your phone. Downloads ~3.7 GB. Requires Wi-Fi and an iPhone with 6 GB+ RAM.")
+        }
+    }
+
+    private var isOnDeviceReady: Bool {
+        switch localService.modelStatus {
+        case .downloaded, .ready: return true
+        default: return false
+        }
+    }
+
+    private var onDeviceStatusText: String {
+        switch localService.modelStatus {
+        case .notDownloaded:
+            return "Not downloaded"
+        case .downloading(let progress):
+            let pct = Int((progress * 100).rounded())
+            return "Downloading \(pct)% — \(localService.downloadedBytesDisplay) / \(localService.totalBytesDisplay)"
+        case .paused(let progress):
+            let pct = Int((progress * 100).rounded())
+            return "Paused at \(pct)%"
+        case .downloaded:
+            return "Downloaded — ready to load"
+        case .loading:
+            return "Loading…"
+        case .ready:
+            return "Ready"
+        case .error(let message):
+            return "Error: \(message)"
+        }
+    }
+
+    @ViewBuilder
+    private var onDeviceActionButtons: some View {
+        switch localService.modelStatus {
+        case .notDownloaded, .error:
+            Button("Download model") {
+                localService.startDownload()
+            }
+        case .downloading:
+            // .borderless button style: without it, both buttons share
+            // one row-wide hit region in Form/List and a single tap fires
+            // every action closure in the row.
+            HStack {
+                Button("Pause") { localService.pauseDownload() }
+                    .buttonStyle(.borderless)
+                Spacer()
+                Button("Cancel", role: .destructive) { localService.cancelDownload() }
+                    .buttonStyle(.borderless)
+            }
+        case .paused:
+            HStack {
+                Button("Resume") { localService.startDownload() }
+                    .buttonStyle(.borderless)
+                Spacer()
+                Button("Cancel", role: .destructive) { localService.cancelDownload() }
+                    .buttonStyle(.borderless)
+            }
+        case .downloaded, .ready, .loading:
+            Button("Delete model", role: .destructive) {
+                if selectedModel == kIosLocalGemmaModelKey {
+                    Task { await selectModel(imbueModelKey) }
+                }
+                localService.deleteModel()
+            }
         }
     }
 
@@ -1237,6 +1382,7 @@ struct ProvidersSettingsView: View {
         } else {
             self.selectedModel = stored
         }
+        viewModel.selectedModel = self.selectedModel
         self.isLoaded = true
     }
 
@@ -1253,6 +1399,7 @@ struct ProvidersSettingsView: View {
             let fallback = hasImbueBackend ? imbueModelKey : ""
             await viewModel.setStorage(["selectedModel": fallback])
             selectedModel = fallback
+            viewModel.selectedModel = fallback
         }
         await viewModel.clearModelCache()
     }
@@ -1261,6 +1408,7 @@ struct ProvidersSettingsView: View {
     private func selectModel(_ modelKey: String) async {
         await viewModel.setStorage(["selectedModel": modelKey])
         selectedModel = modelKey
+        viewModel.selectedModel = modelKey
         await viewModel.clearModelCache()
     }
 }

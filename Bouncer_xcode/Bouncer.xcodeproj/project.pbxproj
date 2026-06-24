@@ -11,6 +11,8 @@
 		4E38A4CF2F72199A00496A14 /* AppCheckProviderFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E38A4CD2F72199A00496A14 /* AppCheckProviderFactory.swift */; };
 		4E38A4D32F721C2500496A14 /* FirebaseAppCheck in Frameworks */ = {isa = PBXBuildFile; productRef = 4E38A4D22F721C2500496A14 /* FirebaseAppCheck */; };
 		4E3B363A2F857BE400A929AD /* iosicon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 4E3B36392F857BE300A929AD /* iosicon.icon */; };
+		4EC0EC652FEB068700F3FCDE /* GoogleService-Info-Dev.plist in Resources */ = {isa = PBXBuildFile; fileRef = 4EC0EC642FEB068700F3FCDE /* GoogleService-Info-Dev.plist */; };
+		4EC0EC812FEB06DD00F3FCDE /* GoogleService-Info.plist in Resources */ = {isa = PBXBuildFile; fileRef = 4EC0EC802FEB06DD00F3FCDE /* GoogleService-Info.plist */; };
 		971D84C92FB271A2006BC538 /* FirebaseCrashlytics in Frameworks */ = {isa = PBXBuildFile; productRef = 971D84C82FB271A2006BC538 /* FirebaseCrashlytics */; };
 		974832542F91595300493A71 /* Bouncer (macOS) Extension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 974832532F91595300493A71 /* Bouncer (macOS) Extension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		97BD3B812F3EB56C00F8BF65 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97BD3B802F3EB56C00F8BF65 /* AppDelegate.swift */; };
@@ -42,6 +44,10 @@
 		AA00003000000000000000AA /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00003100000000000000AA /* OnboardingView.swift */; };
 		AA00004000000000000000AA /* filterphrases.mp4 in Resources */ = {isa = PBXBuildFile; fileRef = AA00004100000000000000AA /* filterphrases.mp4 */; };
 		AA00005000000000000000AA /* PlatformPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00005100000000000000AA /* PlatformPickerView.swift */; };
+		DA00HEADRES000000000DA008 /* linear_v3_head.bin in Resources */ = {isa = PBXBuildFile; fileRef = DA00HEADBIN000000000DA007 /* linear_v3_head.bin */; };
+		DA00LISBUILD0000000DA004 /* LocalInferenceService.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA00LISFILE00000000DA003 /* LocalInferenceService.swift */; };
+		DA00LITERTLM000000DA002 /* LiteRTLM in Frameworks */ = {isa = PBXBuildFile; productRef = DA00LITERTLM000000DA001 /* LiteRTLM */; };
+		DA00MDBUILD000000000DA006 /* ModelDownloader.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA00MDFILE0000000000DA005 /* ModelDownloader.swift */; };
 		EE00000200000000000000EE /* manifest.json in Resources */ = {isa = PBXBuildFile; fileRef = EE00000100000000000000EE /* manifest.json */; };
 		SF00000100000000000000SF /* manifest.json in Resources */ = {isa = PBXBuildFile; fileRef = EE00000100000000000000EE /* manifest.json */; };
 		SF00000200000000000000SF /* browser-polyfill.js in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BCB2F3EB56D00F8BF65 /* browser-polyfill.js */; };
@@ -83,6 +89,8 @@
 		4E38A4CC2F72199A00496A14 /* AppCheckBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppCheckBridge.swift; sourceTree = "<group>"; };
 		4E38A4CD2F72199A00496A14 /* AppCheckProviderFactory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppCheckProviderFactory.swift; sourceTree = "<group>"; };
 		4E3B36392F857BE300A929AD /* iosicon.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = iosicon.icon; sourceTree = "<group>"; };
+		4EC0EC642FEB068700F3FCDE /* GoogleService-Info-Dev.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "GoogleService-Info-Dev.plist"; sourceTree = "<group>"; };
+		4EC0EC802FEB06DD00F3FCDE /* GoogleService-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "GoogleService-Info.plist"; sourceTree = "<group>"; };
 		9748323A2F91595100493A71 /* Bouncer.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Bouncer.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		974832532F91595300493A71 /* Bouncer (macOS) Extension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = "Bouncer (macOS) Extension.appex"; sourceTree = BUILT_PRODUCTS_DIR; };
 		97BD3B762F3EB56C00F8BF65 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -117,6 +125,9 @@
 		AA00003100000000000000AA /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
 		AA00004100000000000000AA /* filterphrases.mp4 */ = {isa = PBXFileReference; lastKnownFileType = file; path = filterphrases.mp4; sourceTree = "<group>"; };
 		AA00005100000000000000AA /* PlatformPickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlatformPickerView.swift; sourceTree = "<group>"; };
+		DA00HEADBIN000000000DA007 /* linear_v3_head.bin */ = {isa = PBXFileReference; lastKnownFileType = archive.macbinary; path = linear_v3_head.bin; sourceTree = "<group>"; };
+		DA00LISFILE00000000DA003 /* LocalInferenceService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalInferenceService.swift; sourceTree = "<group>"; };
+		DA00MDFILE0000000000DA005 /* ModelDownloader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelDownloader.swift; sourceTree = "<group>"; };
 		EE00000100000000000000EE /* manifest.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = manifest.json; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -154,6 +165,7 @@
 			files = (
 				4E38A4D32F721C2500496A14 /* FirebaseAppCheck in Frameworks */,
 				971D84C92FB271A2006BC538 /* FirebaseCrashlytics in Frameworks */,
+				DA00LITERTLM000000DA002 /* LiteRTLM in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -201,6 +213,9 @@
 				AA00000700000000000000AA /* FilterPhraseSheet.swift */,
 				AA00003100000000000000AA /* OnboardingView.swift */,
 				AA00005100000000000000AA /* PlatformPickerView.swift */,
+				DA00LISFILE00000000DA003 /* LocalInferenceService.swift */,
+				DA00MDFILE0000000000DA005 /* ModelDownloader.swift */,
+				DA00HEADBIN000000000DA007 /* linear_v3_head.bin */,
 				AA00004100000000000000AA /* filterphrases.mp4 */,
 				AA00000400000000000000AA /* ChromePolyfill.js */,
 				AA00000600000000000000AA /* Bouncer.entitlements */,
@@ -209,6 +224,8 @@
 				97BD3B842F3EB56C00F8BF65 /* LaunchScreen.storyboard */,
 				97BD3B872F3EB56C00F8BF65 /* Main.storyboard */,
 				97BD3B8A2F3EB56C00F8BF65 /* Info.plist */,
+				4EC0EC642FEB068700F3FCDE /* GoogleService-Info-Dev.plist */,
+				4EC0EC802FEB06DD00F3FCDE /* GoogleService-Info.plist */,
 			);
 			path = "iOS (App)";
 			sourceTree = "<group>";
@@ -341,6 +358,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				4E38A4C92F7218D300496A14 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */,
+				DA00LITERTPKG00000DA000 /* XCRemoteSwiftPackageReference "LiteRT-LM" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 97BD3B7E2F3EB56C00F8BF65 /* Products */;
@@ -394,6 +412,7 @@
 				97BD3BE32F3EB56D00F8BF65 /* background.js in Resources */,
 				97BD3BE42F3EB56D00F8BF65 /* dist in Resources */,
 				97BD3BE52F3EB56D00F8BF65 /* popup.html in Resources */,
+				4EC0EC812FEB06DD00F3FCDE /* GoogleService-Info.plist in Resources */,
 				97BD3BE72F3EB56D00F8BF65 /* build.js in Resources */,
 				97BD3BE82F3EB56D00F8BF65 /* manifest.firefox.json in Resources */,
 				97BD3BE92F3EB56D00F8BF65 /* manifest.chrome.json in Resources */,
@@ -407,6 +426,8 @@
 				97BD3BF22F3EB56D00F8BF65 /* content.js in Resources */,
 				97BD3BF32F3EB56D00F8BF65 /* dompurify.js in Resources */,
 				AA00004000000000000000AA /* filterphrases.mp4 in Resources */,
+				DA00HEADRES000000000DA008 /* linear_v3_head.bin in Resources */,
+				4EC0EC652FEB068700F3FCDE /* GoogleService-Info-Dev.plist in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -472,7 +493,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "export NVM_DIR=\"$HOME/.nvm\"\n[ -s \"$NVM_DIR/nvm.sh\" ] && . \"$NVM_DIR/nvm.sh\"\nif ! command -v node > /dev/null 2>&1; then\n  export PATH=\"/usr/local/bin:/opt/homebrew/bin:$PATH\"\nfi\nEXT_DIR=\"${PROJECT_DIR}/../Bouncer\"\nif [ ! -d \"$EXT_DIR/node_modules\" ]; then\n  echo \"Installing npm dependencies...\"\n  cd \"$EXT_DIR\" && npm install --silent\nfi\ncd \"$EXT_DIR\"\nif [ \"$BOUNCER_ENV\" = \"DEV\" ]; then\n  echo \"Building extension JS (dev)...\"\n  npm run build:dev --silent\nelse\n  echo \"Building extension JS (prod)...\"\n  npm run build --silent\nfi\n";
+			shellScript = "export NVM_DIR=\"$HOME/.nvm\"\n[ -s \"$NVM_DIR/nvm.sh\" ] && . \"$NVM_DIR/nvm.sh\"\nif ! command -v node > /dev/null 2>&1; then\n  export PATH=\"/usr/local/bin:/opt/homebrew/bin:$PATH\"\nfi\nEXT_DIR=\"${PROJECT_DIR}/../Bouncer\"\nif [ ! -d \"$EXT_DIR/node_modules\" ]; then\n  echo \"Installing npm dependencies...\"\n  cd \"$EXT_DIR\" && npm install --silent\nfi\ncd \"$EXT_DIR\"\nif [ \"$BOUNCER_ENV\" = \"DEV\" ]; then\n  if [ ! -f \".env.dev\" ]; then\n    echo \"warning: .env.dev file not found in $EXT_DIR. Consider switching target to prod.\"\n    exit 1\n  fi\n  echo \"Building extension JS (dev)...\"\n  npm run build:dev --silent\nelse\n  if [ ! -f \".env.prod\" ]; then\n    echo \"warning: .env file not found in $EXT_DIR. Consider switching target to dev.\"\n    exit 1\n  fi\n  echo \"Building extension JS (prod)...\"\n  npm run build --silent\nfi\n";
 		};
 		SF00002000000000000000SF /* Build Extension JS */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -522,6 +543,8 @@
 				4E38A4CF2F72199A00496A14 /* AppCheckProviderFactory.swift in Sources */,
 				AA00003000000000000000AA /* OnboardingView.swift in Sources */,
 				AA00005000000000000000AA /* PlatformPickerView.swift in Sources */,
+				DA00LISBUILD0000000DA004 /* LocalInferenceService.swift in Sources */,
+				DA00MDBUILD000000000DA006 /* ModelDownloader.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -985,6 +1008,14 @@
 				minimumVersion = 12.11.0;
 			};
 		};
+		DA00LITERTPKG00000DA000 /* XCRemoteSwiftPackageReference "LiteRT-LM" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/millanatimbue/LiteRT-LM.git";
+			requirement = {
+				kind = revision;
+				revision = 4e05601aa0e197016b54f2f4246feba9513b1169;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -997,6 +1028,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 4E38A4C92F7218D300496A14 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
 			productName = FirebaseCrashlytics;
+		};
+		DA00LITERTLM000000DA001 /* LiteRTLM */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = DA00LITERTPKG00000DA000 /* XCRemoteSwiftPackageReference "LiteRT-LM" */;
+			productName = LiteRTLM;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

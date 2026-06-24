@@ -150,6 +150,7 @@ export interface LocalModelDef extends ModelDef {
 /** Typed map for PREDEFINED_MODELS — local models get extended fields. */
 export interface PredefinedModelsMap {
   local: LocalModelDef[];
+  iosLocal: LocalModelDef[];
   [provider: string]: (ModelDef | LocalModelDef)[];
 }
 

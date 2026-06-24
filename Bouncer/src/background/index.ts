@@ -615,7 +615,6 @@ async function handleMessage(
 // Handle messages from content script
 chrome.runtime.onMessage.addListener((message: ContentToBackgroundMessage, sender, sendResponse) => {
   const tabId = sender.tab?.id;
-  console.log('[Background] onMessage:', message?.type, 'from:', sender?.url?.substring(0, 60), 'tab:', tabId);
 
   // --- Sync-only: pageLoad does not need async, just side effects ---
   if (message.type === 'pageLoad') {
