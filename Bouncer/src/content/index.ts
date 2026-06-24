@@ -588,7 +588,15 @@ import { formatPostForEvaluation } from '../shared/utils';
     // Per-platform master switch. `adapter.siteId` is the source of truth
     // for which storage key gates this run. Default true so installs that
     // pre-date the toggle keep filtering as before.
-    const platformKey = adapter.siteId === 'twitter' ? 'twitterEnabled' : 'youtubeEnabled';
+    // Map each adapter to its master-switch storage key. Using `as const`
+    // gives TS a literal-union type for `platformKey` so it lines up with
+    // the typed StorageSchema keys getStorage accepts.
+    const platformKeyMap = {
+      twitter: 'twitterEnabled',
+      youtube: 'youtubeEnabled',
+      linkedin: 'linkedinEnabled',
+    } as const;
+    const platformKey = platformKeyMap[adapter.siteId];
     const data = await getStorage(['enabled', 'filterReplies', platformKey]);
     let globalEnabled = data.enabled !== false;
     const platformEnabled = data[platformKey] !== false;

@@ -41,6 +41,7 @@
 		AA00002000000000000000AA /* WebSocketBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00002100000000000000AA /* WebSocketBridge.swift */; };
 		AA00003000000000000000AA /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00003100000000000000AA /* OnboardingView.swift */; };
 		AA00004000000000000000AA /* filterphrases.mp4 in Resources */ = {isa = PBXBuildFile; fileRef = AA00004100000000000000AA /* filterphrases.mp4 */; };
+		AA00005000000000000000AA /* PlatformPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00005100000000000000AA /* PlatformPickerView.swift */; };
 		EE00000200000000000000EE /* manifest.json in Resources */ = {isa = PBXBuildFile; fileRef = EE00000100000000000000EE /* manifest.json */; };
 		SF00000100000000000000SF /* manifest.json in Resources */ = {isa = PBXBuildFile; fileRef = EE00000100000000000000EE /* manifest.json */; };
 		SF00000200000000000000SF /* browser-polyfill.js in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BCB2F3EB56D00F8BF65 /* browser-polyfill.js */; };
@@ -115,6 +116,7 @@
 		AA00002100000000000000AA /* WebSocketBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebSocketBridge.swift; sourceTree = "<group>"; };
 		AA00003100000000000000AA /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
 		AA00004100000000000000AA /* filterphrases.mp4 */ = {isa = PBXFileReference; lastKnownFileType = file; path = filterphrases.mp4; sourceTree = "<group>"; };
+		AA00005100000000000000AA /* PlatformPickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlatformPickerView.swift; sourceTree = "<group>"; };
 		EE00000100000000000000EE /* manifest.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = manifest.json; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -198,6 +200,7 @@
 				AA00002100000000000000AA /* WebSocketBridge.swift */,
 				AA00000700000000000000AA /* FilterPhraseSheet.swift */,
 				AA00003100000000000000AA /* OnboardingView.swift */,
+				AA00005100000000000000AA /* PlatformPickerView.swift */,
 				AA00004100000000000000AA /* filterphrases.mp4 */,
 				AA00000400000000000000AA /* ChromePolyfill.js */,
 				AA00000600000000000000AA /* Bouncer.entitlements */,
@@ -518,6 +521,7 @@
 				4E38A4CE2F72199A00496A14 /* AppCheckBridge.swift in Sources */,
 				4E38A4CF2F72199A00496A14 /* AppCheckProviderFactory.swift in Sources */,
 				AA00003000000000000000AA /* OnboardingView.swift in Sources */,
+				AA00005000000000000000AA /* PlatformPickerView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

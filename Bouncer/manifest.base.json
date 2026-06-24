@@ -12,7 +12,8 @@
   ],
   "host_permissions": [
     "https://x.com/*",
-    "https://www.youtube.com/*"
+    "https://www.youtube.com/*",
+    "https://www.linkedin.com/*"
   ],
   "action": {
     "default_popup": "popup.html",
@@ -58,6 +59,22 @@
         "adapters/youtube/youtube.css"
       ],
       "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://www.linkedin.com/*"
+      ],
+      "js": [
+        "browser-polyfill.js",
+        "dompurify.js",
+        "dist/LinkedInAdapter.js",
+        "dist/content.js"
+      ],
+      "css": [
+        "content.css",
+        "adapters/linkedin/linkedin.css"
+      ],
+      "run_at": "document_idle"
     }
   ],
   "icons": {
@@ -79,7 +96,8 @@
       ],
       "matches": [
         "https://x.com/*",
-        "https://www.youtube.com/*"
+        "https://www.youtube.com/*",
+        "https://www.linkedin.com/*"
       ]
     }
   ]

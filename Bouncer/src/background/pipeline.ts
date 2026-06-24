@@ -461,7 +461,7 @@ export async function getSettings(siteId?: SiteId): Promise<Settings> {
     'anthropicApiKey', 'enabled', 'useEmbeddings', 'selectedModel',
     'customModels', 'predefinedModelKwargs', 'aiTextFilterEnabled', 'aiTextDetectionThreshold',
     'aiImageFilterEnabled', 'aiImageDetectionThreshold',
-    'filterReplies', 'twitterEnabled', 'youtubeEnabled', 'youtubeShowPlaceholder'
+    'filterReplies', 'twitterEnabled', 'youtubeEnabled', 'linkedinEnabled', 'youtubeShowPlaceholder'
   ] as const;
   const [data, descriptions] = await Promise.all([
     getStorage([...settingsKeys]),
@@ -487,6 +487,7 @@ export async function getSettings(siteId?: SiteId): Promise<Settings> {
     filterReplies: data.filterReplies !== false,
     twitterEnabled: data.twitterEnabled !== false,
     youtubeEnabled: data.youtubeEnabled !== false,
+    linkedinEnabled: data.linkedinEnabled !== false,
     youtubeShowPlaceholder: data.youtubeShowPlaceholder === true
   };
 }

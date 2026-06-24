@@ -250,6 +250,12 @@ function setupStorageListener() {
       if (el && el.checked !== checked) el.checked = checked;
       document.getElementById('platformProviderYoutube')?.classList.toggle('disabled', !checked);
     }
+    if (areaName === 'local' && changes.linkedinEnabled) {
+      const checked = changes.linkedinEnabled.newValue !== false;
+      const el = document.getElementById('enableLinkedin') as HTMLInputElement | null;
+      if (el && el.checked !== checked) el.checked = checked;
+      document.getElementById('platformProviderLinkedin')?.classList.toggle('disabled', !checked);
+    }
     if (areaName === 'local' && changes.youtubeShowPlaceholder) {
       const checked = changes.youtubeShowPlaceholder.newValue === true;
       const el = document.getElementById('enableYoutubePlaceholder') as HTMLInputElement | null;
@@ -299,6 +305,7 @@ async function loadSettings() {
     'filterReplies',
     'twitterEnabled',
     'youtubeEnabled',
+    'linkedinEnabled',
     'youtubeShowPlaceholder'
   ]);
 
@@ -332,6 +339,9 @@ async function loadSettings() {
   const youtubeEl = document.getElementById('enableYoutube') as HTMLInputElement | null;
   if (youtubeEl) youtubeEl.checked = data.youtubeEnabled !== false;
   document.getElementById('platformProviderYoutube')?.classList.toggle('disabled', data.youtubeEnabled === false);
+  const linkedinEl = document.getElementById('enableLinkedin') as HTMLInputElement | null;
+  if (linkedinEl) linkedinEl.checked = data.linkedinEnabled !== false;
+  document.getElementById('platformProviderLinkedin')?.classList.toggle('disabled', data.linkedinEnabled === false);
 
   // YouTube placeholder toggle (off by default — match Twitter's "remove"
   // behavior unless the user opts in).
@@ -725,6 +735,12 @@ function setupEventListeners() {
     document.getElementById('platformProviderYoutube')?.classList.toggle('disabled', !checked);
     await setStorage({ youtubeEnabled: checked });
   })().catch(err => console.error('[Popup] enableYoutube change failed:', err)); });
+
+  document.getElementById('enableLinkedin')?.addEventListener('change', (e) => { (async () => {
+    const checked = (e.target as HTMLInputElement).checked;
+    document.getElementById('platformProviderLinkedin')?.classList.toggle('disabled', !checked);
+    await setStorage({ linkedinEnabled: checked });
+  })().catch(err => console.error('[Popup] enableLinkedin change failed:', err)); });
 
   document.getElementById('enableYoutubePlaceholder')?.addEventListener('change', (e) => { (async () => {
     const checked = (e.target as HTMLInputElement).checked;

@@ -79,7 +79,9 @@ export function initIOS(deps: IOSDeps) {
   // listener in content/index.ts; writing the other site's key is simply
   // stored and picked up when that site next loads.
   const descKeyFor = (siteId: string): DescriptionKey | null =>
-    (siteId === 'twitter' || siteId === 'youtube') ? `descriptions_${siteId}` : null;
+    (siteId === 'twitter' || siteId === 'youtube' || siteId === 'linkedin')
+      ? `descriptions_${siteId}`
+      : null;
 
   w.__ff_getPhrases = async (siteId: string): Promise<string[]> => {
     const key = descKeyFor(siteId);
@@ -209,10 +211,24 @@ export function showIOSFilteredModal() {
 
   const backdrop = document.createElement('div');
   backdrop.className = 'ff-ios-filtered-modal-backdrop';
+  // The LinkedIn-specific filtered-post styles (white card, off-white feed
+  // background, body padding, header layout, headline truncation, etc.) are
+  // all scoped under `.filtered-view-container--linkedin .slop-...`. The
+  // desktop modal adds that class to its root container; the iOS modal lives
+  // in a different element (`.ff-ios-filtered-modal-backdrop`), so without
+  // explicitly tagging it the same way, none of those rules apply on iOS and
+  // the LinkedIn-specific DOM (headline element + slop-post--linkedin layout)
+  // renders against default Twitter styles — looking like duplicated text
+  // with no margins. Add the class here too.
+  if (_deps.adapter.siteId === 'linkedin') {
+    backdrop.classList.add('filtered-view-container--linkedin');
+  }
+  // Title noun matches the desktop modal's logic in toggleFilteredTab().
+  const titleNoun = _deps.adapter.siteId === 'youtube' ? 'Filtered videos' : 'Filtered posts';
   backdrop.replaceChildren(parseHTML(`
     <div class="ff-ios-filtered-modal">
       <div class="ff-ios-filtered-modal-header">
-        <span class="ff-ios-filtered-modal-title">Filtered posts</span>
+        <span class="ff-ios-filtered-modal-title">${titleNoun}</span>
         <button class="ff-ios-filtered-modal-close" aria-label="Close">&times;</button>
       </div>
       <div class="ff-ios-filtered-modal-content"></div>

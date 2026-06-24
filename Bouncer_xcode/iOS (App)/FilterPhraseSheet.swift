@@ -48,23 +48,52 @@ class FilterSheetViewModel: ObservableObject {
     // Independent of the page the WebView is on — the dropdown lets the user
     // manage X or YouTube phrases from anywhere. "twitter" | "youtube".
     @Published var selectedPlatform: String = "twitter"
+    // When true, FilteredWebViewContainer renders PlatformPickerView over the
+    // WebView. Toggled by the Home button in the filter sheet; cleared when the
+    // user picks a platform.
+    @Published var showingPlatformPicker: Bool = false
 
     weak var webView: WKWebView?
 
     static let contentWorld = WKContentWorld.world(name: "feedfilter")
 
-    // Default the dropdown to the platform of the page currently loaded, so
-    // opening the sheet on YouTube shows YouTube phrases and on X shows X
-    // phrases. The user can then switch platforms via the dropdown.
+    // Default the sheet's phrase list to the platform of the page currently
+    // loaded, so opening the sheet on YouTube shows YouTube phrases, etc.
     func syncPlatformToCurrentSite() {
         let host = (URL(string: currentURL)?.host ?? "").lowercased()
-        selectedPlatform = host.contains("youtube") ? "youtube" : "twitter"
+        if host.contains("youtube") {
+            selectedPlatform = "youtube"
+        } else if host.contains("linkedin") {
+            selectedPlatform = "linkedin"
+        } else {
+            selectedPlatform = "twitter"
+        }
     }
 
     func selectPlatform(_ platform: String) {
         guard platform != selectedPlatform else { return }
         selectedPlatform = platform
         loadPhrases()
+    }
+
+    // Called by the PlatformPickerView when the user picks a platform. Updates
+    // the active platform AND navigates the WebView to that platform's feed
+    // URL — the URL change will also re-trigger syncPlatformToCurrentSite on
+    // the next sheet open, so the two stay coherent.
+    func selectPlatformAndNavigate(_ platform: String) {
+        selectedPlatform = platform
+        loadPhrases()
+        guard let webView = webView else { return }
+        let urlString: String
+        switch platform {
+        case "youtube": urlString = "https://www.youtube.com/"
+        case "linkedin": urlString = "https://www.linkedin.com/feed/"
+        case "twitter": urlString = "https://x.com/home"
+        default: return
+        }
+        if let url = URL(string: urlString) {
+            webView.load(URLRequest(url: url))
+        }
     }
 
     // Load the selected platform's phrases from the (shared, native-backed)
@@ -677,23 +706,18 @@ struct FilterPhraseSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Menu {
-                        Picker("Platform", selection: Binding(
-                            get: { viewModel.selectedPlatform },
-                            set: { viewModel.selectPlatform($0) }
-                        )) {
-                            Text("X (Twitter)").tag("twitter")
-                            Text("YouTube").tag("youtube")
-                        }
+                    Button {
+                        // Dismiss the sheet first so the picker overlay can
+                        // take over the screen, then ask the container to
+                        // render PlatformPickerView. Container reads the flag
+                        // off the same shared viewModel.
+                        viewModel.isPresented = false
+                        viewModel.showingPlatformPicker = true
                     } label: {
-                        HStack(spacing: 4) {
-                            Text(viewModel.selectedPlatform == "youtube" ? "YouTube" : "X")
-                                .font(.system(size: 17, weight: .semibold))
-                            Image(systemName: "chevron.down")
-                                .font(.system(size: 12, weight: .semibold))
-                        }
+                        Image(systemName: "house")
+                            .font(.system(size: 17, weight: .regular))
                     }
-                    .accessibilityLabel("Select platform for filter phrases")
+                    .accessibilityLabel("Switch platform")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
@@ -1246,11 +1270,21 @@ struct ProvidersSettingsView: View {
 struct FilteredWebViewContainer: View {
     @StateObject var viewModel = FilterSheetViewModel()
     @State private var isOnboarded = UserDefaults.standard.bool(forKey: "hasCompletedOnboarding")
+    // Show the platform picker on launch (after onboarding) so the user
+    // chooses a feed first instead of landing on X by default. Once they
+    // pick, the WebView mounts; tapping the Home button in the filter sheet
+    // sets viewModel.showingPlatformPicker back to true to re-show this
+    // overlay (and we keep the WebView mounted under it so picking the same
+    // platform doesn't force a fresh page load).
+    @State private var hasChosenPlatform = false
     var body: some View {
         ZStack {
             VStack(spacing: 0) {
                 ZStack {
-                    if isOnboarded {
+                    // Only mount the WebView once the user has chosen a
+                    // platform. Before that, the PlatformPickerView overlay
+                    // (below) is the entire visible surface.
+                    if isOnboarded && hasChosenPlatform {
                         FilteredWebView(sheetViewModel: viewModel)
                     }
 
@@ -1306,6 +1340,24 @@ struct FilteredWebViewContainer: View {
                 if newValue {
                     viewModel.setPanelOpen(true)
                 }
+            }
+
+            // Platform picker shown:
+            //   (1) on first launch after onboarding (hasChosenPlatform=false)
+            //   (2) whenever the Home button in the filter sheet flips
+            //       viewModel.showingPlatformPicker to true.
+            // Picking always seeds `viewModel.selectedPlatform` and (when the
+            // WebView is already mounted) navigates to the platform's feed.
+            if isOnboarded && (!hasChosenPlatform || viewModel.showingPlatformPicker) {
+                PlatformPickerView { platformId in
+                    viewModel.selectPlatformAndNavigate(platformId)
+                    withAnimation(.easeOut(duration: 0.25)) {
+                        viewModel.showingPlatformPicker = false
+                        hasChosenPlatform = true
+                    }
+                }
+                .transition(.opacity)
+                .zIndex(1)
             }
 
             // Onboarding overlays on top; fades + scales out on dismiss

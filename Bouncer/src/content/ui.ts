@@ -534,6 +534,11 @@ export function injectFilterPhrasesInput() {
   filterPhrasesContainer.className = usingWrapper
     ? 'filter-phrases-sidebar filter-phrases-sidebar--in-wrapper'
     : 'filter-phrases-sidebar';
+  // linkedin adaptation: raise z-index so LinkedIn promoted/ad cards in the
+  // right rail don't overlap the filter box.
+  if (_deps.adapter.siteId === 'linkedin') {
+    filterPhrasesContainer.classList.add('filter-phrases-sidebar--linkedin');
+  }
 
   if (process.env.HAS_IMBUE_BACKEND === 'true' && !isAuthenticated) {
     filterPhrasesContainer.replaceChildren(parseHTML(getSignInHTML()));
@@ -1936,6 +1941,11 @@ export function toggleFilteredTab(active: boolean) {
 
       filteredViewContainer = document.createElement('div');
       filteredViewContainer.className = 'filtered-view-container';
+      // linkedin adaptation: tag the panel so its posts adopt LinkedIn's
+      // card visual style (white card, off-white feed background, etc.).
+      if (_deps.adapter.siteId === 'linkedin') {
+        filteredViewContainer.classList.add('filtered-view-container--linkedin');
+      }
 
       const header = document.createElement('div');
       header.className = 'filtered-modal-header';
@@ -2203,10 +2213,56 @@ export function renderFilteredPostsView(container: Element) {
   });
 }
 
+// linkedin adaptation: static SVG icons used inside LinkedIn filtered-post
+// cards. Defined here so buildTwitterCard's LinkedIn branch can pull them in
+// without leaking the implementation into a public/exported surface.
+function _liLinkedInBadge(): SVGElement {
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('width', '16'); svg.setAttribute('height', '16');
+  svg.setAttribute('viewBox', '0 0 16 16');
+  svg.setAttribute('aria-label', 'LinkedIn'); svg.setAttribute('role', 'img');
+  svg.classList.add('slop-li-badge-icon');
+  const bg = document.createElementNS(ns, 'rect');
+  bg.setAttribute('width', '16'); bg.setAttribute('height', '16');
+  bg.setAttribute('rx', '3'); bg.setAttribute('fill', '#0A66C2');
+  svg.appendChild(bg);
+  const iStem = document.createElementNS(ns, 'rect');
+  iStem.setAttribute('x', '2.5'); iStem.setAttribute('y', '6');
+  iStem.setAttribute('width', '2'); iStem.setAttribute('height', '7');
+  iStem.setAttribute('fill', 'white');
+  svg.appendChild(iStem);
+  const iDot = document.createElementNS(ns, 'circle');
+  iDot.setAttribute('cx', '3.5'); iDot.setAttribute('cy', '4'); iDot.setAttribute('r', '1.2');
+  iDot.setAttribute('fill', 'white');
+  svg.appendChild(iDot);
+  const n = document.createElementNS(ns, 'path');
+  n.setAttribute('fill', 'white');
+  n.setAttribute('d', 'M6.5 6h2v1.1C8.8 6.4 9.5 6 10.5 6 12.2 6 12.5 7.2 12.5 8.8V13h-2V9.3c0-.8-.2-1.4-1-1.4-.9 0-1 .6-1 1.5V13H6.5V6z');
+  svg.appendChild(n);
+  return svg;
+}
+function _liGlobeIcon(): SVGElement {
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('width', '14'); svg.setAttribute('height', '14');
+  svg.setAttribute('viewBox', '0 0 16 16');
+  svg.setAttribute('aria-hidden', 'true');
+  svg.classList.add('slop-li-globe-icon');
+  const p = document.createElementNS(ns, 'path');
+  p.setAttribute('fill', 'currentColor');
+  p.setAttribute('d', 'M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zM3.1 8.5h2.1c.1.9.3 1.8.6 2.5A5.5 5.5 0 0 1 3.1 8.5zm0-1A5.5 5.5 0 0 1 5.8 5c-.3.7-.5 1.6-.6 2.5H3.1zM8 13c-.5 0-1.4-1.6-1.6-3.5h3.2C9.4 11.4 8.5 13 8 13zm-1.6-4.5c.1-1.1.4-2 .8-2.7.2-.3.5-.5.8-.5s.6.2.8.5c.4.7.7 1.6.8 2.7H6.4zm4.5 0c-.1-.9-.3-1.8-.6-2.5A5.5 5.5 0 0 1 12.9 8.5h-2zm2 1a5.5 5.5 0 0 1-2.8 2.5c.3-.7.5-1.6.6-2.5h2.2z');
+  svg.appendChild(p);
+  return svg;
+}
+
 // Twitter-style filtered-post card: avatar + body (name/handle, text, optional
-// quote, media, reasoning). See buildYouTubeCard for the thumbnail-first
-// YouTube layout.
+// quote, media, reasoning). LinkedIn shares this function but rearranges
+// avatar+meta into a header above a full-width body, swaps in LinkedIn-style
+// name/headline/time elements, and adds a "…more" expander for long text.
+// See buildYouTubeCard for the thumbnail-first YouTube layout.
 function buildTwitterCard(post: FilteredPost): HTMLElement {
+  const isLinkedIn = _deps.adapter.siteId === 'linkedin';
   const { post: postContent } = post;
   const wrapper = document.createElement('div');
   wrapper.className = 'slop-post-wrapper';
@@ -2240,7 +2296,11 @@ function buildTwitterCard(post: FilteredPost): HTMLElement {
     fallback.textContent = initial;
     avatar.appendChild(fallback);
   }
-  postRow.appendChild(avatar);
+  // linkedin adaptation: avatar gets appended later as part of the header row
+  // (above the body). For everything else it goes side-by-side with the body.
+  if (!isLinkedIn) {
+    postRow.appendChild(avatar);
+  }
 
   // Body
   const body = document.createElement('div');
@@ -2252,27 +2312,76 @@ function buildTwitterCard(post: FilteredPost): HTMLElement {
 
   const meta = document.createElement('div');
   meta.className = 'slop-post-meta';
-  if (postContent.author) {
-    // Extract display name — author field has "DisplayName@handle · time" concatenated
-    // Use handle to split if available, otherwise use full author string
-    let displayName = postContent.author;
-    if (postContent.handle) {
-      const handleIdx = displayName.indexOf(postContent.handle);
-      if (handleIdx > 0) displayName = displayName.substring(0, handleIdx);
+  if (isLinkedIn) {
+    // linkedin adaptation: structured 3-row header matching LinkedIn's
+    // native card. Row 1: [name] [in badge] • [degree]; Row 2: [headline,
+    // truncated]; Row 3: [time] • [globe icon].
+    const nameRow = document.createElement('div');
+    nameRow.className = 'slop-post-name-row';
+    if (postContent.author) {
+      const nameSpan = document.createElement('span');
+      nameSpan.className = 'slop-post-name';
+      nameSpan.textContent = postContent.author;
+      nameRow.appendChild(nameSpan);
     }
-    const nameSpan = document.createElement('span');
-    nameSpan.className = 'slop-post-name';
-    nameSpan.textContent = displayName;
-    meta.appendChild(nameSpan);
-  }
-  // YouTube's `handle` (e.g. "/@channel") and `timeText` (e.g. "1.2M views • 3 months ago")
-  // aren't meaningful identity in the filtered card the way Twitter's `@handle` / "2h" are.
-  if ((postContent.handle || postContent.timeText) && _deps.adapter.siteId !== 'youtube') {
-    const handleSpan = document.createElement('span');
-    handleSpan.className = 'slop-post-handle';
-    const parts = [postContent.handle, postContent.timeText].filter(Boolean);
-    handleSpan.textContent = parts.join(' · ');
-    meta.appendChild(handleSpan);
+    nameRow.appendChild(_liLinkedInBadge());
+    if (postContent.degree) {
+      const sep = document.createElement('span');
+      sep.className = 'slop-post-degree-sep';
+      sep.setAttribute('aria-hidden', 'true');
+      sep.textContent = ' • ';
+      nameRow.appendChild(sep);
+      const degSpan = document.createElement('span');
+      degSpan.className = 'slop-post-degree';
+      degSpan.textContent = postContent.degree;
+      nameRow.appendChild(degSpan);
+    }
+    meta.appendChild(nameRow);
+
+    if (postContent.handle) {
+      // LinkedIn re-purposes the handle slot as the author's headline.
+      const headline = document.createElement('span');
+      headline.className = 'slop-post-handle slop-post-linkedin-headline';
+      headline.textContent = postContent.handle;
+      meta.appendChild(headline);
+    }
+
+    if (postContent.timeText) {
+      const timeRow = document.createElement('div');
+      timeRow.className = 'slop-post-time-row';
+      const timeSpan = document.createElement('span');
+      timeSpan.textContent = postContent.timeText;
+      timeRow.appendChild(timeSpan);
+      const sep = document.createElement('span');
+      sep.setAttribute('aria-hidden', 'true');
+      sep.textContent = ' • ';
+      timeRow.appendChild(sep);
+      timeRow.appendChild(_liGlobeIcon());
+      meta.appendChild(timeRow);
+    }
+  } else {
+    if (postContent.author) {
+      // Extract display name — author field has "DisplayName@handle · time" concatenated
+      // Use handle to split if available, otherwise use full author string
+      let displayName = postContent.author;
+      if (postContent.handle) {
+        const handleIdx = displayName.indexOf(postContent.handle);
+        if (handleIdx > 0) displayName = displayName.substring(0, handleIdx);
+      }
+      const nameSpan = document.createElement('span');
+      nameSpan.className = 'slop-post-name';
+      nameSpan.textContent = displayName;
+      meta.appendChild(nameSpan);
+    }
+    // YouTube's `handle` (e.g. "/@channel") and `timeText` (e.g. "1.2M views • 3 months ago")
+    // aren't meaningful identity in the filtered card the way Twitter's `@handle` / "2h" are.
+    if ((postContent.handle || postContent.timeText) && _deps.adapter.siteId !== 'youtube') {
+      const handleSpan = document.createElement('span');
+      handleSpan.className = 'slop-post-handle';
+      const parts = [postContent.handle, postContent.timeText].filter(Boolean);
+      handleSpan.textContent = parts.join(' · ');
+      meta.appendChild(handleSpan);
+    }
   }
   top.appendChild(meta);
 
@@ -2302,16 +2411,37 @@ function buildTwitterCard(post: FilteredPost): HTMLElement {
   body.appendChild(top);
 
   // Tweet text — use sanitized HTML to preserve links/emojis/formatting
+  let textDiv: HTMLElement | null = null;
   if (postContent.textHtml) {
-    const textDiv = document.createElement('div');
+    textDiv = document.createElement('div');
     textDiv.className = 'slop-post-text';
     textDiv.replaceChildren(DOMPurify.sanitize(postContent.textHtml, { RETURN_DOM_FRAGMENT: true }));
     body.appendChild(textDiv);
   } else if (post.evaluationText) {
-    const textDiv = document.createElement('div');
+    textDiv = document.createElement('div');
     textDiv.className = 'slop-post-text';
     textDiv.textContent = post.evaluationText;
     body.appendChild(textDiv);
+  }
+
+  // linkedin adaptation: collapse long posts to ~5 lines with a "…more"
+  // button, matching LinkedIn's own expandable post behaviour.
+  if (isLinkedIn && textDiv) {
+    const textLen = textDiv.textContent?.length ?? 0;
+    if (textLen > 280) {
+      const collapsibleEl = textDiv;
+      collapsibleEl.classList.add('slop-post-text--collapsible');
+      const expandBtn = document.createElement('button');
+      expandBtn.className = 'slop-post-expand-btn';
+      expandBtn.textContent = '…more';
+      expandBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        collapsibleEl.classList.remove('slop-post-text--collapsible');
+        expandBtn.remove();
+      });
+      body.appendChild(expandBtn);
+    }
   }
 
   // Quote tweet — render as a mini-card with avatar, author, and text
@@ -2393,7 +2523,21 @@ function buildTwitterCard(post: FilteredPost): HTMLElement {
   actions.appendChild(createRestoreButton(post, postContent));
   body.appendChild(actions);
 
-  postRow.appendChild(body);
+  if (isLinkedIn) {
+    // linkedin adaptation: header row (avatar + meta/top) sits ABOVE the
+    // full-width body. The top block was appended to body earlier; pull it
+    // back out so it lives in the header instead.
+    const liHeader = document.createElement('div');
+    liHeader.className = 'slop-post-linkedin-header';
+    liHeader.appendChild(avatar);
+    body.removeChild(top);
+    liHeader.appendChild(top);
+    postRow.classList.add('slop-post--linkedin');
+    postRow.appendChild(liHeader);
+    postRow.appendChild(body);
+  } else {
+    postRow.appendChild(body);
+  }
 
   // Wrap in a real <a> so middle-click / ctrl-click open in new tab natively
   wrapper.appendChild(wrapInPostLink(postRow, postContent.postUrl));

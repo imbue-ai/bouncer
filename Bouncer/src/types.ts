@@ -1,7 +1,7 @@
 // ==================== Site IDs ====================
 
 /** Known platform adapter identifiers. Add new entries when adding adapters. */
-export type SiteId = 'twitter' | 'youtube';
+export type SiteId = 'twitter' | 'youtube' | 'linkedin';
 
 /** Where the filter box is rendered on a platform.
  *  - `sidebar`: Twitter-style — pinned in the right-hand column, with companion
@@ -100,6 +100,9 @@ export interface PostContent {
   hasMediaContainer: boolean;
   fromStore?: boolean;
   mediaBlurred?: boolean;
+  /** LinkedIn-only: connection degree ("1st", "2nd", "3rd+", or null when
+   *  not surfaced by the post). Other adapters leave this undefined. */
+  degree?: string | null;
 }
 
 /** Stored for the "filtered posts" panel — includes captured display data for re-rendering. */
@@ -187,6 +190,7 @@ interface SettingsBase {
   // when its platform's switch is off.
   twitterEnabled: boolean;
   youtubeEnabled: boolean;
+  linkedinEnabled: boolean;
   // When true on YouTube, filtered videos are left in the grid and shown
   // as a "Filtered by Bouncer" placeholder card (see youtube.css). Default
   // false — remove the card outright, matching Twitter's behavior.

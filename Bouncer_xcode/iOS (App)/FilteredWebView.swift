@@ -49,8 +49,18 @@ struct FilteredWebView: UIViewRepresentable {
             webView.isInspectable = true
         }
 
-        let hasLoggedIn = UserDefaults.standard.bool(forKey: "hasLoggedIn")
-        let urlString = hasLoggedIn ? "https://x.com" : "https://x.com/i/flow/login"
+        // Initial URL follows whichever platform the user picked on the
+        // PlatformPickerView. The X path keeps the legacy login-flow branch
+        // (since the container gates first-mount until the user has picked,
+        // selectedPlatform is always set by the time we get here).
+        let urlString: String
+        switch sheetViewModel.selectedPlatform {
+        case "youtube":  urlString = "https://www.youtube.com/"
+        case "linkedin": urlString = "https://www.linkedin.com/feed/"
+        default:
+            let hasLoggedIn = UserDefaults.standard.bool(forKey: "hasLoggedIn")
+            urlString = hasLoggedIn ? "https://x.com" : "https://x.com/i/flow/login"
+        }
         if let url = URL(string: urlString) {
             webView.load(URLRequest(url: url))
         }
@@ -116,10 +126,10 @@ struct FilteredWebView: UIViewRepresentable {
             print("[FeedFilter] Injected dompurify.js")
         }
 
-        // 5. Platform adapters — document end. Both are injected on every page;
+        // 5. Platform adapters — document end. All are injected on every page;
         // each self-guards by hostname (see the adapter files), claiming
         // `window.BouncerAdapter` only on its own site, so content.js picks the
-        // right one for x.com vs m.youtube.com.
+        // right one for x.com vs m.youtube.com vs linkedin.com.
         if let source = loadBundledScript(named: "TwitterAdapter", ext: "js", subdirectory: "dist") {
             let script = WKUserScript(source: source, injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: world)
             controller.addUserScript(script)
@@ -129,6 +139,11 @@ struct FilteredWebView: UIViewRepresentable {
             let script = WKUserScript(source: source, injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: world)
             controller.addUserScript(script)
             print("[FeedFilter] Injected YouTubeAdapter.js")
+        }
+        if let source = loadBundledScript(named: "LinkedInAdapter", ext: "js", subdirectory: "dist") {
+            let script = WKUserScript(source: source, injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: world)
+            controller.addUserScript(script)
+            print("[FeedFilter] Injected LinkedInAdapter.js")
         }
 
         // 6. content.js — document end (bundled IIFE from dist/)
@@ -233,6 +248,9 @@ struct FilteredWebView: UIViewRepresentable {
         }
         if let youtubeCSS = loadBundledScript(named: "youtube", ext: "css", subdirectory: "adapters/youtube") {
             cssContent += "\n" + youtubeCSS
+        }
+        if let linkedinCSS = loadBundledScript(named: "linkedin", ext: "css", subdirectory: "adapters/linkedin") {
+            cssContent += "\n" + linkedinCSS
         }
 
         guard !cssContent.isEmpty else { return nil }
@@ -439,6 +457,7 @@ struct FilteredWebView: UIViewRepresentable {
         private let allowedHosts: Set<String> = [
             "x.com", "twitter.com", "t.co", "twimg.com", "pbs.twimg.com", "abs.twimg.com", "video.twimg.com",
             "youtube.com", "m.youtube.com", "youtu.be", "ytimg.com", "ggpht.com", "googlevideo.com",
+            "linkedin.com", "licdn.com", "static.licdn.com", "media.licdn.com",
             "accounts.google.com", "accounts.youtube.com", "google.com", "gstatic.com",
             "apple.com", "appleid.apple.com",
         ]

@@ -1,0 +1,29 @@
+/* linkedin adaptation
+ *
+ * LinkedIn-specific styles for Bouncer. The shared content.css already covers
+ * both `.light-mode` and `.dark-mode` UI surfaces, and LinkedInAdapter only
+ * ever reports 'light' | 'dark' (LinkedIn has no Twitter-style "dim" theme),
+ * so no per-theme overrides are needed here — unlike adapters/twitter/twitter.css
+ * which carries an extra dim-mode palette.
+ *
+ * Add LinkedIn-only layout tweaks below (e.g. hiding promoted rails, spacing
+ * fixes for the injected filter box). Keep selectors scoped to LinkedIn DOM. */
+
+/* linkedin adaptation: when our Bounce control replaces the desktop SDUI's
+ * native "Hide post" (X) button in the card header, size it to match the
+ * native round icon button it sits in place of and give it LinkedIn's
+ * hover-fill rather than the shared bottom-action-row treatment. */
+.ff-why-annoying-btn--linkedin-header {
+  /* width/height are set inline at insert time to match the native button. */
+  /* Negative margin nudges the control left, closer to the "…" button. */
+  margin-left: -8px;
+  flex: 0 0 auto;
+}
+
+.ff-why-annoying-btn--linkedin-header:hover {
+  background: rgba(0, 0, 0, 0.08);
+}
+
+.dark-mode .ff-why-annoying-btn--linkedin-header:hover {
+  background: rgba(255, 255, 255, 0.12);
+}

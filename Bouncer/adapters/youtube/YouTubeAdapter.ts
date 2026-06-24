@@ -435,24 +435,34 @@ const BouncerYouTubeAdapter = class YouTubeAdapter implements PlatformAdapter {
 
   getThemeMode(): 'light' | 'dim' | 'dark' {
     const html = document.documentElement;
-    // Desktop marks dark mode with a `dark` attribute; mobile (m.youtube.com)
-    // uses `darker-dark-theme` and paints the dark background on <html> while
-    // <body> stays transparent — so on mobile sniff <html>, not <body>.
-    // NOTE: desktop carries `darker-dark-theme` even in LIGHT mode, so that
-    // attribute is only a dark-mode signal on mobile — gating it on `_mobile`
-    // is what keeps the desktop filtered panel from going dark in light mode.
-    if (html.hasAttribute('dark') || (this._mobile && html.hasAttribute('darker-dark-theme'))) return 'dark';
     const root = this._mobile ? html : document.body;
-    // Accept rgb()/rgba(); ignore fully-transparent backgrounds (alpha 0).
+    // Trust the computed background color first: it's what the user
+    // actually sees on the page, regardless of what attributes YouTube
+    // happens to flip. On mobile in particular the `darker-dark-theme`
+    // attribute has been observed in BOTH light and dark mode in recent
+    // builds, so leaning on attributes alone produces false darks.
     const m = window.getComputedStyle(root).backgroundColor
       .match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/);
     if (m) {
       const r = Number(m[1]), g = Number(m[2]), b = Number(m[3]);
       const a = m[4] !== undefined ? Number(m[4]) : 1;
-      if (a > 0 && r < 50 && g < 50 && b < 50) return 'dark';
+      if (a > 0) {
+        // High RGB values → definitely a light background.
+        if (r > 200 && g > 200 && b > 200) return 'light';
+        // Low RGB values → definitely dark.
+        if (r < 50 && g < 50 && b < 50) return 'dark';
+      }
     }
-    // Last resort on mobile: follow the device color scheme.
-    if (this._mobile && window.matchMedia?.('(prefers-color-scheme: dark)').matches) return 'dark';
+    // Background was transparent or in the ambiguous mid-range. Fall
+    // back to attribute sniffing — desktop is reliable (only set in
+    // dark mode); mobile's `darker-dark-theme` is less so but still
+    // useful as a tiebreaker when the bg color didn't give a clear read.
+    if (html.hasAttribute('dark')) return 'dark';
+    if (this._mobile && html.hasAttribute('darker-dark-theme')) return 'dark';
+    // Default to light. Deliberately NOT falling back to
+    // matchMedia('(prefers-color-scheme: dark)') — inside an iOS
+    // WKWebView that reflects the iPhone's system theme, not the
+    // actual YouTube page theme.
     return 'light';
   }
 
