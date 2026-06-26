@@ -213,6 +213,7 @@ async function skipSignIn() {
     if (response?.success) {
       isAuthenticated = true;
       isAnonymous = true;
+      dismissGuestLimitPopup();
       refreshAllFilterBoxes();
     }
   } catch (err) {
@@ -297,12 +298,24 @@ function dismissGuestLimitPopup() {
   }
 }
 
-// Centered modal shown the moment an anonymous user crosses the trial limit.
-// The X dismisses the popup (the filter box stays gated underneath); the
+// Centered modal sign-in popup. Two variants:
+//  - 'signin': the user isn't signed in at all (hasn't chosen Google/Apple or
+//    the guest trial). Offers the sign-in button plus the "Trial without
+//    signing in" guest option.
+//  - 'guestLimit': an anonymous user has exhausted the trial. Offers sign-in
+//    only — no skip, since the trial is used up.
+// The X dismisses the popup (any gated filter box stays gated underneath); the
 // sign-in button runs the normal Google/Apple flow.
-function showGuestLimitPopup() {
+function showSignInPopup(variant: 'signin' | 'guestLimit') {
   if (guestLimitPopup && guestLimitPopup.isConnected) return; // idempotent
   dismissGuestLimitPopup();
+
+  const message = variant === 'guestLimit'
+    ? GUEST_LIMIT_MESSAGE
+    : 'Sign in to use Bouncer.';
+  const skipButtonHTML = variant === 'signin'
+    ? `<button class="skip-signin-btn">Trial without signing in<span class="skip-signin-arrow" aria-hidden="true">→</span></button>`
+    : '';
 
   const theme = _deps.adapter.getThemeMode();
   const backdrop = document.createElement('div');
@@ -310,8 +323,9 @@ function showGuestLimitPopup() {
   backdrop.replaceChildren(parseHTML(`
     <div class="bouncer-guest-popup" role="dialog" aria-modal="true">
       <button class="bouncer-guest-popup-close" aria-label="Close">×</button>
-      <p class="bouncer-guest-popup-msg">${escapeHtml(GUEST_LIMIT_MESSAGE)}</p>
+      <p class="bouncer-guest-popup-msg">${escapeHtml(message)}</p>
       ${signinButtonHTML(isSafari ? 'Sign in with Apple' : 'Sign in with Google')}
+      ${skipButtonHTML}
     </div>
   `));
   document.body.appendChild(backdrop);
@@ -321,6 +335,14 @@ function showGuestLimitPopup() {
     ?.addEventListener('click', () => dismissGuestLimitPopup());
   backdrop.querySelector('.google-signin-btn')
     ?.addEventListener('click', asyncHandler(launchSignIn));
+  backdrop.querySelector('.skip-signin-btn')
+    ?.addEventListener('click', asyncHandler(skipSignIn));
+}
+
+// Shown the moment an anonymous user crosses the trial limit (broadcast from
+// the background). Thin wrapper over the shared popup.
+function showGuestLimitPopup() {
+  showSignInPopup('guestLimit');
 }
 
 // Wire up the sign-in button click handler inside a container
@@ -2920,6 +2942,12 @@ export function showReasoningPopup(article: HTMLElement, x: number, y: number) {
   // Suggest annoying reasons button handler
   popup.querySelector('.reasoning-suggest-btn')!.addEventListener('click', (e) => {
     (async () => {
+      // Gate the backend request behind sign-in / trial state, same as the
+      // trash-can button. iOS is auto-authenticated via App Check.
+      if (!_deps.IS_IOS) {
+        if (!isAuthenticated) { showSignInPopup('signin'); return; }
+        if (guestLimitReached) { showSignInPopup('guestLimit'); return; }
+      }
       const btn = e.currentTarget as HTMLButtonElement;
       const suggestionsDiv = popup.querySelector('.reasoning-suggestions')!;
       btn.disabled = true;
@@ -3287,16 +3315,19 @@ export function addWhyAnnoyingButton(article: HTMLElement) {
     e.preventDefault();
     e.stopPropagation();
 
-    // Require authentication before allowing suggest annoyances
-    // iOS: App Check provides auth automatically — no Google sign-in needed
-    if (!isAuthenticated && !_deps.IS_IOS) {
-      document.querySelectorAll('.ff-annoying-tooltip').forEach(t => t.remove());
-      const tooltip = document.createElement('div');
-      tooltip.className = 'ff-annoying-tooltip';
-      btn.style.position = 'relative';
-      tooltip.replaceChildren(parseHTML(`<span class="ff-annoying-empty">Sign in ${isSafari ? 'with Apple' : 'with Google'} to use this feature</span>`));
-      btn.appendChild(tooltip);
-      return;
+    // Gate the backend request behind sign-in / trial state.
+    // iOS: App Check provides auth automatically — no Google sign-in needed.
+    if (!_deps.IS_IOS) {
+      // Never signed in (no Google/Apple, no guest trial) → full sign-in popup.
+      if (!isAuthenticated) {
+        showSignInPopup('signin');
+        return;
+      }
+      // Anonymous guest who has used up the trial → sign-in-only popup.
+      if (guestLimitReached) {
+        showSignInPopup('guestLimit');
+        return;
+      }
     }
 
     // If tooltip already open on this button, close it
