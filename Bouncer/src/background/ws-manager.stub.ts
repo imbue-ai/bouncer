@@ -20,6 +20,10 @@ export const imbueWebSocket = {
 
   disconnect(): void {},
 
+  reconnect(): Promise<void> {
+    return Promise.resolve();
+  },
+
   send(_message: Record<string, unknown>): Promise<ImbueAPIResponse> {
     return Promise.reject(new Error('Imbue backend not configured'));
   },

@@ -358,6 +358,22 @@ class ImbueWebSocket {
       this.ws = null;
     }
   }
+
+  // Tear down and immediately re-establish the socket so a fresh auth token is
+  // sent at $connect. Call when the user's identity changes (e.g. anonymous ->
+  // signed-in): the backend captures is_anonymous and the guest limits once, at
+  // connect time, and never re-reads the token per message — a new connection is
+  // the only way to refresh server-side identity.
+  async reconnect(): Promise<void> {
+    this.disconnect();
+    try {
+      // Proactively reopen so the new identity registers even if the user pauses
+      // before the next request. If this fails, the next send() reconnects lazily.
+      await this.ensureConnected();
+    } catch (err) {
+      console.error('[WS Manager] Reconnect after identity change failed:', (err as Error).message);
+    }
+  }
 }
 
 export const imbueWebSocket = new ImbueWebSocket();

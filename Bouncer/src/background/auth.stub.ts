@@ -25,6 +25,8 @@ export function isAnonymousUser(): boolean {
   return false;
 }
 
+export function setOnIdentityChanged(_cb: () => void): void {}
+
 export function handleAppleSignIn(
   _idToken: string,
   _rawNonce: string,

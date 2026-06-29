@@ -16,7 +16,7 @@ import {
 } from './pipeline';
 import { sendFeedback } from './providers';
 import { imbueWebSocket, type ForceLoginMessage } from './ws-manager';
-import { launchAuthFlow, signInAnon, isAnonymousUser, refreshAuthToken, getAuthToken, handleAppleSignIn, signOut, IS_SAFARI } from './auth';
+import { launchAuthFlow, signInAnon, isAnonymousUser, refreshAuthToken, getAuthToken, handleAppleSignIn, signOut, setOnIdentityChanged, IS_SAFARI } from './auth';
 
 // ==================== Tab tracking ====================
 
@@ -95,6 +95,14 @@ imbueWebSocket.onForceLogin = (msg: ForceLoginMessage) => {
     void sendToTab(tid, { type: 'guestLimitReached' });
   }
 };
+
+// When the user's identity changes mid-session (e.g. "Skip for now" anonymous
+// -> Google/Apple sign-in), the live WebSocket still carries the old token, so
+// the backend keeps applying anonymous limits to that connection. Reconnect to
+// re-run $connect with the new token and register the real identity server-side.
+setOnIdentityChanged(() => {
+  void imbueWebSocket.reconnect();
+});
 
 // ==================== Startup ====================
 

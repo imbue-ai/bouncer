@@ -41,11 +41,32 @@ const authReadyPromise = new Promise<void>((resolve) => {
   authReadyResolve = resolve;
 });
 
+// Notified whenever the signed-in identity actually changes (anonymous ->
+// Google/Apple, or sign-out). The WebSocket reads the auth token only once, at
+// $connect; the backend then pins is_anonymous and the guest limits to that
+// connection. So a mid-session identity change requires tearing down and
+// reopening the socket — index.ts wires this to imbueWebSocket.reconnect().
+let onIdentityChanged: (() => void) | null = null;
+let prevUid: string | null | undefined = undefined; // undefined = before first auth-state callback
+
+export function setOnIdentityChanged(cb: () => void): void {
+  onIdentityChanged = cb;
+}
+
 onAuthStateChanged(auth, (user) => {
+  const newUid = user?.uid ?? null;
+  const isInitial = prevUid === undefined;
+  const identityChanged = !isInitial && newUid !== prevUid;
+  prevUid = newUid;
   currentUser = user;
   if (!authReady) {
     authReady = true;
     authReadyResolve!();
+  }
+  // Skip the initial restore (null -> restored user at startup, before any
+  // socket exists); only fire on real mid-session transitions.
+  if (identityChanged && onIdentityChanged) {
+    onIdentityChanged();
   }
 });
 
