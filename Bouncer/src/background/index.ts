@@ -444,9 +444,6 @@ async function handleMessage(
     case 'skipAuth': {
       // "Skip for now" — sign in anonymously so the user can use Bouncer
       // without a Google/Apple account.
-      if (process.env.HAS_IMBUE_BACKEND !== 'true') {
-        return { success: false, error: 'Imbue backend not configured' };
-      }
       try {
         const token = await signInAnon();
         if (token) {
