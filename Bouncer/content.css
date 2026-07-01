@@ -781,6 +781,15 @@ article {
   left: 12px;
 }
 
+/* Center-aligned: notch x set inline by JS via --ff-notch-x, measured from
+ * the tooltip's own left edge to the notch's left edge. Used when the button
+ * is in the middle of a narrow viewport and neither directional placement
+ * fits without spilling off-screen. */
+.ff-annoying-tooltip--align-center::after {
+  right: auto;
+  left: var(--ff-notch-x, 12px);
+}
+
 @media (prefers-color-scheme: light) {
   .ff-annoying-tooltip::after {
     background: #ffffff;

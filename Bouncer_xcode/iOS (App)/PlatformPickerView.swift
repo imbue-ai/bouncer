@@ -12,7 +12,9 @@
 //  Styled to match OnboardingPage so the launch-flow visual language is
 //  consistent: system background, centered 28pt title + 17pt secondary
 //  subtitle, and a rounded card with the same corner radius / separator
-//  stroke as the onboarding image cards.
+//  stroke as the onboarding image cards. Rows are white at rest and use a
+//  native SwiftUI ButtonStyle to flash the accent color (system blue) as a
+//  tap highlight — .buttonStyle(.plain) previously suppressed that feedback.
 //
 
 import SwiftUI
@@ -38,7 +40,7 @@ struct PlatformPickerView: View {
                         .font(.system(size: 28, weight: .bold))
                         .multilineTextAlignment(.center)
 
-                    Text("Choose a feed to start filtering. You can switch anytime from the home button.")
+                    Text("Choose a feed to start filtering. You can switch anytime from the dropdown at the bottom.")
                         .font(.system(size: 17))
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
@@ -85,16 +87,29 @@ struct PlatformPickerView: View {
             HStack {
                 Text(label)
                     .font(.system(size: 22, weight: .semibold))
-                    .foregroundStyle(.primary)
                 Spacer()
                 Image(systemName: "arrow.right")
                     .font(.system(size: 17, weight: .medium))
-                    .foregroundStyle(.tertiary)
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 22)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(PressHighlightButtonStyle())
+    }
+}
+
+// MARK: - Row Highlight
+
+// Native ButtonStyle: row content is transparent at rest (letting the card's
+// systemBackground show through as white / dark surface) and flips to the
+// accent color when pressed. Text switches to white on press for legibility
+// on the blue fill; the arrow follows via inherited foregroundStyle.
+private struct PressHighlightButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundStyle(configuration.isPressed ? Color.white : Color.primary)
+            .background(configuration.isPressed ? Color.accentColor : Color.clear)
+            .animation(.easeInOut(duration: 0.12), value: configuration.isPressed)
     }
 }

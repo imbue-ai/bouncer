@@ -17,18 +17,16 @@ import type {
 // it's available as a runtime global.
 declare const DOMPurify: { sanitize(html: string, opts: { RETURN_DOM_FRAGMENT: true }): DocumentFragment };
 
-// YouTube-native "not interested" glyph (circle with diagonal slash). Replaces
-// the shared trash SVG so the affordance reads as a YT-style action rather
-// than a destructive delete. Sized via the `.ff-yt-* svg` rule in youtube.css.
-const CANCEL_SVG = '<svg xmlns="http://www.w3.org/2000/svg" height="24" viewBox="0 0 24 24" width="24" focusable="false" aria-hidden="true" style="pointer-events: none; display: inherit; width: 100%; height: 100%;"><path d="M12 1C5.925 1 1 5.925 1 12s4.925 11 11 11 11-4.925 11-11S18.075 1 12 1Zm0 2a9 9 0 018.246 12.605L4.755 6.661A8.99 8.99 0 0112 3ZM3.754 8.393l15.491 8.944A9 9 0 013.754 8.393Z"></path></svg>';
+// Classic Bouncer trashcan glyph (same as Twitter/LinkedIn). Sized via the
+// `.ff-yt-* svg` rule in youtube.css. Stroke-based, so the wrapper uses
+// `stroke: currentcolor` and `fill: none` rather than a fill cascade.
+const CANCEL_SVG = '<svg xmlns="http://www.w3.org/2000/svg" height="24" viewBox="0 0 24 24" width="24" focusable="false" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="pointer-events: none; display: inherit; width: 100%; height: 100%;"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M5 6v13a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V6"/><line x1="10" y1="10" x2="10" y2="17"/><line x1="14" y1="10" x2="14" y2="17"/></svg>';
 
 // YT-native icon-button wrapper. When the bouncer button sits next to a
 // real "More actions" 3-dot menu, we clone YT's button-shape DOM around the
-// cancel SVG so YT's own stylesheet drives sizing, hover, and currentcolor
-// fill — keeping the two icons visually indistinguishable except for the
-// glyph itself. The `<yt-touch-feedback-shape>` ripple is intentionally
-// omitted (it's not load-bearing for layout or color).
-const YT_BUTTON_INNER = `<div aria-hidden="true" class="ytSpecButtonShapeNextIcon"><span class="ytIconWrapperHost" style="width: 24px; height: 24px;"><span class="yt-icon-shape ytSpecIconShapeHost"><div style="width: 100%; height: 100%; display: block; fill: currentcolor;">${CANCEL_SVG}</div></span></span></div>`;
+// trash SVG so YT's own stylesheet drives sizing and hover. Stroke (not fill)
+// drives the glyph color since the trashcan is a stroke-only path.
+const YT_BUTTON_INNER = `<div aria-hidden="true" class="ytSpecButtonShapeNextIcon"><span class="ytIconWrapperHost" style="width: 24px; height: 24px;"><span class="yt-icon-shape ytSpecIconShapeHost"><div style="width: 100%; height: 100%; display: block; stroke: currentcolor; fill: none;">${CANCEL_SVG}</div></span></span></div>`;
 const YT_BUTTON_SHAPE_CLASSES = [
   'ytSpecButtonShapeNextHost',
   'ytSpecButtonShapeNextText',
@@ -395,24 +393,6 @@ const BouncerYouTubeAdapter = class YouTubeAdapter implements PlatformAdapter {
     setTimeout(scrollAndFocus, 350);
   }
 
-  // Prepend the Bouncer logo into the box's title span. Done from the
-  // adapter (not from shared UI markup) because the logo URL needs
-  // `chrome.runtime.getURL`, which isn't reachable from CSS, and only the
-  // YouTube skin wants this decoration.
-  private _ensureTitleLogo() {
-    const title = document.querySelector<HTMLElement>(
-      '.filter-phrases-banner--youtube .filter-phrases-box-name'
-    );
-    if (!title) return;
-    if (title.querySelector('.bouncer-title-logo')) return;
-    const img = document.createElement('img');
-    img.className = 'bouncer-title-logo';
-    img.src = chrome.runtime.getURL('icons/icon48.png');
-    img.alt = '';
-    img.setAttribute('aria-hidden', 'true');
-    title.prepend(img);
-  }
-
   private _initMiniGuideEntry() {
     if (!this._countListenerWired) {
       this._wireFilteredCountListener();
@@ -420,7 +400,6 @@ const BouncerYouTubeAdapter = class YouTubeAdapter implements PlatformAdapter {
     }
     const tick = () => {
       this._ensureMiniGuideEntry();
-      this._ensureTitleLogo();
     };
     tick();
     // Long-running observer — handles delayed guide hydration, SPA nav, and

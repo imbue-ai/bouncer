@@ -175,9 +175,9 @@ function getSignInHTML() {
         <span class="filter-phrases-box-name">Bouncer</span>
         <div class="filter-signin-prompt">
           <button class="google-signin-btn">
-            Activate Bouncer
+            <span class="google-signin-btn-label">Activate Bouncer</span>
           </button>
-          <p class="ff-signin-explanation">Sign in to start filtering your feed</p>
+          <p class="ff-signin-explanation">Login helps prevent abuse</p>
         </div>
       </div>
     `;
@@ -193,9 +193,9 @@ function getSignInHTML() {
             <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
             <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
           </svg>
-          Activate Bouncer
+          <span class="google-signin-btn-label">Activate Bouncer</span>
         </button>
-        <p class="ff-signin-explanation">Google sign-in helps us prevent abuse</p>
+        <p class="ff-signin-explanation">Login helps prevent abuse</p>
       </div>
     </div>
   `;
@@ -3195,20 +3195,48 @@ export function addWhyAnnoyingButton(article: HTMLElement) {
     // Position the tooltip above the button
     const positionTooltip = () => {
       const btnRect = btn.getBoundingClientRect();
+      const viewportW = document.documentElement.clientWidth;
+      const edgeMargin = 8;
+      const tipW = tooltip.offsetWidth;
       tooltip.style.position = 'fixed';
-      // Horizontal: default right-aligned so the tooltip extends LEFT from the
-      // button (fine on Twitter / desktop YouTube). If that would push it off
-      // the left edge — common on narrow YouTube-mobile where the button sits
-      // near the left — left-align instead so it extends rightward on-screen.
+      // Horizontal: three-way fit check.
+      //  1. Right-align (default): tooltip extends leftward from btn.right.
+      //  2. Left-align: tooltip extends rightward from btn.left (used when the
+      //     button is close to the left edge — common on narrow YouTube mobile).
+      //  3. Center-align: neither directional placement fits; clamp the tooltip
+      //     into the viewport and slide the notch inline so it still points at
+      //     the button.
       tooltip.style.left = '';
       tooltip.style.right = '';
-      const edgeMargin = 8;
-      if (btnRect.right - tooltip.offsetWidth < edgeMargin) {
+      tooltip.classList.remove('ff-annoying-tooltip--align-left');
+      tooltip.classList.remove('ff-annoying-tooltip--align-center');
+      tooltip.style.removeProperty('--ff-notch-x');
+      const fitsRightAligned = btnRect.right - tipW >= edgeMargin;
+      const fitsLeftAligned = btnRect.left + tipW <= viewportW - edgeMargin;
+      if (fitsRightAligned) {
+        tooltip.style.right = `${viewportW - btnRect.right}px`;
+      } else if (fitsLeftAligned) {
         tooltip.style.left = `${Math.max(edgeMargin, btnRect.left)}px`;
         tooltip.classList.add('ff-annoying-tooltip--align-left');
       } else {
-        tooltip.style.right = `${document.documentElement.clientWidth - btnRect.right}px`;
-        tooltip.classList.remove('ff-annoying-tooltip--align-left');
+        const btnCenterX = btnRect.left + btnRect.width / 2;
+        const idealLeft = btnCenterX - tipW / 2;
+        const clampedLeft = Math.min(
+          Math.max(edgeMargin, idealLeft),
+          viewportW - edgeMargin - tipW,
+        );
+        tooltip.style.left = `${clampedLeft}px`;
+        tooltip.classList.add('ff-annoying-tooltip--align-center');
+        // Notch x measured from tooltip's own left edge; center of the 10px
+        // notch lands on btnCenterX in viewport coords. Clamp inside the
+        // rounded corners so the notch never draws into the border-radius arc.
+        const notchInset = 12;
+        const rawNotchX = btnCenterX - clampedLeft - 5;
+        const notchX = Math.min(
+          Math.max(notchInset, rawNotchX),
+          tipW - notchInset - 10,
+        );
+        tooltip.style.setProperty('--ff-notch-x', `${notchX}px`);
       }
       // Place above the button; if clipped, place below
       tooltip.style.bottom = '';

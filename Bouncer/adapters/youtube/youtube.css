@@ -19,7 +19,6 @@
  * adapter's mini-guide observer keeps trying to re-add the entry on every
  * DOM mutation — CSS hides what slips through. */
 body.bouncer-disabled .bouncer-mini-guide-entry,
-body.bouncer-disabled .bouncer-title-logo,
 body.bouncer-disabled .filter-phrases-banner,
 body.bouncer-disabled .ff-why-annoying-btn {
   display: none !important;
@@ -176,19 +175,11 @@ html[dark] .filter-phrases-banner--youtube .filter-phrases-container {
   gap: 8px;
   padding-bottom: 0;
   font-family: "Roboto", "Arial", sans-serif;
-  font-size: 16px;
+  font-size: 20px;
   font-weight: 700;
   letter-spacing: 0.1px;
   color: #0f0f0f;
   text-transform: none;
-}
-
-.filter-phrases-banner--youtube .bouncer-title-logo {
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  flex-shrink: 0;
-  display: block;
 }
 
 html[dark] .filter-phrases-banner--youtube .filter-phrases-box-name {
@@ -257,7 +248,7 @@ html[dark] .filter-phrases-banner--youtube .filter-phrase-separator {
 }
 
 .filter-phrases-banner--youtube .filter-phrases-container .filter-phrases-input:focus {
-  border-bottom-color: #c00 !important;
+  border-bottom-color: rgb(var(--bouncer-brand-rgb)) !important;
 }
 
 html[dark] .filter-phrases-banner--youtube .filter-phrases-container .filter-phrases-input {
@@ -266,7 +257,14 @@ html[dark] .filter-phrases-banner--youtube .filter-phrases-container .filter-phr
 }
 
 html[dark] .filter-phrases-banner--youtube .filter-phrases-container .filter-phrases-input:focus {
-  border-bottom-color: #ff4444 !important;
+  border-bottom-color: rgb(var(--bouncer-brand-rgb)) !important;
+}
+
+/* Nudge the cycling placeholder up 2px so its baseline aligns with the
+ * input's typed text on YT (the input uses a slightly different font metric
+ * than the shared placeholder pin). */
+.filter-phrases-banner--youtube .filter-placeholder-cycle {
+  top: -2px;
 }
 
 /* Actions row — "View filtered" pill + icon buttons, sized for the column. */
@@ -343,6 +341,12 @@ html[dark] .filter-phrases-banner--youtube .filter-ai-text-toggle {
   border: 1px solid rgba(0, 0, 0, 0.12) !important;
   color: #0f0f0f !important;
   font-weight: 500;
+}
+
+/* Keep "Activate Bouncer" on one line in the narrow YT guide column —
+ * without this the two-word label wraps and pushes the button height. */
+.filter-phrases-banner--youtube .google-signin-btn-label {
+  white-space: nowrap;
 }
 
 .filter-phrases-banner--youtube .google-signin-btn:hover {
@@ -676,11 +680,11 @@ body.site-youtube .yt-card-reasoning {
 }
 
 /* For the next-to-menu placement we can't rely on inherited `color` driving
- * `fill: currentcolor` — YT's `.ytSpecButtonShapeNext*` rules set their own
- * `color` on the host. Force `fill` directly on the SVG so the brand orange
+ * `stroke: currentcolor` — YT's `.ytSpecButtonShapeNext*` rules set their own
+ * `color` on the host. Force `stroke` directly on the SVG so the brand orange
  * wins regardless of YT's icon-color cascade. */
 .ff-why-annoying-btn.ff-yt-next-to-menu svg {
-  fill: rgb(var(--bouncer-brand-rgb));
+  stroke: rgb(var(--bouncer-brand-rgb));
 }
 
 .ff-why-annoying-btn.ff-yt-under-menu:hover,
