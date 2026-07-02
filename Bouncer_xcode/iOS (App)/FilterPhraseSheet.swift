@@ -107,7 +107,17 @@ class FilterSheetViewModel: ObservableObject {
     @Published var isPresented = false
     @Published var phrases: [String] = []
     @Published var themeMode: String = "dark"  // kept for JS bridge communication
-    @Published var filteredCount: Int = 0
+    // Per-platform filtered-post counts. Each cached webview reports its own
+    // count via feedfilterShowSheet / feedfilterPhrasesUpdated; the badge and
+    // "View filtered posts (N)" label read the active platform's slot through
+    // the `filteredCount` computed property below.
+    @Published var filteredCounts: [String: Int] = [:]
+
+    // Reads the currently-visible platform's count. SwiftUI re-computes it
+    // when either `filteredCounts` or `selectedPlatform` changes, so
+    // switching X → YouTube instantly reflects YT's count (or 0 if we
+    // haven't heard from that webview yet) without waiting for a fresh push.
+    var filteredCount: Int { filteredCounts[selectedPlatform] ?? 0 }
     @Published var canGoBack = false
     @Published var canGoForward = false
     @Published var currentURL: String = ""

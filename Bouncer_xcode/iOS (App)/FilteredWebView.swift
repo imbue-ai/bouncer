@@ -481,25 +481,28 @@ struct FilteredWebView: UIViewRepresentable {
                 }
 
                 // With multiple webviews cached, hidden ones still emit these
-                // events. Only trust events coming from the webview whose
-                // platform matches the ViewModel's currently-selected platform —
-                // otherwise a background YouTube filter fires and clobbers the
-                // count / theme the user sees on X, or the sheet gets toggled
-                // by a webview the user isn't looking at.
+                // events. Route the filtered count into the sender's slot so
+                // each platform's badge stays accurate independently, but
+                // gate anything that mutates active-user UI (theme, sheet
+                // toggle) on the sender being the currently-selected platform
+                // — otherwise a background YouTube filter would flip X's
+                // theme or pop the sheet while the user is looking at X.
                 let senderHost = message.webView?.url?.host?.lowercased() ?? ""
                 let senderPlatform = Platforms.fromHost(senderHost)?.id
 
                 DispatchQueue.main.async { [weak self] in
                     guard let vm = self?.sheetViewModel else { return }
+
+                    if let count = json["filteredCount"] as? Int, let platform = senderPlatform {
+                        vm.filteredCounts[platform] = count
+                    }
+
                     guard senderPlatform == nil || senderPlatform == vm.selectedPlatform else { return }
 
                     // Phrase list is driven by the sheet's platform dropdown
                     // (viewModel.loadPhrases), not this push — the push carries
                     // only the current site's phrases and would clobber a
-                    // cross-platform view. We still take the filtered count.
-                    if let count = json["filteredCount"] as? Int {
-                        vm.filteredCount = count
-                    }
+                    // cross-platform view.
                     if let theme = json["theme"] as? String {
                         vm.themeMode = theme
                     }
