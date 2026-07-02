@@ -63,7 +63,7 @@ enum Platforms {
     static let all: [PlatformDef] = [
         PlatformDef(
             id: "twitter",
-            displayName: "X",
+            displayName: "X (Twitter)",
             feedURL: "https://x.com/home",
             loginURL: "https://x.com/i/flow/login",
             adapterScriptName: "TwitterAdapter",

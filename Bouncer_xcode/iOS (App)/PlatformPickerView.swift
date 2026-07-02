@@ -40,7 +40,7 @@ struct PlatformPickerView: View {
                         .font(.system(size: 28, weight: .bold))
                         .multilineTextAlignment(.center)
 
-                    Text("Choose a feed to start filtering. You can switch anytime from the dropdown at the bottom.")
+                    Text("You can switch anytime from the dropdown at the bottom.")
                         .font(.system(size: 17))
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
