@@ -83,8 +83,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 // was reached server-side). Mirror the local guest-limit gate: persist it via
 // `anonFilterCount` so it survives reloads, then prompt every content tab with
 // the same `guestLimitReached` signal the local path uses.
-imbueWebSocket.onForceLogin = (msg: ForceLoginMessage) => {
-  if (msg.reason && msg.reason !== 'anonymous_tweet_limit') return;
+imbueWebSocket.onForceLogin = (_msg: ForceLoginMessage) => {
   void (async () => {
     const { anonFilterCount } = await getStorage(['anonFilterCount']);
     if ((anonFilterCount || 0) < GUEST_FILTER_LIMIT) {
