@@ -205,8 +205,23 @@ async function launchSignIn() {
 }
 
 // "Skip for now" — sign in anonymously via the background script so the user
-// can use Bouncer without a Google/Apple account.
-async function skipSignIn() {
+// can use Bouncer without a Google/Apple account. While the request is in
+// flight, the button's arrow becomes a spinner; on success the surrounding UI
+// is torn down anyway, so the arrow is only restored on failure.
+async function skipSignIn(btn?: HTMLButtonElement) {
+  const arrow = btn?.querySelector<HTMLElement>('.skip-signin-arrow');
+  if (btn) btn.disabled = true;
+  if (arrow) {
+    arrow.textContent = '';
+    arrow.classList.add('spinning');
+  }
+  const restoreArrow = () => {
+    if (btn) btn.disabled = false;
+    if (arrow) {
+      arrow.classList.remove('spinning');
+      arrow.textContent = '→';
+    }
+  };
   try {
     console.log('[Bouncer] Skipping sign-in (anonymous auth)...');
     const response: { success?: boolean } = await chrome.runtime.sendMessage({ type: 'skipAuth' });
@@ -215,8 +230,11 @@ async function skipSignIn() {
       isAnonymous = true;
       dismissGuestLimitPopup();
       refreshAllFilterBoxes();
+    } else {
+      restoreArrow();
     }
   } catch (err) {
+    restoreArrow();
     console.error('[Bouncer] Anonymous sign-in failed:', err);
   }
 }
@@ -335,8 +353,8 @@ function showSignInPopup(variant: 'signin' | 'guestLimit') {
     ?.addEventListener('click', () => dismissGuestLimitPopup());
   backdrop.querySelector('.google-signin-btn')
     ?.addEventListener('click', asyncHandler(launchSignIn));
-  backdrop.querySelector('.skip-signin-btn')
-    ?.addEventListener('click', asyncHandler(skipSignIn));
+  const popupSkipBtn = backdrop.querySelector<HTMLButtonElement>('.skip-signin-btn');
+  popupSkipBtn?.addEventListener('click', asyncHandler(() => skipSignIn(popupSkipBtn)));
 }
 
 // Shown the moment an anonymous user crosses the trial limit (broadcast from
@@ -361,9 +379,9 @@ function setupSignInButton(container: HTMLElement) {
       btn.addEventListener('click', asyncHandler(launchSignIn));
     }
   }
-  const skipBtn = container.querySelector('.skip-signin-btn');
+  const skipBtn = container.querySelector<HTMLButtonElement>('.skip-signin-btn');
   if (skipBtn) {
-    skipBtn.addEventListener('click', asyncHandler(skipSignIn));
+    skipBtn.addEventListener('click', asyncHandler(() => skipSignIn(skipBtn)));
   }
 }
 
