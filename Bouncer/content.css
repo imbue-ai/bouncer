@@ -1329,22 +1329,17 @@ article {
 }
 
 /* Instant feedback on press: transition disabled so the color changes on the
-   very frame of the click. The .signing-in class (set while the auth request
-   is in flight) holds the same pressed look until the auth window opens.
+   very frame of the click. Only :active — the pressed look must release on
+   mouseup, not linger while the auth window opens (the button stays disabled
+   against double-clicks, but visually returns to normal).
    CASCADE TRAP: you're hovering while you click, so any hover rule that
    outranks these selectors (higher specificity, or equal specificity later
    in the file — e.g. a .light-mode hover override) silently masks the
    pressed state. Keep these the last background rules for this button. */
 .google-signin-btn:active,
-.google-signin-btn.signing-in,
-.light-mode .google-signin-btn:active,
-.light-mode .google-signin-btn.signing-in {
+.light-mode .google-signin-btn:active {
   transition: none;
   background: rgba(234, 133, 84, 0.32);
-}
-
-.google-signin-btn.signing-in {
-  cursor: default;
 }
 
 .google-signin-btn .google-icon {
