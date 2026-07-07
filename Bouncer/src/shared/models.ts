@@ -11,7 +11,7 @@ export const PREDEFINED_MODELS: PredefinedModelsMap = {
       isLocal: true,
       backend: 'litertlm',
       supportsImages: false,
-      sizeGB: 3.0,
+      sizeGB: 2.0,
       inferenceParams: { temperature: 0.0 },
       litertlmConfig: {
         modelUrl: "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it-web.litertlm",
