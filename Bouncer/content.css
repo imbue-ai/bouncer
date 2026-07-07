@@ -1291,37 +1291,41 @@ article {
 }
 
 .ff-signin-explanation {
-  margin: 8px 0 0;
-  font-size: 13px;
-  color: rgba(255, 255, 255, 0.5);
+  margin: 14px 0 0;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.45);
   text-align: center;
-  line-height: 1.4;
+  /* Distribute words evenly across lines instead of a long first line with
+     a short orphan below. */
+  text-wrap: balance;
+  line-height: 1.45;
 }
 
 .light-mode .ff-signin-explanation {
-  color: rgba(0, 0, 0, 0.45);
+  color: rgba(0, 0, 0, 0.4);
 }
 
+/* Outlined in the same orange as the filter-box border (see
+   .filter-phrases-container), transparent fill so it sits on any theme. */
 .google-signin-btn {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 10px 20px;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.08);
+  padding: 15px 20px;
+  border: 1.5px solid rgb(234, 133, 84);
+  border-radius: 10px;
+  background: rgba(234, 133, 84, 0.08);
   color: inherit;
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 15px;
+  font-weight: 700;
   cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
+  transition: background 0.15s;
   width: 100%;
   justify-content: center;
 }
 
 .google-signin-btn:hover {
-  background: rgba(255, 255, 255, 0.14);
-  border-color: rgba(255, 255, 255, 0.35);
+  background: rgba(234, 133, 84, 0.18);
 }
 
 .google-signin-btn .google-icon {
@@ -1330,29 +1334,23 @@ article {
   flex-shrink: 0;
 }
 
-.light-mode .google-signin-btn {
-  border-color: rgba(0, 0, 0, 0.15);
-  background: rgba(0, 0, 0, 0.04);
-}
-
 .light-mode .google-signin-btn:hover {
-  background: rgba(0, 0, 0, 0.08);
-  border-color: rgba(0, 0, 0, 0.25);
+  background: rgba(234, 133, 84, 0.14);
 }
 
 .skip-signin-btn {
-  margin: 10px 0 0;
+  margin: 12px 0 0;
   padding: 4px 8px;
   border: none;
   background: none;
-  color: rgba(255, 255, 255, 0.4);
-  font-size: 12px;
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 13px;
   cursor: pointer;
   transition: color 0.15s;
 }
 
 .skip-signin-btn:hover {
-  color: rgba(255, 255, 255, 0.65);
+  color: #ffffff;
 }
 
 .skip-signin-arrow {
@@ -1384,16 +1382,21 @@ article {
   animation: skip-signin-spin 0.45s linear infinite;
 }
 
+/* Both keyframes are explicit so the animation is a pure rotation. With only
+   a `to`, the implicit `from` inherits the hover translateX(2px), and the
+   browser matrix-interpolates between mismatched transforms — a wobbly path
+   that also can't composite, so it freezes while the main thread is busy. */
 @keyframes skip-signin-spin {
+  from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
 }
 
 .light-mode .skip-signin-btn {
-  color: rgba(0, 0, 0, 0.4);
+  color: rgba(0, 0, 0, 0.85);
 }
 
 .light-mode .skip-signin-btn:hover {
-  color: rgba(0, 0, 0, 0.6);
+  color: #000000;
 }
 
 /* Guest-limit popup (shown when an anonymous user exhausts their free filters) */
@@ -1473,8 +1476,11 @@ article {
   width: 100%;
 }
 
+/* Guest-limit variant is the headline of its state, not fine print — keep it
+   at full message size despite the smaller .ff-signin-explanation base. */
 .ff-guest-limit-msg {
   margin: 4px 0 12px;
+  font-size: 13px;
   font-weight: 600;
 }
 

@@ -269,18 +269,15 @@ function refreshAllFilterBoxes() {
 }
 
 // HTML for the initial sign-in state shown inside filter boxes (with the
-// "Skip for now" guest option).
+// "Try it without signing in" guest option).
 function getSignInHTML() {
-  const explanation = isSafari
-    ? 'Sign in to start filtering your feed'
-    : 'Google sign-in helps us prevent abuse';
   return `
     <div class="filter-phrases-container">
       <span class="filter-phrases-box-name">Bouncer</span>
       <div class="filter-signin-prompt">
-        ${signinButtonHTML('Activate Bouncer')}
-        <p class="ff-signin-explanation">${explanation}</p>
-        <button class="skip-signin-btn">Trial without signing in<span class="skip-signin-arrow" aria-hidden="true">→</span></button>
+        ${signinButtonHTML(isSafari ? 'Continue with Apple' : 'Continue with Google')}
+        <button class="skip-signin-btn">Try it without signing in<span class="skip-signin-arrow" aria-hidden="true">→</span></button>
+        <p class="ff-signin-explanation">Signing in helps us prevent abuse. We do not collect or store any identifying data.</p>
       </div>
     </div>
   `;
@@ -322,8 +319,8 @@ function dismissGuestLimitPopup() {
 //    signing in" guest option.
 //  - 'guestLimit': an anonymous user has exhausted the trial. Offers sign-in
 //    only — no skip, since the trial is used up.
-// The X dismisses the popup (any gated filter box stays gated underneath); the
-// sign-in button runs the normal Google/Apple flow.
+// The X or a click on the backdrop dismisses the popup (any gated filter box
+// stays gated underneath); the sign-in button runs the normal Google/Apple flow.
 function showSignInPopup(variant: 'signin' | 'guestLimit') {
   if (guestLimitPopup && guestLimitPopup.isConnected) return; // idempotent
   dismissGuestLimitPopup();
@@ -332,7 +329,7 @@ function showSignInPopup(variant: 'signin' | 'guestLimit') {
     ? GUEST_LIMIT_MESSAGE
     : 'Sign in to use Bouncer.';
   const skipButtonHTML = variant === 'signin'
-    ? `<button class="skip-signin-btn">Trial without signing in<span class="skip-signin-arrow" aria-hidden="true">→</span></button>`
+    ? `<button class="skip-signin-btn">Try it without signing in<span class="skip-signin-arrow" aria-hidden="true">→</span></button>`
     : '';
 
   const theme = _deps.adapter.getThemeMode();
@@ -351,6 +348,9 @@ function showSignInPopup(variant: 'signin' | 'guestLimit') {
 
   backdrop.querySelector('.bouncer-guest-popup-close')
     ?.addEventListener('click', () => dismissGuestLimitPopup());
+  backdrop.addEventListener('click', (e) => {
+    if (e.target === backdrop) dismissGuestLimitPopup();
+  });
   backdrop.querySelector('.google-signin-btn')
     ?.addEventListener('click', asyncHandler(launchSignIn));
   const popupSkipBtn = backdrop.querySelector<HTMLButtonElement>('.skip-signin-btn');
