@@ -17,6 +17,16 @@ export function launchAuthFlow(_method?: string): Promise<string | null> {
   return Promise.resolve(null);
 }
 
+export function signInAnon(): Promise<string | null> {
+  return Promise.resolve(null);
+}
+
+export function isAnonymousUser(): boolean {
+  return false;
+}
+
+export function setOnIdentityChanged(_cb: () => void): void {}
+
 export function handleAppleSignIn(
   _idToken: string,
   _rawNonce: string,

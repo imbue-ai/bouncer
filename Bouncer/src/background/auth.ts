@@ -7,6 +7,7 @@ import { initializeApp } from 'firebase/app';
 import {
   getAuth,
   signInWithCredential,
+  signInAnonymously,
   GoogleAuthProvider,
   OAuthProvider,
   onAuthStateChanged,
@@ -40,11 +41,32 @@ const authReadyPromise = new Promise<void>((resolve) => {
   authReadyResolve = resolve;
 });
 
+// Notified whenever the signed-in identity actually changes (anonymous ->
+// Google/Apple, or sign-out). The WebSocket reads the auth token only once, at
+// $connect; the backend then pins is_anonymous and the guest limits to that
+// connection. So a mid-session identity change requires tearing down and
+// reopening the socket — index.ts wires this to imbueWebSocket.reconnect().
+let onIdentityChanged: (() => void) | null = null;
+let prevUid: string | null | undefined = undefined; // undefined = before first auth-state callback
+
+export function setOnIdentityChanged(cb: () => void): void {
+  onIdentityChanged = cb;
+}
+
 onAuthStateChanged(auth, (user) => {
+  const newUid = user?.uid ?? null;
+  const isInitial = prevUid === undefined;
+  const identityChanged = !isInitial && newUid !== prevUid;
+  prevUid = newUid;
   currentUser = user;
   if (!authReady) {
     authReady = true;
     authReadyResolve!();
+  }
+  // Skip the initial restore (null -> restored user at startup, before any
+  // socket exists); only fire on real mid-session transitions.
+  if (identityChanged && onIdentityChanged) {
+    onIdentityChanged();
   }
 });
 
@@ -69,6 +91,12 @@ export async function getAuthToken(): Promise<string | null> {
   }
 }
 
+// True when the signed-in user is a Firebase anonymous ("Skip for now") user.
+// Used to gate the guest trial — real Google/Apple users are never gated.
+export function isAnonymousUser(): boolean {
+  return currentUser?.isAnonymous ?? false;
+}
+
 // ==================== Interactive sign-in ====================
 
 // Sign out
@@ -88,6 +116,22 @@ export async function launchAuthFlow(_method?: string): Promise<string | null> {
     return launchHostedAuthFlow();
   }
   return launchGoogleAuthFlow();
+}
+
+// Sign in anonymously ("skip for now"). Lets users access Bouncer without a
+// Google/Apple account. Firebase creates a throwaway anonymous user; its ID
+// token works against the backend just like a real one and persists across
+// restarts. Requires Anonymous auth to be enabled in the Firebase console.
+export async function signInAnon(): Promise<string | null> {
+  try {
+    const userCredential = await signInAnonymously(auth);
+    const token = await userCredential.user.getIdToken();
+    console.log('[Auth] Anonymous sign-in succeeded');
+    return token;
+  } catch (err) {
+    console.error('[Auth] Anonymous sign-in failed:', (err as Error).message);
+    return null;
+  }
 }
 
 // Safari sign-in — opens a hosted page on BOUNCER_SIGNIN_DOMAIN
