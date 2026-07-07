@@ -25,6 +25,10 @@ const LITERTLM_CACHE_KEY = 'litertlm-cache';
 // + binaries. Has to be reachable via chrome.runtime.getURL.
 const WASM_BASE = 'dist/litertlm-wasm';
 
+// Bumped manually on runtime changes so a stale extension build is easy to
+// spot in the offscreen console.
+const BUILD_TAG = 'greedy-clamp-v3';
+
 // Rough chars-per-token for Gemma's BPE tokenizer. LiteRT-LM's JS layer
 // doesn't expose a tokenizer, so we use a conservative estimate — round down
 // in chars-to-tokens (estimateTokens) and round down in tokens-to-chars
@@ -169,6 +173,7 @@ export class LitertlmRuntime {
       throw new Error('aborted');
     }
     this.modelDef = modelDef;
+    console.log(`[LiteRT-LM] Engine initialized for ${modelDef.name} (${BUILD_TAG})`);
     onProgress({ progress: 1, text: '' });
   }
 
@@ -217,13 +222,12 @@ export class LitertlmRuntime {
     return { prefaceMessages, userText };
   }
 
-  generate(messages: ChatMessage[], _maxTokens: number, params: Record<string, unknown>): Promise<string> {
+  generate(messages: ChatMessage[], maxTokens: number, params: Record<string, unknown>): Promise<string> {
     if (!this.engine) throw new Error('Engine not loaded');
     return this.enqueue(async () => {
       if (!this.engine) throw new Error('Engine not loaded');
 
       const { prefaceMessages, userText } = this.splitMessages(messages);
-      const cfg = this.modelDef?.litertlmConfig;
       const defaultParams = this.modelDef?.inferenceParams ?? {};
       const temperature = typeof params.temperature === 'number'
         ? params.temperature
@@ -231,22 +235,28 @@ export class LitertlmRuntime {
           ? defaultParams.temperature
           : 0.0;
 
-      // GREEDY when temperature is 0 (deterministic classification);
-      // otherwise TOP_K with the configured k. Bouncer's table_yesno
-      // classifier wants deterministic verdicts so temperature=0 is the
-      // common path. Greedy means top-1, so k MUST be 1 — the GPU backend
-      // defaults max_top_k to 1 and rejects larger values otherwise.
-      const isGreedy = temperature === 0;
-      const samplerType = isGreedy ? SamplerType.GREEDY : SamplerType.TOP_K;
-      const k = isGreedy ? 1 : (cfg?.topK ?? 40);
-
+      // Always GREEDY (top-1). The GPU backend's max_top_k defaults to 1
+      // and Engine.create can only raise it by supplying a complete
+      // GpuArtisanConfig (whose defaults live in the wasm binary), so a
+      // TOP_K session with k > 1 is rejected at session startup inside
+      // sendMessage ("Top-K value 40 must be <= 1") — and the failed
+      // attempt poisons the engine's context handler (every later session
+      // RET_CHECKs with "processed context is already set"), so a
+      // try-sampled-then-retry-greedy fallback is not viable either.
+      // Until the engine is created with a raised max_top_k, sampled
+      // callers (phrase suggestions request temperature 0.7) get clamped
+      // to deterministic greedy output instead of an error.
+      if (temperature > 0) {
+        console.warn(`[LiteRT-LM] TOP_K sampling unsupported (max_top_k=1); clamping temperature ${temperature} to greedy (${BUILD_TAG})`);
+      }
       const conversationConfig: ConversationConfig = {
         preface: { messages: prefaceMessages },
         sessionConfig: {
+          ...(maxTokens > 0 ? { maxOutputTokens: maxTokens } : {}),
           samplerParams: {
-            type: samplerType,
-            k,
-            temperature,
+            type: SamplerType.GREEDY,
+            k: 1,
+            temperature: 0,
             seed: 0,
           },
         },

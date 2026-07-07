@@ -6,7 +6,9 @@ import { PREDEFINED_MODELS } from '../shared/models';
 import { isGPUDeviceLostError, isNetworkError, formatLocalInferenceResult } from '../shared/utils';
 import {
   LOCAL_SYSTEM_PROMPT,
+  LOCAL_SYSTEM_PROMPT_SINGLE,
   buildTableYesnoUserMessage,
+  buildSingleYesnoUserMessage,
   parseTableYesnoResponse,
 } from '../shared/prompts';
 export { parseTableYesnoResponse } from '../shared/prompts';
@@ -612,15 +614,26 @@ export async function callLocalInference(
 
   const contextWindowSize = modelConfig?.litertlmConfig?.maxTokens ?? 1024;
   // Output is the verdict row (~3 tokens × N categories). Pad generously so
-  // a long topic name or extra category never truncates.
-  const maxGenerationTokens = Math.max(20, 6 + 4 * bannedCategories.length);
+  // a long topic name or extra category never truncates. The floor also
+  // leaves headroom for Gemma's markdown-table drift (header + separator
+  // rows before the verdicts), which parseTableYesnoResponse tolerates but
+  // which a tight maxOutputTokens cap would truncate mid-row — this value
+  // is enforced as the session's maxOutputTokens, not just used for input
+  // budgeting.
+  const maxGenerationTokens = Math.max(64, 6 + 4 * bannedCategories.length);
   const supportsImages = modelConfig?.supportsImages === true;
   let useImages = !!(supportsImages && postData.imageUrls && postData.imageUrls.length > 0);
 
   // The user content is a string for text-only models and a multipart array
   // (text + image_url entries) when the backend supports vision.
+  // Single-category calls (phrase-suggestion validation, single-phrase filter
+  // lists) use a plain yes/no question instead of the verdict-row table — see
+  // LOCAL_SYSTEM_PROMPT_SINGLE for why.
+  const isSingleCategory = bannedCategories.length === 1;
   const buildUserContent = (postText: string, includeImages: boolean): ChatMessage['content'] => {
-    const userText = buildTableYesnoUserMessage(postText, bannedCategories, includeImages);
+    const userText = isSingleCategory
+      ? buildSingleYesnoUserMessage(postText, bannedCategories[0], includeImages)
+      : buildTableYesnoUserMessage(postText, bannedCategories, includeImages);
     if (!includeImages) return userText;
     return [
       { type: 'text', text: userText },
@@ -628,7 +641,7 @@ export async function callLocalInference(
     ];
   };
   const buildMessages = (postText: string, includeImages: boolean): ChatMessage[] => [
-    { role: 'system', content: LOCAL_SYSTEM_PROMPT },
+    { role: 'system', content: isSingleCategory ? LOCAL_SYSTEM_PROMPT_SINGLE : LOCAL_SYSTEM_PROMPT },
     { role: 'user', content: buildUserContent(postText, includeImages) },
   ];
 

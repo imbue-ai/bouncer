@@ -6,7 +6,7 @@ import {
 } from '../shared/utils';
 import { isAnonymousUser } from './auth';
 import { PREDEFINED_MODELS, API_DISPLAY_NAMES, DEFAULT_MODEL } from '../shared/models';
-import { buildAPIMessages } from '../shared/prompts';
+import { buildAPIMessages, parseTableYesnoResponse } from '../shared/prompts';
 import { callDirectAPI, callAnthropicAPI, callImbueAPI, callImbueAiTextDetection, callImbueAiImageDetection } from './providers';
 import { runDetectors, type Detector, type DetectorResult } from './detectors';
 import { callLocalInference, localEngine } from './local-model';
@@ -1230,6 +1230,7 @@ async function validateFilterPhrase(postText: string, imageUrls: string[], phras
     const modelName = settings.selectedModel.split(':')[1];
     const modelConfig = PREDEFINED_MODELS.local?.find(m => m.name === modelName) || {} as LocalModelDef;
     const localResult = await callLocalInference(postData, [phrase], modelConfig, modelName, { priority: 1 });
+    console.log(`[Suggest] validate ${JSON.stringify(phrase)} → ${localResult.shouldHide ? 'PASS' : 'FAIL'}; raw: ${JSON.stringify(localResult.rawResponse)}`);
     return localResult.shouldHide === true;
   } else if (isIosLocalModel) {
     const iosModelName = settings.selectedModel.split(':')[1];
@@ -1281,12 +1282,17 @@ async function generateCandidatePhrases(postText: string, imageUrls: string[], c
     // Local models don't support image inputs — use text only
     const modelName = settings.selectedModel.split(':')[1];
     await localEngine.ensureLoaded(modelName);
+    console.log('[Suggest] local candidate generation starting (greedy-clamp-v3)');
     const rawText = await localEngine.generate([
       { role: 'system', content: simpleSystemPrompt },
       { role: 'user', content: postText }
     ], 150, { priority: 1, temperature: 0.7 });
+    console.log('[Suggest] local candidate generation done, raw text:', JSON.stringify(rawText));
+    // Strip list numbering, bullet markers, and markdown emphasis — greedy
+    // decoding on the local Gemma reliably formats the labels as a markdown
+    // list, and leftover `**`/backticks would pollute the filter phrase.
     result = rawText.split('\n')
-      .map(l => l.replace(/^\d+[.)-]\s*/, '').trim())
+      .map(l => l.replace(/^\d+[.)-]\s*/, '').replace(/^[-*•]\s+/, '').replace(/[*_`"]/g, '').trim())
       .filter(l => l && l.length <= 40 && !l.startsWith('<'))
       .slice(0, count);
   } else {
@@ -1314,6 +1320,25 @@ async function generateCandidatePhrases(postText: string, imageUrls: string[], c
   return result.map(item => item.toLowerCase());
 }
 
+// Validate all candidate phrases against the local model in one multi-category
+// inference call. Returns the matched phrases (in candidate order), or null
+// when the call errored or the verdict row was malformed — callers should fall
+// back to per-phrase validation in that case.
+async function validatePhrasesBatchedLocal(postText: string, imageUrls: string[], phrases: string[], settings: Settings): Promise<string[] | null> {
+  const modelName = settings.selectedModel.split(':')[1];
+  const modelConfig = PREDEFINED_MODELS.local?.find(m => m.name === modelName) || {} as LocalModelDef;
+  const postData = { text: postText, imageUrls: imageUrls || [] };
+  try {
+    const localResult = await callLocalInference(postData, phrases, modelConfig, modelName, { priority: 1 });
+    const parsed = parseTableYesnoResponse(localResult.rawResponse ?? null, phrases);
+    console.log(`[Suggest] batched validate raw: ${JSON.stringify(localResult.rawResponse)} → matches: ${JSON.stringify(parsed.matches)}${parsed.malformed ? ' (malformed)' : ''}`);
+    return parsed.malformed ? null : parsed.matches;
+  } catch (err) {
+    console.warn('[Suggest] batched validation error:', (err as Error).message);
+    return null;
+  }
+}
+
 // Generate 9 candidate filter phrases up front, then return the first 3 that validate
 export async function suggestAnnoyingReasons(postText: string, imageUrls: string[], siteId?: SiteId, tabId?: number): Promise<string[]> {
   const settings = await getSettings(siteId);
@@ -1322,6 +1347,7 @@ export async function suggestAnnoyingReasons(postText: string, imageUrls: string
   const candidates = await generateCandidatePhrases(postText, imageUrls, 9, rejected, settings);
 
   const uniqueCandidates = [...new Set(candidates)];
+  console.log('[Suggest] candidate phrases:', JSON.stringify(uniqueCandidates));
   let validatedCount = 0;
 
   function sendProgress(): void {
@@ -1332,6 +1358,24 @@ export async function suggestAnnoyingReasons(postText: string, imageUrls: string
         total: 3
       });
     }
+  }
+
+  // Batched fast path for the local model: validate every candidate in one
+  // multi-category call — a single prefill of the post instead of one per
+  // phrase, all on the serial WebGPU queue — using the same verdict-row
+  // format the feed filter runs in production. Falls through to the
+  // per-phrase loop below when the row comes back malformed, so one bad row
+  // costs a retry instead of the whole click.
+  if (settings.selectedModel?.startsWith('local:') && uniqueCandidates.length > 1) {
+    const matches = await validatePhrasesBatchedLocal(postText, imageUrls, uniqueCandidates, settings);
+    if (matches !== null) {
+      const finalValidated = matches.slice(0, 3);
+      validatedCount = finalValidated.length;
+      sendProgress();
+      console.log('[Suggest] accepted phrases (batched):', JSON.stringify(finalValidated));
+      return finalValidated;
+    }
+    console.warn('[Suggest] batched validation failed; falling back to per-phrase validation');
   }
 
   const results = await Promise.all(uniqueCandidates.map(async (phrase) => {
@@ -1349,5 +1393,6 @@ export async function suggestAnnoyingReasons(postText: string, imageUrls: string
   }));
 
   const finalValidated = results.filter(r => r.passes).map(r => r.phrase).slice(0, 3);
+  console.log('[Suggest] accepted phrases:', JSON.stringify(finalValidated));
   return finalValidated;
 }
