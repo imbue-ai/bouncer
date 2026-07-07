@@ -1328,14 +1328,29 @@ article {
   background: rgba(234, 133, 84, 0.18);
 }
 
+/* Instant feedback on press: transition disabled so the color changes on the
+   very frame of the click. The .signing-in class (set while the auth request
+   is in flight) holds the same pressed look until the auth window opens.
+   CASCADE TRAP: you're hovering while you click, so any hover rule that
+   outranks these selectors (higher specificity, or equal specificity later
+   in the file — e.g. a .light-mode hover override) silently masks the
+   pressed state. Keep these the last background rules for this button. */
+.google-signin-btn:active,
+.google-signin-btn.signing-in,
+.light-mode .google-signin-btn:active,
+.light-mode .google-signin-btn.signing-in {
+  transition: none;
+  background: rgba(234, 133, 84, 0.32);
+}
+
+.google-signin-btn.signing-in {
+  cursor: default;
+}
+
 .google-signin-btn .google-icon {
   width: 18px;
   height: 18px;
   flex-shrink: 0;
-}
-
-.light-mode .google-signin-btn:hover {
-  background: rgba(234, 133, 84, 0.14);
 }
 
 .skip-signin-btn {
@@ -1479,7 +1494,7 @@ article {
 /* Guest-limit variant is the headline of its state, not fine print — keep it
    at full message size despite the smaller .ff-signin-explanation base. */
 .ff-guest-limit-msg {
-  margin: 4px 0 12px;
+  margin: 12px 0 0;
   font-size: 13px;
   font-weight: 600;
 }

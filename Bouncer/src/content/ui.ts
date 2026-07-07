@@ -159,8 +159,10 @@ const isSafari = /^((?!chrome|android|crios|fxios|edg|opr).)*safari/i.test(navig
 // lowercase "dev" — case-insensitive compare covers both.
 const IS_DEV_BUILD = (process.env.BOUNCER_ENV || '').toLowerCase() === 'dev';
 
-// Shown when an anonymous guest exhausts their free filters.
-const GUEST_LIMIT_MESSAGE = "You've reached the guest limit — sign in to keep using Bouncer.";
+// Shown when an anonymous guest exhausts their free filters. The no-break
+// space glues the em dash to "limit" so a line break lands after the dash,
+// not before it.
+const GUEST_LIMIT_MESSAGE = "You've reached the guest limit — sign in to keep using Bouncer.";
 
 // Markup for the Google (Chrome) / Apple (Safari) sign-in button, shared by the
 // initial prompt, the guest-limit prompt, and the guest-limit popup.
@@ -180,8 +182,15 @@ function signinButtonHTML(label: string) {
     </button>`;
 }
 
-// Launch sign-in via background script (Google on Chrome, Apple on Safari)
-async function launchSignIn() {
+// Launch sign-in via background script (Google on Chrome, Apple on Safari).
+// The button is held in a pressed "signing-in" state (and disabled against
+// double-clicks) until the flow resolves, so the click feels acknowledged
+// during the pause before the auth window opens.
+async function launchSignIn(btn?: HTMLButtonElement) {
+  if (btn) {
+    btn.disabled = true;
+    btn.classList.add('signing-in');
+  }
   try {
     if (isSafari) {
       // Safari: opens sign-in page in a new tab. Auth state change will come via broadcast.
@@ -201,6 +210,13 @@ async function launchSignIn() {
     }
   } catch (err) {
     console.error('[Bouncer] Sign-in failed:', err);
+  } finally {
+    // On success the surrounding UI is torn down anyway, so this only
+    // matters on failure/cancel — re-enable so the user can retry.
+    if (btn) {
+      btn.disabled = false;
+      btn.classList.remove('signing-in');
+    }
   }
 }
 
@@ -290,8 +306,8 @@ function getGuestLimitHTML() {
     <div class="filter-phrases-container">
       <span class="filter-phrases-box-name">Bouncer</span>
       <div class="filter-signin-prompt">
-        <p class="ff-signin-explanation ff-guest-limit-msg">${escapeHtml(GUEST_LIMIT_MESSAGE)}</p>
         ${signinButtonHTML(isSafari ? 'Sign in with Apple' : 'Sign in with Google')}
+        <p class="ff-signin-explanation ff-guest-limit-msg">${escapeHtml(GUEST_LIMIT_MESSAGE)}</p>
       </div>
     </div>
   `;
@@ -351,8 +367,8 @@ function showSignInPopup(variant: 'signin' | 'guestLimit') {
   backdrop.addEventListener('click', (e) => {
     if (e.target === backdrop) dismissGuestLimitPopup();
   });
-  backdrop.querySelector('.google-signin-btn')
-    ?.addEventListener('click', asyncHandler(launchSignIn));
+  const popupSigninBtn = backdrop.querySelector<HTMLButtonElement>('.google-signin-btn');
+  popupSigninBtn?.addEventListener('click', asyncHandler(() => launchSignIn(popupSigninBtn)));
   const popupSkipBtn = backdrop.querySelector<HTMLButtonElement>('.skip-signin-btn');
   popupSkipBtn?.addEventListener('click', asyncHandler(() => skipSignIn(popupSkipBtn)));
 }
@@ -363,21 +379,12 @@ function showGuestLimitPopup() {
   showSignInPopup('guestLimit');
 }
 
-// Wire up the sign-in button click handler inside a container
+// Wire up the sign-in button click handler inside a container.
+// launchSignIn handles the platform split (Google popup vs Apple tab).
 function setupSignInButton(container: HTMLElement) {
-  if (isSafari) {
-    const btn = container.querySelector('.google-signin-btn');
-    if (btn) {
-      btn.addEventListener('click', asyncHandler(async () => {
-        console.log('[Bouncer] Opening sign-in page...');
-        await chrome.runtime.sendMessage({ type: 'launchAuth' });
-      }));
-    }
-  } else {
-    const btn = container.querySelector('.google-signin-btn');
-    if (btn) {
-      btn.addEventListener('click', asyncHandler(launchSignIn));
-    }
+  const signinBtn = container.querySelector<HTMLButtonElement>('.google-signin-btn');
+  if (signinBtn) {
+    signinBtn.addEventListener('click', asyncHandler(() => launchSignIn(signinBtn)));
   }
   const skipBtn = container.querySelector<HTMLButtonElement>('.skip-signin-btn');
   if (skipBtn) {
