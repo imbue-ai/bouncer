@@ -64,7 +64,14 @@ class WebSocketBridge: NSObject, URLSessionWebSocketDelegate {
 
     private var tasks: [String: URLSessionWebSocketTask] = [:]
     private var taskToSocketId: [ObjectIdentifier: String] = [:]
-    weak var webView: WKWebView?
+    // Per-socket webview reference so events fire back into the JS heap that
+    // opened the socket. With the multi-webview cache, the "active" webview
+    // isn't a stable identity — a socket opened by the YouTube webview must
+    // deliver its onmessage callbacks to that same webview, even while the
+    // user is looking at X. Strong reference; cleared on cleanup(). Safe
+    // because WebViewCache holds the primary strong ref to every cached
+    // webview — this dict just piggybacks for the socket's lifetime.
+    private var socketWebViews: [String: WKWebView] = [:]
 
     private lazy var session: URLSession = {
         let config = URLSessionConfiguration.default
@@ -73,7 +80,10 @@ class WebSocketBridge: NSObject, URLSessionWebSocketDelegate {
 
     // MARK: - JS → Native actions
 
-    func open(socketId: String, urlString: String) {
+    func open(socketId: String, urlString: String, webView: WKWebView?) {
+        if let webView = webView {
+            socketWebViews[socketId] = webView
+        }
         guard let baseUrl = URL(string: urlString),
               let url = Self.appendingUserId(to: baseUrl) else {
             fireEvent(socketId: socketId, event: "error", data: "null")
@@ -179,25 +189,26 @@ class WebSocketBridge: NSObject, URLSessionWebSocketDelegate {
     /// Fire a simple event (open, error).
     private func fireEvent(socketId: String, event: String, data: String) {
         let js = "window.__ff_wsEvent('\(socketId)', '\(event)', \(data));"
-        evaluateInExtensionWorld(js)
+        evaluateInExtensionWorld(socketId: socketId, js)
     }
 
     /// Fire a close event with code and wasClean.
     private func fireEvent(socketId: String, event: String, code: Int, wasClean: Bool) {
         let js = "window.__ff_wsEvent('\(socketId)', 'close', { code: \(code), wasClean: \(wasClean) });"
-        evaluateInExtensionWorld(js)
+        evaluateInExtensionWorld(socketId: socketId, js)
     }
 
     /// Fire a message event. Uses base64 to avoid escaping issues with arbitrary JSON.
     private func fireMessageEvent(socketId: String, text: String) {
         guard let b64 = text.data(using: .utf8)?.base64EncodedString() else { return }
         let js = "window.__ff_wsMessage('\(socketId)', '\(b64)');"
-        evaluateInExtensionWorld(js)
+        evaluateInExtensionWorld(socketId: socketId, js)
     }
 
-    private func evaluateInExtensionWorld(_ js: String) {
+    private func evaluateInExtensionWorld(socketId: String, _ js: String) {
         DispatchQueue.main.async { [weak self] in
-            self?.webView?.evaluateJavaScript(js, in: nil, in: FilteredWebView.extensionWorld) { _ in }
+            self?.socketWebViews[socketId]?
+                .evaluateJavaScript(js, in: nil, in: FilteredWebView.extensionWorld) { _ in }
         }
     }
 
@@ -206,6 +217,7 @@ class WebSocketBridge: NSObject, URLSessionWebSocketDelegate {
     private func cleanup(socketId: String, task: URLSessionWebSocketTask) {
         taskToSocketId.removeValue(forKey: ObjectIdentifier(task))
         tasks.removeValue(forKey: socketId)
+        socketWebViews.removeValue(forKey: socketId)
     }
 
     /// Appends `user_id=<keychain uuid>` to a WS URL. Skips if already present.

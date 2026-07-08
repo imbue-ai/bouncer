@@ -91,6 +91,38 @@ export function mobileWatchCard(): HTMLElement {
 }
 
 /**
+ * Desktop home lockup with the per-card "More actions" overflow menu attached.
+ * Same shape as `desktopVideoLockup`, plus a `yt-button-shape` wrapper around
+ * a `button[aria-label="More actions"]` — the preferred injection anchor for
+ * the Bouncer action button.
+ */
+export function desktopVideoLockupWithMenu(): HTMLElement {
+  return setBody(`
+    <yt-lockup-view-model>
+      <div class="ytLockupViewModelHost ytLockupViewModelVertical content-id-dQw4w9WgXcQ">
+        <a class="ytLockupViewModelContentImage" href="/watch?v=dQw4w9WgXcQ">
+          <yt-thumbnail-view-model>
+            <img class="ytCoreImageHost" src="https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg">
+          </yt-thumbnail-view-model>
+        </a>
+        <div class="ytLockupMetadataViewModelTitle">Never Gonna Give You Up</div>
+        <div class="ytContentMetadataViewModelMetadataRow">
+          <a href="/@RickAstley">Rick Astley</a>
+        </div>
+        <div class="ytContentMetadataViewModelMetadataRow">
+          <span class="ytContentMetadataViewModelMetadataText">1.4B views</span>
+          <span class="ytContentMetadataViewModelMetadataText">15 years ago</span>
+        </div>
+        <yt-button-shape>
+          <button aria-label="More actions"></button>
+        </yt-button-shape>
+        <img class="ytSpecAvatarShapeImage" src="https://yt3.ggpht.com/abc/avatar.jpg">
+      </div>
+    </yt-lockup-view-model>
+  `);
+}
+
+/**
  * Mobile Shorts shelf card (`ytm-shorts-lockup-view-model`). Title lives in
  * `.shortsLockupViewModelHostMetadataTitle`; id is in the `/shorts/<id>` href.
  */

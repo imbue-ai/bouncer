@@ -606,12 +606,13 @@ const BouncerLinkedInAdapter = class LinkedInAdapter implements PlatformAdapter 
     }
   }
 
-  // linkedin adaptation: the desktop SDUI renders a "…" overflow control-menu
-  // button in each feed card's header. We anchor our Bounce control to it so it
-  // always sits immediately to its right.
+  // linkedin adaptation: each feed card's header renders a "…" overflow menu
+  // button — labeled "Open control menu" on the desktop SDUI and "Open menu"
+  // on the mobile-web variant. We anchor our Bounce control to it so it always
+  // sits immediately to its right (top-right of the card) on both surfaces.
   private _getOverflowButton(article: HTMLElement): HTMLElement | null {
     return article.querySelector<HTMLElement>(
-      'button[aria-label^="Open control menu"]'
+      'button[aria-label^="Open control menu"], button[aria-label^="Open menu"]'
     );
   }
 
