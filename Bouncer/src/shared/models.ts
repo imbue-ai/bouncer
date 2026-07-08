@@ -52,6 +52,16 @@ export const PREDEFINED_MODELS: PredefinedModelsMap = {
   ],
   iosLocal: [
     {
+      name: 'gemma-4-e2b',
+      display: 'Gemma 4 E2B (on-device)',
+      isLocal: true,
+      supportsImages: false,
+      // ~2.6 GB base .litertlm (upstream Gemma 4 E2B IT from litert-community).
+      // No AI-text classification: linear_v3_head.bin was trained on E4B
+      // logits, so the aiText detector never routes here (see pipeline.ts).
+      sizeGB: 2.6,
+    },
+    {
       name: 'gemma-4-e4b',
       display: 'Gemma 4 E4B (on-device)',
       isLocal: true,

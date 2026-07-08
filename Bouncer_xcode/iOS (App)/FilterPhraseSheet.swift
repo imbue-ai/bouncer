@@ -1007,7 +1007,10 @@ struct BouncerSettingsView: View {
 
 // MARK: - Providers Settings
 
-private let kIosLocalGemmaModelKey = "iosLocal:gemma-4-e4b"
+// E4B specifically: it gates the AI-text-filter settings (the on-device
+// AI-text classifier head only works on E4B logits). E2B has its own key
+// via OnDeviceModelVariant.e2b.modelKey.
+private let kIosLocalGemmaModelKey = OnDeviceModelVariant.e4b.modelKey
 
 private struct ProviderSpec: Identifiable {
     let id: String              // "openai", "anthropic", ...
@@ -1135,7 +1138,7 @@ struct ProvidersSettingsView: View {
 
     private var currentProviderLabel: String {
         if selectedModel == imbueModelKey { return "Imbue" }
-        if selectedModel == kIosLocalGemmaModelKey { return "On-device" }
+        if selectedModel.hasPrefix("iosLocal:") { return "On-device" }
         guard let colon = selectedModel.firstIndex(of: ":") else { return "" }
         let providerId = String(selectedModel[..<colon])
         return providerSpecs.first(where: { $0.id == providerId })?.displayName ?? providerId
@@ -1143,7 +1146,9 @@ struct ProvidersSettingsView: View {
 
     private var currentModelLabel: String {
         if selectedModel == imbueModelKey { return "Imbue (default)" }
-        if selectedModel == kIosLocalGemmaModelKey { return "Gemma 4 E4B (on-device)" }
+        if let variant = OnDeviceModelVariant.allCases.first(where: { $0.modelKey == selectedModel }) {
+            return variant.displayName
+        }
         guard let colon = selectedModel.firstIndex(of: ":") else { return selectedModel }
         let providerId = String(selectedModel[..<colon])
         let modelId = String(selectedModel[selectedModel.index(after: colon)...])
@@ -1181,51 +1186,64 @@ struct ProvidersSettingsView: View {
     @ViewBuilder
     private var onDeviceSection: some View {
         Section {
-            Button {
-                guard isOnDeviceReady else { return }
-                Task { await selectModel(kIosLocalGemmaModelKey) }
-            } label: {
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Gemma 4 E4B (on-device)")
-                            .foregroundStyle(isOnDeviceReady ? .primary : .secondary)
-                        Text(onDeviceStatusText)
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    if selectedModel == kIosLocalGemmaModelKey {
-                        Image(systemName: "checkmark")
-                            .foregroundStyle(.tint)
+            ForEach(OnDeviceModelVariant.allCases) { variant in
+                onDeviceRow(variant)
+
+                if variant == localService.activeVariant {
+                    if case .downloading(let progress) = localService.modelStatus {
+                        ProgressView(value: progress)
+                    } else if case .paused(let progress) = localService.modelStatus {
+                        ProgressView(value: progress)
                     }
                 }
-            }
-            .buttonStyle(.plain)
-            .disabled(!isOnDeviceReady)
 
-            if case .downloading(let progress) = localService.modelStatus {
-                ProgressView(value: progress)
-            } else if case .paused(let progress) = localService.modelStatus {
-                ProgressView(value: progress)
+                onDeviceActionButtons(variant)
             }
-
-            onDeviceActionButtons
         } header: {
             Text("On-device")
         } footer: {
-            Text("Runs Gemma 4 E4B locally for phrase-filter classification and AI-text detection — no posts leave your phone. Downloads ~3.7 GB. Requires Wi-Fi and an iPhone with 6 GB+ RAM.")
+            Text("Runs Gemma locally for phrase-filter classification — no posts leave your phone. E2B downloads ~2.6 GB; E4B ~3.7 GB and also powers AI-text detection. Requires Wi-Fi and an iPhone with 6 GB+ RAM.")
         }
     }
 
-    private var isOnDeviceReady: Bool {
-        switch localService.modelStatus {
+    @ViewBuilder
+    private func onDeviceRow(_ variant: OnDeviceModelVariant) -> some View {
+        let isReady = isVariantReady(variant)
+        Button {
+            guard isReady else { return }
+            Task { await selectModel(variant.modelKey) }
+        } label: {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(variant.displayName)
+                        .foregroundStyle(isReady ? .primary : .secondary)
+                    Text(onDeviceStatusText(localService.status(for: variant)))
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                if selectedModel == variant.modelKey {
+                    Image(systemName: "checkmark")
+                        .foregroundStyle(.tint)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .disabled(!isReady)
+    }
+
+    private func isVariantReady(_ variant: OnDeviceModelVariant) -> Bool {
+        switch localService.status(for: variant) {
         case .downloaded, .ready: return true
         default: return false
         }
     }
 
-    private var onDeviceStatusText: String {
-        switch localService.modelStatus {
+    // Only the downloader-bound variant ever reports downloading/paused
+    // states (see LocalInferenceService.status(for:)), so the byte displays
+    // below always describe the right transfer.
+    private func onDeviceStatusText(_ status: LocalInferenceService.ModelStatus) -> String {
+        switch status {
         case .notDownloaded:
             return "Not downloaded"
         case .downloading(let progress):
@@ -1245,13 +1263,22 @@ struct ProvidersSettingsView: View {
         }
     }
 
+    private var isActivelyDownloading: Bool {
+        if case .downloading = localService.modelStatus { return true }
+        return false
+    }
+
     @ViewBuilder
-    private var onDeviceActionButtons: some View {
-        switch localService.modelStatus {
+    private func onDeviceActionButtons(_ variant: OnDeviceModelVariant) -> some View {
+        switch localService.status(for: variant) {
         case .notDownloaded, .error:
+            // Single download slot: block starting a second transfer while
+            // the other variant is actively downloading (a paused one gets
+            // cancelled by startDownload's variant switch).
             Button("Download model") {
-                localService.startDownload()
+                localService.startDownload(variant: variant)
             }
+            .disabled(isActivelyDownloading)
         case .downloading:
             // .borderless button style: without it, both buttons share
             // one row-wide hit region in Form/List and a single tap fires
@@ -1265,7 +1292,7 @@ struct ProvidersSettingsView: View {
             }
         case .paused:
             HStack {
-                Button("Resume") { localService.startDownload() }
+                Button("Resume") { localService.startDownload(variant: variant) }
                     .buttonStyle(.borderless)
                 Spacer()
                 Button("Cancel", role: .destructive) { localService.cancelDownload() }
@@ -1273,10 +1300,10 @@ struct ProvidersSettingsView: View {
             }
         case .downloaded, .ready, .loading:
             Button("Delete model", role: .destructive) {
-                if selectedModel == kIosLocalGemmaModelKey {
+                if selectedModel == variant.modelKey {
                     Task { await selectModel(imbueModelKey) }
                 }
-                localService.deleteModel()
+                localService.deleteModel(variant: variant)
             }
         }
     }

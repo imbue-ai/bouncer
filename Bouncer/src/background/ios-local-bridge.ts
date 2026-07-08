@@ -208,6 +208,7 @@ export async function iosLocalClassify(
       pending.set(callbackId, { resolve, reject });
       try {
         const payload: Record<string, unknown> = { callbackId, systemMessage, userMessage, regexConstraint };
+        if (modelConfig?.name) payload.modelName = modelConfig.name;
         if (hasImages) payload.imageUrls = imageUrls;
         webkit.messageHandlers.feedfilterLocalClassify.postMessage(JSON.stringify(payload));
       } catch (err) {

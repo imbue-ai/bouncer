@@ -65,15 +65,57 @@ public final class ModelDownloader: NSObject, @unchecked Sendable {
         FileManager.default.fileExists(atPath: modelPath.path)
     }
 
-    // Bump when switching modelURL in LocalInferenceService so the
-    // downloader treats it as a fresh fetch instead of reusing a
-    // previously downloaded variant under the old name.
     public static let defaultModelFilename = "gemma-4-E4B-it.litertlm"
+
+    // Filename the single download slot is bound to. Persisted in
+    // UserDefaults because iOS can relaunch the app in the background to
+    // deliver a finished transfer — didFinishDownloadingTo must move the
+    // file to the variant that was actually downloading, and in that path
+    // this singleton is constructed before any UI or LocalInferenceService.
+    private static let targetFilenameDefaultsKey = "modelDownloadTargetFilename"
+    public private(set) var targetFilename: String =
+        UserDefaults.standard.string(forKey: ModelDownloader.targetFilenameDefaultsKey)
+            ?? ModelDownloader.defaultModelFilename
+
+    // Shown by totalBytesDisplay before the transfer reports a real total.
+    // Set alongside the target filename (per-variant size estimate).
+    public var totalBytesFallbackDisplay: String = "~3.7 GB"
 
     public let modelsDirectory: URL
 
     public var modelPath: URL {
-        modelsDirectory.appendingPathComponent(Self.defaultModelFilename)
+        path(for: targetFilename)
+    }
+
+    public func path(for filename: String) -> URL {
+        modelsDirectory.appendingPathComponent(filename)
+    }
+
+    public func isDownloaded(filename: String) -> Bool {
+        FileManager.default.fileExists(atPath: path(for: filename).path)
+    }
+
+    /// Rebind the download slot to a different model file. Refused while a
+    /// download task is active — callers pause/cancel first. Clears resume
+    /// data on a real switch (the blob belongs to the old URL).
+    public func setTarget(filename: String, totalBytesFallback: String) {
+        totalBytesFallbackDisplay = totalBytesFallback
+        guard filename != targetFilename else { return }
+        let hasActiveTask = withLock { activeTask != nil || continuation != nil }
+        guard !hasActiveTask else {
+            print("[ModelDownloader] WARN: setTarget(\(filename)) ignored — download in progress")
+            return
+        }
+        clearResumeData()
+        targetFilename = filename
+        UserDefaults.standard.set(filename, forKey: Self.targetFilenameDefaultsKey)
+        downloadedBytes = 0
+        totalBytes = 0
+        withLock {
+            _liveDownloaded = 0
+            _liveTotal = 0
+        }
+        status = isDownloaded ? .completed : .notStarted
     }
 
     private var _session: URLSession?
@@ -300,7 +342,7 @@ public final class ModelDownloader: NSObject, @unchecked Sendable {
     }
 
     public var totalBytesDisplay: String {
-        guard totalBytes > 0 else { return "~3.7 GB" }
+        guard totalBytes > 0 else { return totalBytesFallbackDisplay }
         return ByteCountFormatter.string(fromByteCount: totalBytes, countStyle: .file)
     }
 

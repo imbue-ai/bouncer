@@ -972,7 +972,10 @@ async function processBatch(): Promise<void> {
       imageUrls,
       aiThreshold: settings.aiTextDetectionThreshold,
       aiImageThreshold: settings.aiImageDetectionThreshold,
-      useIosLocalAiText: apiConfig.apiName === 'iosLocal',
+      // The on-device aiText path depends on linear_v3_head.bin, which was
+      // trained on E4B last-token logits — E2B shares the vocab dim so it
+      // would run but produce garbage confidences. Route only E4B locally.
+      useIosLocalAiText: apiConfig.apiName === 'iosLocal' && apiConfig.modelName === 'gemma-4-e4b',
     });
 
     if (detectors.length === 0) {

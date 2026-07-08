@@ -135,6 +135,76 @@ final class LinearV3Head {
     }
 }
 
+/// The on-device Gemma variants the app can download and run. The download
+/// slot binding is persisted by ModelDownloader (targetFilename), so a
+/// background-relaunch completion lands the file at the right path.
+enum OnDeviceModelVariant: String, CaseIterable, Identifiable {
+    case e2b, e4b
+
+    var id: String { rawValue }
+
+    /// Matches PREDEFINED_MODELS.iosLocal names in Bouncer/src/shared/models.ts.
+    var modelName: String {
+        switch self {
+        case .e2b: return "gemma-4-e2b"
+        case .e4b: return "gemma-4-e4b"
+        }
+    }
+
+    /// Value written to chrome.storage.local.selectedModel.
+    var modelKey: String { "iosLocal:\(modelName)" }
+
+    var displayName: String {
+        switch self {
+        case .e2b: return "Gemma 4 E2B (on-device)"
+        case .e4b: return "Gemma 4 E4B (on-device)"
+        }
+    }
+
+    var filename: String {
+        switch self {
+        case .e2b: return "gemma-4-E2B-it.litertlm"
+        case .e4b: return "gemma-4-E4B-it.litertlm"
+        }
+    }
+
+    var downloadURL: URL {
+        switch self {
+        case .e2b:
+            return URL(string:
+                "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it.litertlm"
+            )!
+        case .e4b:
+            // TEMPORARILY unpinned to test whether the format-drift on iOS is
+            // tied to the older 9695417f2481 revision's tokenizer/stop-tokens
+            // metadata. The pinning comment claimed `main` adds MTP / verify
+            // speculative-decoding subgraphs that fail Metal compile with
+            // status 504 — if that's still true, engine create will fail on
+            // first launch and we revert to the pin. If it loads, we keep
+            // the unpinned URL for upstream metadata improvements.
+            return URL(string:
+                "https://huggingface.co/litert-community/gemma-4-E4B-it-litert-lm/resolve/main/gemma-4-E4B-it.litertlm"
+            )!
+        }
+    }
+
+    var sizeEstimateDisplay: String {
+        switch self {
+        case .e2b: return "~2.6 GB"
+        case .e4b: return "~3.7 GB"
+        }
+    }
+
+    /// Engine compile-cache subdir under litertlm_cache/. E4B keeps the
+    /// pre-variant "upstream_v1" dir so existing installs don't recompile.
+    var engineCacheDirName: String {
+        switch self {
+        case .e2b: return "upstream_v1_e2b"
+        case .e4b: return "upstream_v1"
+        }
+    }
+}
+
 @MainActor
 final class LocalInferenceService: ObservableObject {
 
@@ -154,26 +224,19 @@ final class LocalInferenceService: ObservableObject {
     @Published private(set) var downloadedBytesDisplay: String = ""
     @Published private(set) var totalBytesDisplay: String = ""
 
-    // Upstream Gemma 4 E4B IT — single chat signature. The classification
-    // head (4-class linear probe over the 262144 vocab logits) runs in Swift
-    // on the chat decode "logits" aux output, so no per-model classifier
-    // signature is needed.
-    private static let modelURL = URL(string:
-        // TEMPORARILY unpinned to test whether the format-drift on iOS is
-        // tied to the older 9695417f2481 revision's tokenizer/stop-tokens
-        // metadata. The pinning comment claimed `main` adds MTP / verify
-        // speculative-decoding subgraphs that fail Metal compile with
-        // status 504 — if that's still true, engine create will fail on
-        // first launch and we revert to the pin. If it loads, we keep
-        // the unpinned URL for upstream metadata improvements.
-        "https://huggingface.co/litert-community/gemma-4-E4B-it-litert-lm/resolve/main/gemma-4-E4B-it.litertlm"
-    )!
+    // The variant the single downloader slot and its status machine are
+    // bound to. Derived from ModelDownloader's persisted target filename;
+    // defaults to E4B, which pre-variant installs already have on disk.
+    @Published private(set) var activeVariant: OnDeviceModelVariant
 
     private let downloader: ModelDownloader
     // Single chat engine over the upstream Gemma .litertlm. The Swift-side
     // LinearV3Head consumes the chat logits via getAuxiliaryOutput("logits")
     // for AI-text classification.
     private var engine: Engine?
+    // Which variant the loaded engine was built from. May differ from
+    // activeVariant while a different variant's download is in flight.
+    private var loadedVariant: OnDeviceModelVariant?
     private var classifierHead: LinearV3Head?
     private var loadTask: Task<Void, Error>?
     private var statusPollTimer: Timer?
@@ -190,6 +253,12 @@ final class LocalInferenceService: ObservableObject {
         // events through ModelDownloader.shared, so this service must use
         // the same instance.
         self.downloader = ModelDownloader.shared
+        self.activeVariant = OnDeviceModelVariant.allCases.first {
+            $0.filename == ModelDownloader.shared.targetFilename
+        } ?? .e4b
+        downloader.setTarget(
+            filename: activeVariant.filename,
+            totalBytesFallback: activeVariant.sizeEstimateDisplay)
         refreshStatusFromDisk()
         observeDownloader()
         // Pick up any download iOS continued while the app was suspended
@@ -199,9 +268,13 @@ final class LocalInferenceService: ObservableObject {
 
     // MARK: - Public API
 
-    func classify(systemMessage: String, userMessage: String, imageUrls: [String] = [], regexConstraint: String? = nil) async throws -> String {
+    func classify(systemMessage: String, userMessage: String, imageUrls: [String] = [], regexConstraint: String? = nil, modelName: String? = nil) async throws -> String {
+        // The JS pipeline names the model it selected (PREDEFINED_MODELS
+        // .iosLocal names); unknown/absent falls back to the active variant.
+        let variant = OnDeviceModelVariant.allCases.first { $0.modelName == modelName }
+            ?? activeVariant
         return try await classifyInternal(
-            tag: "Filter", systemMessage: systemMessage,
+            tag: "Filter", variant: variant, systemMessage: systemMessage,
             userMessage: userMessage, imageUrls: imageUrls,
             regexConstraint: regexConstraint)
     }
@@ -210,10 +283,11 @@ final class LocalInferenceService: ObservableObject {
     /// → sendMessage → response. `tag` is the log prefix (e.g. "Filter" for
     /// production calls).
     private func classifyInternal(
-        tag: String, systemMessage: String, userMessage: String, imageUrls: [String] = [],
+        tag: String, variant: OnDeviceModelVariant,
+        systemMessage: String, userMessage: String, imageUrls: [String] = [],
         regexConstraint: String? = nil
     ) async throws -> String {
-        try await ensureReady()
+        try await ensureReady(variant: variant)
         let wallStart = Date()
         let fetchStart = Date()
         let imageData = await Self.fetchImageData(imageUrls)
@@ -345,7 +419,9 @@ final class LocalInferenceService: ObservableObject {
     // "logits" aux output (262144 fp16), then apply the Swift-side
     // LinearV3Head (LayerNorm + Linear) to produce 4-class logits.
     func classifyText(_ text: String) async throws -> [Float] {
-        try await ensureReady()
+        // Always E4B: linear_v3_head.bin was trained on E4B last-token
+        // logits (the JS pipeline only routes aiText here for E4B anyway).
+        try await ensureReady(variant: .e4b)
         return try await classifyTextInternal(text)
     }
 
@@ -444,22 +520,36 @@ final class LocalInferenceService: ObservableObject {
         return expectation / Float(n - 1)
     }
 
-    func ensureReady() async throws {
-        if engine != nil, modelStatus == .ready { return }
-        guard downloader.isDownloaded else {
-            throw LocalInferenceError.modelNotDownloaded
-        }
+    private func isEngineReady(for variant: OnDeviceModelVariant) -> Bool {
+        guard engine != nil, loadedVariant == variant else { return false }
+        // For the downloader-bound variant, respect its status machine as
+        // before. For the other variant modelStatus tracks a different
+        // model's download, so the live engine alone is authoritative.
+        return variant != activeVariant || modelStatus == .ready
+    }
+
+    func ensureReady(variant: OnDeviceModelVariant) async throws {
+        if isEngineReady(for: variant) { return }
         if let loadTask = loadTask {
             try await loadTask.value
-            return
+            // The in-flight load may have been for a different variant —
+            // fall through and re-check.
+            if isEngineReady(for: variant) { return }
         }
-        modelStatus = .loading
+        if engine != nil, loadedVariant != variant {
+            print("[Filter] switching on-device model \(loadedVariant?.rawValue ?? "?") → \(variant.rawValue)")
+            unloadEngine()
+        }
+        guard downloader.isDownloaded(filename: variant.filename) else {
+            throw LocalInferenceError.modelNotDownloaded
+        }
+        setEngineStatus(.loading, for: variant)
         let task = Task<Void, Error> { [weak self] in
             guard let self else { return }
-            let cacheDir = self.engineCacheDir()
+            let cacheDir = self.engineCacheDir(for: variant)
             try? FileManager.default.createDirectory(
                 at: cacheDir, withIntermediateDirectories: true)
-            let engine = try await self.buildEngine(cacheDir: cacheDir)
+            let engine = try await self.buildEngine(variant: variant, cacheDir: cacheDir)
             let sampler = try SamplerConfig(topK: 1, topP: 1.0, temperature: 1.0)
             // Load the bundled classifier head once at engine-ready time.
             // 6.29 MB blob; takes a few ms to read + parse.
@@ -473,9 +563,10 @@ final class LocalInferenceService: ObservableObject {
             }
             await MainActor.run {
                 self.engine = engine
+                self.loadedVariant = variant
                 self.samplerConfig = sampler
                 self.classifierHead = head
-                self.modelStatus = .ready
+                self.setEngineStatus(.ready, for: variant)
             }
         }
         loadTask = task
@@ -483,25 +574,34 @@ final class LocalInferenceService: ObservableObject {
             try await task.value
         } catch {
             loadTask = nil
-            modelStatus = .error("Load failed: \(error.localizedDescription)")
+            setEngineStatus(.error("Load failed: \(error.localizedDescription)"), for: variant)
             throw error
         }
         loadTask = nil
     }
 
-    private func engineCacheDir() -> URL {
-        let cacheRoot = FileManager.default
-            .urls(for: .cachesDirectory, in: .userDomainMask)[0]
-        // New cache dir so we don't reuse the dual-sig bouncer compile artifacts.
-        return cacheRoot.appendingPathComponent("litertlm_cache/upstream_v1", isDirectory: true)
+    // modelStatus is the status machine of the downloader-bound variant;
+    // engine transitions for the other variant must not clobber it (e.g.
+    // loading E2B while E4B is mid-download).
+    private func setEngineStatus(_ status: ModelStatus, for variant: OnDeviceModelVariant) {
+        if variant == activeVariant {
+            modelStatus = status
+        }
     }
 
-    private func buildEngine(cacheDir: URL) async throws -> Engine {
-        // Upstream Gemma 4 E4B IT — single chat signature pair. Don't pin
+    private func engineCacheDir(for variant: OnDeviceModelVariant) -> URL {
+        let cacheRoot = FileManager.default
+            .urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        return cacheRoot.appendingPathComponent(
+            "litertlm_cache/\(variant.engineCacheDirName)", isDirectory: true)
+    }
+
+    private func buildEngine(variant: OnDeviceModelVariant, cacheDir: URL) async throws -> Engine {
+        // Upstream Gemma 4 IT — single chat signature pair. Don't pin
         // decodeSignatureName / prefillSignatureFilter; the runtime will pick
         // the standard "decode" + "prefill_*" signatures bundled in the file.
         let cfg = try EngineConfig(
-            modelPath: self.downloader.modelPath.path,
+            modelPath: self.downloader.path(for: variant.filename).path,
             backend: .gpu,
             visionBackend: .cpu(),
             maxNumTokens: 1024,
@@ -514,23 +614,49 @@ final class LocalInferenceService: ObservableObject {
 
     func rebuildEngine() async throws {
         print("[Filter] REBUILD engine begin")
+        guard let variant = loadedVariant else {
+            throw LocalInferenceError.engineNotLoaded
+        }
         let started = Date()
         self.baseConversation = nil
         self.baseSystemMessage = nil
         self.engine = nil
-        let cacheDir = engineCacheDir()
-        let newEngine = try await buildEngine(cacheDir: cacheDir)
+        let cacheDir = engineCacheDir(for: variant)
+        let newEngine = try await buildEngine(variant: variant, cacheDir: cacheDir)
         self.engine = newEngine
         print(String(format: "[Filter] REBUILD engine done in %.2fs",
                      Date().timeIntervalSince(started)))
     }
 
-    func startDownload() {
+    /// Per-variant status for the settings rows. The downloader-bound
+    /// variant gets the full status machine; any other variant's state is
+    /// derived from its live engine / on-disk file.
+    func status(for variant: OnDeviceModelVariant) -> ModelStatus {
+        if variant == activeVariant { return modelStatus }
+        if engine != nil, loadedVariant == variant { return .ready }
+        return downloader.isDownloaded(filename: variant.filename) ? .downloaded : .notDownloaded
+    }
+
+    private func setActiveVariant(_ variant: OnDeviceModelVariant) {
+        guard variant != activeVariant else { return }
+        // Single download/resume slot: abandon any paused download of the
+        // old target before rebinding (the UI blocks switching while a
+        // transfer is actively running).
+        downloader.cancel()
+        downloader.setTarget(
+            filename: variant.filename,
+            totalBytesFallback: variant.sizeEstimateDisplay)
+        activeVariant = variant
+        refreshStatusFromDisk()
+    }
+
+    func startDownload(variant: OnDeviceModelVariant) {
         if case .downloading = downloader.status { return }
+        setActiveVariant(variant)
         Task { [weak self] in
             guard let self else { return }
             do {
-                try await self.downloader.download(from: Self.modelURL)
+                try await self.downloader.download(from: variant.downloadURL)
             } catch is CancellationError {
                 // User-initiated pause/cancel — not a failure. The
                 // downloader's own status (.paused or .notStarted) is
@@ -561,14 +687,18 @@ final class LocalInferenceService: ObservableObject {
         refreshStatusFromDisk()
     }
 
-    func deleteModel() {
-        unloadEngine()
-        downloader.deleteModel()
-        let cacheRoot = FileManager.default
-            .urls(for: .cachesDirectory, in: .userDomainMask)[0]
-        let litertCacheDir = cacheRoot.appendingPathComponent(
-            "litertlm_cache", isDirectory: true)
-        try? FileManager.default.removeItem(at: litertCacheDir)
+    func deleteModel(variant: OnDeviceModelVariant) {
+        if loadedVariant == variant {
+            unloadEngine()
+        }
+        if variant == activeVariant {
+            downloader.deleteModel()
+        } else {
+            try? FileManager.default.removeItem(
+                at: downloader.path(for: variant.filename))
+        }
+        // Only this variant's compile cache — the other model's stays valid.
+        try? FileManager.default.removeItem(at: engineCacheDir(for: variant))
         refreshStatusFromDisk()
     }
 
@@ -576,6 +706,7 @@ final class LocalInferenceService: ObservableObject {
         baseConversation = nil
         baseSystemMessage = nil
         engine = nil
+        loadedVariant = nil
         classifierHead = nil
         samplerConfig = nil
         if downloader.isDownloaded {
@@ -594,9 +725,16 @@ final class LocalInferenceService: ObservableObject {
         }
     }
 
+    // Whether the live engine belongs to the downloader-bound variant (the
+    // one modelStatus describes). False while e.g. E2B is loaded but the
+    // E4B download slot is active.
+    private var engineMatchesActiveVariant: Bool {
+        engine != nil && loadedVariant == activeVariant
+    }
+
     private func refreshStatusFromDisk() {
         if downloader.isDownloaded {
-            modelStatus = engine == nil ? .downloaded : .ready
+            modelStatus = engineMatchesActiveVariant ? .ready : .downloaded
         } else {
             modelStatus = .notDownloaded
         }
@@ -614,14 +752,14 @@ final class LocalInferenceService: ObservableObject {
         case .paused(let progress):
             modelStatus = .paused(progress: progress)
         case .completed:
-            if engine == nil {
+            if !engineMatchesActiveVariant {
                 modelStatus = .downloaded
             }
         case .failed(let message):
             modelStatus = .error(message)
         case .notStarted:
             if downloader.isDownloaded {
-                modelStatus = engine == nil ? .downloaded : .ready
+                modelStatus = engineMatchesActiveVariant ? .ready : .downloaded
             } else {
                 modelStatus = .notDownloaded
             }
