@@ -370,6 +370,14 @@
   if (typeof webkit !== 'undefined' && webkit.messageHandlers && webkit.messageHandlers.feedfilterWsOpen) {
     var _nativeSockets = {};
     var _nativeSocketId = 0;
+    // Per-webview prefix so socket IDs never collide across the cached
+    // WKWebViews. Each webview evaluates this polyfill in its own JS heap
+    // with its own counter starting at 0 — so without a prefix, webview A
+    // and webview B would both mint "ws_1" and native's socket→webview map
+    // would overwrite one with the other, silently misrouting all callbacks
+    // for that ID. Generated once per webview; native uses the full string
+    // as the map key.
+    var _nativeSocketPrefix = 'ws_' + Math.random().toString(36).slice(2, 10) + '_' + Date.now().toString(36) + '_';
 
     // Called by native for open, error, close events
     window.__ff_wsEvent = function(socketId, event, data) {
@@ -402,7 +410,7 @@
 
     function NativeWebSocket(url) {
       this._readyState = 0; // CONNECTING
-      this._socketId = 'ws_' + (++_nativeSocketId);
+      this._socketId = _nativeSocketPrefix + (++_nativeSocketId);
       this.onopen = null;
       this.onmessage = null;
       this.onerror = null;

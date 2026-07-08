@@ -3375,20 +3375,48 @@ export function addWhyAnnoyingButton(article: HTMLElement) {
     // Position the tooltip above the button
     const positionTooltip = () => {
       const btnRect = btn.getBoundingClientRect();
+      const viewportW = document.documentElement.clientWidth;
+      const edgeMargin = 8;
+      const tipW = tooltip.offsetWidth;
       tooltip.style.position = 'fixed';
-      // Horizontal: default right-aligned so the tooltip extends LEFT from the
-      // button (fine on Twitter / desktop YouTube). If that would push it off
-      // the left edge — common on narrow YouTube-mobile where the button sits
-      // near the left — left-align instead so it extends rightward on-screen.
+      // Horizontal: three-way fit check.
+      //  1. Right-align (default): tooltip extends leftward from btn.right.
+      //  2. Left-align: tooltip extends rightward from btn.left (used when the
+      //     button is close to the left edge — common on narrow YouTube mobile).
+      //  3. Center-align: neither directional placement fits; clamp the tooltip
+      //     into the viewport and slide the notch inline so it still points at
+      //     the button.
       tooltip.style.left = '';
       tooltip.style.right = '';
-      const edgeMargin = 8;
-      if (btnRect.right - tooltip.offsetWidth < edgeMargin) {
+      tooltip.classList.remove('ff-annoying-tooltip--align-left');
+      tooltip.classList.remove('ff-annoying-tooltip--align-center');
+      tooltip.style.removeProperty('--ff-notch-x');
+      const fitsRightAligned = btnRect.right - tipW >= edgeMargin;
+      const fitsLeftAligned = btnRect.left + tipW <= viewportW - edgeMargin;
+      if (fitsRightAligned) {
+        tooltip.style.right = `${viewportW - btnRect.right}px`;
+      } else if (fitsLeftAligned) {
         tooltip.style.left = `${Math.max(edgeMargin, btnRect.left)}px`;
         tooltip.classList.add('ff-annoying-tooltip--align-left');
       } else {
-        tooltip.style.right = `${document.documentElement.clientWidth - btnRect.right}px`;
-        tooltip.classList.remove('ff-annoying-tooltip--align-left');
+        const btnCenterX = btnRect.left + btnRect.width / 2;
+        const idealLeft = btnCenterX - tipW / 2;
+        const clampedLeft = Math.min(
+          Math.max(edgeMargin, idealLeft),
+          viewportW - edgeMargin - tipW,
+        );
+        tooltip.style.left = `${clampedLeft}px`;
+        tooltip.classList.add('ff-annoying-tooltip--align-center');
+        // Notch x measured from tooltip's own left edge; center of the 10px
+        // notch lands on btnCenterX in viewport coords. Clamp inside the
+        // rounded corners so the notch never draws into the border-radius arc.
+        const notchInset = 12;
+        const rawNotchX = btnCenterX - clampedLeft - 5;
+        const notchX = Math.min(
+          Math.max(notchInset, rawNotchX),
+          tipW - notchInset - 10,
+        );
+        tooltip.style.setProperty('--ff-notch-x', `${notchX}px`);
       }
       // Place above the button; if clipped, place below
       tooltip.style.bottom = '';

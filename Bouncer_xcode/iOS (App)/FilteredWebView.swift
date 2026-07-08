@@ -2,275 +2,37 @@
 //  FilteredWebView.swift
 //  iOS (App)
 //
-//  WKWebView that loads x.com and injects extension scripts for feed filtering.
+//  WKWebView that loads x.com / youtube.com / linkedin.com and injects
+//  extension scripts for feed filtering.
+//
+//  The struct itself is intentionally trivial — it wraps a pre-built
+//  `WKWebView` that the app has already configured and inserted into the
+//  view hierarchy. Construction lives in `WebViewFactory.make(...)` so the
+//  multi-webview cache (see `WebViewCache` in FilterPhraseSheet.swift) can
+//  create webviews eagerly, keep them alive across platform switches, and
+//  hand the same instance to whichever SwiftUI mount asks for it.
 //
 
 import SwiftUI
 import WebKit
 
+// MARK: - Thin SwiftUI wrapper
+
 struct FilteredWebView: UIViewRepresentable {
+    // The webview is owned by `WebViewCache` — this struct is just a mount
+    // point. `makeUIView` returns the pre-built instance so SwiftUI can insert
+    // it into the view hierarchy without ever rebuilding it. Switching between
+    // platforms toggles `.opacity` / `.allowsHitTesting` on sibling mounts;
+    // each mount's underlying WKWebView survives the flip.
+    let webView: WKWebView
 
-    var sheetViewModel: FilterSheetViewModel
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(sheetViewModel: sheetViewModel)
-    }
-
-    func makeUIView(context: Context) -> WKWebView {
-        let contentController = WKUserContentController()
-        contentController.add(context.coordinator, contentWorld: Self.extensionWorld, name: "feedfilterLog")
-        contentController.add(context.coordinator, contentWorld: Self.extensionWorld, name: "feedfilterShowSheet")
-        contentController.add(context.coordinator, contentWorld: Self.extensionWorld, name: "feedfilterPhrasesUpdated")
-        contentController.add(context.coordinator, contentWorld: Self.extensionWorld, name: "feedfilterGetAppCheckToken")
-        contentController.add(context.coordinator, contentWorld: Self.extensionWorld, name: "feedfilterWsOpen")
-        contentController.add(context.coordinator, contentWorld: Self.extensionWorld, name: "feedfilterWsSend")
-        contentController.add(context.coordinator, contentWorld: Self.extensionWorld, name: "feedfilterWsClose")
-        contentController.add(context.coordinator, contentWorld: Self.extensionWorld, name: "feedfilterModalClosed")
-        // Reply-style handler backing chrome.storage.local/sync with a native
-        // UserDefaults store, shared across origins (x.com, m.youtube.com, linkedin.com).
-        contentController.addScriptMessageHandler(context.coordinator, contentWorld: Self.extensionWorld, name: "feedfilterStorage")
-        // iOS Local Inference: classify/detect bridges for the on-device Gemma model.
-        contentController.add(context.coordinator, contentWorld: Self.extensionWorld, name: "feedfilterLocalClassify")
-        contentController.add(context.coordinator, contentWorld: Self.extensionWorld, name: "feedfilterLocalAiTextDetect")
-        injectScripts(into: contentController)
-
-        let config = WKWebViewConfiguration()
-        config.userContentController = contentController
-        config.websiteDataStore = .default()
-        config.allowsInlineMediaPlayback = true
-
-        let webView = WKWebView(frame: .zero, configuration: config)
-        webView.navigationDelegate = context.coordinator
-        webView.uiDelegate = context.coordinator
-        webView.allowsBackForwardNavigationGestures = true
-        if UIDevice.current.userInterfaceIdiom == .pad {
-            webView.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15"
-        } else {
-            webView.customUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"
-        }
-        if #available(iOS 16.4, *) {
-            webView.isInspectable = true
-        }
-
-        // Initial URL follows whichever platform the user picked on the
-        // PlatformPickerView. Registry-driven; falls back to X's home/login
-        // pair so first-run sign-in still surfaces the right page.
-        let def = Platforms.byId(sheetViewModel.selectedPlatform)
-            ?? Platforms.byId("twitter")
-        let urlString: String = {
-            if let def = def, let login = def.loginURL,
-               !UserDefaults.standard.bool(forKey: "hasLoggedIn") {
-                return login
-            }
-            return def?.feedURL ?? "https://x.com"
-        }()
-        if let url = URL(string: urlString) {
-            webView.load(URLRequest(url: url))
-        }
-
-        context.coordinator.sheetViewModel.webView = webView
-        context.coordinator.observeWebView(webView)
-        WebSocketBridge.shared.webView = webView
-
-        return webView
-    }
-
+    func makeUIView(context: Context) -> WKWebView { webView }
     func updateUIView(_ uiView: WKWebView, context: Context) {}
 
-    // MARK: - Script Injection
-
+    // Shared content world so JS injected across all webviews resolves to the
+    // same namespace. WKContentWorld is process-level, so this constant lives
+    // outside any single webview.
     static let extensionWorld = WKContentWorld.world(name: "feedfilter")
-
-    private func injectScripts(into controller: WKUserContentController) {
-        let world = Self.extensionWorld
-
-        // 0. Store extractors — injected into the PAGE world (not the extension
-        // world) at document start, because they must read JS data off the
-        // site's custom elements, which only the page world can see. On desktop
-        // the adapters inject these via chrome.runtime.getURL; that scheme can't
-        // load in a WKWebView, so we bundle + inject them natively here. They
-        // bridge data back to the content script via DOM CustomEvents.
-        if let source = loadBundledScript(named: "fiber-extractor", ext: "js", subdirectory: "adapters/twitter") {
-            controller.addUserScript(WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: .page))
-            print("[FeedFilter] Injected fiber-extractor.js (page world)")
-        } else { print("[FeedFilter] fiber-extractor.js NOT bundled") }
-        if let source = loadBundledScript(named: "lockup-extractor", ext: "js", subdirectory: "adapters/youtube") {
-            controller.addUserScript(WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: .page))
-            print("[FeedFilter] Injected lockup-extractor.js (page world)")
-        } else { print("[FeedFilter] lockup-extractor.js NOT bundled") }
-
-        // 1. ChromePolyfill.js — document start
-        if let source = loadBundledScript(named: "ChromePolyfill", ext: "js") {
-            let version = extensionManifestVersion() ?? "0.0.0"
-            let patched = "var __ffExtensionVersion = '\(version)';\n" + source
-            let script = WKUserScript(source: patched, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: world)
-            controller.addUserScript(script)
-            print("[FeedFilter] Injected ChromePolyfill.js (version \(version))")
-        }
-
-        // 2. background-app.js — document start (IIFE bundle)
-        if let source = loadBundledScript(named: "background-app", ext: "js", subdirectory: "dist") {
-            let script = WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: world)
-            controller.addUserScript(script)
-            print("[FeedFilter] Injected background-app.js")
-        }
-
-        // 3. Popup bridge — document start
-        if let source = buildPopupBridgeScript() {
-            let script = WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: world)
-            controller.addUserScript(script)
-            print("[FeedFilter] Injected PopupBridge")
-        }
-
-        // 4. dompurify.js — document end
-        if let source = loadBundledScript(named: "dompurify", ext: "js") {
-            let script = WKUserScript(source: source, injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: world)
-            controller.addUserScript(script)
-            print("[FeedFilter] Injected dompurify.js")
-        }
-
-        // 5. Platform adapters — document end. All are injected on every page;
-        // each self-guards by hostname (see the adapter files), claiming
-        // `window.BouncerAdapter` only on its own site, so content.js picks the
-        // right one based on current location. Registry-driven so adding a
-        // platform here is one entry in Platforms.swift.
-        for platform in Platforms.all {
-            guard let source = loadBundledScript(
-                named: platform.adapterScriptName, ext: "js", subdirectory: "dist"
-            ) else { continue }
-            let script = WKUserScript(source: source, injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: world)
-            controller.addUserScript(script)
-            print("[FeedFilter] Injected \(platform.adapterScriptName).js")
-        }
-
-        // 6. content.js — document end (bundled IIFE from dist/)
-        if let source = loadBundledScript(named: "content", ext: "js", subdirectory: "dist") {
-            let script = WKUserScript(source: source, injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: world)
-            controller.addUserScript(script)
-            print("[FeedFilter] Injected content.js")
-        }
-
-        // 7. CSS injection — document end (in page world)
-        if let cssScript = buildCSSInjectionScript() {
-            let script = WKUserScript(source: cssScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true)
-            controller.addUserScript(script)
-            print("[FeedFilter] Injected CSS styles")
-        }
-
-        // 8. App install prompt bypass — redirect to x.com when Twitter shows the "get the app" screen
-        let bypassScript = WKUserScript(source: """
-            (function() {
-                var re = /The X app lets you see what.s happening, join the conversation, and watch live events, instantly\\./;
-                function check() {
-                    if (document.body && re.test(document.body.innerText)) {
-                        window.location.href = "https://x.com";
-                    }
-                }
-                var observer = new MutationObserver(check);
-                observer.observe(document.documentElement, { childList: true, subtree: true });
-                check();
-            })();
-            """, injectionTime: .atDocumentEnd, forMainFrameOnly: true)
-        controller.addUserScript(bypassScript)
-        print("[FeedFilter] Injected app-install bypass")
-    }
-
-    // MARK: - Popup Bridge
-
-    private func buildPopupBridgeScript() -> String? {
-        guard let popupCSS = loadBundledScript(named: "popup", ext: "css"),
-              let popupJS = loadBundledScript(named: "popup-app", ext: "js", subdirectory: "dist") else {
-            print("[FeedFilter] Failed to load popup resources for bridge")
-            return nil
-        }
-
-        guard let popupHTML = loadBundledScript(named: "popup", ext: "html"),
-              let bodyStart = popupHTML.range(of: "<body>"),
-              let bodyEnd = popupHTML.range(of: "</body>") else {
-            print("[FeedFilter] Failed to parse popup.html")
-            return nil
-        }
-        let bodyContent = String(popupHTML[bodyStart.upperBound..<bodyEnd.lowerBound])
-            .replacingOccurrences(of: "<script src=\"browser-polyfill.js\"></script>", with: "")
-            .replacingOccurrences(of: "<script src=\"dist/popup.js\" type=\"module\"></script>", with: "")
-
-        let patchedPopupJS = popupJS.replacingOccurrences(
-            of: "document.addEventListener(\"DOMContentLoaded\", init);",
-            with: "init();"
-        )
-
-        guard let cssB64 = popupCSS.data(using: .utf8)?.base64EncodedString(),
-              let htmlB64 = bodyContent.data(using: .utf8)?.base64EncodedString(),
-              let jsB64 = patchedPopupJS.data(using: .utf8)?.base64EncodedString() else {
-            return nil
-        }
-
-        return """
-        (function() {
-            function b64(s) { return decodeURIComponent(escape(atob(s))); }
-            window.__feedfilterPopup = {
-                css: b64('\(cssB64)'),
-                html: b64('\(htmlB64)'),
-                js: b64('\(jsB64)')
-            };
-            console.log('[FeedFilter] PopupBridge: popup resources loaded');
-        })();
-        """
-    }
-
-    // MARK: - Script Loading Helpers
-
-    private func loadBundledScript(named name: String, ext: String, subdirectory: String? = nil) -> String? {
-        let url: URL?
-        if let subdirectory = subdirectory {
-            url = Bundle.main.url(forResource: name, withExtension: ext, subdirectory: subdirectory)
-        } else {
-            url = Bundle.main.url(forResource: name, withExtension: ext)
-        }
-        guard let fileURL = url else {
-            print("[FeedFilter] Failed to find bundled script: \(subdirectory ?? "")/\(name).\(ext)")
-            return nil
-        }
-        return try? String(contentsOf: fileURL, encoding: .utf8)
-    }
-
-    private func buildCSSInjectionScript() -> String? {
-        var cssContent = ""
-
-        if let contentCSS = loadBundledScript(named: "content", ext: "css") {
-            cssContent += contentCSS
-        }
-        // Platform stylesheets — registry-driven so adding a platform here
-        // is one entry in Platforms.swift.
-        for platform in Platforms.all {
-            if let css = loadBundledScript(named: platform.cssFile, ext: "css", subdirectory: platform.cssSubdir) {
-                cssContent += "\n" + css
-            }
-        }
-
-        guard !cssContent.isEmpty else { return nil }
-
-        let escaped = cssContent
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "`", with: "\\`")
-            .replacingOccurrences(of: "$", with: "\\$")
-
-        return """
-        (function() {
-            var style = document.createElement('style');
-            style.textContent = `\(escaped)`;
-            document.head.appendChild(style);
-        })();
-        """
-    }
-
-    private func extensionManifestVersion() -> String? {
-        guard let manifestURL = Bundle.main.url(forResource: "manifest", withExtension: "json"),
-              let data = try? Data(contentsOf: manifestURL),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let version = json["version"] as? String else { return nil }
-        return version
-    }
 
     // MARK: - Local-classify resolver
 
@@ -303,9 +65,277 @@ struct FilteredWebView: UIViewRepresentable {
         await webView.evaluateJavaScript(js, in: nil, in: FilteredWebView.extensionWorld)
     }
 
-    // MARK: - Coordinator
+    // MARK: - Factory
 
-    class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler, WKScriptMessageHandlerWithReply, UIAdaptivePresentationControllerDelegate {
+    // Builds a fully-configured WKWebView for a single platform: attaches all
+    // message handlers to the shared Coordinator, injects the extension's
+    // scripts, sets the user agent, and kicks off the initial navigation.
+    // Called from `WebViewCache.webView(for:)` — see FilterPhraseSheet.swift.
+    enum WebViewFactory {
+        static func make(platform: PlatformDef, coordinator: WebCoordinator) -> WKWebView {
+            let contentController = WKUserContentController()
+            let world = FilteredWebView.extensionWorld
+
+            contentController.add(coordinator, contentWorld: world, name: "feedfilterLog")
+            contentController.add(coordinator, contentWorld: world, name: "feedfilterShowSheet")
+            contentController.add(coordinator, contentWorld: world, name: "feedfilterPhrasesUpdated")
+            contentController.add(coordinator, contentWorld: world, name: "feedfilterGetAppCheckToken")
+            contentController.add(coordinator, contentWorld: world, name: "feedfilterWsOpen")
+            contentController.add(coordinator, contentWorld: world, name: "feedfilterWsSend")
+            contentController.add(coordinator, contentWorld: world, name: "feedfilterWsClose")
+            contentController.add(coordinator, contentWorld: world, name: "feedfilterModalClosed")
+            // Reply-style handler backing chrome.storage.local/sync with a native
+            // UserDefaults store, shared across origins (x.com, m.youtube.com, linkedin.com).
+            contentController.addScriptMessageHandler(coordinator, contentWorld: world, name: "feedfilterStorage")
+            // iOS Local Inference: classify/detect bridges for the on-device Gemma model.
+            contentController.add(coordinator, contentWorld: world, name: "feedfilterLocalClassify")
+            contentController.add(coordinator, contentWorld: world, name: "feedfilterLocalAiTextDetect")
+
+            injectScripts(into: contentController)
+
+            let config = WKWebViewConfiguration()
+            config.userContentController = contentController
+            // Shared persistent store means all cached webviews see the same
+            // cookies / logins / origin storage. Sign in once on YouTube; the
+            // YT webview keeps that state and any future webview shares it.
+            config.websiteDataStore = .default()
+            config.allowsInlineMediaPlayback = true
+
+            let webView = WKWebView(frame: .zero, configuration: config)
+            webView.navigationDelegate = coordinator
+            webView.uiDelegate = coordinator
+            webView.allowsBackForwardNavigationGestures = true
+            if UIDevice.current.userInterfaceIdiom == .pad {
+                webView.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15"
+            } else {
+                webView.customUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"
+            }
+            if #available(iOS 16.4, *) {
+                webView.isInspectable = true
+            }
+
+            // First-launch fallback: if the platform has a dedicated login URL
+            // and the user has never logged in, land on the login flow.
+            // Otherwise go straight to the platform's feed. Twitter is the only
+            // platform with a distinct loginURL today; the others authenticate
+            // internally, so loginURL is nil for them and we always land on
+            // feedURL.
+            let urlString: String = {
+                if let login = platform.loginURL,
+                   !UserDefaults.standard.bool(forKey: "hasLoggedIn") {
+                    return login
+                }
+                return platform.feedURL
+            }()
+            if let url = URL(string: urlString) {
+                webView.load(URLRequest(url: url))
+            }
+
+            return webView
+        }
+
+        // MARK: - Script Injection
+
+        private static func injectScripts(into controller: WKUserContentController) {
+            let world = FilteredWebView.extensionWorld
+
+            // 0. Store extractors — injected into the PAGE world (not the extension
+            // world) at document start, because they must read JS data off the
+            // site's custom elements, which only the page world can see. On desktop
+            // the adapters inject these via chrome.runtime.getURL; that scheme can't
+            // load in a WKWebView, so we bundle + inject them natively here. They
+            // bridge data back to the content script via DOM CustomEvents.
+            if let source = loadBundledScript(named: "fiber-extractor", ext: "js", subdirectory: "adapters/twitter") {
+                controller.addUserScript(WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: .page))
+                print("[FeedFilter] Injected fiber-extractor.js (page world)")
+            } else { print("[FeedFilter] fiber-extractor.js NOT bundled") }
+            if let source = loadBundledScript(named: "lockup-extractor", ext: "js", subdirectory: "adapters/youtube") {
+                controller.addUserScript(WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: .page))
+                print("[FeedFilter] Injected lockup-extractor.js (page world)")
+            } else { print("[FeedFilter] lockup-extractor.js NOT bundled") }
+
+            // 1. ChromePolyfill.js — document start
+            if let source = loadBundledScript(named: "ChromePolyfill", ext: "js") {
+                let version = extensionManifestVersion() ?? "0.0.0"
+                let patched = "var __ffExtensionVersion = '\(version)';\n" + source
+                let script = WKUserScript(source: patched, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: world)
+                controller.addUserScript(script)
+                print("[FeedFilter] Injected ChromePolyfill.js (version \(version))")
+            }
+
+            // 2. background-app.js — document start (IIFE bundle)
+            if let source = loadBundledScript(named: "background-app", ext: "js", subdirectory: "dist") {
+                let script = WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: world)
+                controller.addUserScript(script)
+                print("[FeedFilter] Injected background-app.js")
+            }
+
+            // 3. Popup bridge — document start
+            if let source = buildPopupBridgeScript() {
+                let script = WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: world)
+                controller.addUserScript(script)
+                print("[FeedFilter] Injected PopupBridge")
+            }
+
+            // 4. dompurify.js — document end
+            if let source = loadBundledScript(named: "dompurify", ext: "js") {
+                let script = WKUserScript(source: source, injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: world)
+                controller.addUserScript(script)
+                print("[FeedFilter] Injected dompurify.js")
+            }
+
+            // 5. Platform adapters — document end. All are injected on every page;
+            // each self-guards by hostname (see the adapter files), claiming
+            // `window.BouncerAdapter` only on its own site, so content.js picks the
+            // right one based on current location. Registry-driven so adding a
+            // platform here is one entry in Platforms.swift.
+            for platform in Platforms.all {
+                guard let source = loadBundledScript(
+                    named: platform.adapterScriptName, ext: "js", subdirectory: "dist"
+                ) else { continue }
+                let script = WKUserScript(source: source, injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: world)
+                controller.addUserScript(script)
+                print("[FeedFilter] Injected \(platform.adapterScriptName).js")
+            }
+
+            // 6. content.js — document end (bundled IIFE from dist/)
+            if let source = loadBundledScript(named: "content", ext: "js", subdirectory: "dist") {
+                let script = WKUserScript(source: source, injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: world)
+                controller.addUserScript(script)
+                print("[FeedFilter] Injected content.js")
+            }
+
+            // 7. CSS injection — document end (in page world)
+            if let cssScript = buildCSSInjectionScript() {
+                let script = WKUserScript(source: cssScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true)
+                controller.addUserScript(script)
+                print("[FeedFilter] Injected CSS styles")
+            }
+
+            // 8. App install prompt bypass — redirect to x.com when Twitter shows the "get the app" screen
+            let bypassScript = WKUserScript(source: """
+                (function() {
+                    var re = /The X app lets you see what.s happening, join the conversation, and watch live events, instantly\\./;
+                    function check() {
+                        if (document.body && re.test(document.body.innerText)) {
+                            window.location.href = "https://x.com";
+                        }
+                    }
+                    var observer = new MutationObserver(check);
+                    observer.observe(document.documentElement, { childList: true, subtree: true });
+                    check();
+                })();
+                """, injectionTime: .atDocumentEnd, forMainFrameOnly: true)
+            controller.addUserScript(bypassScript)
+            print("[FeedFilter] Injected app-install bypass")
+        }
+
+        // MARK: - Popup Bridge
+
+        private static func buildPopupBridgeScript() -> String? {
+            guard let popupCSS = loadBundledScript(named: "popup", ext: "css"),
+                  let popupJS = loadBundledScript(named: "popup-app", ext: "js", subdirectory: "dist") else {
+                print("[FeedFilter] Failed to load popup resources for bridge")
+                return nil
+            }
+
+            guard let popupHTML = loadBundledScript(named: "popup", ext: "html"),
+                  let bodyStart = popupHTML.range(of: "<body>"),
+                  let bodyEnd = popupHTML.range(of: "</body>") else {
+                print("[FeedFilter] Failed to parse popup.html")
+                return nil
+            }
+            let bodyContent = String(popupHTML[bodyStart.upperBound..<bodyEnd.lowerBound])
+                .replacingOccurrences(of: "<script src=\"browser-polyfill.js\"></script>", with: "")
+                .replacingOccurrences(of: "<script src=\"dist/popup.js\" type=\"module\"></script>", with: "")
+
+            let patchedPopupJS = popupJS.replacingOccurrences(
+                of: "document.addEventListener(\"DOMContentLoaded\", init);",
+                with: "init();"
+            )
+
+            guard let cssB64 = popupCSS.data(using: .utf8)?.base64EncodedString(),
+                  let htmlB64 = bodyContent.data(using: .utf8)?.base64EncodedString(),
+                  let jsB64 = patchedPopupJS.data(using: .utf8)?.base64EncodedString() else {
+                return nil
+            }
+
+            return """
+            (function() {
+                function b64(s) { return decodeURIComponent(escape(atob(s))); }
+                window.__feedfilterPopup = {
+                    css: b64('\(cssB64)'),
+                    html: b64('\(htmlB64)'),
+                    js: b64('\(jsB64)')
+                };
+                console.log('[FeedFilter] PopupBridge: popup resources loaded');
+            })();
+            """
+        }
+
+        // MARK: - Script Loading Helpers
+
+        private static func loadBundledScript(named name: String, ext: String, subdirectory: String? = nil) -> String? {
+            let url: URL?
+            if let subdirectory = subdirectory {
+                url = Bundle.main.url(forResource: name, withExtension: ext, subdirectory: subdirectory)
+            } else {
+                url = Bundle.main.url(forResource: name, withExtension: ext)
+            }
+            guard let fileURL = url else {
+                print("[FeedFilter] Failed to find bundled script: \(subdirectory ?? "")/\(name).\(ext)")
+                return nil
+            }
+            return try? String(contentsOf: fileURL, encoding: .utf8)
+        }
+
+        private static func buildCSSInjectionScript() -> String? {
+            var cssContent = ""
+
+            if let contentCSS = loadBundledScript(named: "content", ext: "css") {
+                cssContent += contentCSS
+            }
+            // Platform stylesheets — registry-driven so adding a platform here
+            // is one entry in Platforms.swift.
+            for platform in Platforms.all {
+                if let css = loadBundledScript(named: platform.cssFile, ext: "css", subdirectory: platform.cssSubdir) {
+                    cssContent += "\n" + css
+                }
+            }
+
+            guard !cssContent.isEmpty else { return nil }
+
+            let escaped = cssContent
+                .replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "`", with: "\\`")
+                .replacingOccurrences(of: "$", with: "\\$")
+
+            return """
+            (function() {
+                var style = document.createElement('style');
+                style.textContent = `\(escaped)`;
+                document.head.appendChild(style);
+            })();
+            """
+        }
+
+        private static func extensionManifestVersion() -> String? {
+            guard let manifestURL = Bundle.main.url(forResource: "manifest", withExtension: "json"),
+                  let data = try? Data(contentsOf: manifestURL),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let version = json["version"] as? String else { return nil }
+            return version
+        }
+    }
+
+    // MARK: - WebCoordinator
+
+    // Nested under FilteredWebView for locality with the factory and static
+    // resolvers, but intentionally NOT named `Coordinator` — that name would
+    // be inferred as SwiftUI's `UIViewRepresentable.Coordinator` associated
+    // type and force a `makeCoordinator()` implementation. This type is owned
+    // by `WebViewCache`, not by the SwiftUI framework's Representable lifecycle.
+    class WebCoordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler, WKScriptMessageHandlerWithReply, UIAdaptivePresentationControllerDelegate {
 
         let sheetViewModel: FilterSheetViewModel
 
@@ -428,7 +458,11 @@ struct FilteredWebView: UIViewRepresentable {
                 if message.name == "feedfilterWsOpen" {
                     let url = json["url"] as? String ?? ""
                     print("[FeedFilter] WS open: \(socketId) -> \(url)")
-                    WebSocketBridge.shared.open(socketId: socketId, urlString: url)
+                    // Route events back to the webview that opened this socket,
+                    // not a globally-set one — otherwise a socket opened in the
+                    // YouTube webview delivers its messages into whichever
+                    // webview was most recently "active" per the bridge.
+                    WebSocketBridge.shared.open(socketId: socketId, urlString: url, webView: message.webView)
                 } else if message.name == "feedfilterWsSend" {
                     let payload = json["data"] as? String ?? ""
                     WebSocketBridge.shared.send(socketId: socketId, data: payload)
@@ -446,16 +480,29 @@ struct FilteredWebView: UIViewRepresentable {
                     return
                 }
 
+                // With multiple webviews cached, hidden ones still emit these
+                // events. Route the filtered count into the sender's slot so
+                // each platform's badge stays accurate independently, but
+                // gate anything that mutates active-user UI (theme, sheet
+                // toggle) on the sender being the currently-selected platform
+                // — otherwise a background YouTube filter would flip X's
+                // theme or pop the sheet while the user is looking at X.
+                let senderHost = message.webView?.url?.host?.lowercased() ?? ""
+                let senderPlatform = Platforms.fromHost(senderHost)?.id
+
                 DispatchQueue.main.async { [weak self] in
                     guard let vm = self?.sheetViewModel else { return }
+
+                    if let count = json["filteredCount"] as? Int, let platform = senderPlatform {
+                        vm.filteredCounts[platform] = count
+                    }
+
+                    guard senderPlatform == nil || senderPlatform == vm.selectedPlatform else { return }
 
                     // Phrase list is driven by the sheet's platform dropdown
                     // (viewModel.loadPhrases), not this push — the push carries
                     // only the current site's phrases and would clobber a
-                    // cross-platform view. We still take the filtered count.
-                    if let count = json["filteredCount"] as? Int {
-                        vm.filteredCount = count
-                    }
+                    // cross-platform view.
                     if let theme = json["theme"] as? String {
                         vm.themeMode = theme
                     }
@@ -532,13 +579,22 @@ struct FilteredWebView: UIViewRepresentable {
             }
         }
 
-        // MARK: - Navigation
+        // MARK: - Active-webview observation
 
+        // With multiple webviews cached, we only care about the currently-visible
+        // one for URL / canGoBack / canGoForward — the ViewModel's back/forward
+        // buttons and URL-derived logic should reflect the active webview. When
+        // the platform switches, `activate(_:)` re-points observations at the
+        // new active webview and immediately pushes its state into the ViewModel.
         private var canGoBackObservation: NSKeyValueObservation?
         private var canGoForwardObservation: NSKeyValueObservation?
         private var urlObservation: NSKeyValueObservation?
 
-        func observeWebView(_ webView: WKWebView) {
+        func activate(_ webView: WKWebView) {
+            canGoBackObservation?.invalidate()
+            canGoForwardObservation?.invalidate()
+            urlObservation?.invalidate()
+
             canGoBackObservation = webView.observe(\.canGoBack, options: [.initial, .new]) { [weak self] wv, _ in
                 DispatchQueue.main.async {
                     self?.sheetViewModel.canGoBack = wv.canGoBack
@@ -588,6 +644,20 @@ struct FilteredWebView: UIViewRepresentable {
                 decisionHandler(.cancel)
             } else {
                 decisionHandler(.allow)
+            }
+        }
+
+        // The iOS filtered-posts modal lives inside the page; its close
+        // signal back to native is driven by a JS MutationObserver attached
+        // in `FilterSheetViewModel.openFilteredModal`. Any navigation tears
+        // down that observer, so `feedfilterModalClosed` would never fire and
+        // the bottom NavBarView would stay hidden indefinitely. Force the
+        // flag back to false on any main-webView navigation so the bar
+        // reappears as soon as the page changes.
+        func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+            guard webView !== popupWebView else { return }
+            DispatchQueue.main.async { [weak self] in
+                self?.sheetViewModel.isFilteredModalOpen = false
             }
         }
 

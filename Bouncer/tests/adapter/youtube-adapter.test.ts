@@ -4,6 +4,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
   desktopVideoLockup,
+  desktopVideoLockupWithMenu,
   desktopShortLockup,
   mobileWatchCard,
   mobileShort,
@@ -199,5 +200,74 @@ describe('hidePost', () => {
     const container = adapter.getPostContainer(article);
     expect(container.dataset.filteredByExtension).toBe('true');
     expect(container.style.display).toBe('none');
+  });
+});
+
+// ==================== insertActionButton ====================
+
+function makeBouncerBtn(): HTMLElement {
+  // Mimic the shared `addWhyAnnoyingButton` output: a div with the trash SVG.
+  // The adapter is expected to overwrite the SVG with the cancel glyph.
+  const btn = document.createElement('div');
+  btn.className = 'ff-why-annoying-btn';
+  btn.innerHTML = '<svg data-icon="trash"></svg>';
+  return btn;
+}
+
+describe('insertActionButton', () => {
+  it('sits immediately before the More actions wrapper and uses ff-yt-next-to-menu', () => {
+    const adapter = makeAdapter('https://www.youtube.com/');
+    const article = desktopVideoLockupWithMenu();
+    const btn = makeBouncerBtn();
+
+    adapter.insertActionButton(article, btn);
+
+    const wrapper = article.querySelector('yt-button-shape')!;
+    expect(wrapper.previousElementSibling).toBe(btn);
+    expect(btn.classList.contains('ff-yt-next-to-menu')).toBe(true);
+  });
+
+  it('replaces the trash glyph with the cancel SVG when placed on YouTube', () => {
+    const adapter = makeAdapter('https://www.youtube.com/');
+    const article = desktopVideoLockupWithMenu();
+    const btn = makeBouncerBtn();
+
+    adapter.insertActionButton(article, btn);
+
+    const svg = btn.querySelector('svg')!;
+    expect(svg).not.toBeNull();
+    expect(svg.getAttribute('data-icon')).toBeNull();
+    // First path of the YT-native "not interested" circle-with-slash glyph.
+    expect(svg.querySelector('path')?.getAttribute('d')).toMatch(/^M12 1C5\.925 1 1 5\.925/);
+  });
+
+  it('clones YT button-shape classes and wrapper so YT styling drives the look', () => {
+    const adapter = makeAdapter('https://www.youtube.com/');
+    const article = desktopVideoLockupWithMenu();
+    const btn = makeBouncerBtn();
+
+    adapter.insertActionButton(article, btn);
+
+    // Outer carries YT's icon-button host class.
+    expect(btn.classList.contains('ytSpecButtonShapeNextHost')).toBe(true);
+    expect(btn.classList.contains('ytSpecButtonShapeNextIconButton')).toBe(true);
+    // Inner structure mirrors YT's More-actions button so currentcolor and
+    // sizing propagate the same way.
+    expect(btn.querySelector('.ytSpecButtonShapeNextIcon')).not.toBeNull();
+    expect(btn.querySelector('.ytIconWrapperHost')).not.toBeNull();
+    expect(btn.querySelector('.yt-icon-shape.ytSpecIconShapeHost')).not.toBeNull();
+  });
+
+  it('falls back to the metadata-row anchor when no More actions button is present', () => {
+    const adapter = makeAdapter('https://www.youtube.com/');
+    const article = desktopVideoLockup();
+    const btn = makeBouncerBtn();
+
+    adapter.insertActionButton(article, btn);
+
+    const metaRows = article.querySelectorAll('.ytContentMetadataViewModelMetadataRow');
+    expect(metaRows[metaRows.length - 1].contains(btn)).toBe(true);
+    expect(btn.classList.contains('ff-yt-inline-meta')).toBe(true);
+    expect(btn.classList.contains('ff-yt-next-to-menu')).toBe(false);
   });
 });
