@@ -54,7 +54,9 @@ async function fetchAndCacheModel(
   const cache = await caches.open(LITERTLM_CACHE_KEY);
   const cached = await cache.match(url);
   if (cached) {
-    onProgress({ progress: 1, text: 'cached' });
+    // Cache hit: no download, so no progress events. The in-feed loading UI
+    // keys off download progress ('downloading' state) and deliberately
+    // stays hidden for the few seconds of cache-to-GPU streaming.
     return cached;
   }
 
@@ -146,7 +148,9 @@ export class LitertlmRuntime {
     const cfg = modelDef.litertlmConfig;
     if (!cfg) throw new Error(`Model ${modelDef.name} is missing litertlmConfig`);
 
-    onProgress({ progress: 0, text: '' });
+    // Progress events are emitted only by the real network download inside
+    // fetchAndCacheModel. Wasm loading, cache hits, and the cache-to-GPU
+    // stream report nothing — callers see state 'initializing' until ready.
     await ensureWasmLoaded();
     if (abortSignal.aborted) throw new Error('aborted');
 
@@ -169,7 +173,6 @@ export class LitertlmRuntime {
       throw new Error('aborted');
     }
     this.modelDef = modelDef;
-    onProgress({ progress: 1, text: '' });
   }
 
   async unload(): Promise<void> {

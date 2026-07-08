@@ -2030,7 +2030,18 @@ export function updateModelLoadingProgress(statuses: Record<string, LocalModelSt
 
   if (!status) return;
 
-  const isLoading = status.state === 'downloading' || status.state === 'initializing' || status.state === 'cached';
+  // The in-feed indicator is only for the multi-GB first download — the one
+  // slow operation with real progress to report. Everything else stays
+  // silent by design:
+  //   - 'cached' is the dormant "downloaded but not loaded" state the engine
+  //     rests in after its idle unload; nothing is in flight.
+  //   - 'initializing' covers cache reloads (a few seconds of streaming the
+  //     model from Cache Storage into the GPU, no incremental progress) —
+  //     the per-post processing indicator already conveys activity there.
+  // The runtime only emits download-progress events from the real network
+  // path (see fetchAndCacheModel), so 'downloading' means a genuine download.
+  // The popup shows its own badge for the other states.
+  const isLoading = status.state === 'downloading';
 
   containers.forEach(container => {
     if (container && container.isConnected) {
@@ -2042,16 +2053,8 @@ export function updateModelLoadingProgress(statuses: Record<string, LocalModelSt
         const textEl = loadingEl.querySelector('.model-loading-text')!;
         const fillEl = loadingEl.querySelector<HTMLElement>('.model-loading-progress-fill')!;
 
-        if (status.state === 'cached') {
-          textEl.textContent = 'Loading model...';
-          fillEl.style.width = '0%';
-        } else if (status.text) {
-          textEl.textContent = status.text;
-          fillEl.style.width = `${(status.progress || 0) * 100}%`;
-        } else {
-          textEl.textContent = status.state === 'initializing' ? 'Initializing...' : 'Downloading...';
-          fillEl.style.width = `${(status.progress || 0) * 100}%`;
-        }
+        textEl.textContent = status.text || 'Downloading...';
+        fillEl.style.width = `${(status.progress || 0) * 100}%`;
       } else {
         loadingEl.style.display = 'none';
       }
