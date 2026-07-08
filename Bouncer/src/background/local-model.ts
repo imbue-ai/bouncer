@@ -174,8 +174,22 @@ export class LocalEngine {
       try {
         await this.updateStatus(modelId, { state: 'initializing', progress: 0, text: retryCount > 0 ? `Retrying (${retryCount}/${DOWNLOAD_MAX_RETRIES})...` : 'Starting...' });
 
+        // Throttle byte-progress status writes. The download reports once per
+        // network chunk — hundreds of events/sec on a fast connection — and
+        // each write is a read-modify-write of localModelStatuses plus a
+        // storage.onChanged broadcast to every open UI. The racing RMW cycles
+        // and the event flood reach a busy page's main thread in bursts,
+        // which is what made the in-feed bar advance in visible jumps. ~4
+        // writes/sec is plenty: both progress bars animate width with a
+        // 0.3s CSS transition that glides across the gap between updates.
+        // Events with progress 1 or a text label are always written so
+        // completion and retry messages are never dropped.
+        let lastProgressWrite = 0;
         await backend.initialize(modelDef, (progress) => {
           if (abortSignal.aborted) return;
+          const now = Date.now();
+          if (progress.progress < 1 && !progress.text && now - lastProgressWrite < 250) return;
+          lastProgressWrite = now;
           this.updateStatus(modelId, {
             state: 'downloading',
             progress: progress.progress,

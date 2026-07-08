@@ -2051,7 +2051,7 @@ export function updateModelLoadingProgress(statuses: Record<string, LocalModelSt
         const textEl = loadingEl.querySelector('.model-loading-text')!;
         const fillEl = loadingEl.querySelector<HTMLElement>('.model-loading-progress-fill')!;
 
-        textEl.textContent = status.text || 'Downloading...';
+        textEl.textContent = status.text || 'Downloading local model...';
         fillEl.style.width = `${(status.progress || 0) * 100}%`;
       } else {
         loadingEl.style.display = 'none';
@@ -2062,42 +2062,49 @@ export function updateModelLoadingProgress(statuses: Record<string, LocalModelSt
 }
 
 export function initModelLoadingListener() {
+  // Cache the selected model so download-progress events render synchronously
+  // from changes.newValue. During a model download, localModelStatuses writes
+  // fire many times per second; the previous getStorage() round-trip per
+  // event queued behind that write flood, so the in-feed bar only caught up
+  // in visible clumps. (The popup renders straight from the event payload,
+  // which is why it was smooth while the in-feed bar was chunky.)
+  let selectedModel = '';
+
   // Get initial state
   getStorage(['localModelStatuses', 'selectedModel']).then((data) => {
+    selectedModel = (data.selectedModel as string) || '';
     if (data.localModelStatuses) {
-      updateModelLoadingProgress(
-        data.localModelStatuses,
-        data.selectedModel || ''
-      );
+      updateModelLoadingProgress(data.localModelStatuses, selectedModel);
     }
   }).catch(err => console.error('[UI] Failed to load model statuses:', err));
 
   // Listen for changes
   chrome.storage.onChanged.addListener((changes: Record<string, chrome.storage.StorageChange>, areaName: string) => {
-    if (areaName === 'local' && changes.localModelStatuses) {
-      getStorage(['selectedModel']).then((data) => {
-        const newStatuses = (changes.localModelStatuses.newValue || {}) as Record<string, LocalModelStatus>;
-        const oldStatuses = (changes.localModelStatuses.oldValue || {}) as Record<string, LocalModelStatus>;
-        const selectedModel = data.selectedModel || '';
+    if (areaName !== 'local') return;
 
-        updateModelLoadingProgress(newStatuses, selectedModel);
-
-        // Check if selected local model just became ready - trigger re-evaluation
-        if (selectedModel?.startsWith('local:')) {
-          const modelId = selectedModel.split(':')[1];
-          const oldState = oldStatuses[modelId]?.state;
-          const newState = newStatuses[modelId]?.state;
-
-          if (newState === 'ready' && oldState && oldState !== 'ready') {
-            _deps.processExistingPosts();
-          }
-        }
-      }).catch(err => console.error('[UI] Failed to get selected model:', err));
-    }
-    if (areaName === 'local' && changes.selectedModel) {
+    if (changes.selectedModel) {
+      selectedModel = (changes.selectedModel.newValue as string) || '';
       getStorage(['localModelStatuses']).then((data) => {
-        updateModelLoadingProgress(data.localModelStatuses || {}, changes.selectedModel.newValue as string);
+        updateModelLoadingProgress(data.localModelStatuses || {}, selectedModel);
       }).catch(err => console.error('[UI] Failed to get model statuses:', err));
+    }
+
+    if (changes.localModelStatuses) {
+      const newStatuses = (changes.localModelStatuses.newValue || {}) as Record<string, LocalModelStatus>;
+      const oldStatuses = (changes.localModelStatuses.oldValue || {}) as Record<string, LocalModelStatus>;
+
+      updateModelLoadingProgress(newStatuses, selectedModel);
+
+      // Check if selected local model just became ready - trigger re-evaluation
+      if (selectedModel?.startsWith('local:')) {
+        const modelId = selectedModel.split(':')[1];
+        const oldState = oldStatuses[modelId]?.state;
+        const newState = newStatuses[modelId]?.state;
+
+        if (newState === 'ready' && oldState && oldState !== 'ready') {
+          _deps.processExistingPosts();
+        }
+      }
     }
   });
 }

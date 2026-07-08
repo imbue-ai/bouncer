@@ -1658,7 +1658,7 @@ function updateLocalModelSectionUI() {
 
     case 'initializing':
     case 'downloading': {
-      badge.textContent = 'Downloading...';
+      badge.textContent = 'Downloading local model...';
       badge.classList.add('downloading');
       downloading.style.display = 'block';
       const progress = status.progress || 0;
