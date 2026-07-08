@@ -183,13 +183,12 @@ function signinButtonHTML(label: string) {
 }
 
 // Launch sign-in via background script (Google on Chrome, Apple on Safari).
-// The button is held in a pressed "signing-in" state (and disabled against
-// double-clicks) until the flow resolves, so the click feels acknowledged
-// during the pause before the auth window opens.
+// The button is disabled against double-clicks until the flow resolves, but
+// visually returns to its normal color on release — a held pressed look reads
+// as lag during the pause before the auth window opens.
 async function launchSignIn(btn?: HTMLButtonElement) {
   if (btn) {
     btn.disabled = true;
-    btn.classList.add('signing-in');
   }
   try {
     if (isSafari) {
@@ -215,7 +214,6 @@ async function launchSignIn(btn?: HTMLButtonElement) {
     // matters on failure/cancel — re-enable so the user can retry.
     if (btn) {
       btn.disabled = false;
-      btn.classList.remove('signing-in');
     }
   }
 }
