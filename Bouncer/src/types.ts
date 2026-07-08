@@ -311,6 +311,7 @@ export type ContentToBackgroundMessage =
   | { type: 'sendFeedback'; decision: string; tweetData: { text: string; imageUrls: string[] }; reasoning?: string; rawResponse?: string; siteId?: SiteId; postUrl?: string | null }
   | { type: 'getAuthStatus' }
   | { type: 'launchAuth' }
+  | { type: 'skipAuth' }
   | { type: 'appleSignIn'; idToken: string; rawNonce: string }
   | { type: 'nativeAppleSignIn' }
   | { type: 'signOut' }
@@ -325,7 +326,8 @@ export type BackgroundToContentMessage =
   | { type: 'getPositions'; postUrls: string[]; evaluationIds?: string[] }
   | { type: 'processingPost'; postUrl: string }
   | { type: 'annoyingProgress'; verified: number; total: number }
-  | { type: 'authStateChanged'; authenticated: boolean }
+  | { type: 'authStateChanged'; authenticated: boolean; isAnonymous?: boolean }
+  | { type: 'guestLimitReached' }
   | { type: 'evaluationStarted'; evaluationId: string; detectorNames: string[] }
   | { type: 'detectorResponse'; evaluationId: string; detectorName: string; shouldHide?: boolean; reasoning?: string; category?: string | null; error?: string; skipped?: boolean; skipReason?: string };
 
@@ -392,6 +394,9 @@ export type StorageSchema = SettingsBase & {
   localModelStatuses: Record<string, LocalModelStatus>;
   evaluationCache: Record<string, EvaluationResult>;
   stats: { filtered: number; evaluated: number; totalCost: number };
+  // Lifetime count of posts filtered while signed in anonymously. Drives the
+  // guest trial gate (see GUEST_FILTER_LIMIT). Persists across sessions.
+  anonFilterCount: number;
   googleAuthToken: string;
   openrouterCodeVerifier: string;
   lastSeenVersion: string;

@@ -2,6 +2,11 @@
 
 import type { ChatMessage, PostContent, SiteId } from '../types';
 
+// Guest trial limit: how many posts an anonymous ("Skip for now") user may
+// filter before being prompted to sign in. Counted persistently across all
+// sessions via the `anonFilterCount` storage key. Tune here.
+export const GUEST_FILTER_LIMIT = 300;
+
 // Format a post's content into the string sent to the AI for evaluation.
 // This is also the basis for cache keys and feedback payloads.
 export function formatPostForEvaluation(post: PostContent): string {

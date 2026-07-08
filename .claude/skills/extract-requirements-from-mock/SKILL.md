@@ -2,7 +2,7 @@
 name: extract-requirements-from-mock
 description: Extract requirements document from HTML mock iteration
 disable-model-invocation: true
-argument-hint: [feature-name]
+argument-hint: "[feature-name]"
 ---
 
 # Extract Requirements from Mock

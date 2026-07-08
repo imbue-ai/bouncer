@@ -1306,37 +1306,55 @@ article {
 }
 
 .ff-signin-explanation {
-  margin: 8px 0 0;
-  font-size: 13px;
-  color: rgba(255, 255, 255, 0.5);
+  margin: 14px 0 0;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.45);
   text-align: center;
-  line-height: 1.4;
+  /* Distribute words evenly across lines instead of a long first line with
+     a short orphan below. */
+  text-wrap: balance;
+  line-height: 1.45;
 }
 
 .light-mode .ff-signin-explanation {
-  color: rgba(0, 0, 0, 0.45);
+  color: rgba(0, 0, 0, 0.4);
 }
 
+/* Outlined in the same orange as the filter-box border (see
+   .filter-phrases-container), transparent fill so it sits on any theme. */
 .google-signin-btn {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 10px 20px;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.08);
+  padding: 15px 20px;
+  border: 1.5px solid rgb(234, 133, 84);
+  border-radius: 10px;
+  background: rgba(234, 133, 84, 0.08);
   color: inherit;
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 15px;
+  font-weight: 700;
   cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
+  transition: background 0.15s;
   width: 100%;
   justify-content: center;
 }
 
 .google-signin-btn:hover {
-  background: rgba(255, 255, 255, 0.14);
-  border-color: rgba(255, 255, 255, 0.35);
+  background: rgba(234, 133, 84, 0.18);
+}
+
+/* Instant feedback on press: transition disabled so the color changes on the
+   very frame of the click. Only :active — the pressed look must release on
+   mouseup, not linger while the auth window opens (the button stays disabled
+   against double-clicks, but visually returns to normal).
+   CASCADE TRAP: you're hovering while you click, so any hover rule that
+   outranks these selectors (higher specificity, or equal specificity later
+   in the file — e.g. a .light-mode hover override) silently masks the
+   pressed state. Keep these the last background rules for this button. */
+.google-signin-btn:active,
+.light-mode .google-signin-btn:active {
+  transition: none;
+  background: rgba(234, 133, 84, 0.32);
 }
 
 .google-signin-btn .google-icon {
@@ -1345,14 +1363,150 @@ article {
   flex-shrink: 0;
 }
 
-.light-mode .google-signin-btn {
-  border-color: rgba(0, 0, 0, 0.15);
-  background: rgba(0, 0, 0, 0.04);
+.skip-signin-btn {
+  margin: 12px 0 0;
+  padding: 4px 8px;
+  border: none;
+  background: none;
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 13px;
+  cursor: pointer;
+  transition: color 0.15s;
 }
 
-.light-mode .google-signin-btn:hover {
-  background: rgba(0, 0, 0, 0.08);
-  border-color: rgba(0, 0, 0, 0.25);
+.skip-signin-btn:hover {
+  color: #ffffff;
+}
+
+.skip-signin-arrow {
+  margin-left: 4px;
+  font-size: 11px;
+  transition: transform 0.15s;
+}
+
+.skip-signin-btn:hover .skip-signin-arrow {
+  transform: translateX(2px);
+}
+
+/* While anonymous sign-in is in flight, the arrow becomes a spinner: a
+   tapered arc (comet) rather than a full ring, so the rotation is visible. */
+.skip-signin-arrow.spinning {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  vertical-align: -1.5px;
+  border-radius: 50%;
+  background: conic-gradient(from 0deg, transparent 0deg 60deg, currentColor 360deg);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 1.5px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 1.5px));
+  transition: none;
+  /* Promote to its own compositor layer so the rotation stays smooth even
+     while the page's main thread is busy. */
+  will-change: transform;
+  backface-visibility: hidden;
+  animation: skip-signin-spin 0.45s linear infinite;
+}
+
+/* Both keyframes are explicit so the animation is a pure rotation. With only
+   a `to`, the implicit `from` inherits the hover translateX(2px), and the
+   browser matrix-interpolates between mismatched transforms — a wobbly path
+   that also can't composite, so it freezes while the main thread is busy. */
+@keyframes skip-signin-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.light-mode .skip-signin-btn {
+  color: rgba(0, 0, 0, 0.85);
+}
+
+.light-mode .skip-signin-btn:hover {
+  color: #000000;
+}
+
+/* Guest-limit popup (shown when an anonymous user exhausts their free filters) */
+.bouncer-guest-popup-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+  animation: backdrop-fade-in 0.1s ease-out;
+}
+
+@keyframes backdrop-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.bouncer-guest-popup {
+  position: relative;
+  box-sizing: border-box;
+  width: min(360px, calc(100vw - 40px));
+  padding: 28px 24px 24px;
+  border-radius: 16px;
+  background: #15202b;
+  border: 1px solid #38444d;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+  color: #ffffff;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  text-align: center;
+  animation: popup-fade-in 0.15s ease-out;
+}
+
+.dim-mode .bouncer-guest-popup {
+  background: #1e2732;
+}
+
+.light-mode .bouncer-guest-popup {
+  background: #ffffff;
+  border-color: rgba(0, 0, 0, 0.12);
+  color: #0f1419;
+}
+
+.bouncer-guest-popup-close {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  border: none;
+  background: none;
+  color: inherit;
+  opacity: 0.6;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 6px;
+  transition: opacity 0.15s;
+}
+
+.bouncer-guest-popup-close:hover {
+  opacity: 1;
+}
+
+.bouncer-guest-popup-msg {
+  margin: 0 0 20px;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.45;
+}
+
+/* The popup reuses .google-signin-btn for the sign-in action */
+.bouncer-guest-popup .google-signin-btn {
+  width: 100%;
+}
+
+/* Guest-limit variant is the headline of its state, not fine print — keep it
+   at full message size despite the smaller .ff-signin-explanation base. */
+.ff-guest-limit-msg {
+  margin: 12px 0 0;
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .filter-phrases-header {
