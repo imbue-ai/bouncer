@@ -156,6 +156,35 @@ export async function iosLocalAiTextDetect(
   }
 }
 
+/**
+ * Freeform text generation over the native bridge — same wire protocol as
+ * classify, but with no regex constraint and a caller-chosen token budget
+ * (the native side defaults to the tight 24-token classify cap otherwise).
+ * Used for phrase suggestions ("Bounce a Tweet"); text only, no images.
+ */
+export async function iosLocalGenerate(
+  systemMessage: string,
+  userMessage: string,
+  opts?: { maxOutputTokens?: number; modelName?: string },
+): Promise<string> {
+  if (!isIosLocalAvailable()) {
+    throw new Error('iOS local-classify bridge unavailable (not running in WKWebView host?)');
+  }
+  const callbackId = `iosLocalGen-${++nextId}-${Date.now()}`;
+  return await new Promise<string>((resolve, reject) => {
+    pending.set(callbackId, { resolve, reject });
+    try {
+      const payload: Record<string, unknown> = { callbackId, systemMessage, userMessage };
+      if (opts?.maxOutputTokens) payload.maxOutputTokens = opts.maxOutputTokens;
+      if (opts?.modelName) payload.modelName = opts.modelName;
+      webkit.messageHandlers.feedfilterLocalClassify.postMessage(JSON.stringify(payload));
+    } catch (err) {
+      pending.delete(callbackId);
+      reject(err instanceof Error ? err : new Error(String(err)));
+    }
+  });
+}
+
 export async function iosLocalClassify(
   postData: EvaluationPostData,
   bannedCategories: string[],

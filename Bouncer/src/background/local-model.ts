@@ -215,14 +215,21 @@ export class LocalEngine {
 
         return this.engine;
       } catch (error) {
-        console.error('[LocalEngine] Initialization failed:', error);
-
         const errorMsg = (error as Error).message;
 
-        if (errorMsg === 'aborted') {
+        // A user cancel aborts the signal, and the in-flight init then dies
+        // with whatever teardown error the abort produced — a fetch
+        // AbortError, a closed message port, a wrapped network-looking
+        // message. Check the signal, not the message: classifying that
+        // fallout as a network failure would clobber the not_downloaded
+        // status cancelDownload just wrote with "Retrying download...".
+        if (abortSignal.aborted || errorMsg === 'aborted') {
+          console.log('[LocalEngine] Initialization cancelled');
           this._completeInit(null);
           return null;
         }
+
+        console.error('[LocalEngine] Initialization failed:', error);
 
         if (isNetworkError(errorMsg) && retryCount < DOWNLOAD_MAX_RETRIES) {
           retryCount++;
@@ -260,8 +267,23 @@ export class LocalEngine {
     if (!this.isInitializingModel(modelId)) {
       return false;
     }
+    // Capture before abort: _completeInit nulls _initPromise as the init
+    // loop exits.
+    const inFlight = this._initPromise;
     if (this._initAbortController) {
       this._initAbortController.abort();
+    }
+
+    // Let the in-flight init observe the abort and stop emitting status
+    // writes before we write the terminal state — otherwise a late
+    // progress/retry write lands after ours and the UI sticks on a
+    // downloading state. Time-bounded so a wedged offscreen call can't
+    // make the Cancel button hang.
+    if (inFlight) {
+      await Promise.race([
+        inFlight,
+        new Promise(resolve => setTimeout(resolve, 3000)),
+      ]);
     }
 
     await this.reset();

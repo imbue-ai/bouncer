@@ -246,6 +246,7 @@ final class LocalInferenceService: ObservableObject {
     private var baseConversation: Conversation?
     private var baseSystemMessage: String?
     private var baseRegexConstraint: String?
+    private var baseMaxOutputTokens: Int?
 
     private let inferenceQueue = AsyncSerialQueue()
     private init() {
@@ -268,7 +269,7 @@ final class LocalInferenceService: ObservableObject {
 
     // MARK: - Public API
 
-    func classify(systemMessage: String, userMessage: String, imageUrls: [String] = [], regexConstraint: String? = nil, modelName: String? = nil) async throws -> String {
+    func classify(systemMessage: String, userMessage: String, imageUrls: [String] = [], regexConstraint: String? = nil, modelName: String? = nil, maxOutputTokens: Int? = nil) async throws -> String {
         // The JS pipeline names the model it selected (PREDEFINED_MODELS
         // .iosLocal names); unknown/absent falls back to the active variant.
         let variant = OnDeviceModelVariant.allCases.first { $0.modelName == modelName }
@@ -276,7 +277,7 @@ final class LocalInferenceService: ObservableObject {
         return try await classifyInternal(
             tag: "Filter", variant: variant, systemMessage: systemMessage,
             userMessage: userMessage, imageUrls: imageUrls,
-            regexConstraint: regexConstraint)
+            regexConstraint: regexConstraint, maxOutputTokens: maxOutputTokens)
     }
 
     /// Run the full inference path: image fetch → queue → base build/clone
@@ -285,7 +286,7 @@ final class LocalInferenceService: ObservableObject {
     private func classifyInternal(
         tag: String, variant: OnDeviceModelVariant,
         systemMessage: String, userMessage: String, imageUrls: [String] = [],
-        regexConstraint: String? = nil
+        regexConstraint: String? = nil, maxOutputTokens: Int? = nil
     ) async throws -> String {
         try await ensureReady(variant: variant)
         let wallStart = Date()
@@ -306,6 +307,7 @@ final class LocalInferenceService: ObservableObject {
                 let baseStart = Date()
                 let (base, rebuiltBase) = try await self.getOrBuildBase(
                     systemMessage: systemMessage, regexConstraint: regexConstraint,
+                    maxOutputTokens: maxOutputTokens,
                     sampler: sampler, engine: engine)
                 let baseSec = Date().timeIntervalSince(baseStart)
                 let cloneStart = Date()
@@ -361,12 +363,13 @@ final class LocalInferenceService: ObservableObject {
     }
 
     private func getOrBuildBase(
-        systemMessage: String, regexConstraint: String?,
+        systemMessage: String, regexConstraint: String?, maxOutputTokens: Int?,
         sampler: SamplerConfig, engine: Engine
     ) async throws -> (Conversation, Bool) {
         if let base = self.baseConversation,
            self.baseSystemMessage == systemMessage,
            self.baseRegexConstraint == regexConstraint,
+           self.baseMaxOutputTokens == maxOutputTokens,
            base.isAlive {
             return (base, false)
         }
@@ -376,17 +379,20 @@ final class LocalInferenceService: ObservableObject {
         // 24 so a 4-category pack has slack for delimiter+space tokenization
         // variation. Without the constraint the unconstrained budget would
         // still cap chat decode time vs the old 32-token default.
+        // Callers doing freeform generation (phrase suggestions) pass their
+        // own larger budget instead.
         let config = ConversationConfig(
             systemMessage: Message(systemMessage, role: .system),
             samplerConfig: sampler,
             prefillPrefaceOnInit: true,
-            maxOutputTokens: 24,
+            maxOutputTokens: maxOutputTokens ?? 24,
             regexConstraint: regexConstraint
         )
         let base = try await engine.createConversation(with: config)
         self.baseConversation = base
         self.baseSystemMessage = systemMessage
         self.baseRegexConstraint = regexConstraint
+        self.baseMaxOutputTokens = maxOutputTokens
         return (base, true)
     }
 
@@ -394,6 +400,7 @@ final class LocalInferenceService: ObservableObject {
         self.baseConversation = nil
         self.baseSystemMessage = nil
         self.baseRegexConstraint = nil
+        self.baseMaxOutputTokens = nil
     }
 
     private static func fetchImageData(_ urls: [String]) async -> [Data] {

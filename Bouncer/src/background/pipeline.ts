@@ -10,7 +10,7 @@ import { buildAPIMessages, parseTableYesnoResponse } from '../shared/prompts';
 import { callDirectAPI, callAnthropicAPI, callImbueAPI, callImbueAiTextDetection, callImbueAiImageDetection } from './providers';
 import { runDetectors, type Detector, type DetectorResult } from './detectors';
 import { callLocalInference, localEngine } from './local-model';
-import { iosLocalClassify, iosLocalAiTextDetect } from './ios-local-bridge';
+import { iosLocalClassify, iosLocalGenerate, iosLocalAiTextDetect } from './ios-local-bridge';
 import { getStorage, setStorage, removeStorage, getDescriptions, clampThreshold, clampImageThreshold, DEFAULT_AI_TEXT_DETECTION_THRESHOLD, DEFAULT_AI_IMAGE_DETECTION_THRESHOLD } from '../shared/storage';
 import { PLATFORMS, enabledStorageKey } from '../shared/platforms';
 export { DEFAULT_AI_TEXT_DETECTION_THRESHOLD, DEFAULT_AI_IMAGE_DETECTION_THRESHOLD };
@@ -1258,13 +1258,7 @@ async function validateFilterPhrase(postText: string, imageUrls: string[], phras
 // Generate candidate filter phrases using the configured model
 async function generateCandidatePhrases(postText: string, imageUrls: string[], count: number, rejectPhrases: string[], settings: Settings): Promise<string[]> {
   const isLocalModel = settings.selectedModel?.startsWith('local:');
-
-  // The iOS local bridge only handles classify-shaped prompts, not freeform
-  // generation. Callers should disable phrase suggestions when iosLocal is the
-  // active model.
-  if (settings.selectedModel?.startsWith('iosLocal:')) {
-    throw new Error('Phrase suggestions are not supported on the iOS on-device model.');
-  }
+  const isIosLocalModel = settings.selectedModel?.startsWith('iosLocal:');
 
   const rejected = rejectPhrases.length > 0
     ? ` Do NOT suggest any of these: ${rejectPhrases.join(', ')}.`
@@ -1291,6 +1285,19 @@ async function generateCandidatePhrases(postText: string, imageUrls: string[], c
     // Strip list numbering, bullet markers, and markdown emphasis — greedy
     // decoding on the local Gemma reliably formats the labels as a markdown
     // list, and leftover `**`/backticks would pollute the filter phrase.
+    result = rawText.split('\n')
+      .map(l => l.replace(/^\d+[.)-]\s*/, '').replace(/^[-*•]\s+/, '').replace(/[*_`"]/g, '').trim())
+      .filter(l => l && l.length <= 40 && !l.startsWith('<'))
+      .slice(0, count);
+  } else if (isIosLocalModel) {
+    // Freeform generation over the native bridge — same prompt and markdown
+    // cleanup as the desktop local branch above. Text only: the on-device
+    // generation path doesn't take images.
+    const modelName = settings.selectedModel.split(':')[1];
+    const rawText = await iosLocalGenerate(simpleSystemPrompt, postText, {
+      maxOutputTokens: 150,
+      modelName,
+    });
     result = rawText.split('\n')
       .map(l => l.replace(/^\d+[.)-]\s*/, '').replace(/^[-*•]\s+/, '').replace(/[*_`"]/g, '').trim())
       .filter(l => l && l.length <= 40 && !l.startsWith('<'))
@@ -1338,6 +1345,23 @@ async function validatePhrasesBatchedLocal(postText: string, imageUrls: string[]
   }
 }
 
+// iOS twin of validatePhrasesBatchedLocal: one multi-category classify over
+// the native bridge instead of one prefill per phrase on the phone's serial
+// inference queue. Same null-on-malformed contract.
+async function validatePhrasesBatchedIosLocal(postText: string, imageUrls: string[], phrases: string[], settings: Settings): Promise<string[] | null> {
+  const modelName = settings.selectedModel.split(':')[1];
+  const modelConfig = PREDEFINED_MODELS.iosLocal?.find(m => m.name === modelName) ?? null;
+  const postData = { text: postText, imageUrls: imageUrls || [] };
+  try {
+    const result = await iosLocalClassify(postData, phrases, modelConfig);
+    const parsed = parseTableYesnoResponse(result.rawResponse ?? null, phrases);
+    return parsed.malformed ? null : parsed.matches;
+  } catch (err) {
+    console.warn('[Suggest] batched iosLocal validation error:', (err as Error).message);
+    return null;
+  }
+}
+
 // Generate 9 candidate filter phrases up front, then return the first 3 that validate
 export async function suggestAnnoyingReasons(postText: string, imageUrls: string[], siteId?: SiteId, tabId?: number): Promise<string[]> {
   const settings = await getSettings(siteId);
@@ -1364,8 +1388,12 @@ export async function suggestAnnoyingReasons(postText: string, imageUrls: string
   // format the feed filter runs in production. Falls through to the
   // per-phrase loop below when the row comes back malformed, so one bad row
   // costs a retry instead of the whole click.
-  if (settings.selectedModel?.startsWith('local:') && uniqueCandidates.length > 1) {
-    const matches = await validatePhrasesBatchedLocal(postText, imageUrls, uniqueCandidates, settings);
+  const isLocal = settings.selectedModel?.startsWith('local:');
+  const isIosLocal = settings.selectedModel?.startsWith('iosLocal:');
+  if ((isLocal || isIosLocal) && uniqueCandidates.length > 1) {
+    const matches = isLocal
+      ? await validatePhrasesBatchedLocal(postText, imageUrls, uniqueCandidates, settings)
+      : await validatePhrasesBatchedIosLocal(postText, imageUrls, uniqueCandidates, settings);
     if (matches !== null) {
       const finalValidated = matches.slice(0, 3);
       validatedCount = finalValidated.length;

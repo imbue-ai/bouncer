@@ -353,6 +353,7 @@ struct FilteredWebView: UIViewRepresentable {
                 let imageUrls = (json["imageUrls"] as? [String]) ?? []
                 let regexConstraint = json["regexConstraint"] as? String
                 let modelName = json["modelName"] as? String
+                let maxOutputTokens = json["maxOutputTokens"] as? Int
                 let webView = message.webView
                 let tweetStart = Date()
                 Task { @MainActor in
@@ -362,7 +363,8 @@ struct FilteredWebView: UIViewRepresentable {
                             userMessage: userMessage,
                             imageUrls: imageUrls,
                             regexConstraint: regexConstraint,
-                            modelName: modelName
+                            modelName: modelName,
+                            maxOutputTokens: maxOutputTokens
                         )
                         let elapsed = Date().timeIntervalSince(tweetStart)
                         print(String(

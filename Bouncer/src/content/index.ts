@@ -19,7 +19,7 @@ import {
   updateTheme,
   injectFilterPhrasesInput, injectBottomFilterBox, injectMobileFilterBox,
   injectBannerFilterBox,
-  syncFilterPhrases, addFilterPhrase, removeFilterPhrase,
+  syncFilterPhrases, addFilterPhrase, removeFilterPhrase, clearFilteredPosts,
   showSettingsModal, renderFilteredPostsView,
   initModelLoadingListener,
   markPostPending, markPostVerified, getVerificationBar,
@@ -696,6 +696,11 @@ import { formatPostForEvaluation } from '../shared/utils';
         // Only re-evaluate when a phrase was added, not removed
         if (newDescs.length > oldDescs.length) {
           reEvaluateAllPosts();
+        } else if (newDescs.length < oldDescs.length) {
+          // Phrase removed via an out-of-band editor (iOS native sheet,
+          // desktop popup) — mirror removeFilterPhrase's in-feed behavior
+          // so the filtered-posts count resets.
+          clearFilteredPosts();
         }
       }
       if (changes.aiTextFilterEnabled) {
