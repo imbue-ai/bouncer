@@ -410,7 +410,20 @@ import { formatPostForEvaluation } from '../shared/utils';
     // "Filter replies/comments" toggle: on a permalink page everything
     // below the main post is a reply. The main-timeline filter is
     // unaffected because adapter.isPermalinkView() is false there.
-    if (!filterReplies && adapter.isPermalinkView()) return;
+    if (!filterReplies && adapter.isPermalinkView()) {
+      // Replies hidden while the toggle was on can resurface via the SPA's
+      // cached conversation DOM, still carrying our display:none. The
+      // flip-time sweep in the storage listener only fixes the page the
+      // user was viewing at that moment — restore stragglers here as they
+      // reappear.
+      const cell = adapter.getPostContainer(article);
+      if (cell.dataset.filteredByExtension) {
+        cell.style.display = '';
+        delete cell.dataset.filteredByExtension;
+        processedPosts.delete(article);
+      }
+      return;
+    }
 
     if (processedPosts.has(article)) return;
     if (article.dataset.filteredByExtension) return;

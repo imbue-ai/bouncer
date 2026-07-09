@@ -203,6 +203,50 @@ enum OnDeviceModelVariant: String, CaseIterable, Identifiable {
         case .e4b: return "upstream_v1"
         }
     }
+
+    // MARK: Device capability
+
+    /// Gate thresholds sit below the nominal RAM class they admit because
+    /// ProcessInfo under-reports physical memory (a 6 GB iPhone reports
+    /// ~5.7 GiB, an 8 GB one ~7.5 GiB). 5 GiB admits 6 GB+ devices; 7 GiB
+    /// admits 8 GB+.
+    //
+    // Basis (GPU backend, which buildEngine uses — official peak-memory
+    // benchmarks from the litert-community HF cards): E2B peaks at
+    // ~1.45 GB, safe within the ~3.2 GB jetsam limit of 6 GB iPhones but
+    // not the ~2.1 GB limit of 4 GB ones. E4B peaks at ~3.4 GB and needs
+    // the ~6 GB budget that the increased-memory-limit entitlement grants
+    // on 8 GB+ devices.
+    var minimumPhysicalMemory: UInt64 {
+        switch self {
+        case .e2b: return 5 << 30
+        case .e4b: return 7 << 30
+        }
+    }
+
+    /// Nominal device-RAM class for user-facing copy.
+    var requiredRAMDisplay: String {
+        switch self {
+        case .e2b: return "6 GB"
+        case .e4b: return "8 GB"
+        }
+    }
+
+    #if DEBUG
+    /// Testable seam: override to simulate a device RAM class
+    /// (e.g. `{ 4 << 30 }` for an iPhone 13).
+    static var physicalMemoryProvider: () -> UInt64 = {
+        ProcessInfo.processInfo.physicalMemory
+    }
+    #else
+    static let physicalMemoryProvider: () -> UInt64 = {
+        ProcessInfo.processInfo.physicalMemory
+    }
+    #endif
+
+    var isSupportedOnThisDevice: Bool {
+        Self.physicalMemoryProvider() >= minimumPhysicalMemory
+    }
 }
 
 @MainActor
@@ -547,6 +591,14 @@ final class LocalInferenceService: ObservableObject {
             print("[Filter] switching on-device model \(loadedVariant?.rawValue ?? "?") → \(variant.rawValue)")
             unloadEngine()
         }
+        // Files can be on disk on an unsupported device (backup restored to
+        // an older phone) — refuse to load rather than get jetsam-killed.
+        guard variant.isSupportedOnThisDevice else {
+            setEngineStatus(
+                .error("This iPhone doesn't have enough memory to run this model (requires \(variant.requiredRAMDisplay)+ RAM)."),
+                for: variant)
+            throw LocalInferenceError.deviceNotSupported
+        }
         guard downloader.isDownloaded(filename: variant.filename) else {
             throw LocalInferenceError.modelNotDownloaded
         }
@@ -660,6 +712,11 @@ final class LocalInferenceService: ObservableObject {
     func startDownload(variant: OnDeviceModelVariant) {
         if case .downloading = downloader.status { return }
         setActiveVariant(variant)
+        guard variant.isSupportedOnThisDevice else {
+            modelStatus = .error(
+                "This iPhone doesn't have enough memory to run this model (requires \(variant.requiredRAMDisplay)+ RAM).")
+            return
+        }
         Task { [weak self] in
             guard let self else { return }
             do {
@@ -759,7 +816,9 @@ final class LocalInferenceService: ObservableObject {
         case .paused(let progress):
             modelStatus = .paused(progress: progress)
         case .completed:
-            if !engineMatchesActiveVariant {
+            // Don't clobber .loading while an engine build is in flight —
+            // the 0.5s poll would otherwise mask the load state in the UI.
+            if !engineMatchesActiveVariant && loadTask == nil {
                 modelStatus = .downloaded
             }
         case .failed(let message):
@@ -777,6 +836,7 @@ final class LocalInferenceService: ObservableObject {
 enum LocalInferenceError: LocalizedError {
     case modelNotDownloaded
     case engineNotLoaded
+    case deviceNotSupported
 
     var errorDescription: String? {
         switch self {
@@ -784,6 +844,8 @@ enum LocalInferenceError: LocalizedError {
             return "Local model has not been downloaded yet."
         case .engineNotLoaded:
             return "Local inference engine is not loaded."
+        case .deviceNotSupported:
+            return "This iPhone doesn't have enough memory to run this model."
         }
     }
 }

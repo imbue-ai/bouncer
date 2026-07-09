@@ -1319,7 +1319,7 @@ struct ProvidersSettingsView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Imbue (default)")
                             .foregroundStyle(.primary)
-                        Text("Use Bouncer's bundled hosted model. No API key required.")
+                        Text("Fast and free filtering on our servers.")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
@@ -1330,7 +1330,10 @@ struct ProvidersSettingsView: View {
                     }
                 }
             }
-            .buttonStyle(.plain)
+            // Default (borderless) list-button style: whole row is the tap
+            // target with the native highlight. `.plain` would shrink the
+            // hit area to the rendered content, leaving the Spacer dead.
+            // Texts keep their colors via explicit foregroundStyle.
         } header: {
             Text("Imbue")
         }
@@ -1355,7 +1358,7 @@ struct ProvidersSettingsView: View {
         } header: {
             Text("On-device")
         } footer: {
-            Text("Runs Gemma locally for phrase-filter classification — no posts leave your phone. E2B downloads ~2.6 GB; E4B ~3.7 GB and also powers AI-text detection. Requires Wi-Fi and an iPhone with 6 GB+ RAM.")
+            Text("Runs Gemma locally for phrase-filter classification — no posts leave your phone. E2B downloads ~2.6 GB and requires an iPhone with 6 GB+ RAM; E4B downloads ~3.7 GB, requires 8 GB+ RAM, and also powers AI-text detection. Requires Wi-Fi.")
         }
     }
 
@@ -1370,9 +1373,11 @@ struct ProvidersSettingsView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(variant.displayName)
                         .foregroundStyle(isReady ? .primary : .secondary)
-                    Text(onDeviceStatusText(localService.status(for: variant)))
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
+                    if let status = onDeviceStatusText(localService.status(for: variant)) {
+                        Text(status)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
                 }
                 Spacer()
                 if selectedModel == variant.modelKey {
@@ -1381,13 +1386,15 @@ struct ProvidersSettingsView: View {
                 }
             }
         }
-        .buttonStyle(.plain)
+        // Default (borderless) list-button style: whole row is the tap
+        // target with the native highlight — `.plain` would leave the
+        // Spacer region dead to taps.
         .disabled(!isReady)
     }
 
     private func isVariantReady(_ variant: OnDeviceModelVariant) -> Bool {
         switch localService.status(for: variant) {
-        case .downloaded, .ready: return true
+        case .downloaded, .loading, .ready: return true
         default: return false
         }
     }
@@ -1395,22 +1402,22 @@ struct ProvidersSettingsView: View {
     // Only the downloader-bound variant ever reports downloading/paused
     // states (see LocalInferenceService.status(for:)), so the byte displays
     // below always describe the right transfer.
-    private func onDeviceStatusText(_ status: LocalInferenceService.ModelStatus) -> String {
+    // Subtitle only while there's live transfer state (or an error) to
+    // report. Static on-disk state is implied by the row itself: enabled +
+    // selectable means downloaded; a disabled row with a Download button
+    // below means not. Engine runtime state (.loading/.ready) is an
+    // implementation detail — the in-feed pending bars cover
+    // "classification hasn't started yet".
+    private func onDeviceStatusText(_ status: LocalInferenceService.ModelStatus) -> String? {
         switch status {
-        case .notDownloaded:
-            return "Not downloaded"
         case .downloading(let progress):
             let pct = Int((progress * 100).rounded())
             return "Downloading \(pct)% — \(localService.downloadedBytesDisplay) / \(localService.totalBytesDisplay)"
         case .paused(let progress):
             let pct = Int((progress * 100).rounded())
             return "Paused at \(pct)%"
-        case .downloaded:
-            return "Downloaded — ready to load"
-        case .loading:
-            return "Loading…"
-        case .ready:
-            return "Ready"
+        case .notDownloaded, .downloaded, .loading, .ready:
+            return nil
         case .error(let message):
             return "Error: \(message)"
         }
@@ -1425,13 +1432,19 @@ struct ProvidersSettingsView: View {
     private func onDeviceActionButtons(_ variant: OnDeviceModelVariant) -> some View {
         switch localService.status(for: variant) {
         case .notDownloaded, .error:
-            // Single download slot: block starting a second transfer while
-            // the other variant is actively downloading (a paused one gets
-            // cancelled by startDownload's variant switch).
-            Button("Download model") {
-                localService.startDownload(variant: variant)
+            if !variant.isSupportedOnThisDevice {
+                Text("Not available on this iPhone — requires \(variant.requiredRAMDisplay)+ RAM")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            } else {
+                // Single download slot: block starting a second transfer
+                // while the other variant is actively downloading (a paused
+                // one gets cancelled by startDownload's variant switch).
+                Button("Download model") {
+                    localService.startDownload(variant: variant)
+                }
+                .disabled(isActivelyDownloading)
             }
-            .disabled(isActivelyDownloading)
         case .downloading:
             // .borderless button style: without it, both buttons share
             // one row-wide hit region in Form/List and a single tap fires
@@ -1505,7 +1518,9 @@ struct ProvidersSettingsView: View {
                         }
                     }
                 }
-                .buttonStyle(.plain)
+                // Default (borderless) list-button style: whole row is the
+                // tap target with the native highlight — `.plain` would
+                // leave the Spacer region dead to taps.
                 .disabled(!hasKey || isDirty)
                 .opacity((!hasKey || isDirty) ? 0.5 : 1.0)
             }

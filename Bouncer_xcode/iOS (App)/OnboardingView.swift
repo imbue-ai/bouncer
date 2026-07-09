@@ -36,7 +36,7 @@ struct OnboardingView: View {
 
                 OnboardingPage(
                     title: "View Filtered",
-                    subtitle: "See all your bounced posts in one place and restore any you want back.",
+                    subtitle: "See all your removed posts in one place and restore any you want back.",
                     imageName: "onboarding-view-filtered",
                     pageIndex: 2
                 )
@@ -140,6 +140,9 @@ struct OnboardingView: View {
             writeSelectedModel(imbueModelKey)
             completeOnboarding()
         case .local:
+            // Unreachable via UI (unsupported devices never see the Local
+            // option), but keep the RAM invariant local to the write.
+            guard OnDeviceModelVariant.e2b.isSupportedOnThisDevice else { return }
             writeSelectedModel(OnDeviceModelVariant.e2b.modelKey)
             switch localService.status(for: .e2b) {
             case .downloaded, .loading, .ready:
@@ -389,7 +392,7 @@ private struct InferenceModePage: View {
     var body: some View {
         VStack(spacing: 8) {
             VStack(spacing: 12) {
-                Text("Choose Your AI")
+                Text("Choose Filtering Mode")
                     .font(.system(size: 28, weight: .bold))
                     .multilineTextAlignment(.center)
 
@@ -409,19 +412,33 @@ private struct InferenceModePage: View {
                     Picker("AI mode", selection: $mode) {
                         option(
                             title: "Express",
-                            description: "Fast and free filtering powered by Imbue's secure cloud. No download required."
+                            description: "Fast, free filtering in the cloud.",
+                            badge: "Recommended",
+                            badgeTint: .green
                         )
                         .tag(InferenceMode.express)
 
-                        option(
-                            title: "Local",
-                            description: "Runs entirely on your device — no posts ever leave your phone. Downloads \(OnDeviceModelVariant.e2b.sizeEstimateDisplay), which may take a few minutes."
-                        )
-                        .tag(InferenceMode.local)
+                        // Inline-Picker rows can't be individually disabled,
+                        // so on low-RAM devices the Local option is omitted
+                        // and the footer below explains why.
+                        if OnDeviceModelVariant.e2b.isSupportedOnThisDevice {
+                            option(
+                                title: "Local",
+                                description: "Runs entirely on your device — no posts ever leave your phone.",
+                                // Badge shows the bare size — the estimate's "~" reads as clutter here.
+                                badge: "\(OnDeviceModelVariant.e2b.sizeEstimateDisplay.replacingOccurrences(of: "~", with: "")) download",
+                                badgeIcon: "arrow.down.circle"
+                            )
+                            .tag(InferenceMode.local)
+                        }
                     }
                     .pickerStyle(.inline)
                     .labelsHidden()
                     .disabled(isDownloading)
+                } footer: {
+                    if !OnDeviceModelVariant.e2b.isSupportedOnThisDevice {
+                        Text("Local filtering isn't available on this iPhone — it requires \(OnDeviceModelVariant.e2b.requiredRAMDisplay)+ RAM. You can use Express mode instead.")
+                    }
                 }
 
                 if isDownloading {
@@ -451,17 +468,47 @@ private struct InferenceModePage: View {
         }
     }
 
-    private func option(title: String, description: String) -> some View {
+    private func option(
+        title: String,
+        description: String,
+        badge: String? = nil,
+        badgeIcon: String? = nil,
+        badgeTint: Color? = nil
+    ) -> some View {
         // System Dynamic Type styles, so the rows scale with the user's
         // text-size setting like any Settings row would.
         VStack(alignment: .leading, spacing: 4) {
-            Text(title)
-                .font(.title3.weight(.semibold))
+            HStack(spacing: 8) {
+                Text(title)
+                    .font(.title3.weight(.semibold))
+                if let badge {
+                    // Tinted capsule (system color on its own low-opacity
+                    // fill) is the App Store-style tag idiom; untinted falls
+                    // back to the neutral gray pill.
+                    badgeLabel(badge, systemImage: badgeIcon)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(badgeTint ?? Color.secondary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(
+                            badgeTint?.opacity(0.15) ?? Color(UIColor.tertiarySystemFill),
+                            in: Capsule()
+                        )
+                }
+            }
             Text(description)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
         }
         .padding(.vertical, 6)
+    }
+
+    private func badgeLabel(_ badge: String, systemImage: String?) -> Text {
+        guard let systemImage else { return Text(badge) }
+        // Inline symbol interpolation, not Label — inside a List, Label
+        // reserves the list's icon-alignment column, which reads as a gap
+        // between the symbol and the text.
+        return Text("\(Image(systemName: systemImage)) \(badge)")
     }
 
     private var downloadProgress: Double {
