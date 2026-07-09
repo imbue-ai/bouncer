@@ -1232,8 +1232,8 @@ private let providerSpecs: [ProviderSpec] = [
 // from the popup writes the literal string "imbue" to selectedModel
 // (no "provider:model" prefix like BYOK entries). Keep the sentinel in
 // one place so the comparison in selectModel/active-row logic doesn't
-// drift.
-private let imbueModelKey = "imbue"
+// drift. Not private: OnboardingView writes it when Express is chosen.
+let imbueModelKey = "imbue"
 
 struct ProvidersSettingsView: View {
     @ObservedObject var viewModel: FilterSheetViewModel
