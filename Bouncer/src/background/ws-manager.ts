@@ -49,6 +49,9 @@ interface WSResultMessage {
   shouldHide?: boolean;
   reasoning?: string | null;
   category?: string | null;
+  // Whether the request's phrase set indicates AI-removal intent.
+  // true | false | null; absent on old workers — null/absent means unknown.
+  aiFilterIntent?: boolean | null;
   // Suggest responses (suggestAnnoying)
   suggestions?: string[];
   // AI-text-detection responses (detectAiText) — confidence in [0, 1]
@@ -82,6 +85,13 @@ function validateWSMessage(raw: unknown): (WSAckMessage & WSResultMessage) | nul
   if (msg.confidence !== undefined && typeof msg.confidence !== 'number') return null;
   if (msg.scores !== undefined && !Array.isArray(msg.scores)) return null;
   if (msg.queueDepth !== undefined && typeof msg.queueDepth !== 'number') return null;
+
+  // aiFilterIntent must be true/false/null. Unlike the fields above, an
+  // unexpected type here downgrades to "unknown" (field dropped) instead of
+  // rejecting the whole result — the filter verdict is still usable without it.
+  if (msg.aiFilterIntent !== undefined && msg.aiFilterIntent !== null && typeof msg.aiFilterIntent !== 'boolean') {
+    delete msg.aiFilterIntent;
+  }
 
   return msg as unknown as WSAckMessage & WSResultMessage;
 }

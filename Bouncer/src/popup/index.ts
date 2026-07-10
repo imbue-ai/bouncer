@@ -3,7 +3,7 @@
 import type { ModelDef, LocalModelStatus, StorageSchema, SiteId } from '../types';
 import { PREDEFINED_MODELS, DEFAULT_MODEL } from '../shared/models';
 import { escapeHtml, parseHTML } from '../shared/utils';
-import { getStorage, setStorage, removeStorage, clampThreshold, clampImageThreshold } from '../shared/storage';
+import { getStorage, setStorage, removeStorage, clampThreshold, clampImageThreshold, clampReplyThreshold, aiIntentAutoActive, setAiDetectionToggle } from '../shared/storage';
 import { asyncHandler } from '../shared/async';
 import { PLATFORMS, enabledStorageKey } from '../shared/platforms';
 
@@ -18,10 +18,6 @@ const platformToggleId = (id: SiteId) => `enable${id.charAt(0).toUpperCase()}${i
 // just return ''.
 function platformSubContentHTML(id: SiteId): string {
   switch (id) {
-    case 'twitter':
-      return '<div class="api-provider-content"><label class="checkbox-label">'
-        + '<input type="checkbox" id="enableFilterReplies" checked>'
-        + '<span>Filter replies</span></label></div>';
     case 'youtube':
       return '<div class="api-provider-content"><label class="checkbox-label">'
         + '<input type="checkbox" id="enableYoutubePlaceholder">'
@@ -80,6 +76,11 @@ const isIOSDevice = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
 
 // In-app mode detection
 const isInAppMode = typeof chrome !== 'undefined' && chrome._polyfilled;
+
+// Model key the "Local (E2B)" headline radio writes. In the iOS app the
+// native bridge runs the on-device model (iosLocal:), everywhere else it's
+// the WebGPU litert-lm web build (local:).
+const LOCAL_RADIO_MODEL_KEY = isInAppMode ? 'iosLocal:gemma-4-e2b' : 'local:gemma-4-E2B-it-web';
 
 // User-friendly error message mapping for local-model errors
 const LOCAL_ERROR_MESSAGES: Record<string, { display: string; hint: string }> = {
@@ -261,6 +262,16 @@ export async function init() {
   setupLocalModelListeners();
 
   setupStorageListener();
+
+  // Deep link from the in-feed trial notice ("Download local model"): select
+  // the Local radio so its download section is immediately visible. click()
+  // runs the exact same selectModel flow as a user tap; a no-op if already
+  // selected (checked radios don't re-fire change).
+  if (window.location.hash === '#local') {
+    const localRadio = document.getElementById('modelRadioLocal') as HTMLInputElement | null;
+    if (localRadio && !localRadio.checked) localRadio.click();
+  }
+
   console.log('[Popup] init() completed successfully');
   } catch (e) {
     console.error('[Popup] init() ERROR:', e, (e as Error).stack);
@@ -277,17 +288,14 @@ function setupStorageListener() {
       updateLocalModelSectionUI();
       refreshModelDropdownWithLocal().catch(err => console.error('[Popup] refreshModelDropdownWithLocal failed:', err));
     }
-    if (areaName === 'local' && changes.aiTextFilterEnabled) {
-      const enabled = changes.aiTextFilterEnabled.newValue === true;
-      const aiTextEl = document.getElementById('enableAiTextFilter') as HTMLInputElement | null;
-      if (aiTextEl) aiTextEl.checked = enabled;
-      setThresholdBlockEnabled(enabled);
-    }
-    if (areaName === 'local' && changes.aiTextFilterExperimental) {
-      const enabled = changes.aiTextFilterExperimental.newValue === true;
-      const expEl = document.getElementById('enableAiTextExperimental') as HTMLInputElement | null;
-      if (expEl) expEl.checked = enabled;
-      setAiTextExperimentalContentVisible(enabled);
+    // Any AI-detection input changed (explicit toggles, experimental gate,
+    // inferred intent, opt-out) — recompute the effective toggle UI from
+    // storage rather than from the single changed value, since the checked
+    // state is a function of several keys.
+    if (areaName === 'local' && AI_DETECTION_UI_KEYS.some(k => changes[k])) {
+      getStorage([...AI_DETECTION_UI_KEYS])
+        .then(applyAiDetectionUI)
+        .catch(err => console.error('[Popup] applyAiDetectionUI failed:', err));
     }
     if (areaName === 'local' && changes.filterReplies) {
       const checked = changes.filterReplies.newValue !== false;
@@ -318,11 +326,21 @@ function setupStorageListener() {
       const valueEl = document.getElementById('aiTextThresholdValue');
       if (valueEl) valueEl.textContent = `${Math.round(v * 100)}%`;
     }
-    if (areaName === 'local' && changes.aiImageFilterEnabled) {
-      const enabled = changes.aiImageFilterEnabled.newValue === true;
-      const aiImageEl = document.getElementById('enableAiImageFilter') as HTMLInputElement | null;
-      if (aiImageEl) aiImageEl.checked = enabled;
-      setImageThresholdBlockEnabled(enabled);
+    if (areaName === 'local' && changes.aiTextReplyDetectionThreshold) {
+      const v = clampReplyThreshold(changes.aiTextReplyDetectionThreshold.newValue);
+      const thresholdEl = document.getElementById('aiTextReplyThreshold') as HTMLInputElement | null;
+      if (thresholdEl) thresholdEl.value = String(v);
+      const valueEl = document.getElementById('aiTextReplyThresholdValue');
+      if (valueEl) valueEl.textContent = `${Math.round(v * 100)}%`;
+    }
+    // Another surface (a second popup window, the iOS native sheet) changed
+    // the model — re-render so the radios and dropdown don't go stale. Skip
+    // when the value already matches: that's the echo of our own write.
+    if (areaName === 'local' && changes.selectedModel) {
+      const v = (changes.selectedModel.newValue as string) || DEFAULT_MODEL;
+      if (v !== dropdownState.selectedModel) {
+        refreshModelDropdownWithLocal().catch(err => console.error('[Popup] refreshModelDropdownWithLocal failed:', err));
+      }
     }
     if (areaName === 'local' && changes.aiImageDetectionThreshold) {
       const v = clampImageThreshold(changes.aiImageDetectionThreshold.newValue);
@@ -346,12 +364,14 @@ async function loadSettings() {
     'anthropicApiKey',
     'predefinedModelKwargs',
     'authErrorApis',
-    'localModelsEnabled',
     'aiTextFilterEnabled',
     'aiTextDetectionThreshold',
+    'aiTextReplyDetectionThreshold',
     'aiImageFilterEnabled',
     'aiImageDetectionThreshold',
     'aiTextFilterExperimental',
+    'aiFilterIntent',
+    'aiFilterIntentOptOut',
     'filterReplies',
     'youtubeShowPlaceholder',
     // Per-platform master-switch keys come from the registry.
@@ -367,11 +387,6 @@ async function loadSettings() {
   (document.getElementById('geminiApiKey') as HTMLInputElement).value = data.geminiApiKey || '';
   (document.getElementById('anthropicApiKey') as HTMLInputElement).value = data.anthropicApiKey || '';
   updateAnthropicEnabledUI(!!data.anthropicApiKey);
-
-  // Local models toggle
-  const localModelsEnabled = data.localModelsEnabled || false;
-  (document.getElementById('enableLocalModels') as HTMLInputElement).checked = localModelsEnabled;
-  dropdownState.localModelsEnabled = localModelsEnabled;
 
   // "Filter replies in conversations" toggle (defaults to true so existing
   // installs keep filtering replies). The content script reads the same
@@ -397,10 +412,10 @@ async function loadSettings() {
   const ytPlaceholderEl = document.getElementById('enableYoutubePlaceholder') as HTMLInputElement | null;
   if (ytPlaceholderEl) ytPlaceholderEl.checked = data.youtubeShowPlaceholder === true;
 
-  // AI-text-detection toggle (gated on auth via parent mainContainer visibility)
-  const aiTextEl = document.getElementById('enableAiTextFilter') as HTMLInputElement | null;
-  const aiEnabled = data.aiTextFilterEnabled === true;
-  if (aiTextEl) aiTextEl.checked = aiEnabled;
+  // AI-detection toggles (gated on auth via parent mainContainer visibility).
+  // Checked state reflects the effective value: explicit toggle OR inferred
+  // AI-removal intent (minus explicit opt-out).
+  applyAiDetectionUI(data);
 
   const thresholdEl = document.getElementById('aiTextThreshold') as HTMLInputElement | null;
   if (thresholdEl) {
@@ -409,34 +424,20 @@ async function loadSettings() {
     const valueEl = document.getElementById('aiTextThresholdValue');
     if (valueEl) valueEl.textContent = `${Math.round(v * 100)}%`;
   }
-  setThresholdBlockEnabled(aiEnabled);
+  const replyThresholdEl = document.getElementById('aiTextReplyThreshold') as HTMLInputElement | null;
+  if (replyThresholdEl) {
+    const v = clampReplyThreshold(data.aiTextReplyDetectionThreshold);
+    replyThresholdEl.value = String(v);
+    const valueEl = document.getElementById('aiTextReplyThresholdValue');
+    if (valueEl) valueEl.textContent = `${Math.round(v * 100)}%`;
+  }
 
-  // AI-image-detection toggle + threshold (sibling of the text controls).
-  const aiImageEl = document.getElementById('enableAiImageFilter') as HTMLInputElement | null;
-  const aiImageEnabled = data.aiImageFilterEnabled === true;
-  if (aiImageEl) aiImageEl.checked = aiImageEnabled;
   const imageThresholdEl = document.getElementById('aiImageThreshold') as HTMLInputElement | null;
   if (imageThresholdEl) {
     const v = clampImageThreshold(data.aiImageDetectionThreshold);
     imageThresholdEl.value = String(v);
     const valueEl = document.getElementById('aiImageThresholdValue');
     if (valueEl) valueEl.textContent = `${Math.round(v * 100)}%`;
-  }
-  setImageThresholdBlockEnabled(aiImageEnabled);
-
-  // AI-text-filter experimental gate. The AI detector is Imbue-only
-  // (callImbueAiTextDetection), so hide the entire UI surface — the
-  // experimental toggle and its content — when the Imbue backend isn't
-  // configured at build time.
-  const expEl = document.getElementById('enableAiTextExperimental') as HTMLInputElement | null;
-  if (process.env.HAS_IMBUE_BACKEND !== 'true') {
-    const expToggle = expEl?.closest<HTMLElement>('.experimental-toggle');
-    if (expToggle) expToggle.style.display = 'none';
-    setAiTextExperimentalContentVisible(false);
-  } else {
-    const expEnabled = data.aiTextFilterExperimental === true;
-    if (expEl) expEl.checked = expEnabled;
-    setAiTextExperimentalContentVisible(expEnabled);
   }
 
   // Update API provider states
@@ -449,12 +450,59 @@ async function loadSettings() {
   updateLocalModelSectionVisibility();
 }
 
+// Storage keys that feed the AI-detection toggle UI. Kept in one place so the
+// hydration path and the storage-change listener stay in sync.
+const AI_DETECTION_UI_KEYS = [
+  'aiTextFilterEnabled', 'aiImageFilterEnabled', 'aiTextFilterExperimental',
+  'aiFilterIntent', 'aiFilterIntentOptOut',
+] as const;
+
+// Sync the AI-detection toggles, the "auto-enabled" hint, and the experimental
+// section's visibility to the effective state: explicit toggle OR inferred
+// AI-removal intent (see background/ai-intent.ts), with an explicit opt-out
+// winning over the inferred signal.
+function applyAiDetectionUI(data: Partial<StorageSchema>) {
+  const auto = aiIntentAutoActive(data);
+  const aiTextEffective = data.aiTextFilterEnabled === true || auto;
+  const aiImageEffective = data.aiImageFilterEnabled === true || auto;
+
+  const aiTextEl = document.getElementById('enableAiTextFilter') as HTMLInputElement | null;
+  if (aiTextEl) aiTextEl.checked = aiTextEffective;
+  setThresholdBlockEnabled(aiTextEffective);
+
+  const aiImageEl = document.getElementById('enableAiImageFilter') as HTMLInputElement | null;
+  if (aiImageEl) aiImageEl.checked = aiImageEffective;
+  setImageThresholdBlockEnabled(aiImageEffective);
+
+  const hintEl = document.getElementById('aiAutoEnabledHint');
+  if (hintEl) hintEl.style.display = auto ? '' : 'none';
+
+  // AI-text-filter experimental gate. The AI detectors are Imbue-only
+  // (callImbueAiTextDetection), so hide the entire UI surface — the
+  // experimental toggle and its content — when the Imbue backend isn't
+  // configured at build time. When the inferred intent auto-enabled
+  // detection, the section is shown even without the experimental flag so
+  // the user can see what engaged and override it.
+  const expEl = document.getElementById('enableAiTextExperimental') as HTMLInputElement | null;
+  if (process.env.HAS_IMBUE_BACKEND !== 'true') {
+    const expToggle = expEl?.closest<HTMLElement>('.experimental-toggle');
+    if (expToggle) expToggle.style.display = 'none';
+    setAiTextExperimentalContentVisible(false);
+  } else {
+    const expEnabled = data.aiTextFilterExperimental === true;
+    if (expEl) expEl.checked = expEnabled;
+    setAiTextExperimentalContentVisible(expEnabled || auto);
+  }
+}
+
 // Toggle the AI threshold block's disabled visual + interaction state.
 // Driven from both the load path and the toggle's change handler so the
 // slider always reflects whether the feature is on.
 function setThresholdBlockEnabled(enabled: boolean) {
   const block = document.getElementById('aiTextThresholdBlock');
   if (block) block.setAttribute('aria-disabled', enabled ? 'false' : 'true');
+  const replyBlock = document.getElementById('aiTextReplyThresholdBlock');
+  if (replyBlock) replyBlock.setAttribute('aria-disabled', enabled ? 'false' : 'true');
 }
 
 function setImageThresholdBlockEnabled(enabled: boolean) {
@@ -478,13 +526,16 @@ function updateAnthropicEnabledUI(isEnabled: boolean) {
 
 function updateApiProviderStates(data: Partial<StorageSchema>) {
   // Update dropdownState with which APIs are authenticated
-  // Note: 'local' is always available (no auth required)
+  // Note: 'local' and 'iosLocal' are always available (no auth required) —
+  // without the iosLocal entry the reset guard below would silently revert
+  // the iOS radio's on-device selection to the default on every popup open.
   dropdownState.authenticatedApis = {
     openrouter: !!data.openrouterApiKey,
     openai: !!data.openaiApiKey,
     gemini: !!data.geminiApiKey,
     anthropic: !!data.anthropicApiKey,
-    local: true
+    local: true,
+    iosLocal: true
   };
 
   // Get providers with auth errors (object mapping provider name -> boolean)
@@ -545,12 +596,7 @@ function updateApiProviderStates(data: Partial<StorageSchema>) {
   // Check if selected model's provider is still authenticated
   if (dropdownState.selectedModel && dropdownState.selectedModel !== 'imbue') {
     const [api] = dropdownState.selectedModel.split(':');
-    // For local models, check if local models are enabled
-    if (api === 'local') {
-      if (!dropdownState.localModelsEnabled) {
-        selectModel(DEFAULT_MODEL).catch(err => console.error('[Popup] selectModel failed:', err));
-      }
-    } else if (!dropdownState.authenticatedApis[api]) {
+    if (!dropdownState.authenticatedApis[api]) {
       // Provider no longer authenticated, reset to default
       selectModel(DEFAULT_MODEL).catch(err => console.error('[Popup] selectModel failed:', err));
     }
@@ -558,6 +604,9 @@ function updateApiProviderStates(data: Partial<StorageSchema>) {
 }
 
 function setupEventListeners() {
+
+  // Headline model radios (Imbue vs Local E2B)
+  setupModelRadios();
 
   // Model dropdown
   setupModelDropdown();
@@ -754,15 +803,24 @@ function setupEventListeners() {
     // When experimental is turned off, also disable the underlying AI text and
     // image filters so the pipeline naturally stops applying them (mirrors how
     // disabling local models switches a selected local model back to imbue).
+    // If the inferred AI-removal intent had them auto-enabled, record the
+    // explicit opt-out too — otherwise the intent would re-engage them.
     if (!enabled) {
-      await setStorage({ aiTextFilterEnabled: false, aiImageFilterEnabled: false });
+      const intentData = await getStorage(['aiFilterIntent', 'aiFilterIntentOptOut']);
+      await setStorage({
+        aiTextFilterEnabled: false,
+        aiImageFilterEnabled: false,
+        ...(aiIntentAutoActive(intentData) && { aiFilterIntentOptOut: true }),
+      });
     }
   })().catch(err => console.error('[Popup] enableAiTextExperimental change failed:', err)); });
 
   document.getElementById('enableAiTextFilter')?.addEventListener('change', (e) => { (async () => {
     const enabled = (e.target as HTMLInputElement).checked;
     setThresholdBlockEnabled(enabled);
-    await setStorage({ aiTextFilterEnabled: enabled });
+    // Turning off while the inferred AI-removal intent had this auto-enabled
+    // also records the explicit opt-out (handled inside the helper).
+    await setAiDetectionToggle('aiTextFilterEnabled', enabled);
   })().catch(err => console.error('[Popup] enableAiTextFilter change failed:', err)); });
 
   document.getElementById('enableFilterReplies')?.addEventListener('change', (e) => { (async () => {
@@ -808,11 +866,29 @@ function setupEventListeners() {
     await setStorage({ aiTextDetectionThreshold: clamped });
   })().catch(err => console.error('[Popup] aiTextThreshold change failed:', err)); });
 
+  // Reply/comment threshold (applied instead of the one above when the
+  // evaluated post is a reply). Same input/change split as its sibling.
+  const replyThresholdInputEl = document.getElementById('aiTextReplyThreshold') as HTMLInputElement | null;
+  const replyThresholdValueEl = document.getElementById('aiTextReplyThresholdValue');
+  const renderReplyThresholdPercent = (v: number) => {
+    if (replyThresholdValueEl) replyThresholdValueEl.textContent = `${Math.round(v * 100)}%`;
+  };
+  replyThresholdInputEl?.addEventListener('input', (e) => {
+    renderReplyThresholdPercent(parseFloat((e.target as HTMLInputElement).value));
+  });
+  replyThresholdInputEl?.addEventListener('change', (e) => { (async () => {
+    const v = parseFloat((e.target as HTMLInputElement).value);
+    if (!Number.isFinite(v)) return;
+    const clamped = Math.min(1, Math.max(0, v));
+    renderReplyThresholdPercent(clamped);
+    await setStorage({ aiTextReplyDetectionThreshold: clamped });
+  })().catch(err => console.error('[Popup] aiTextReplyThreshold change failed:', err)); });
+
   // AI-image-detection toggle + threshold (mirrors the AI text controls).
   document.getElementById('enableAiImageFilter')?.addEventListener('change', (e) => { (async () => {
     const enabled = (e.target as HTMLInputElement).checked;
     setImageThresholdBlockEnabled(enabled);
-    await setStorage({ aiImageFilterEnabled: enabled });
+    await setAiDetectionToggle('aiImageFilterEnabled', enabled);
   })().catch(err => console.error('[Popup] enableAiImageFilter change failed:', err)); });
 
   const imageThresholdInputEl = document.getElementById('aiImageThreshold') as HTMLInputElement | null;
@@ -831,25 +907,22 @@ function setupEventListeners() {
     await setStorage({ aiImageDetectionThreshold: clamped });
   })().catch(err => console.error('[Popup] aiImageThreshold change failed:', err)); });
 
-  // Local models toggle
-  document.getElementById('enableLocalModels')!.addEventListener('change', (e) => { (async () => {
-    const enabled = (e.target as HTMLInputElement).checked;
-    dropdownState.localModelsEnabled = enabled;
-    await setStorage({ localModelsEnabled: enabled });
+}
 
-    // If disabling local models and a local model was selected, switch to default
-    if (!enabled && dropdownState.selectedModel?.startsWith('local:')) {
-      await selectModel(DEFAULT_MODEL);
-    }
+// Wire the headline radios. selectModel() persists, re-renders the dropdown
+// (which re-syncs the radios via updateModelRadioUI), clears the
+// classification cache, and shows the download section when a not-yet-
+// downloaded local model is picked — no radio-specific follow-up needed.
+function setupModelRadios() {
+  document.getElementById('modelRadioImbue')?.addEventListener('change', asyncHandler(() => selectModel('imbue')));
+  document.getElementById('modelRadioLocal')?.addEventListener('change', asyncHandler(() => selectModel(LOCAL_RADIO_MODEL_KEY)));
 
-    // Re-render dropdown to show/hide local models
-    const data = await getStorage(['customModels', 'selectedModel']);
-    renderModelDropdown(data.customModels || [], data.selectedModel || DEFAULT_MODEL);
-
-    // Update local model section visibility
-    updateLocalModelSectionVisibility();
-  })().catch(err => console.error('[Popup] enableLocalModels change failed:', err)); });
-
+  // The Imbue option doesn't exist on open-source builds with no Imbue
+  // backend (same gate as the dropdown's Imbue entry).
+  if (process.env.HAS_IMBUE_BACKEND !== 'true') {
+    const row = document.getElementById('modelRadioImbueRow');
+    if (row) row.style.display = 'none';
+  }
 }
 
 // ==================== Custom Model Dropdown ====================
@@ -858,7 +931,6 @@ interface DropdownState {
   isOpen: boolean;
   customModels: ModelDef[];
   selectedModel: string;
-  localModelsEnabled: boolean;
   authenticatedApis: Record<string, boolean>;
 }
 
@@ -866,7 +938,6 @@ const dropdownState: DropdownState = {
   isOpen: false,
   customModels: [],
   selectedModel: DEFAULT_MODEL,
-  localModelsEnabled: false,
   authenticatedApis: {
     openrouter: false,
     openai: false,
@@ -978,6 +1049,32 @@ function getModelsForProvider(api: string) {
   return { predefined, custom };
 }
 
+// Human-readable label for a selected model key ("api:modelName" or
+// "imbue"). Shared by the dropdown's selected text and the radios'
+// "set in Advanced" note.
+function getModelDisplayLabel(selectedModel: string, customModels: ModelDef[]): string {
+  if (!selectedModel) return 'Select a model';
+  if (selectedModel === 'imbue') return 'Imbue (Default)';
+  // Parse model key (format: api:modelName)
+  const [api, ...nameParts] = selectedModel.split(':');
+  const modelName = nameParts.join(':');
+  // Find display name from predefined models
+  const predefinedModel = (PREDEFINED_MODELS[api] || []).find(m => m.name === modelName);
+  const displayName = predefinedModel ? predefinedModel.display : modelName;
+  // Check if this model has apiKwargs configured (only show indicator for custom models)
+  let kwargsIndicator = '';
+  if (!predefinedModel) {
+    // Only show gear indicator for custom models
+    const customModel = customModels.find(m => m.api === api && m.name === modelName);
+    const hasKwargs = customModel && customModel.apiKwargs && Object.keys(customModel.apiKwargs).length > 0;
+    kwargsIndicator = hasKwargs ? ' \u2699' : '';
+  }
+  // Don't append API name for local models since their display names already
+  // make it clear (and "iosLocal" has no user-facing provider name).
+  const apiSuffix = api === 'local' || api === 'iosLocal' ? '' : ` (${getApiDisplayName(api)})`;
+  return `${displayName}${kwargsIndicator}${apiSuffix}`;
+}
+
 function renderModelDropdown(customModels: ModelDef[], selectedModel: string) {
   // Update state
   dropdownState.customModels = customModels;
@@ -985,29 +1082,7 @@ function renderModelDropdown(customModels: ModelDef[], selectedModel: string) {
 
   // Update selected display text
   const selectedText = document.querySelector('.model-dropdown-text')!;
-  if (!selectedModel) {
-    selectedText.textContent = 'Select a model';
-  } else if (selectedModel === 'imbue') {
-    selectedText.textContent = 'Imbue (Default)';
-  } else {
-    // Parse model key (format: api:modelName)
-    const [api, ...nameParts] = selectedModel.split(':');
-    const modelName = nameParts.join(':');
-    // Find display name from predefined models
-    const predefinedModel = (PREDEFINED_MODELS[api] || []).find(m => m.name === modelName);
-    const displayName = predefinedModel ? predefinedModel.display : modelName;
-    // Check if this model has apiKwargs configured (only show indicator for custom models)
-    let kwargsIndicator = '';
-    if (!predefinedModel) {
-      // Only show gear indicator for custom models
-      const customModel = customModels.find(m => m.api === api && m.name === modelName);
-      const hasKwargs = customModel && customModel.apiKwargs && Object.keys(customModel.apiKwargs).length > 0;
-      kwargsIndicator = hasKwargs ? ' \u2699' : '';
-    }
-    // Don't append API name for local models since their display names already include "(Local)"
-    const apiSuffix = api === 'local' ? '' : ` (${getApiDisplayName(api)})`;
-    selectedText.textContent = `${displayName}${kwargsIndicator}${apiSuffix}`;
-  }
+  selectedText.textContent = getModelDisplayLabel(selectedModel, customModels);
 
   // Build menu items
   const menu = document.getElementById('modelDropdownMenu')!;
@@ -1023,8 +1098,8 @@ function renderModelDropdown(customModels: ModelDef[], selectedModel: string) {
     menu.appendChild(imbueItem);
   }
 
-  // Add local models (only show if enabled and WebGPU supported)
-  if (dropdownState.localModelsEnabled && (webgpuSupported || isIOSDevice) && PREDEFINED_MODELS.local) {
+  // Add local models (only where the runtime can actually execute them)
+  if ((webgpuSupported || isIOSDevice) && PREDEFINED_MODELS.local) {
     // Add predefined local models
     PREDEFINED_MODELS.local.forEach(model => {
       const modelKey = `local:${model.name}`;
@@ -1140,6 +1215,44 @@ function renderModelDropdown(customModels: ModelDef[], selectedModel: string) {
     empty.className = 'model-dropdown-empty';
     empty.textContent = 'Enable a provider below to start filtering';
     menu.appendChild(empty);
+  }
+
+  // Keep the headline radios in sync — this is the single funnel every
+  // selection/auth change already flows through.
+  updateModelRadioUI();
+}
+
+// Sync the headline radios (and their notes) with the current selection.
+function updateModelRadioUI() {
+  const imbueRadio = document.getElementById('modelRadioImbue') as HTMLInputElement | null;
+  const localRadio = document.getElementById('modelRadioLocal') as HTMLInputElement | null;
+  if (!imbueRadio || !localRadio) return;
+
+  const selected = dropdownState.selectedModel;
+  imbueRadio.checked = selected === 'imbue';
+  localRadio.checked = selected === LOCAL_RADIO_MODEL_KEY;
+
+  // A model picked from the Advanced dropdown matches neither radio —
+  // explain where the active selection lives instead of showing two
+  // unchecked radios with no context.
+  const advancedNote = document.getElementById('modelRadioAdvancedNote');
+  if (advancedNote) {
+    const isAdvancedSelection = !!selected && !imbueRadio.checked && !localRadio.checked;
+    advancedNote.style.display = isAdvancedSelection ? '' : 'none';
+    advancedNote.textContent = isAdvancedSelection
+      ? `Using ${getModelDisplayLabel(selected, dropdownState.customModels)} (set in Advanced Settings)`
+      : '';
+  }
+
+  // Local option is first-class but hardware-gated: WebGPU on desktop, the
+  // native bridge in the iOS app. iOS Safari extension mode has neither.
+  const localSupported = webgpuSupported || isInAppMode;
+  localRadio.disabled = !localSupported;
+  document.getElementById('modelRadioLocalRow')?.classList.toggle('disabled', !localSupported);
+  const localNote = document.getElementById('modelRadioLocalNote');
+  if (localNote) {
+    localNote.style.display = localSupported ? 'none' : '';
+    localNote.textContent = localSupported ? '' : 'Not supported on this device (requires WebGPU).';
   }
 }
 
@@ -1520,15 +1633,12 @@ async function updateLocalModelStatus() {
     localModelStatuses = {};
     webgpuSupported = true; // Assume supported, will be corrected if not
   }
-  // Hide the local models toggle on iOS (insufficient memory for local inference)
-  // or if WebGPU is not supported
-  const localModelsToggle = document.querySelector<HTMLElement>('.local-models-toggle');
-  if (localModelsToggle) {
-    localModelsToggle.style.display = (webgpuSupported || isIOSDevice) ? '' : 'none';
-  }
 
-  // Always update UI, even on error
+  // Always update UI, even on error. webgpuSupported resolves async, so the
+  // radio's disabled state must be refreshed here too, not just from
+  // renderModelDropdown.
   updateLocalModelSectionUI();
+  updateModelRadioUI();
 }
 
 // Get the currently selected local model (if any)
@@ -1609,7 +1719,7 @@ function updateLocalModelSectionUI() {
     badge.textContent = 'Select a model';
     notDownloaded.style.display = 'block';
     if (downloadHint) {
-      downloadHint.textContent = 'Select a local model from the dropdown above to use local inference.';
+      downloadHint.textContent = 'Select a local model to use local inference.';
     }
     document.getElementById('downloadLocalModel')!.style.display = 'none';
     return;

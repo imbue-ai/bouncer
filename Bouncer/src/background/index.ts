@@ -3,7 +3,8 @@
 import { PREDEFINED_MODELS } from '../shared/models';
 import { cacheKeyFor, GUEST_FILTER_LIMIT } from '../shared/utils';
 import { getStorage, setStorage, removeStorage } from '../shared/storage';
-import type { ContentToBackgroundMessage, LocalModelStatus } from '../types';
+import type { AiFilterIntentState, ContentToBackgroundMessage, LocalModelStatus } from '../types';
+import { scheduleAiFilterIntentRefresh } from './ai-intent';
 import { localEngine } from './local-model';
 import {
   initPipeline, loadCache, saveCache,
@@ -237,7 +238,7 @@ async function handleMessage(
       // Check if already in queue - add another resolver for this item
       if (tabId !== undefined && isKeyPending(tabId, cacheKey)) {
         return new Promise(resolve => {
-          const item = { evaluationId: message.evaluationId, post: message.post, rawText: message.rawText, imageUrls, resolve, cacheKey, tabId, postUrl: message.postUrl, siteId: message.siteId };
+          const item = { evaluationId: message.evaluationId, post: message.post, rawText: message.rawText, imageUrls, resolve, cacheKey, tabId, postUrl: message.postUrl, siteId: message.siteId, isReply: message.isReply === true };
           enqueuePost(tabId, item);
         });
       }
@@ -245,7 +246,7 @@ async function handleMessage(
       // Queue for batch processing
       // processBatch will prioritize posts closest to viewport center for local models
       const resultPromise = new Promise(resolve => {
-        const item = { evaluationId: message.evaluationId, post: message.post, rawText: message.rawText, imageUrls, resolve, cacheKey, tabId, postUrl: message.postUrl, siteId: message.siteId };
+        const item = { evaluationId: message.evaluationId, post: message.post, rawText: message.rawText, imageUrls, resolve, cacheKey, tabId, postUrl: message.postUrl, siteId: message.siteId, isReply: message.isReply === true };
         enqueuePost(tabId!, item);
       });
       console.log('[Bouncer][diag] evaluatePost enqueued for tab', tabId);
@@ -751,10 +752,22 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
     );
     if (filtersChanged) {
       handleFilterPackChange();
+      // Phrase edits are the natural moment to re-derive whether the user
+      // wants AI-generated content removed (validatePhrase probe, debounced).
+      scheduleAiFilterIntentRefresh();
     }
 
+    // The intent state also persists bookkeeping (phrase-set key) — only an
+    // actual flip of the latched bit warrants flushing the pipeline.
+    const intentChange = changes.aiFilterIntent;
+    const intentBitFlipped = !!intentChange
+      && (intentChange.oldValue as AiFilterIntentState | undefined)?.intent
+        !== (intentChange.newValue as AiFilterIntentState | undefined)?.intent;
+
     if (changes.aiTextFilterEnabled || changes.aiTextDetectionThreshold
-        || changes.aiImageFilterEnabled || changes.aiImageDetectionThreshold) {
+        || changes.aiTextReplyDetectionThreshold
+        || changes.aiImageFilterEnabled || changes.aiImageDetectionThreshold
+        || changes.aiFilterIntentOptOut || intentBitFlipped) {
       await handleSettingsChange(changes);
     }
 

@@ -11,7 +11,8 @@ import { callDirectAPI, callAnthropicAPI, callImbueAPI, callImbueAiTextDetection
 import { runDetectors, type Detector, type DetectorResult } from './detectors';
 import { callLocalInference, localEngine } from './local-model';
 import { iosLocalClassify, iosLocalGenerate, iosLocalAiTextDetect } from './ios-local-bridge';
-import { getStorage, setStorage, removeStorage, getDescriptions, clampThreshold, clampImageThreshold, DEFAULT_AI_TEXT_DETECTION_THRESHOLD, DEFAULT_AI_IMAGE_DETECTION_THRESHOLD } from '../shared/storage';
+import { getStorage, setStorage, removeStorage, getDescriptions, clampThreshold, clampImageThreshold, clampReplyThreshold, aiIntentAutoActive, DEFAULT_AI_TEXT_DETECTION_THRESHOLD, DEFAULT_AI_IMAGE_DETECTION_THRESHOLD } from '../shared/storage';
+import { recordAiFilterIntent } from './ai-intent';
 import { PLATFORMS, enabledStorageKey } from '../shared/platforms';
 export { DEFAULT_AI_TEXT_DETECTION_THRESHOLD, DEFAULT_AI_IMAGE_DETECTION_THRESHOLD };
 import type {
@@ -479,7 +480,8 @@ export async function getSettings(siteId?: SiteId): Promise<Settings> {
     'apiKey', 'openaiApiKey', 'openaiApiBase', 'openrouterApiKey', 'geminiApiKey',
     'anthropicApiKey', 'enabled', 'useEmbeddings', 'selectedModel',
     'customModels', 'predefinedModelKwargs', 'aiTextFilterEnabled', 'aiTextDetectionThreshold',
-    'aiImageFilterEnabled', 'aiImageDetectionThreshold',
+    'aiTextReplyDetectionThreshold', 'aiImageFilterEnabled', 'aiImageDetectionThreshold',
+    'aiFilterIntent', 'aiFilterIntentOptOut',
     'filterReplies', 'youtubeShowPlaceholder',
     ...platformEnabledKeys,
   ] as const;
@@ -506,8 +508,10 @@ export async function getSettings(siteId?: SiteId): Promise<Settings> {
     predefinedModelKwargs: data.predefinedModelKwargs || {},
     aiTextFilterEnabled: data.aiTextFilterEnabled === true,
     aiTextDetectionThreshold: clampThreshold(data.aiTextDetectionThreshold),
+    aiTextReplyDetectionThreshold: clampReplyThreshold(data.aiTextReplyDetectionThreshold),
     aiImageFilterEnabled: data.aiImageFilterEnabled === true,
     aiImageDetectionThreshold: clampImageThreshold(data.aiImageDetectionThreshold),
+    aiFilterIntentActive: aiIntentAutoActive(data),
     filterReplies: data.filterReplies !== false,
     platformEnabled,
     youtubeShowPlaceholder: data.youtubeShowPlaceholder === true
@@ -847,8 +851,11 @@ async function processBatch(): Promise<void> {
   // are off we still flow through the tab-dispatch logic below so the popup
   // always shows two tabs (both marked skipped).
   const filterEnabled = !!(settings.descriptions && settings.descriptions.length > 0);
-  const aiToggleOn = settings.aiTextFilterEnabled;
-  const aiImageToggleOn = settings.aiImageFilterEnabled;
+  // Explicit toggles OR the inferred "user wants AI content removed" state
+  // (see ai-intent.ts). An explicit user off is folded into
+  // aiFilterIntentActive already, via the aiFilterIntentOptOut flag.
+  const aiToggleOn = settings.aiTextFilterEnabled || settings.aiFilterIntentActive;
+  const aiImageToggleOn = settings.aiImageFilterEnabled || settings.aiFilterIntentActive;
 
   // Check cache. Use the key computed at enqueue time (cacheKeyFor) rather than
   // recomputing — for YouTube that key is video-id based, not text+image.
@@ -934,6 +941,11 @@ async function processBatch(): Promise<void> {
         return await iosLocalClassify(postData, settings.descriptions, apiConfig.modelConfig as LocalModelDef | null);
       } else if (apiConfig.apiName === 'imbue') {
         const imbueResponse = await callImbueAPI(postData, settings.descriptions, 'filterPost');
+        // Every filterPost result carries the backend's judgment of whether
+        // this phrase set targets AI-generated content — fold it into the
+        // sticky intent state that auto-engages the AI detectors.
+        void recordAiFilterIntent(settings.descriptions, imbueResponse.aiFilterIntent, 'filterPost')
+          .catch(err => console.warn('[AiIntent] record failed:', (err as Error).message));
         return {
           shouldHide: imbueResponse.shouldHide,
           reasoning: imbueResponse.reasoning || 'No reasoning provided',
@@ -970,7 +982,8 @@ async function processBatch(): Promise<void> {
       runFilter,
       rawText: item.rawText,
       imageUrls,
-      aiThreshold: settings.aiTextDetectionThreshold,
+      // Replies/comments use their own (typically lower) threshold.
+      aiThreshold: item.isReply ? settings.aiTextReplyDetectionThreshold : settings.aiTextDetectionThreshold,
       aiImageThreshold: settings.aiImageDetectionThreshold,
       // The on-device aiText path depends on linear_v3_head.bin, which was
       // trained on E4B last-token logits — E2B shares the vocab dim so it
@@ -1022,11 +1035,13 @@ async function processBatch(): Promise<void> {
 
     // Guest trial: count posts filtered while signed in anonymously, lifetime
     // across all sessions. iOS is permanently anonymous by design (App Check)
-    // and has no Google sign-in path, so it's excluded. When the guest crosses
-    // the limit, prompt every content tab to sign in.
+    // and has no Google sign-in path, so it's excluded. Local models are also
+    // excluded — they run on-device without the Imbue backend, and the trial
+    // notice advertises them as unlimited. When the guest crosses the limit,
+    // prompt every content tab to sign in.
     const isIOS = typeof window !== 'undefined'
       && typeof (window as unknown as Record<string, unknown>).__ff_getAppCheckToken === 'function';
-    if (evalResult.shouldHide && !isIOS && isAnonymousUser()) {
+    if (evalResult.shouldHide && !isIOS && !isLocalModel && isAnonymousUser()) {
       const prev = statsData.anonFilterCount || 0;
       const next = prev + 1;
       await setStorage({ anonFilterCount: next });
@@ -1193,7 +1208,15 @@ function flushPipelineQueues(reason: string): void {
 export async function handleSettingsChange(changes: Record<string, chrome.storage.StorageChange>): Promise<void> {
   flushPipelineQueues('Settings changed, re-evaluating...');
 
-  if (changes.selectedModel) {
+  // Model changes invalidate everything. AI-detection changes (toggles,
+  // thresholds, inferred intent, opt-out) also invalidate: cached verdicts
+  // were computed with a different detector set, and the content script
+  // re-evaluates on these changes expecting fresh results, not cache hits.
+  if (changes.selectedModel
+      || changes.aiTextFilterEnabled || changes.aiTextDetectionThreshold
+      || changes.aiTextReplyDetectionThreshold
+      || changes.aiImageFilterEnabled || changes.aiImageDetectionThreshold
+      || changes.aiFilterIntent || changes.aiFilterIntentOptOut) {
     await clearEvaluationCache();
   }
 
@@ -1227,6 +1250,10 @@ async function validateFilterPhrase(postText: string, imageUrls: string[], phras
   const isIosLocalModel = settings.selectedModel?.startsWith('iosLocal:');
 
   if (process.env.HAS_IMBUE_BACKEND === 'true' && settings.selectedModel === 'imbue') {
+    // Deliberately NOT recorded into the aiFilterIntent state: this screens a
+    // single *candidate* suggestion the user hasn't added (and may never add).
+    // If they do add it, the descriptions-change probe in ai-intent.ts
+    // re-derives intent from the real phrase set.
     const imbueResponse = await callImbueAPI(postData, [phrase], 'validatePhrase');
     return imbueResponse.shouldHide === true;
   } else if (isLocalModel) {

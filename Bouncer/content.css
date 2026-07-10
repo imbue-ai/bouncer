@@ -1416,6 +1416,41 @@ article {
   to { transform: rotate(360deg); }
 }
 
+/* Guest-trial notice advertising the local model, shown between the filter
+   input and the actions row while the user is on the anonymous free trial.
+   Same orange accent as .google-signin-btn / the filter-box border. */
+.ff-guest-trial-notice {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(234, 133, 84, 0.08);
+  border: 1px solid rgba(234, 133, 84, 0.35);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.ff-guest-trial-text {
+  margin: 0 0 8px;
+}
+
+.ff-local-model-cta {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  border: 1.5px solid rgb(234, 133, 84);
+  border-radius: 8px;
+  background: none;
+  color: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.ff-local-model-cta:hover {
+  background: rgba(234, 133, 84, 0.18);
+}
+
 .light-mode .skip-signin-btn {
   color: rgba(0, 0, 0, 0.85);
 }
@@ -2126,10 +2161,26 @@ article {
   outline-offset: 2px;
 }
 
+/* "auto" badge shown when the toggle was engaged by inferred AI-removal
+   intent rather than an explicit user choice. */
+.filter-ai-toggle-auto {
+  font-size: 11px;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: rgba(29, 155, 240, 0.12);
+  color: #1d9bf0;
+  flex-shrink: 0;
+}
+
 /* Dim/dark theme adjustments */
 body.dim-mode .filter-ai-text-toggle-slider,
 body.dark-mode .filter-ai-text-toggle-slider {
   background: #2f3336;
+}
+body.dim-mode .filter-ai-toggle-auto,
+body.dark-mode .filter-ai-toggle-auto {
+  background: rgba(29, 155, 240, 0.2);
 }
 
 /* Right side of the actions row: circular Share and Settings icon buttons. */

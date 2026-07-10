@@ -32,6 +32,7 @@ import {
   initDetectorStates,
   updateDetectorState,
   isGuestLimitReached,
+  refreshAiToggleUI,
 } from './ui';
 
 import { formatPostForEvaluation } from '../shared/utils';
@@ -272,7 +273,11 @@ import { formatPostForEvaluation } from '../shared/utils';
           rawText: content.text,
           imageUrls: content.imageUrls || [],
           postUrl: content.postUrl || null,
-          siteId: adapter.siteId
+          siteId: adapter.siteId,
+          // On a permalink page everything below the main post is a
+          // reply/comment — the pipeline applies the reply-specific
+          // AI-text threshold to these.
+          isReply: adapter.isPermalinkView()
         });
       const response = await evaluatePromise as PipelineResponse;
       releaseEvaluation(evaluationId);
@@ -716,24 +721,21 @@ import { formatPostForEvaluation } from '../shared/utils';
           clearFilteredPosts();
         }
       }
-      if (changes.aiTextFilterEnabled) {
-        // Sync each filter box's checkbox to the new value, then re-evaluate
-        // all posts since the cache has been invalidated by the background.
-        const checked = changes.aiTextFilterEnabled.newValue === true;
-        document.querySelectorAll<HTMLInputElement>('.filter-ai-text-toggle-input:not(.filter-ai-image-toggle-input)')
-          .forEach(el => { if (el.checked !== checked) el.checked = checked; });
-        reEvaluateAllPosts();
+      // Any change to the AI-detection enablement inputs — explicit toggles,
+      // the inferred AI-removal intent, the explicit opt-out, or the
+      // experimental gate — re-syncs every filter box's toggle rows to the
+      // effective state (explicit OR auto).
+      if (changes.aiTextFilterEnabled || changes.aiImageFilterEnabled
+          || changes.aiFilterIntent || changes.aiFilterIntentOptOut
+          || changes.aiTextFilterExperimental) {
+        refreshAiToggleUI().catch(err => console.error('[Bouncer] refreshAiToggleUI failed:', err));
       }
-      if (changes.aiImageFilterEnabled) {
-        const checked = changes.aiImageFilterEnabled.newValue === true;
-        document.querySelectorAll<HTMLInputElement>('.filter-ai-image-toggle-input')
-          .forEach(el => { if (el.checked !== checked) el.checked = checked; });
+      // Re-evaluate when the effective detector set changed — the cache has
+      // been invalidated by the background. (aiTextFilterExperimental alone
+      // is only a UI gate; it flips the underlying toggles when turned off.)
+      if (changes.aiTextFilterEnabled || changes.aiImageFilterEnabled
+          || changes.aiFilterIntent || changes.aiFilterIntentOptOut) {
         reEvaluateAllPosts();
-      }
-      if (changes.aiTextFilterExperimental) {
-        const expEnabled = changes.aiTextFilterExperimental.newValue === true;
-        document.querySelectorAll<HTMLElement>('.filter-ai-text-toggle')
-          .forEach(el => { el.style.display = expEnabled ? '' : 'none'; });
       }
       if (changes.filterReplies) {
         filterReplies = changes.filterReplies.newValue !== false;

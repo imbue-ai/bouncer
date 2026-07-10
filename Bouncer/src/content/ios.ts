@@ -1,7 +1,7 @@
 // iOS FAB, filtered modal, native sheet bridge
 
 import type { IOSDeps, DescriptionKey, SiteId } from '../types';
-import { clampThreshold, clampImageThreshold, getDescriptions, setDescriptions } from '../shared/storage';
+import { clampThreshold, clampImageThreshold, getDescriptions, setDescriptions, getStorage, aiIntentAutoActive, setAiDetectionToggle } from '../shared/storage';
 import { platformById, descriptionsStorageKey } from '../shared/platforms';
 import { parseHTML } from '../shared/utils';
 import { shareFilterPackForIOS } from './ui';
@@ -135,12 +135,14 @@ export function initIOS(deps: IOSDeps) {
   // content/index.ts then re-evaluates posts (cache is invalidated by
   // background/index.ts's settings-change handler).
   w.__ff_getAiTextFilterEnabled = async (): Promise<boolean> => {
-    const data = await chrome.storage.local.get(['aiTextFilterEnabled']);
-    return data.aiTextFilterEnabled === true;
+    // Effective state: explicit toggle OR inferred AI-removal intent
+    // (minus explicit opt-out) — mirrors the pipeline's gating.
+    const data = await getStorage(['aiTextFilterEnabled', 'aiFilterIntent', 'aiFilterIntentOptOut']);
+    return data.aiTextFilterEnabled === true || aiIntentAutoActive(data);
   };
   w.__ff_setAiTextFilterEnabled = async (enabled: boolean): Promise<void> => {
     console.log('[Bouncer][iOS] __ff_setAiTextFilterEnabled:', enabled);
-    await chrome.storage.local.set({ aiTextFilterEnabled: enabled === true });
+    await setAiDetectionToggle('aiTextFilterEnabled', enabled === true);
   };
   w.__ff_getAiTextDetectionThreshold = async (): Promise<number> => {
     const data = await chrome.storage.local.get(['aiTextDetectionThreshold']);
@@ -156,12 +158,12 @@ export function initIOS(deps: IOSDeps) {
 
   // AI-image-detection toggle bridge. Mirrors the AI-text bridge above.
   w.__ff_getAiImageFilterEnabled = async (): Promise<boolean> => {
-    const data = await chrome.storage.local.get(['aiImageFilterEnabled']);
-    return data.aiImageFilterEnabled === true;
+    const data = await getStorage(['aiImageFilterEnabled', 'aiFilterIntent', 'aiFilterIntentOptOut']);
+    return data.aiImageFilterEnabled === true || aiIntentAutoActive(data);
   };
   w.__ff_setAiImageFilterEnabled = async (enabled: boolean): Promise<void> => {
     console.log('[Bouncer][iOS] __ff_setAiImageFilterEnabled:', enabled);
-    await chrome.storage.local.set({ aiImageFilterEnabled: enabled === true });
+    await setAiDetectionToggle('aiImageFilterEnabled', enabled === true);
   };
   w.__ff_getAiImageDetectionThreshold = async (): Promise<number> => {
     const data = await chrome.storage.local.get(['aiImageDetectionThreshold']);

@@ -1,4 +1,5 @@
 import type {
+  AiFilterIntentState,
   DescriptionKey,
   SiteId,
   StorageSchema,
@@ -94,4 +95,44 @@ export function clampThreshold(v: unknown): number {
 export function clampImageThreshold(v: unknown): number {
   if (typeof v !== 'number' || !Number.isFinite(v)) return DEFAULT_AI_IMAGE_DETECTION_THRESHOLD;
   return Math.min(1, Math.max(0, v));
+}
+
+// Default confidence threshold for AI-text detection on replies/comments.
+// Deliberately lower than the main-post default: comments are short, so the
+// detector's confidence rarely climbs as high as it does on full posts.
+export const DEFAULT_AI_TEXT_REPLY_DETECTION_THRESHOLD = 0.3;
+
+/** Same as clampThreshold but with the reply/comment default. */
+export function clampReplyThreshold(v: unknown): number {
+  if (typeof v !== 'number' || !Number.isFinite(v)) return DEFAULT_AI_TEXT_REPLY_DETECTION_THRESHOLD;
+  return Math.min(1, Math.max(0, v));
+}
+
+/** True when the inferred "user wants AI content removed" state should
+ *  auto-engage AI detection: the intent bit is latched on and the user hasn't
+ *  explicitly opted out. Callers OR this with the explicit aiText/aiImage
+ *  toggles to compute the effective enabled state. */
+export function aiIntentAutoActive(data: {
+  aiFilterIntent?: AiFilterIntentState;
+  aiFilterIntentOptOut?: boolean;
+}): boolean {
+  return data.aiFilterIntent?.intent === true && data.aiFilterIntentOptOut !== true;
+}
+
+/** Persist an AI-detection toggle change from any UI surface (popup, in-feed
+ *  settings, iOS bridge). Turning ON clears any earlier opt-out; turning OFF
+ *  while the inferred intent had it auto-enabled records the opt-out so the
+ *  intent can't re-engage detection against the user's explicit choice. The
+ *  opt-out is shared by both toggles — the inferred intent is a single
+ *  signal, and declining it once declines it everywhere. */
+export async function setAiDetectionToggle(
+  key: 'aiTextFilterEnabled' | 'aiImageFilterEnabled',
+  on: boolean,
+): Promise<void> {
+  if (on) {
+    await setStorage({ [key]: true, aiFilterIntentOptOut: false });
+    return;
+  }
+  const data = await getStorage(['aiFilterIntent', 'aiFilterIntentOptOut']);
+  await setStorage({ [key]: false, ...(aiIntentAutoActive(data) && { aiFilterIntentOptOut: true }) });
 }
