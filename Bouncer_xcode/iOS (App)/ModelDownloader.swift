@@ -65,15 +65,41 @@ public final class ModelDownloader: NSObject, @unchecked Sendable {
         FileManager.default.fileExists(atPath: modelPath.path)
     }
 
-    // Bump when switching modelURL in LocalInferenceService so the
-    // downloader treats it as a fresh fetch instead of reusing a
-    // previously downloaded variant under the old name.
-    public static let defaultModelFilename = "gemma-4-E4B-it.litertlm"
+    public static let defaultModelFilename = "gemma-4-E4B-it-qat.litertlm"
+
+    // The model file this downloader is currently targeting for download /
+    // pause / delete / status. Set by LocalInferenceService before a download
+    // so multiple on-device variants can coexist on disk under distinct
+    // filenames. Do NOT change while a download is in flight — the completion
+    // handler moves the finished file to `modelPath` (== this filename).
+    public var activeFilename: String = ModelDownloader.defaultModelFilename {
+        didSet {
+            if oldValue != activeFilename {
+                // Drop the in-memory resume blob so we don't reuse one
+                // variant's partial download for another (on-disk resume
+                // files are per-filename; see resumeDataPath).
+                withLock { resumeData = nil }
+            }
+        }
+    }
 
     public let modelsDirectory: URL
 
     public var modelPath: URL {
-        modelsDirectory.appendingPathComponent(Self.defaultModelFilename)
+        modelsDirectory.appendingPathComponent(activeFilename)
+    }
+
+    // Path for an arbitrary variant filename (used by LocalInferenceService to
+    // load the SELECTED model's file, which may differ from the active
+    // download target).
+    public func modelPath(for filename: String) -> URL {
+        modelsDirectory.appendingPathComponent(filename)
+    }
+
+    // Whether a specific variant's file is on disk (independent of which one
+    // is the active download target).
+    public func isDownloaded(_ filename: String) -> Bool {
+        FileManager.default.fileExists(atPath: modelPath(for: filename).path)
     }
 
     private var _session: URLSession?
@@ -97,6 +123,18 @@ public final class ModelDownloader: NSObject, @unchecked Sendable {
     private let lock = NSLock()
 
     private var resumeData: Data?
+    // Bumped by cancel(). pause()'s async cancel-with-resume completion handler
+    // checks it before persisting its blob: if a cancel intervened, the blob is
+    // discarded instead of saved. Without this, a stale blob survives the
+    // cancel and the NEXT download "resumes" a dead transfer — splicing
+    // mismatched bytes into the file (observed: correct total size, corrupt
+    // content, engine "Failed to load model from buffer").
+    private var cancelGeneration = 0
+    // Destination filename per task, captured at task creation (see download()).
+    // Lock-protected; read by didFinishDownloadingTo on the delegate queue.
+    // Tasks reattached after an app relaunch (reconcileWithSession) have no
+    // entry and fall back to activeFilename — the pre-existing behavior.
+    private var taskFilenames: [Int: String] = [:]
     private var isPausing = false
     private var resumeOffset: Int64 = 0
     private var knownTotal: Int64 = 0
@@ -217,6 +255,14 @@ public final class ModelDownloader: NSObject, @unchecked Sendable {
             resumeOffset = 0
             knownTotal = 0
             lastLoggedDecile = -1
+            // Pin the task to its destination filename NOW. The completion
+            // handler must NOT read activeFilename at finish time: for
+            // multi-file downloads (model then adapter) the UI can flip
+            // activeFilename mid-flight (e.g. selectModel while the adapter
+            // is still downloading), and the finished blob would be moved
+            // over the WRONG file — this clobbered a 2.2 GB model with its
+            // 10 MB adapter (engine then failed with "Invalid magic: TFL3").
+            taskFilenames[task.taskIdentifier] = activeFilename
             // Note: don't reset _liveDownloaded/_liveTotal here. On resume,
             // we want them to retain the last-known progress so any read
             // between resume and the first new didWriteData reflects the
@@ -233,7 +279,10 @@ public final class ModelDownloader: NSObject, @unchecked Sendable {
 
     public func pause() {
         guard let task = activeTask else { return }
-        withLock { isPausing = true }
+        let generationAtPause = withLock { () -> Int in
+            isPausing = true
+            return cancelGeneration
+        }
         // Cancel-with-resume's completion handler is the source of truth
         // for both the resume blob AND the UI transition to .paused.
         // didCompleteWithError fires separately (possibly first); it
@@ -242,6 +291,14 @@ public final class ModelDownloader: NSObject, @unchecked Sendable {
         // on disk and let the user race past it.
         task.cancel(byProducingResumeData: { [weak self] data in
             guard let self else { return }
+            // If the user hit Cancel while this pause was completing, the
+            // cancel already cleared all resume state — persisting this blob
+            // now would resurrect a dead transfer and corrupt the next
+            // download. Discard it and leave the cancel's .notStarted intact.
+            guard self.withLock({ self.cancelGeneration == generationAtPause }) else {
+                print("[ModelDownloader] Pause resume-data discarded (cancel intervened)")
+                return
+            }
             // Read the latest progress from lock-protected fields. These
             // are committed synchronously by didWriteData on this same
             // queue, so they're always current — unlike the @Observable
@@ -275,6 +332,7 @@ public final class ModelDownloader: NSObject, @unchecked Sendable {
         downloadedBytes = 0
         totalBytes = 0
         withLock {
+            cancelGeneration += 1
             _liveDownloaded = 0
             _liveTotal = 0
         }
@@ -310,12 +368,15 @@ public final class ModelDownloader: NSObject, @unchecked Sendable {
         modelsDirectory.appendingPathComponent(".resumedata", isDirectory: true)
     }
 
+    // Per-variant resume files so pausing one model's download doesn't clobber
+    // another's partial blob (filenames have no path separators — safe as a
+    // single path component).
     private var resumeDataPath: URL {
-        resumeDataDirectory.appendingPathComponent("model.resume")
+        resumeDataDirectory.appendingPathComponent("\(activeFilename).resume")
     }
 
     private var resumeMetadataPath: URL {
-        resumeDataDirectory.appendingPathComponent("model.meta")
+        resumeDataDirectory.appendingPathComponent("\(activeFilename).meta")
     }
 
     private struct ResumeMetadata: Codable {
@@ -371,6 +432,9 @@ public final class ModelDownloader: NSObject, @unchecked Sendable {
         let cont = withLock {
             let c = continuation
             continuation = nil
+            if let task = activeTask {
+                taskFilenames[task.taskIdentifier] = nil
+            }
             activeTask = nil
             resumeOffset = 0
             knownTotal = 0
@@ -399,16 +463,21 @@ extension ModelDownloader: URLSessionDownloadDelegate {
 
         // `location` is deleted as soon as this delegate returns, so move
         // synchronously on the delegate queue before doing anything else.
+        // Destination = the filename pinned at task creation, NOT the current
+        // activeFilename (which the UI may have flipped mid-flight).
+        let destination = withLock {
+            taskFilenames[downloadTask.taskIdentifier].map(modelPath(for:))
+        } ?? modelPath
         do {
             try FileManager.default.createDirectory(
                 at: modelsDirectory, withIntermediateDirectories: true
             )
-            if FileManager.default.fileExists(atPath: modelPath.path) {
-                try FileManager.default.removeItem(at: modelPath)
+            if FileManager.default.fileExists(atPath: destination.path) {
+                try FileManager.default.removeItem(at: destination)
             }
-            try FileManager.default.moveItem(at: location, to: modelPath)
+            try FileManager.default.moveItem(at: location, to: destination)
 
-            print("[ModelDownloader] Download completed")
+            print("[ModelDownloader] Download completed → \(destination.lastPathComponent)")
             clearResumeData()
             DispatchQueue.main.async { self.status = .completed }
             finish(result: .success(()))
