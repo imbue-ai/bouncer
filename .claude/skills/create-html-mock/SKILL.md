@@ -2,7 +2,7 @@
 name: create-html-mock
 description: Create HTML mocks for a new feature idea
 disable-model-invocation: true
-argument-hint: [feature description]
+argument-hint: "[feature description]"
 ---
 
 # Create HTML Mock

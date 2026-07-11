@@ -1,7 +1,7 @@
 // Background script entry point: message handler, storage listener, startup, tab tracking
 
 import { PREDEFINED_MODELS } from '../shared/models';
-import { cacheKeyFor } from '../shared/utils';
+import { cacheKeyFor, GUEST_FILTER_LIMIT } from '../shared/utils';
 import { getStorage, setStorage, removeStorage } from '../shared/storage';
 import type { ContentToBackgroundMessage, LocalModelStatus } from '../types';
 import { localEngine } from './local-model';
@@ -15,8 +15,8 @@ import {
   replayDetectorStates,
 } from './pipeline';
 import { sendFeedback } from './providers';
-import { imbueWebSocket } from './ws-manager';
-import { launchAuthFlow, refreshAuthToken, getAuthToken, handleAppleSignIn, signOut, IS_SAFARI } from './auth';
+import { imbueWebSocket, type ForceLoginMessage } from './ws-manager';
+import { launchAuthFlow, signInAnon, isAnonymousUser, refreshAuthToken, getAuthToken, handleAppleSignIn, signOut, setOnIdentityChanged, IS_SAFARI } from './auth';
 
 // ==================== Tab tracking ====================
 
@@ -75,6 +75,32 @@ chrome.tabs.onRemoved.addListener((tabId) => {
       console.error('[LocalModel] Error unloading engine on last tab close:', err);
     });
   }
+});
+
+// ==================== Backend-forced sign-in ====================
+
+// The backend can push a `forceLogin` message (e.g. the anonymous tweet limit
+// was reached server-side). Mirror the local guest-limit gate: persist it via
+// `anonFilterCount` so it survives reloads, then prompt every content tab with
+// the same `guestLimitReached` signal the local path uses.
+imbueWebSocket.onForceLogin = (_msg: ForceLoginMessage) => {
+  void (async () => {
+    const { anonFilterCount } = await getStorage(['anonFilterCount']);
+    if ((anonFilterCount || 0) < GUEST_FILTER_LIMIT) {
+      await setStorage({ anonFilterCount: GUEST_FILTER_LIMIT });
+    }
+  })();
+  for (const tid of activeContentTabs) {
+    void sendToTab(tid, { type: 'guestLimitReached' });
+  }
+};
+
+// When the user's identity changes mid-session (e.g. "Skip for now" anonymous
+// -> Google/Apple sign-in), the live WebSocket still carries the old token, so
+// the backend keeps applying anonymous limits to that connection. Reconnect to
+// re-run $connect with the new token and register the real identity server-side.
+setOnIdentityChanged(() => {
+  void imbueWebSocket.reconnect();
 });
 
 // ==================== Startup ====================
@@ -380,7 +406,7 @@ async function handleMessage(
         return { authenticated: true, isSafari: IS_SAFARI };
       }
       const token = await getAuthToken();
-      return { authenticated: !!token, isSafari: IS_SAFARI };
+      return { authenticated: !!token, isSafari: IS_SAFARI, isAnonymous: isAnonymousUser() };
     }
 
     case 'launchAuth': {
@@ -404,12 +430,29 @@ async function handleMessage(
         const token = await launchAuthFlow(method);
         if (token) {
           for (const tid of activeContentTabs) {
-            void sendToTab(tid, { type: 'authStateChanged', authenticated: true });
+            void sendToTab(tid, { type: 'authStateChanged', authenticated: true, isAnonymous: isAnonymousUser() });
           }
         }
         return { success: !!token };
       } catch (err) {
         console.error('[Auth] On-demand auth flow error:', err);
+        return { success: false, error: (err as Error).message };
+      }
+    }
+
+    case 'skipAuth': {
+      // "Skip for now" — sign in anonymously so the user can use Bouncer
+      // without a Google/Apple account.
+      try {
+        const token = await signInAnon();
+        if (token) {
+          for (const tid of activeContentTabs) {
+            void sendToTab(tid, { type: 'authStateChanged', authenticated: true, isAnonymous: true });
+          }
+        }
+        return { success: !!token };
+      } catch (err) {
+        console.error('[Auth] Anonymous auth flow error:', err);
         return { success: false, error: (err as Error).message };
       }
     }

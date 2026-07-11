@@ -2,6 +2,12 @@
 
 :root {
   --green-border-width: 2px;
+  /* Bouncer brand accent — stored as raw rgb channels so the same value can
+   * back both `rgb(var(--bouncer-brand-rgb))` and faded
+   * `rgba(var(--bouncer-brand-rgb), <alpha>)` usages without duplicating the
+   * literal. Update here to retheme the panel outline, CTA buttons, focus
+   * rings, and per-card cancel icon together. */
+  --bouncer-brand-rgb: 234, 133, 84;
 }
 
 /* Base font for all Bouncer UI — applies directly to every child element
@@ -687,7 +693,7 @@
   width: 34px;
   border: none;
   background: transparent;
-  color: rgb(234, 133, 84);
+  color: rgb(var(--bouncer-brand-rgb));
   border-radius: 50%;
   cursor: pointer;
   padding: 0;
@@ -706,7 +712,7 @@
 }
 
 .ff-why-annoying-btn.ff-unfilter-btn:hover {
-  background: rgba(234, 133, 84, 0.1);
+  background: rgba(var(--bouncer-brand-rgb), 0.1);
 }
 
 .ff-why-annoying-btn svg {
@@ -775,6 +781,15 @@ article {
   left: 12px;
 }
 
+/* Center-aligned: notch x set inline by JS via --ff-notch-x, measured from
+ * the tooltip's own left edge to the notch's left edge. Used when the button
+ * is in the middle of a narrow viewport and neither directional placement
+ * fits without spilling off-screen. */
+.ff-annoying-tooltip--align-center::after {
+  right: auto;
+  left: var(--ff-notch-x, 12px);
+}
+
 @media (prefers-color-scheme: light) {
   .ff-annoying-tooltip::after {
     background: #ffffff;
@@ -796,7 +811,7 @@ article {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: rgb(234, 133, 84);
+  background: rgb(var(--bouncer-brand-rgb));
   animation: ff-bounce 1.2s infinite ease-in-out;
 }
 
@@ -836,7 +851,7 @@ article {
 .ff-progress-fill {
   height: 100%;
   width: 5%;
-  background: rgb(234, 133, 84);
+  background: rgb(var(--bouncer-brand-rgb));
   border-radius: 2px;
   transition: width 0.4s ease;
 }
@@ -870,8 +885,8 @@ article {
 }
 
 .ff-annoying-chip:hover {
-  background: rgb(234, 133, 84);
-  border-color: rgb(234, 133, 84);
+  background: rgb(var(--bouncer-brand-rgb));
+  border-color: rgb(var(--bouncer-brand-rgb));
   color: #fff;
 }
 
@@ -903,7 +918,7 @@ article {
 }
 
 .ff-annoying-custom-wrapper:focus-within {
-  border-color: rgb(234, 133, 84);
+  border-color: rgb(var(--bouncer-brand-rgb));
 }
 
 .ff-annoying-custom-input {
@@ -938,7 +953,7 @@ article {
   height: 20px;
   margin-right: 5px;
   padding: 0;
-  background: rgb(234, 133, 84);
+  background: rgb(var(--bouncer-brand-rgb));
   border: none;
   border-radius: 50%;
   cursor: pointer;
@@ -1010,9 +1025,9 @@ article {
   border-color: #cfd9de;
 }
 .twitter-light .ff-annoying-chip:hover {
-  background: rgb(234, 133, 84);
+  background: rgb(var(--bouncer-brand-rgb));
   color: #fff;
-  border-color: rgb(234, 133, 84);
+  border-color: rgb(var(--bouncer-brand-rgb));
 }
 .twitter-light .ff-annoying-thinking {
   color: #536471;
@@ -1027,7 +1042,7 @@ article {
   border-color: #cfd9de;
 }
 .twitter-light .ff-annoying-custom-wrapper:focus-within {
-  border-color: rgb(234, 133, 84);
+  border-color: rgb(var(--bouncer-brand-rgb));
 }
 .twitter-light .ff-annoying-custom-input {
   color: #0f1419;
@@ -1275,7 +1290,7 @@ article {
 .filter-phrases-container {
   padding: 12px 16px;
   background-color: rgb(0, 0, 0);
-  border: var(--green-border-width) solid rgb(234, 133, 84);
+  border: var(--green-border-width) solid rgb(var(--bouncer-brand-rgb));
   border-radius: 16px;
   display: flex;
   flex-direction: column
@@ -1291,37 +1306,55 @@ article {
 }
 
 .ff-signin-explanation {
-  margin: 8px 0 0;
-  font-size: 13px;
-  color: rgba(255, 255, 255, 0.5);
+  margin: 14px 0 0;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.45);
   text-align: center;
-  line-height: 1.4;
+  /* Distribute words evenly across lines instead of a long first line with
+     a short orphan below. */
+  text-wrap: balance;
+  line-height: 1.45;
 }
 
 .light-mode .ff-signin-explanation {
-  color: rgba(0, 0, 0, 0.45);
+  color: rgba(0, 0, 0, 0.4);
 }
 
+/* Outlined in the same orange as the filter-box border (see
+   .filter-phrases-container), transparent fill so it sits on any theme. */
 .google-signin-btn {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 10px 20px;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.08);
+  padding: 15px 20px;
+  border: 1.5px solid rgb(234, 133, 84);
+  border-radius: 10px;
+  background: rgba(234, 133, 84, 0.08);
   color: inherit;
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 15px;
+  font-weight: 700;
   cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
+  transition: background 0.15s;
   width: 100%;
   justify-content: center;
 }
 
 .google-signin-btn:hover {
-  background: rgba(255, 255, 255, 0.14);
-  border-color: rgba(255, 255, 255, 0.35);
+  background: rgba(234, 133, 84, 0.18);
+}
+
+/* Instant feedback on press: transition disabled so the color changes on the
+   very frame of the click. Only :active — the pressed look must release on
+   mouseup, not linger while the auth window opens (the button stays disabled
+   against double-clicks, but visually returns to normal).
+   CASCADE TRAP: you're hovering while you click, so any hover rule that
+   outranks these selectors (higher specificity, or equal specificity later
+   in the file — e.g. a .light-mode hover override) silently masks the
+   pressed state. Keep these the last background rules for this button. */
+.google-signin-btn:active,
+.light-mode .google-signin-btn:active {
+  transition: none;
+  background: rgba(234, 133, 84, 0.32);
 }
 
 .google-signin-btn .google-icon {
@@ -1330,14 +1363,150 @@ article {
   flex-shrink: 0;
 }
 
-.light-mode .google-signin-btn {
-  border-color: rgba(0, 0, 0, 0.15);
-  background: rgba(0, 0, 0, 0.04);
+.skip-signin-btn {
+  margin: 12px 0 0;
+  padding: 4px 8px;
+  border: none;
+  background: none;
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 13px;
+  cursor: pointer;
+  transition: color 0.15s;
 }
 
-.light-mode .google-signin-btn:hover {
-  background: rgba(0, 0, 0, 0.08);
-  border-color: rgba(0, 0, 0, 0.25);
+.skip-signin-btn:hover {
+  color: #ffffff;
+}
+
+.skip-signin-arrow {
+  margin-left: 4px;
+  font-size: 11px;
+  transition: transform 0.15s;
+}
+
+.skip-signin-btn:hover .skip-signin-arrow {
+  transform: translateX(2px);
+}
+
+/* While anonymous sign-in is in flight, the arrow becomes a spinner: a
+   tapered arc (comet) rather than a full ring, so the rotation is visible. */
+.skip-signin-arrow.spinning {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  vertical-align: -1.5px;
+  border-radius: 50%;
+  background: conic-gradient(from 0deg, transparent 0deg 60deg, currentColor 360deg);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 1.5px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 1.5px));
+  transition: none;
+  /* Promote to its own compositor layer so the rotation stays smooth even
+     while the page's main thread is busy. */
+  will-change: transform;
+  backface-visibility: hidden;
+  animation: skip-signin-spin 0.45s linear infinite;
+}
+
+/* Both keyframes are explicit so the animation is a pure rotation. With only
+   a `to`, the implicit `from` inherits the hover translateX(2px), and the
+   browser matrix-interpolates between mismatched transforms — a wobbly path
+   that also can't composite, so it freezes while the main thread is busy. */
+@keyframes skip-signin-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.light-mode .skip-signin-btn {
+  color: rgba(0, 0, 0, 0.85);
+}
+
+.light-mode .skip-signin-btn:hover {
+  color: #000000;
+}
+
+/* Guest-limit popup (shown when an anonymous user exhausts their free filters) */
+.bouncer-guest-popup-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+  animation: backdrop-fade-in 0.1s ease-out;
+}
+
+@keyframes backdrop-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.bouncer-guest-popup {
+  position: relative;
+  box-sizing: border-box;
+  width: min(360px, calc(100vw - 40px));
+  padding: 28px 24px 24px;
+  border-radius: 16px;
+  background: #15202b;
+  border: 1px solid #38444d;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+  color: #ffffff;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  text-align: center;
+  animation: popup-fade-in 0.15s ease-out;
+}
+
+.dim-mode .bouncer-guest-popup {
+  background: #1e2732;
+}
+
+.light-mode .bouncer-guest-popup {
+  background: #ffffff;
+  border-color: rgba(0, 0, 0, 0.12);
+  color: #0f1419;
+}
+
+.bouncer-guest-popup-close {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  border: none;
+  background: none;
+  color: inherit;
+  opacity: 0.6;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 6px;
+  transition: opacity 0.15s;
+}
+
+.bouncer-guest-popup-close:hover {
+  opacity: 1;
+}
+
+.bouncer-guest-popup-msg {
+  margin: 0 0 20px;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.45;
+}
+
+/* The popup reuses .google-signin-btn for the sign-in action */
+.bouncer-guest-popup .google-signin-btn {
+  width: 100%;
+}
+
+/* Guest-limit variant is the headline of its state, not fine print — keep it
+   at full message size despite the smaller .ff-signin-explanation base. */
+.ff-guest-limit-msg {
+  margin: 12px 0 0;
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .filter-phrases-header {
@@ -1398,7 +1567,7 @@ article {
 }
 
 .filter-phrases-container .filter-phrases-input:focus {
-  border-bottom-color: rgb(234, 133, 84) !important;
+  border-bottom-color: rgb(var(--bouncer-brand-rgb)) !important;
   box-shadow: none !important;
 }
 
@@ -1735,7 +1904,7 @@ article {
   bottom: 0;
   z-index: 10000;
   background-color: rgb(0, 0, 0);
-  border: 2px solid rgb(234, 133, 84);
+  border: 2px solid rgb(var(--bouncer-brand-rgb));
   border-bottom: none;
   border-radius: 16px 16px 0 0;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -1758,7 +1927,7 @@ article {
   height: 0;
   border-left: 6px solid transparent;
   border-right: 6px solid transparent;
-  border-top: 6px solid rgb(234, 133, 84);
+  border-top: 6px solid rgb(var(--bouncer-brand-rgb));
   transition: transform 0.2s;
 }
 
@@ -1818,7 +1987,7 @@ article {
 
 .filter-phrases-mobile .filter-phrases-container {
   background-color: rgb(0, 0, 0);
-  border: 2px solid rgb(234, 133, 84);
+  border: 2px solid rgb(var(--bouncer-brand-rgb));
   border-radius: 16px;
   padding: 12px 16px;
 }

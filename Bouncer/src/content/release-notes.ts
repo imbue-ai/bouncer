@@ -35,7 +35,7 @@ export const RELEASE_NOTES: ReleaseNote[] = [
       '(Experimental) AI Text and Image Detection',
       'Improved local model: Gemma 4 E4B',
     ],
-  },
+  }
 ];
 
 export function getReleaseNote(version: string, platform: ReleaseNotePlatform): ReleaseNote | undefined {

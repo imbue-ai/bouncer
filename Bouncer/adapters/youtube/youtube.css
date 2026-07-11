@@ -19,7 +19,6 @@
  * adapter's mini-guide observer keeps trying to re-add the entry on every
  * DOM mutation — CSS hides what slips through. */
 body.bouncer-disabled .bouncer-mini-guide-entry,
-body.bouncer-disabled .bouncer-title-logo,
 body.bouncer-disabled .filter-phrases-banner,
 body.bouncer-disabled .ff-why-annoying-btn {
   display: none !important;
@@ -151,7 +150,9 @@ html[dark] .bouncer-mini-guide-entry__label {
 .filter-phrases-banner--youtube .filter-phrases-container {
   padding: 12px 16px;
   background-color: #ffffff !important;
-  border: 1px solid rgba(0, 0, 0, 0.1) !important;
+  /* Brand orange outline — matches the Twitter panel. Color comes from the
+   * `--bouncer-brand-rgb` variable defined in content.css's :root. */
+  border: var(--green-border-width) solid rgb(var(--bouncer-brand-rgb)) !important;
   border-radius: 12px !important;
   display: flex;
   flex-direction: column;
@@ -160,7 +161,6 @@ html[dark] .bouncer-mini-guide-entry__label {
 
 html[dark] .filter-phrases-banner--youtube .filter-phrases-container {
   background-color: #0f0f0f !important;
-  border-color: rgba(255, 255, 255, 0.1) !important;
 }
 
 /* Title row: bold "Bouncer" header. No accent dot — the orange border
@@ -175,19 +175,11 @@ html[dark] .filter-phrases-banner--youtube .filter-phrases-container {
   gap: 8px;
   padding-bottom: 0;
   font-family: "Roboto", "Arial", sans-serif;
-  font-size: 16px;
+  font-size: 20px;
   font-weight: 700;
   letter-spacing: 0.1px;
   color: #0f0f0f;
   text-transform: none;
-}
-
-.filter-phrases-banner--youtube .bouncer-title-logo {
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  flex-shrink: 0;
-  display: block;
 }
 
 html[dark] .filter-phrases-banner--youtube .filter-phrases-box-name {
@@ -256,7 +248,7 @@ html[dark] .filter-phrases-banner--youtube .filter-phrase-separator {
 }
 
 .filter-phrases-banner--youtube .filter-phrases-container .filter-phrases-input:focus {
-  border-bottom-color: #c00 !important;
+  border-bottom-color: rgb(var(--bouncer-brand-rgb)) !important;
 }
 
 html[dark] .filter-phrases-banner--youtube .filter-phrases-container .filter-phrases-input {
@@ -265,7 +257,14 @@ html[dark] .filter-phrases-banner--youtube .filter-phrases-container .filter-phr
 }
 
 html[dark] .filter-phrases-banner--youtube .filter-phrases-container .filter-phrases-input:focus {
-  border-bottom-color: #ff4444 !important;
+  border-bottom-color: rgb(var(--bouncer-brand-rgb)) !important;
+}
+
+/* Nudge the cycling placeholder up 2px so its baseline aligns with the
+ * input's typed text on YT (the input uses a slightly different font metric
+ * than the shared placeholder pin). */
+.filter-phrases-banner--youtube .filter-placeholder-cycle {
+  top: -2px;
 }
 
 /* Actions row — "View filtered" pill + icon buttons, sized for the column. */
@@ -342,6 +341,12 @@ html[dark] .filter-phrases-banner--youtube .filter-ai-text-toggle {
   border: 1px solid rgba(0, 0, 0, 0.12) !important;
   color: #0f0f0f !important;
   font-weight: 500;
+}
+
+/* Keep "Activate Bouncer" on one line in the narrow YT guide column —
+ * without this the two-word label wraps and pushes the button height. */
+.filter-phrases-banner--youtube .google-signin-btn-label {
+  white-space: nowrap;
 }
 
 .filter-phrases-banner--youtube .google-signin-btn:hover {
@@ -656,32 +661,34 @@ body.site-youtube .yt-card-reasoning {
 }
 
 /* ===== "Bounce this video" action button ===== */
-/* Anchored inline with the first line of the title text, to the left of
- * the 3-dots menu. Sized down and recolored to YT's secondary icon gray
- * so it reads as a native sibling of the menu rather than a brand accent.
- * The default orange + 34px sizing from content.css is overridden here. */
+/* Per-card cancel icon — sized to match YT's own 24×24 icon-button so it
+ * reads as a native sibling of the 3-dot "More actions" menu, then tinted
+ * with the Bouncer brand orange so users can recognise it as our control.
+ * The 34px default sizing from content.css is overridden here. */
 
 .ff-why-annoying-btn.ff-yt-under-menu,
 .ff-why-annoying-btn.ff-yt-inline-meta {
+  /* Sizing for our two fallback placements only. The next-to-menu placement
+   * is intentionally excluded — it carries the cloned YT button-shape
+   * classes and needs to size from YT's own rules so its baseline lines up
+   * with the 3-dot button next to it. */
   width: 24px;
   height: 24px;
-  color: #606060;
+  /* Bouncer brand accent. Defined in content.css :root as
+   * `--bouncer-brand-rgb`. */
+  color: rgb(var(--bouncer-brand-rgb));
 }
 
-/* Dark trash icon. Desktop marks dark mode with `html[dark]`. Mobile
- * (m.youtube.com, inside the iOS app) uses `html[darker-dark-theme]` instead —
- * but desktop ALSO carries that attribute even in light mode, so the mobile
- * override is scoped to `body.ff-ios` to avoid recoloring the desktop icon. */
-html[dark] .ff-why-annoying-btn.ff-yt-under-menu,
-html[dark] .ff-why-annoying-btn.ff-yt-inline-meta,
-html[darker-dark-theme] body.ff-ios .ff-why-annoying-btn.ff-yt-under-menu,
-html[darker-dark-theme] body.ff-ios .ff-why-annoying-btn.ff-yt-inline-meta {
-  color: #aaa;
+/* For the next-to-menu placement we can't rely on inherited `color` driving
+ * `stroke: currentcolor` — YT's `.ytSpecButtonShapeNext*` rules set their own
+ * `color` on the host. Force `stroke` directly on the SVG so the brand orange
+ * wins regardless of YT's icon-color cascade. */
+.ff-why-annoying-btn.ff-yt-next-to-menu svg {
+  stroke: rgb(var(--bouncer-brand-rgb));
 }
 
 .ff-why-annoying-btn.ff-yt-under-menu:hover,
 .ff-why-annoying-btn.ff-yt-inline-meta:hover {
-  color: #0f0f0f;
   background: rgba(0, 0, 0, 0.05);
 }
 
@@ -689,7 +696,6 @@ html[dark] .ff-why-annoying-btn.ff-yt-under-menu:hover,
 html[dark] .ff-why-annoying-btn.ff-yt-inline-meta:hover,
 html[darker-dark-theme] body.ff-ios .ff-why-annoying-btn.ff-yt-under-menu:hover,
 html[darker-dark-theme] body.ff-ios .ff-why-annoying-btn.ff-yt-inline-meta:hover {
-  color: #f1f1f1;
   background: rgba(255, 255, 255, 0.1);
 }
 
@@ -697,6 +703,16 @@ html[darker-dark-theme] body.ff-ios .ff-why-annoying-btn.ff-yt-inline-meta:hover
 .ff-why-annoying-btn.ff-yt-inline-meta svg {
   width: 16px;
   height: 16px;
+}
+
+/* Sits as an inline sibling immediately before the 3-dot "More actions"
+ * button. Hover treatment and inner layout come from the cloned
+ * `ytSpecButtonShape*` classes on the element; color and outer sizing are
+ * set in the shared block above. This rule just adds the gap between us
+ * and the 3-dots. */
+.ff-why-annoying-btn.ff-yt-next-to-menu {
+  margin-right: 4px;
+  vertical-align: middle;
 }
 
 /* Sponsored ad row uses `display: flex` with default `align-items: stretch`,
@@ -749,5 +765,24 @@ html[darker-dark-theme] body.ff-ios .ff-why-annoying-btn.ff-yt-inline-meta:hover
 .ff-why-annoying-btn.ff-yt-short-menu svg {
   width: 16px;
   height: 16px;
+}
+
+/* Lockup metadata column. Pulling the 3-dot menu out of absolute
+ * positioning (below) lets the text container claim full width and flow
+ * naturally next to the buttons instead of running underneath them. */
+.ytLockupMetadataViewModelTextContainer {
+  width: 100%;
+}
+
+.ytLockupMetadataViewModelMenuButton {
+  position: static !important;
+  transform: translateX(13px);
+}
+
+/* Watch-page sidebar lockups clamp the 3-dot button to a fixed width that
+ * crowds the cancel icon next to it. Letting it size to content matches
+ * the home feed. */
+ytd-item-section-renderer .ytSpecButtonShapeNextSizeM.ytSpecButtonShapeNextIconButton {
+  width: unset;
 }
 

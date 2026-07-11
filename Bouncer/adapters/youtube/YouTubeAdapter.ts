@@ -10,6 +10,32 @@ import type {
 // Keep the hostname check inline. Must match the `youtube` entry in
 // src/shared/platforms.ts (PLATFORM_RUNTIME.youtube.hostPattern).
 
+// Adapter is built unbundled (`bundle: false` in build.js) and runs as a
+// standalone content script, so we can't import shared helpers — they would
+// become `require(...)` calls at runtime. `DOMPurify` is loaded as a sibling
+// content script (see `dompurify.js` ahead of this file in manifest.json), so
+// it's available as a runtime global.
+declare const DOMPurify: { sanitize(html: string, opts: { RETURN_DOM_FRAGMENT: true }): DocumentFragment };
+
+// Classic Bouncer trashcan glyph (same as Twitter/LinkedIn). Sized via the
+// `.ff-yt-* svg` rule in youtube.css. Stroke-based, so the wrapper uses
+// `stroke: currentcolor` and `fill: none` rather than a fill cascade.
+const CANCEL_SVG = '<svg xmlns="http://www.w3.org/2000/svg" height="24" viewBox="0 0 24 24" width="24" focusable="false" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="pointer-events: none; display: inherit; width: 100%; height: 100%;"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M5 6v13a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V6"/><line x1="10" y1="10" x2="10" y2="17"/><line x1="14" y1="10" x2="14" y2="17"/></svg>';
+
+// YT-native icon-button wrapper. When the bouncer button sits next to a
+// real "More actions" 3-dot menu, we clone YT's button-shape DOM around the
+// trash SVG so YT's own stylesheet drives sizing and hover. Stroke (not fill)
+// drives the glyph color since the trashcan is a stroke-only path.
+const YT_BUTTON_INNER = `<div aria-hidden="true" class="ytSpecButtonShapeNextIcon"><span class="ytIconWrapperHost" style="width: 24px; height: 24px;"><span class="yt-icon-shape ytSpecIconShapeHost"><div style="width: 100%; height: 100%; display: block; stroke: currentcolor; fill: none;">${CANCEL_SVG}</div></span></span></div>`;
+const YT_BUTTON_SHAPE_CLASSES = [
+  'ytSpecButtonShapeNextHost',
+  'ytSpecButtonShapeNextText',
+  'ytSpecButtonShapeNextMono',
+  'ytSpecButtonShapeNextSizeM',
+  'ytSpecButtonShapeNextIconButton',
+  'ytSpecButtonShapeNextEnableBackdropFilterExperiment',
+] as const;
+
 interface LockupStoreData {
   kind?: 'video' | 'ad' | 'short';
   videoId: string | null;
@@ -367,24 +393,6 @@ const BouncerYouTubeAdapter = class YouTubeAdapter implements PlatformAdapter {
     setTimeout(scrollAndFocus, 350);
   }
 
-  // Prepend the Bouncer logo into the box's title span. Done from the
-  // adapter (not from shared UI markup) because the logo URL needs
-  // `chrome.runtime.getURL`, which isn't reachable from CSS, and only the
-  // YouTube skin wants this decoration.
-  private _ensureTitleLogo() {
-    const title = document.querySelector<HTMLElement>(
-      '.filter-phrases-banner--youtube .filter-phrases-box-name'
-    );
-    if (!title) return;
-    if (title.querySelector('.bouncer-title-logo')) return;
-    const img = document.createElement('img');
-    img.className = 'bouncer-title-logo';
-    img.src = chrome.runtime.getURL('icons/icon48.png');
-    img.alt = '';
-    img.setAttribute('aria-hidden', 'true');
-    title.prepend(img);
-  }
-
   private _initMiniGuideEntry() {
     if (!this._countListenerWired) {
       this._wireFilteredCountListener();
@@ -392,7 +400,6 @@ const BouncerYouTubeAdapter = class YouTubeAdapter implements PlatformAdapter {
     }
     const tick = () => {
       this._ensureMiniGuideEntry();
-      this._ensureTitleLogo();
     };
     tick();
     // Long-running observer — handles delayed guide hydration, SPA nav, and
@@ -842,8 +849,25 @@ const BouncerYouTubeAdapter = class YouTubeAdapter implements PlatformAdapter {
 
   insertActionButton(article: HTMLElement, button: HTMLElement): void {
     if (article.querySelector('.ff-why-annoying-btn')) return;
-    // Surface-specific anchors, all inline at the end of an existing text
-    // row so the button reads as a native sibling of the metadata:
+    // Preferred anchor on cards that expose a per-video overflow menu
+    // ("More actions"): sit immediately to its left, structurally identical
+    // to YT's own icon-button so its CSS handles sizing, hover, and color.
+    const moreActions = article.querySelector<HTMLElement>('button[aria-label="More actions"]');
+    if (moreActions) {
+      const wrapper = moreActions.closest<HTMLElement>('yt-button-shape') || moreActions;
+      wrapper.insertAdjacentElement('beforebegin', button);
+      button.classList.add('ff-yt-next-to-menu', ...YT_BUTTON_SHAPE_CLASSES);
+      button.replaceChildren(DOMPurify.sanitize(YT_BUTTON_INNER, { RETURN_DOM_FRAGMENT: true }));
+      return;
+    }
+    // Fallback surfaces (Shorts, mobile m.youtube.com, ad treatments without
+    // a More-actions menu) get the bare cancel glyph; YT-native chrome
+    // isn't available to mimic there.
+    button.replaceChildren(DOMPurify.sanitize(CANCEL_SVG, { RETURN_DOM_FRAGMENT: true }));
+    // Fallbacks for surfaces without a More-actions button (Shorts, mobile
+    // m.youtube.com cards, some ad treatments). Inline anchors at the end of
+    // an existing text row so the button reads as a native sibling of the
+    // metadata:
     //   - Regular videos (incl. mobile home lockup): end of the views/age row.
     //   - Mobile watch cards: end of the views byline.
     //   - Shorts: end of the views subhead (desktop) / title (mobile).
@@ -898,10 +922,12 @@ const BouncerYouTubeAdapter = class YouTubeAdapter implements PlatformAdapter {
 
     if (!anchor) {
       // Anchor not hydrated yet — observe the card and retry when YT
-      // finishes rendering the metadata row. Without this we'd silently
-      // miss the first few cards on every page load.
+      // finishes rendering the metadata row or the More-actions button.
+      // Without this we'd silently miss the first few cards on every page
+      // load.
       const mo = new MutationObserver(() => {
         if (article.querySelector('.ff-why-annoying-btn')) { mo.disconnect(); return; }
+        const hasMoreActions = article.querySelector('button[aria-label="More actions"]');
         const hasShort = article.querySelector('.shortsLockupViewModelHostOutsideMetadataSubhead');
         const hasAdBadge = article.querySelector('.ytwFeedAdMetadataViewModelHostMetadataAdBadgeDetailsLineContainerStyleStandard');
         const metaRows = article.querySelectorAll('.ytContentMetadataViewModelMetadataRow');
@@ -909,7 +935,7 @@ const BouncerYouTubeAdapter = class YouTubeAdapter implements PlatformAdapter {
           article.querySelector('.ytLockupMetadataViewModelHost')
           || article.querySelector('feed-ad-metadata-view-model');
         const hasMobile = this._mobile && (article.matches?.('ytm-shorts-lockup-view-model') || this._mobileActionAnchor(article));
-        if (hasShort || hasAdBadge || metaRows.length >= 1 || hasFallback || hasMobile) {
+        if (hasMoreActions || hasShort || hasAdBadge || metaRows.length >= 1 || hasFallback || hasMobile) {
           mo.disconnect();
           this.insertActionButton(article, button);
         }
