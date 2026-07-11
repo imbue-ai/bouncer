@@ -1,5 +1,5 @@
 {
-  "originHash" : "bcda6546ca7481ff6a9d5ee8dc918b1cdef522729a8360d1288ee422233e9bf8",
+  "originHash" : "2b3caee7718d4a9c6e47b84383556b32427d02cf1f13a3e32fd8b0f96ca4a3b9",
   "pins" : [
     {
       "identity" : "abseil-cpp-binary",
@@ -98,6 +98,15 @@
       "state" : {
         "revision" : "a0bc79961d7be727d258d33d5a6b2f1023270ba1",
         "version" : "1.22.5"
+      }
+    },
+    {
+      "identity" : "litert-lm",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/millanatimbue/LiteRT-LM.git",
+      "state" : {
+        "branch" : "release/ios",
+        "revision" : "01020c602a8b6f9344522b0f83e149bf35517ca0"
       }
     },
     {

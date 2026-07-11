@@ -361,7 +361,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				4E38A4C92F7218D300496A14 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */,
-				DA00LITERTPKG00000DA000 /* XCLocalSwiftPackageReference "LiteRT-LM" */,
+				DA00LITERTPKG00000DA000 /* XCRemoteSwiftPackageReference "LiteRT-LM" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 97BD3B7E2F3EB56C00F8BF65 /* Products */;
@@ -1012,9 +1012,13 @@
 				minimumVersion = 12.11.0;
 			};
 		};
-		DA00LITERTPKG00000DA000 /* XCLocalSwiftPackageReference "LiteRT-LM" */ = {
-			isa = XCLocalSwiftPackageReference;
-			relativePath = ../LiteRT-LM;
+		DA00LITERTPKG00000DA000 /* XCRemoteSwiftPackageReference "LiteRT-LM" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/millanatimbue/LiteRT-LM.git";
+			requirement = {
+				branch = "release/ios";
+				kind = branch;
+			};
 		};
 /* End XCRemoteSwiftPackageReference section */
 
@@ -1031,7 +1035,7 @@
 		};
 		DA00LITERTLM000000DA001 /* LiteRTLM */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = DA00LITERTPKG00000DA000 /* XCLocalSwiftPackageReference "LiteRT-LM" */;
+			package = DA00LITERTPKG00000DA000 /* XCRemoteSwiftPackageReference "LiteRT-LM" */;
 			productName = LiteRTLM;
 		};
 /* End XCSwiftPackageProductDependency section */
