@@ -94,7 +94,7 @@ export function isIosLocalAiTextDetectAvailable(): boolean {
  *
  * - `aiConfidence` is the **normalized expected bucket index** from the
  *   trained 4-class softmax, i.e. `(probs · [0,1,2,3]) / 3`, matching the
- *   EditLens scoring formula `(probs @ arange(n)) / (n-1)` used in the
+ *   detector scoring formula `(probs @ arange(n)) / (n-1)` used in the
  *   training pipeline (classify_tweets.py, inference.py, eval_v2_buckets.py).
  *   Ranges continuously in [0, 1]: 0 = all mass on class 0 ("clearly
  *   human"), 1 = all mass on class 3 ("clearly AI"), 0.5 = uniform over the

@@ -865,7 +865,7 @@ struct BouncerSettingsView: View {
 
             // AI text/image detection is available when either Imbue is configured
             // OR the on-device classifier model has been picked.
-            if hasImbueBackend || viewModel.selectedModel == kIosLocalGemmaModelKey {
+            if hasImbueBackend || viewModel.selectedModel.hasPrefix("iosLocal:") {
                 Section {
                     Toggle(isOn: Binding(
                         get: { viewModel.aiTextFilterEnabled },
@@ -1007,7 +1007,9 @@ struct BouncerSettingsView: View {
 
 // MARK: - Providers Settings
 
-private let kIosLocalGemmaModelKey = "iosLocal:gemma-4-e4b"
+// On-device model keys are "iosLocal:<id>" where <id> comes from
+// LocalInferenceService.models. Use LocalInferenceService.model(forKey:) to
+// resolve a selectedModel string to a catalog entry.
 
 private struct ProviderSpec: Identifiable {
     let id: String              // "openai", "anthropic", ...
@@ -1135,7 +1137,7 @@ struct ProvidersSettingsView: View {
 
     private var currentProviderLabel: String {
         if selectedModel == imbueModelKey { return "Imbue" }
-        if selectedModel == kIosLocalGemmaModelKey { return "On-device" }
+        if LocalInferenceService.model(forKey: selectedModel) != nil { return "On-device" }
         guard let colon = selectedModel.firstIndex(of: ":") else { return "" }
         let providerId = String(selectedModel[..<colon])
         return providerSpecs.first(where: { $0.id == providerId })?.displayName ?? providerId
@@ -1143,7 +1145,7 @@ struct ProvidersSettingsView: View {
 
     private var currentModelLabel: String {
         if selectedModel == imbueModelKey { return "Imbue (default)" }
-        if selectedModel == kIosLocalGemmaModelKey { return "Gemma 4 E4B (on-device)" }
+        if let m = LocalInferenceService.model(forKey: selectedModel) { return "\(m.displayName) (on-device)" }
         guard let colon = selectedModel.firstIndex(of: ":") else { return selectedModel }
         let providerId = String(selectedModel[..<colon])
         let modelId = String(selectedModel[selectedModel.index(after: colon)...])
@@ -1181,53 +1183,65 @@ struct ProvidersSettingsView: View {
     @ViewBuilder
     private var onDeviceSection: some View {
         Section {
-            Button {
-                guard isOnDeviceReady else { return }
-                Task { await selectModel(kIosLocalGemmaModelKey) }
-            } label: {
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Gemma 4 E4B (on-device)")
-                            .foregroundStyle(isOnDeviceReady ? .primary : .secondary)
-                        Text(onDeviceStatusText)
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    if selectedModel == kIosLocalGemmaModelKey {
-                        Image(systemName: "checkmark")
-                            .foregroundStyle(.tint)
-                    }
-                }
+            ForEach(LocalInferenceService.models) { model in
+                onDeviceModelRow(model)
             }
-            .buttonStyle(.plain)
-            .disabled(!isOnDeviceReady)
-
-            if case .downloading(let progress) = localService.modelStatus {
-                ProgressView(value: progress)
-            } else if case .paused(let progress) = localService.modelStatus {
-                ProgressView(value: progress)
-            }
-
-            onDeviceActionButtons
         } header: {
             Text("On-device")
         } footer: {
-            Text("Runs Gemma 4 E4B locally for phrase-filter classification and AI-text detection — no posts leave your phone. Downloads ~3.7 GB. Requires Wi-Fi and an iPhone with 6 GB+ RAM.")
+            Text("Runs Gemma locally for phrase filtering and AI-text detection — no posts leave your phone. Download a model, then tap it to make it active. Requires Wi-Fi and an iPhone with 6 GB+ RAM.")
         }
     }
 
-    private var isOnDeviceReady: Bool {
-        switch localService.modelStatus {
+    @ViewBuilder
+    private func onDeviceModelRow(_ model: LocalInferenceService.LocalModel) -> some View {
+        let status = localService.downloadStatus(for: model)
+        let ready = isReady(status)
+        Button {
+            guard ready else { return }
+            Task { await selectModel(model.selectedModelKey) }
+        } label: {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("\(model.displayName) (on-device)")
+                        .foregroundStyle(ready ? .primary : .secondary)
+                    Text(onDeviceStatusText(model, status))
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                if selectedModel == model.selectedModelKey {
+                    Image(systemName: "checkmark")
+                        .foregroundStyle(.tint)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .disabled(!ready)
+
+        if case .downloading(let progress) = status {
+            ProgressView(value: progress)
+        } else if case .paused(let progress) = status {
+            ProgressView(value: progress)
+        }
+
+        onDeviceActionButtons(model, status)
+    }
+
+    private func isReady(_ status: LocalInferenceService.ModelStatus) -> Bool {
+        switch status {
         case .downloaded, .ready: return true
         default: return false
         }
     }
 
-    private var onDeviceStatusText: String {
-        switch localService.modelStatus {
+    private func onDeviceStatusText(
+        _ model: LocalInferenceService.LocalModel,
+        _ status: LocalInferenceService.ModelStatus
+    ) -> String {
+        switch status {
         case .notDownloaded:
-            return "Not downloaded"
+            return "Not downloaded — \(model.approxSize)"
         case .downloading(let progress):
             let pct = Int((progress * 100).rounded())
             return "Downloading \(pct)% — \(localService.downloadedBytesDisplay) / \(localService.totalBytesDisplay)"
@@ -1235,27 +1249,30 @@ struct ProvidersSettingsView: View {
             let pct = Int((progress * 100).rounded())
             return "Paused at \(pct)%"
         case .downloaded:
-            return "Downloaded — ready to load"
+            return "Downloaded — tap to use"
         case .loading:
             return "Loading…"
         case .ready:
-            return "Ready"
+            return "Ready — active"
         case .error(let message):
             return "Error: \(message)"
         }
     }
 
     @ViewBuilder
-    private var onDeviceActionButtons: some View {
-        switch localService.modelStatus {
+    private func onDeviceActionButtons(
+        _ model: LocalInferenceService.LocalModel,
+        _ status: LocalInferenceService.ModelStatus
+    ) -> some View {
+        switch status {
         case .notDownloaded, .error:
-            Button("Download model") {
-                localService.startDownload()
+            Button("Download") {
+                localService.startDownload(model)
             }
         case .downloading:
-            // .borderless button style: without it, both buttons share
-            // one row-wide hit region in Form/List and a single tap fires
-            // every action closure in the row.
+            // .borderless button style: without it, both buttons share one
+            // row-wide hit region in Form/List and a single tap fires every
+            // action closure in the row.
             HStack {
                 Button("Pause") { localService.pauseDownload() }
                     .buttonStyle(.borderless)
@@ -1265,18 +1282,18 @@ struct ProvidersSettingsView: View {
             }
         case .paused:
             HStack {
-                Button("Resume") { localService.startDownload() }
+                Button("Resume") { localService.startDownload(model) }
                     .buttonStyle(.borderless)
                 Spacer()
                 Button("Cancel", role: .destructive) { localService.cancelDownload() }
                     .buttonStyle(.borderless)
             }
         case .downloaded, .ready, .loading:
-            Button("Delete model", role: .destructive) {
-                if selectedModel == kIosLocalGemmaModelKey {
+            Button("Delete", role: .destructive) {
+                if selectedModel == model.selectedModelKey {
                     Task { await selectModel(imbueModelKey) }
                 }
-                localService.deleteModel()
+                localService.deleteModel(model)
             }
         }
     }
@@ -1393,6 +1410,11 @@ struct ProvidersSettingsView: View {
 
     @MainActor
     private func selectModel(_ modelKey: String) async {
+        // When an on-device variant is picked, switch the native engine to it
+        // (unloads the current model; the new one lazily loads on next classify).
+        if let model = LocalInferenceService.model(forKey: modelKey) {
+            localService.selectModel(model)
+        }
         await viewModel.setStorage(["selectedModel": modelKey])
         selectedModel = modelKey
         viewModel.selectedModel = modelKey

@@ -45,7 +45,7 @@
 		AA00004000000000000000AA /* filterphrases.mp4 in Resources */ = {isa = PBXBuildFile; fileRef = AA00004100000000000000AA /* filterphrases.mp4 */; };
 		AA00005000000000000000AA /* PlatformPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00005100000000000000AA /* PlatformPickerView.swift */; };
 		AA00006000000000000000AA /* Platforms.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00006100000000000000AA /* Platforms.swift */; };
-		DA00HEADRES000000000DA008 /* linear_v3_head.bin in Resources */ = {isa = PBXBuildFile; fileRef = DA00HEADBIN000000000DA007 /* linear_v3_head.bin */; };
+		DA00E3HEADRES0000000DA016 /* detector_head_e2b_v2.bin in Resources */ = {isa = PBXBuildFile; fileRef = DA00E3HEADBIN0000000DA015 /* detector_head_e2b_v2.bin */; };
 		DA00LISBUILD0000000DA004 /* LocalInferenceService.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA00LISFILE00000000DA003 /* LocalInferenceService.swift */; };
 		DA00LITERTLM000000DA002 /* LiteRTLM in Frameworks */ = {isa = PBXBuildFile; productRef = DA00LITERTLM000000DA001 /* LiteRTLM */; };
 		DA00MDBUILD000000000DA006 /* ModelDownloader.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA00MDFILE0000000000DA005 /* ModelDownloader.swift */; };
@@ -127,7 +127,7 @@
 		AA00004100000000000000AA /* filterphrases.mp4 */ = {isa = PBXFileReference; lastKnownFileType = file; path = filterphrases.mp4; sourceTree = "<group>"; };
 		AA00005100000000000000AA /* PlatformPickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlatformPickerView.swift; sourceTree = "<group>"; };
 		AA00006100000000000000AA /* Platforms.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Platforms.swift; sourceTree = "<group>"; };
-		DA00HEADBIN000000000DA007 /* linear_v3_head.bin */ = {isa = PBXFileReference; lastKnownFileType = archive.macbinary; path = linear_v3_head.bin; sourceTree = "<group>"; };
+		DA00E3HEADBIN0000000DA015 /* detector_head_e2b_v2.bin */ = {isa = PBXFileReference; lastKnownFileType = archive.macbinary; path = detector_head_e2b_v2.bin; sourceTree = "<group>"; };
 		DA00LISFILE00000000DA003 /* LocalInferenceService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalInferenceService.swift; sourceTree = "<group>"; };
 		DA00MDFILE0000000000DA005 /* ModelDownloader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelDownloader.swift; sourceTree = "<group>"; };
 		EE00000100000000000000EE /* manifest.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = manifest.json; sourceTree = "<group>"; };
@@ -218,7 +218,7 @@
 				AA00006100000000000000AA /* Platforms.swift */,
 				DA00LISFILE00000000DA003 /* LocalInferenceService.swift */,
 				DA00MDFILE0000000000DA005 /* ModelDownloader.swift */,
-				DA00HEADBIN000000000DA007 /* linear_v3_head.bin */,
+				DA00E3HEADBIN0000000DA015 /* detector_head_e2b_v2.bin */,
 				AA00004100000000000000AA /* filterphrases.mp4 */,
 				AA00000400000000000000AA /* ChromePolyfill.js */,
 				AA00000600000000000000AA /* Bouncer.entitlements */,
@@ -361,7 +361,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				4E38A4C92F7218D300496A14 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */,
-				DA00LITERTPKG00000DA000 /* XCRemoteSwiftPackageReference "LiteRT-LM" */,
+				DA00LITERTPKG00000DA000 /* XCLocalSwiftPackageReference "LiteRT-LM" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 97BD3B7E2F3EB56C00F8BF65 /* Products */;
@@ -429,7 +429,7 @@
 				97BD3BF22F3EB56D00F8BF65 /* content.js in Resources */,
 				97BD3BF32F3EB56D00F8BF65 /* dompurify.js in Resources */,
 				AA00004000000000000000AA /* filterphrases.mp4 in Resources */,
-				DA00HEADRES000000000DA008 /* linear_v3_head.bin in Resources */,
+				DA00E3HEADRES0000000DA016 /* detector_head_e2b_v2.bin in Resources */,
 				4EC0EC652FEB068700F3FCDE /* GoogleService-Info-Dev.plist in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -1012,13 +1012,9 @@
 				minimumVersion = 12.11.0;
 			};
 		};
-		DA00LITERTPKG00000DA000 /* XCRemoteSwiftPackageReference "LiteRT-LM" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/millanatimbue/LiteRT-LM.git";
-			requirement = {
-				kind = revision;
-				revision = 4e05601aa0e197016b54f2f4246feba9513b1169;
-			};
+		DA00LITERTPKG00000DA000 /* XCLocalSwiftPackageReference "LiteRT-LM" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../LiteRT-LM;
 		};
 /* End XCRemoteSwiftPackageReference section */
 
@@ -1035,7 +1031,7 @@
 		};
 		DA00LITERTLM000000DA001 /* LiteRTLM */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = DA00LITERTPKG00000DA000 /* XCRemoteSwiftPackageReference "LiteRT-LM" */;
+			package = DA00LITERTPKG00000DA000 /* XCLocalSwiftPackageReference "LiteRT-LM" */;
 			productName = LiteRTLM;
 		};
 /* End XCSwiftPackageProductDependency section */

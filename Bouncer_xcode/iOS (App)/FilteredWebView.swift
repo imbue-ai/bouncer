@@ -291,7 +291,7 @@ struct FilteredWebView: UIViewRepresentable {
     //     {"logits": [f,f,f,f], "aiConfidence": f}
     // where aiConfidence is the normalized expected bucket index:
     //     aiConfidence = (softmax(logits) · [0, 1, 2, 3]) / 3
-    // matching the EditLens training-pipeline scoring formula
+    // matching the detector training-pipeline scoring formula
     //     (probs @ arange(n_buckets)) / (n_buckets - 1).
     // Ranges in [0, 1]: 0 = clearly human, 1 = clearly AI. On error the
     // payload is a string error message.
@@ -395,11 +395,17 @@ struct FilteredWebView: UIViewRepresentable {
                 let webView = message.webView
                 Task { @MainActor in
                     do {
-                        let logits = try await LocalInferenceService.shared.classifyText(text)
-                        let confidence = LocalInferenceService.aiConfidence(fromLogits: logits)
+                        // On-device detection: scoped LoRA + `activations`
+                        // + bundled head on the selected model's dedicated
+                        // detection engine. Requires a detection-capable model
+                        // (detector) selected with its files downloaded; otherwise
+                        // this throws and the JS aiText detector surfaces the
+                        // error (JS routes here for ANY iosLocal model, so a
+                        // non-detection variant fails loudly, not silently).
+                        let result = try await LocalInferenceService.shared.detectAIText(text)
                         let responseJson: [String: Any] = [
-                            "logits": logits.map { Double($0) },
-                            "aiConfidence": Double(confidence),
+                            "logits": result.logits.map { Double($0) },
+                            "aiConfidence": Double(result.score),
                         ]
                         let payloadData = try JSONSerialization.data(withJSONObject: responseJson)
                         let payload = String(data: payloadData, encoding: .utf8) ?? "{}"
@@ -408,7 +414,7 @@ struct FilteredWebView: UIViewRepresentable {
                     } catch {
                         let nsError = error as NSError
                         let payload = "\(type(of: error))[\(nsError.domain)#\(nsError.code)]: \(error.localizedDescription) | textLen=\(text.count)"
-                        print("[FeedFilter] classifyText error → JS: \(payload)")
+                        print("[FeedFilter] detectAIText error → JS: \(payload)")
                         await FilteredWebView.resolveLocalAiTextDetect(
                             webView: webView, callbackId: callbackId, ok: false, payload: payload)
                     }

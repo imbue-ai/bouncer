@@ -38,15 +38,16 @@ export const PREDEFINED_MODELS: PredefinedModelsMap = {
   ],
   iosLocal: [
     {
-      name: 'gemma-4-e4b',
-      display: 'Gemma 4 E4B (on-device)',
+      name: 'gemma-4-e2b-detector-v2',
+      display: 'Gemma E2B (on-device)',
       isLocal: true,
       supportsImages: false,
-      // ~3.7 GB base .litertlm (upstream Gemma 4 E4B IT from litert-community).
-      // AI-text classification runs in Swift on top of the chat decode logits
-      // via the bundled linear_v3_head.bin (LayerNorm + Linear → 4 classes),
-      // so no separate adapter download is needed.
-      sizeGB: 3.7,
+      // LoRA-socketed Gemma E2B (~2.2 GB base + small adapter). One model, two
+      // modes: plain chat/filtering with zero LoRA, and AI-text detection with
+      // the adapter scoped in + the bundled classifier head. The name must
+      // match LocalInferenceService.models ids — the native side resolves
+      // files/URLs from the "iosLocal:<id>" key.
+      sizeGB: 2.2,
     },
   ],
 };
