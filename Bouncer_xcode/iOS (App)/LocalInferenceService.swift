@@ -206,7 +206,14 @@ final class LocalInferenceService: ObservableObject {
         var adapterFilename: String? = nil
         var adapterURL: URL? = nil
         var headBlobResource: String? = nil     // bundled DetectorHead blob (no extension)
+        // Device gating for onboarding/UI: peak-RAM budget to run this model
+        // on the GPU backend, and the user-facing requirement string.
+        var minimumRAMBytes: UInt64 = 5 << 30
+        var requiredRAMDisplay: String = "6 GB"
         var supportsDetection: Bool { adapterFilename != nil && headBlobResource != nil }
+        var isSupportedOnThisDevice: Bool {
+            ProcessInfo.processInfo.physicalMemory >= minimumRAMBytes
+        }
         var selectedModelKey: String { "iosLocal:\(id)" }
     }
 

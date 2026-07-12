@@ -130,7 +130,7 @@ struct OnboardingView: View {
                 completeOnboarding()
             default:
                 // Paused or failed — resume/restart the transfer.
-                localService.startDownload(variant: .e2b)
+                localService.startDownload(LocalInferenceService.models[0])
             }
             return
         }
@@ -142,15 +142,15 @@ struct OnboardingView: View {
         case .local:
             // Unreachable via UI (unsupported devices never see the Local
             // option), but keep the RAM invariant local to the write.
-            guard OnDeviceModelVariant.e2b.isSupportedOnThisDevice else { return }
-            writeSelectedModel(OnDeviceModelVariant.e2b.modelKey)
-            switch localService.status(for: .e2b) {
+            guard LocalInferenceService.models[0].isSupportedOnThisDevice else { return }
+            writeSelectedModel(LocalInferenceService.models[0].selectedModelKey)
+            switch localService.downloadStatus(for: LocalInferenceService.models[0]) {
             case .downloaded, .loading, .ready:
                 // Already on disk (e.g. onboarding re-run) — nothing to fetch.
                 completeOnboarding()
             default:
                 isDownloadingModel = true
-                localService.startDownload(variant: .e2b)
+                localService.startDownload(LocalInferenceService.models[0])
             }
         }
     }
@@ -421,12 +421,12 @@ private struct InferenceModePage: View {
                         // Inline-Picker rows can't be individually disabled,
                         // so on low-RAM devices the Local option is omitted
                         // and the footer below explains why.
-                        if OnDeviceModelVariant.e2b.isSupportedOnThisDevice {
+                        if LocalInferenceService.models[0].isSupportedOnThisDevice {
                             option(
                                 title: "Local",
                                 description: "Runs entirely on your device — no posts ever leave your phone.",
                                 // Badge shows the bare size — the estimate's "~" reads as clutter here.
-                                badge: "\(OnDeviceModelVariant.e2b.sizeEstimateDisplay.replacingOccurrences(of: "~", with: "")) download",
+                                badge: "\(LocalInferenceService.models[0].approxSize.replacingOccurrences(of: "~", with: "")) download",
                                 badgeIcon: "arrow.down.circle"
                             )
                             .tag(InferenceMode.local)
@@ -436,8 +436,8 @@ private struct InferenceModePage: View {
                     .labelsHidden()
                     .disabled(isDownloading)
                 } footer: {
-                    if !OnDeviceModelVariant.e2b.isSupportedOnThisDevice {
-                        Text("Local filtering isn't available on this iPhone — it requires \(OnDeviceModelVariant.e2b.requiredRAMDisplay)+ RAM. You can use Express mode instead.")
+                    if !LocalInferenceService.models[0].isSupportedOnThisDevice {
+                        Text("Local filtering isn't available on this iPhone — it requires \(LocalInferenceService.models[0].requiredRAMDisplay)+ RAM. You can use Express mode instead.")
                     }
                 }
 

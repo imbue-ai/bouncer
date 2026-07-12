@@ -1232,7 +1232,7 @@ private let providerSpecs: [ProviderSpec] = [
 // (no "provider:model" prefix like BYOK entries). Keep the sentinel in
 // one place so the comparison in selectModel/active-row logic doesn't
 // drift.
-private let imbueModelKey = "imbue"
+let imbueModelKey = "imbue"
 
 struct ProvidersSettingsView: View {
     @ObservedObject var viewModel: FilterSheetViewModel
