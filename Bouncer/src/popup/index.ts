@@ -288,6 +288,14 @@ function setupStorageListener() {
       updateLocalModelSectionUI();
       refreshModelDropdownWithLocal().catch(err => console.error('[Popup] refreshModelDropdownWithLocal failed:', err));
     }
+    // Parked Local choice set/cleared (possibly by the background flipping
+    // selectedModel when the download finished) — re-sync radios + panel.
+    if (areaName === 'local' && changes.pendingLocalModelSelection) {
+      pendingLocalSelection = (changes.pendingLocalModelSelection.newValue as string) || null;
+      updateModelRadioUI();
+      updateLocalModelSectionVisibility();
+      updateLocalModelSectionUI();
+    }
     // Any AI-detection input changed (explicit toggles, experimental gate,
     // inferred intent, opt-out) — recompute the effective toggle UI from
     // storage rather than from the single changed value, since the checked
@@ -372,6 +380,7 @@ async function loadSettings() {
     'aiTextFilterExperimental',
     'aiFilterIntent',
     'aiFilterIntentOptOut',
+    'pendingLocalModelSelection',
     'filterReplies',
     'youtubeShowPlaceholder',
     // Per-platform master-switch keys come from the registry.
@@ -380,6 +389,10 @@ async function loadSettings() {
 
   // Load predefined model kwargs overrides
   predefinedModelKwargs = data.predefinedModelKwargs || {};
+
+  // Parked "Local, once downloaded" choice (cleared by the background when
+  // the download lands, or by any explicit model selection).
+  pendingLocalSelection = data.pendingLocalModelSelection || null;
 
   // API keys
   (document.getElementById('openaiApiKey') as HTMLInputElement).value = data.openaiApiKey || '';
@@ -909,13 +922,48 @@ function setupEventListeners() {
 
 }
 
+// The user's parked "switch to Local once it's downloaded" choice. Mirrors
+// the pendingLocalModelSelection storage key; while set, the previous model
+// keeps filtering and stays selected in the radios — only the download
+// panel and a note under Local reflect the parked choice. The background
+// flips selectedModel (and clears the key) when the download completes, so
+// the switch happens even if this popup is closed mid-download.
+let pendingLocalSelection: string | null = null;
+
+async function clearPendingLocalSelection() {
+  if (!pendingLocalSelection) return;
+  pendingLocalSelection = null;
+  await removeStorage('pendingLocalModelSelection');
+}
+
+// True when the model behind the headline Local radio has its weights on
+// disk (ready to select outright).
+function localRadioModelDownloaded(): boolean {
+  const state = localModelStatuses[LOCAL_RADIO_MODEL_KEY.split(':')[1]]?.state;
+  return state === 'ready' || state === 'cached';
+}
+
 // Wire the headline radios. selectModel() persists, re-renders the dropdown
 // (which re-syncs the radios via updateModelRadioUI), clears the
 // classification cache, and shows the download section when a not-yet-
 // downloaded local model is picked — no radio-specific follow-up needed.
 function setupModelRadios() {
   document.getElementById('modelRadioImbue')?.addEventListener('change', asyncHandler(() => selectModel('imbue')));
-  document.getElementById('modelRadioLocal')?.addEventListener('change', asyncHandler(() => selectModel(LOCAL_RADIO_MODEL_KEY)));
+  document.getElementById('modelRadioLocal')?.addEventListener('change', asyncHandler(async () => {
+    // Only switch outright when the model is already on disk (or in the iOS
+    // app, where the native sheet owns the download flow). Otherwise park
+    // the choice: Express stays selected and filtering, and the download
+    // panel appears below.
+    if (isInAppMode || localRadioModelDownloaded()) {
+      await selectModel(LOCAL_RADIO_MODEL_KEY);
+      return;
+    }
+    pendingLocalSelection = LOCAL_RADIO_MODEL_KEY;
+    await setStorage({ pendingLocalModelSelection: LOCAL_RADIO_MODEL_KEY });
+    updateModelRadioUI();
+    updateLocalModelSectionVisibility();
+    updateLocalModelSectionUI();
+  }));
 
   // The Imbue option doesn't exist on open-source builds with no Imbue
   // backend (same gate as the dropdown's Imbue entry).
@@ -983,6 +1031,10 @@ function closeDropdown() {
 }
 
 async function selectModel(modelKey: string) {
+  // Any explicit selection supersedes a parked "Local, once downloaded"
+  // choice — without this, the grey pending radio would linger next to
+  // whatever the user just picked.
+  await clearPendingLocalSelection();
   dropdownState.selectedModel = modelKey;
   await setStorage({ selectedModel: modelKey });
   renderModelDropdown(dropdownState.customModels, modelKey);
@@ -1007,10 +1059,13 @@ async function selectModel(modelKey: string) {
   }
 }
 
-// Show/hide the local model section based on whether a local model is selected
+// Show/hide the local model section based on whether a local model is
+// selected — or parked as the pending choice, so its download panel is
+// reachable before the switch actually happens.
 function updateLocalModelSectionVisibility() {
   const localModelSection = document.getElementById('localModelSection')!;
-  const isLocalModelSelected = dropdownState.selectedModel?.startsWith('local:');
+  const isLocalModelSelected = dropdownState.selectedModel?.startsWith('local:')
+    || pendingLocalSelection?.startsWith('local:');
   localModelSection.style.display = isLocalModelSelected ? 'block' : 'none';
 }
 
@@ -1229,6 +1284,11 @@ function updateModelRadioUI() {
   if (!imbueRadio || !localRadio) return;
 
   const selected = dropdownState.selectedModel;
+  // A parked Local choice (model still downloading) leaves the radios
+  // showing what's actually filtering — Express stays checked, Local stays
+  // unchecked — and the row's note explains that Local activates once the
+  // download finishes.
+  const localPending = !!pendingLocalSelection && selected !== LOCAL_RADIO_MODEL_KEY;
   imbueRadio.checked = selected === 'imbue';
   localRadio.checked = selected === LOCAL_RADIO_MODEL_KEY;
 
@@ -1251,8 +1311,16 @@ function updateModelRadioUI() {
   document.getElementById('modelRadioLocalRow')?.classList.toggle('disabled', !localSupported);
   const localNote = document.getElementById('modelRadioLocalNote');
   if (localNote) {
-    localNote.style.display = localSupported ? 'none' : '';
-    localNote.textContent = localSupported ? '' : 'Not supported on this device (requires WebGPU).';
+    if (!localSupported) {
+      localNote.style.display = '';
+      localNote.textContent = 'Not supported on this device.';
+    } else if (localPending) {
+      localNote.style.display = '';
+      localNote.textContent = 'Turns on after the download finishes.';
+    } else {
+      localNote.style.display = 'none';
+      localNote.textContent = '';
+    }
   }
 }
 
@@ -1643,10 +1711,15 @@ async function updateLocalModelStatus() {
 
 // Get the currently selected local model (if any)
 function getSelectedLocalModel(): ModelDef | null {
-  if (!dropdownState.selectedModel || !dropdownState.selectedModel.startsWith('local:')) {
+  // A parked pending choice counts: the download panel below the radios
+  // must describe/drive the model the user asked for before it's selected.
+  const modelKey = dropdownState.selectedModel?.startsWith('local:')
+    ? dropdownState.selectedModel
+    : (pendingLocalSelection?.startsWith('local:') ? pendingLocalSelection : null);
+  if (!modelKey) {
     return null;
   }
-  const modelName = dropdownState.selectedModel.split(':')[1];
+  const modelName = modelKey.split(':')[1];
   // First check predefined models
   const predefinedModel = PREDEFINED_MODELS.local.find(m => m.name === modelName);
   if (predefinedModel) {
@@ -1719,7 +1792,7 @@ function updateLocalModelSectionUI() {
     badge.textContent = 'Select a model';
     notDownloaded.style.display = 'block';
     if (downloadHint) {
-      downloadHint.textContent = 'Select a local model to use local inference.';
+      downloadHint.textContent = 'Choose a local model in Advanced Settings.';
     }
     document.getElementById('downloadLocalModel')!.style.display = 'none';
     return;
@@ -1756,8 +1829,8 @@ function updateLocalModelSectionUI() {
       badge.textContent = 'Not downloaded';
       notDownloaded.style.display = 'block';
       if (downloadHint) {
-        const sizeText = selectedLocalModel.sizeGB ? `(~${selectedLocalModel.sizeGB}GB)` : '';
-        downloadHint.textContent = `Download ${selectedLocalModel.display} ${sizeText} to run inference locally without API calls.`;
+        const sizeText = selectedLocalModel.sizeGB ? ` (~${selectedLocalModel.sizeGB}GB)` : '';
+        downloadHint.textContent = `One-time download${sizeText}.`;
       }
       const downloadBtn = document.getElementById('downloadLocalModel') as HTMLButtonElement;
       downloadBtn.style.display = 'inline-flex';
@@ -1768,7 +1841,7 @@ function updateLocalModelSectionUI() {
 
     case 'initializing':
     case 'downloading': {
-      badge.textContent = 'Downloading local model...';
+      badge.textContent = 'Downloading...';
       badge.classList.add('downloading');
       downloading.style.display = 'block';
       const progress = status.progress || 0;
@@ -1782,7 +1855,7 @@ function updateLocalModelSectionUI() {
       badge.classList.add('ready');
       ready.style.display = 'block';
       if (readyHint) {
-        readyHint.textContent = `${selectedLocalModel.display} is ready for local inference.`;
+        readyHint.textContent = 'Model ready.';
       }
       break;
 
@@ -1862,6 +1935,11 @@ function setupLocalModelListeners() {
       cancelBtn.disabled = true;
       try {
         await chrome.runtime.sendMessage({ type: 'cancelLocalModelDownload', modelId: selectedLocalModel.name });
+        // Cancelling also un-parks a pending "Local, once downloaded" choice
+        // — otherwise the radio would stay grey-checked with nothing coming.
+        await clearPendingLocalSelection();
+        updateModelRadioUI();
+        updateLocalModelSectionVisibility();
       } catch (err) {
         console.error('Failed to cancel download:', err);
       }

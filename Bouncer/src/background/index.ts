@@ -747,6 +747,25 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
       await handleSettingsChange(changes);
     }
 
+    // A headline-radio Local pick made before the model was downloaded is
+    // parked in pendingLocalModelSelection (the prior model keeps filtering).
+    // Complete the switch here, off the model-status stream, so it happens
+    // even when the popup that parked it is long closed.
+    if (changes.localModelStatuses) {
+      const { pendingLocalModelSelection } = await getStorage(['pendingLocalModelSelection']);
+      if (pendingLocalModelSelection) {
+        const statuses = (changes.localModelStatuses.newValue || {}) as Record<string, LocalModelStatus>;
+        const state = statuses[pendingLocalModelSelection.split(':')[1]]?.state;
+        if (state === 'ready' || state === 'cached') {
+          console.log('[Background] Pending local model downloaded — switching to', pendingLocalModelSelection);
+          await removeStorage('pendingLocalModelSelection');
+          // This write re-enters this listener as a selectedModel change,
+          // which flushes the pipeline and wipes the classification cache.
+          await setStorage({ selectedModel: pendingLocalModelSelection });
+        }
+      }
+    }
+
     const filtersChanged = Object.keys(changes).some(
       key => key.startsWith('descriptions_')
     );

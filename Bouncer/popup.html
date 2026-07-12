@@ -30,7 +30,7 @@
   <!-- Main settings (shown when authenticated) -->
   <div class="container" id="mainContainer">
     <header>
-      <h1>Bouncer</h1>
+      <h1>Bouncer Settings</h1>
       <button id="modalCloseBtn" class="modal-close-btn">&times;</button>
     </header>
 
@@ -39,19 +39,19 @@
          popup/index.ts keeps these radios and the dropdown in sync via the
          shared `selectedModel` storage key. -->
     <section id="modelChoiceSection">
-      <label>Model</label>
-      <div class="model-radio-group" role="radiogroup" aria-label="Model">
+      <label>Filtering Mode</label>
+      <div class="model-radio-group" role="radiogroup" aria-label="Filtering mode">
         <label class="model-radio" id="modelRadioImbueRow">
           <input type="radio" name="modelChoice" id="modelRadioImbue" value="imbue">
           <span class="model-radio-text">
-            <span class="model-radio-label">Imbue <span class="free-badge">free</span></span>
-            <span class="model-radio-sub">Fast filtering in Imbue's secure cloud.</span>
+            <span class="model-radio-label">Express <span class="free-badge">recommended</span></span>
+            <span class="model-radio-sub">Fast and free, in the cloud.</span>
           </span>
         </label>
         <label class="model-radio" id="modelRadioLocalRow">
           <input type="radio" name="modelChoice" id="modelRadioLocal" value="local">
           <span class="model-radio-text">
-            <span class="model-radio-label">Local (E2B)</span>
+            <span class="model-radio-label">Local</span>
             <span class="model-radio-sub">Runs entirely on your device.</span>
             <span class="model-radio-note hint" id="modelRadioLocalNote" style="display: none;"></span>
           </span>
@@ -66,14 +66,13 @@
         <span class="local-model-title">Local Model</span>
         <span id="localModelStatusBadge" class="api-status-badge">Checking...</span>
       </div>
-      <p class="hint local-model-resource-hint">Local models use your device's memory and GPU for inference. Performance depends on your hardware.</p>
-      <p id="localModelNoImageWarning" class="hint local-model-no-image-warning" style="display: none;">This model does not support images, so filtering will be less precise for posts with images or videos.</p>
+      <p id="localModelNoImageWarning" class="hint local-model-no-image-warning" style="display: none;">Can't see images — photo and video posts are filtered less accurately.</p>
       <div id="localModelContent">
         <div id="localModelUnsupported" style="display: none;">
-          <p class="hint">WebGPU is not supported in your browser. Local inference requires Chrome 113+ with WebGPU enabled.</p>
+          <p class="hint">This browser can't run the local model. Use Chrome 113 or newer.</p>
         </div>
         <div id="localModelNotDownloaded" style="display: none;">
-          <p class="hint" id="localModelDownloadHint">Select a local model to use local inference.</p>
+          <p class="hint" id="localModelDownloadHint">Choose a local model in Advanced Settings.</p>
           <button id="downloadLocalModel" class="local-model-download-btn">
             <span class="download-icon">&#8595;</span>
             Download Model
@@ -89,7 +88,7 @@
           </div>
         </div>
         <div id="localModelReady" style="display: none;">
-          <p class="hint" id="localModelReadyHint">Model ready for local inference.</p>
+          <p class="hint" id="localModelReadyHint">Model ready.</p>
         </div>
         <div id="localModelError" style="display: none;">
           <p class="hint local-model-error-text" id="localModelErrorText">An error occurred.</p>
@@ -106,8 +105,7 @@
         <input type="checkbox" id="enableFilterReplies" checked>
         <span class="toggle-switch-slider" aria-hidden="true"></span>
         <span class="toggle-switch-text">
-          <span class="toggle-switch-label">Filter replies</span>
-          <span class="toggle-switch-sub">Apply your filters to replies in conversation threads.</span>
+          <span class="toggle-switch-label">Also filter replies in threads</span>
         </span>
       </label>
     </section>

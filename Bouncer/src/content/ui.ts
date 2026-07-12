@@ -323,7 +323,7 @@ function getGateHTML() {
 }
 
 // Notice advertising the local model, shown at the bottom of the filter box
-// while the user is on the anonymous free trial (same population that
+// while the user is on the anonymous no-login trial (same population that
 // refreshGuestLimitState gates). Hidden again in setupFilterBoxEventHandlers
 // if a local model is already selected — local filtering isn't limited.
 function guestTrialNoticeHTML() {
@@ -332,8 +332,8 @@ function guestTrialNoticeHTML() {
   }
   return `
     <div class="ff-guest-trial-notice">
-      <p class="ff-guest-trial-text">You're on the free trial — it covers your first ${GUEST_FILTER_LIMIT} filtered posts. <em>Want unlimited access?</em> The local model runs on your device, with no limits.</p>
-      <button class="ff-local-model-cta" type="button">Download local model</button>
+      <p class="ff-guest-trial-text">No-login trial: ${GUEST_FILTER_LIMIT} filtered posts.</p>
+      <button class="ff-local-model-cta" type="button">Go unlimited</button>
     </div>
   `;
 }

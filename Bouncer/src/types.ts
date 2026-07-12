@@ -420,6 +420,11 @@ export type StorageSchema = SettingsBase & {
   // inferred signal; cleared when the user explicitly turns a toggle back on.
   aiFilterIntentOptOut: boolean;
   localModelStatuses: Record<string, LocalModelStatus>;
+  // Model key ("local:...") the user picked from the headline radios while
+  // its weights weren't downloaded yet. The previous model keeps filtering;
+  // the background flips selectedModel to this and clears it once the
+  // download lands (see the localModelStatuses storage listener).
+  pendingLocalModelSelection: string;
   evaluationCache: Record<string, EvaluationResult>;
   stats: { filtered: number; evaluated: number; totalCost: number };
   // Lifetime count of posts filtered while signed in anonymously. Drives the
