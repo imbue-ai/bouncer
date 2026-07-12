@@ -236,6 +236,35 @@ final class LocalInferenceService: ObservableObject {
             headBlobResource: "detector_head_e2b_v2"),
     ]
 
+    /// Wire shape of one catalog entry. Field names are the contract with the
+    /// JS side — keep in sync with `InjectedIosModel` in shared/models.ts.
+    private struct CatalogEntry: Encodable {
+        let name: String
+        let display: String
+        let size: String
+        let isSupported: Bool
+        let requiredRAM: String
+    }
+
+    /// JSON catalog of the registry for the webview layer. FilteredWebView
+    /// prepends `var __iosLocalModels = <this>;` to ChromePolyfill.js, and
+    /// shared/models.ts builds PREDEFINED_MODELS.iosLocal from it — so the
+    /// popup's model list (and its RAM gating) comes from this registry
+    /// instead of a hand-maintained duplicate in JS.
+    static func modelCatalogJSON() -> String {
+        let entries = models.map { m in
+            CatalogEntry(
+                name: m.id,
+                display: m.displayName,
+                size: m.approxSize,
+                isSupported: m.isSupportedOnThisDevice,
+                requiredRAM: m.requiredRAMDisplay)
+        }
+        guard let data = try? JSONEncoder().encode(entries),
+              let json = String(data: data, encoding: .utf8) else { return "[]" }
+        return json
+    }
+
     /// The currently-selected model, if it can run AI-text detection.
     var detectionModel: LocalModel? { selectedModel.supportsDetection ? selectedModel : nil }
 

@@ -1348,37 +1348,53 @@ struct ProvidersSettingsView: View {
 
     @ViewBuilder
     private func onDeviceModelRow(_ model: LocalInferenceService.LocalModel) -> some View {
-        let status = localService.downloadStatus(for: model)
-        let ready = isReady(status)
-        Button {
-            guard ready else { return }
-            Task { await selectModel(model.selectedModelKey) }
-        } label: {
+        if !model.isSupportedOnThisDevice {
+            // Same RAM gate as onboarding and the popup's provider list, in
+            // the greyed-out-with-reason style: no Download button — the
+            // engine can't run within this device's memory budget.
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("\(model.displayName) (on-device)")
-                        .foregroundStyle(ready ? .primary : .secondary)
-                    Text(onDeviceStatusText(model, status))
+                        .foregroundStyle(.secondary)
+                    Text("Not available on this iPhone — requires \(model.requiredRAMDisplay)+ RAM.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                if selectedModel == model.selectedModelKey {
-                    Image(systemName: "checkmark")
-                        .foregroundStyle(.tint)
+            }
+        } else {
+            let status = localService.downloadStatus(for: model)
+            let ready = isReady(status)
+            Button {
+                guard ready else { return }
+                Task { await selectModel(model.selectedModelKey) }
+            } label: {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("\(model.displayName) (on-device)")
+                            .foregroundStyle(ready ? .primary : .secondary)
+                        Text(onDeviceStatusText(model, status))
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if selectedModel == model.selectedModelKey {
+                        Image(systemName: "checkmark")
+                            .foregroundStyle(.tint)
+                    }
                 }
             }
-        }
-        .buttonStyle(.plain)
-        .disabled(!ready)
+            .buttonStyle(.plain)
+            .disabled(!ready)
 
-        if case .downloading(let progress) = status {
-            ProgressView(value: progress)
-        } else if case .paused(let progress) = status {
-            ProgressView(value: progress)
-        }
+            if case .downloading(let progress) = status {
+                ProgressView(value: progress)
+            } else if case .paused(let progress) = status {
+                ProgressView(value: progress)
+            }
 
-        onDeviceActionButtons(model, status)
+            onDeviceActionButtons(model, status)
+        }
     }
 
     private func isReady(_ status: LocalInferenceService.ModelStatus) -> Bool {

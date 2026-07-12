@@ -154,10 +154,15 @@ struct FilteredWebView: UIViewRepresentable {
                 print("[FeedFilter] Injected lockup-extractor.js (page world)")
             } else { print("[FeedFilter] lockup-extractor.js NOT bundled") }
 
-            // 1. ChromePolyfill.js — document start
+            // 1. ChromePolyfill.js — document start. Prepends two globals the
+            // JS bundles read at load: the extension version, and the on-device
+            // model catalog (single source of truth: LocalInferenceService.models;
+            // shared/models.ts turns it into PREDEFINED_MODELS.iosLocal).
             if let source = loadBundledScript(named: "ChromePolyfill", ext: "js") {
                 let version = extensionManifestVersion() ?? "0.0.0"
-                let patched = "var __ffExtensionVersion = '\(version)';\n" + source
+                let patched = "var __ffExtensionVersion = '\(version)';\n"
+                    + "var __iosLocalModels = \(LocalInferenceService.modelCatalogJSON());\n"
+                    + source
                 let script = WKUserScript(source: patched, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: world)
                 controller.addUserScript(script)
                 print("[FeedFilter] Injected ChromePolyfill.js (version \(version))")

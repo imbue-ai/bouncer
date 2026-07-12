@@ -140,6 +140,12 @@ export interface LocalModelDef extends ModelDef {
   backend?: 'litertlm';
   extraBody?: Record<string, unknown>;
   inferenceParams?: Record<string, unknown>;
+  // iOS on-device entries only — carried over from the native registry
+  // (LocalInferenceService.models) via the injected __iosLocalModels global;
+  // see shared/models.ts.
+  sizeDisplay?: string;
+  isSupportedOnThisDevice?: boolean;
+  requiredRAMDisplay?: string;
   litertlmConfig?: {
     // Absolute URL to the `.litertlm` model asset.
     modelUrl: string;
