@@ -6,6 +6,20 @@ import type { PredefinedModelsMap } from '../types';
 export const PREDEFINED_MODELS: PredefinedModelsMap = {
   local: [
     {
+      name: "gemma-4-E2B-it-web",
+      display: "Gemma 4 E2B (Instruct)",
+      isLocal: true,
+      backend: 'litertlm',
+      supportsImages: false,
+      sizeGB: 2.0,
+      inferenceParams: { temperature: 0.0 },
+      litertlmConfig: {
+        modelUrl: "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it-web.litertlm",
+        maxTokens: 1024,
+        topK: 40,
+      }
+    },
+    {
       name: "gemma-4-E4B-it-web",
       display: "Gemma 4 E4B (Instruct)",
       isLocal: true,

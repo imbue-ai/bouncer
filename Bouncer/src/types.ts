@@ -183,6 +183,9 @@ interface SettingsBase {
   predefinedModelKwargs: Record<string, Record<string, unknown>>;
   aiTextFilterEnabled: boolean;
   aiTextDetectionThreshold: number;
+  // Threshold applied instead of aiTextDetectionThreshold when the post
+  // being evaluated is a reply/comment (permalink-view posts).
+  aiTextReplyDetectionThreshold: number;
   aiImageFilterEnabled: boolean;
   aiImageDetectionThreshold: number;
   // When false, replies on permalink (/status/<id>) pages are not
@@ -204,6 +207,22 @@ interface SettingsBase {
 
 export interface Settings extends SettingsBase {
   descriptions: string[];
+  /** Derived at settings-read time: the inferred "user wants AI content
+   *  removed" state is on and the user hasn't explicitly opted out. OR'ed
+   *  with the explicit aiText/aiImage toggles when gating AI detection. */
+  aiFilterIntentActive: boolean;
+}
+
+/** Persisted derivation of the backend's `aiFilterIntent` signal: does the
+ *  user's phrase set indicate they want AI-generated content removed? Written
+ *  only by src/background/ai-intent.ts; read wherever the effective AI-detection
+ *  toggle state is computed (pipeline, popup, content UI, iOS bridge). */
+export interface AiFilterIntentState {
+  /** Latched "user wants AI content removed" bit. */
+  intent: boolean;
+  /** Normalized phrase set (see phraseSetKey) the bit was last derived from. */
+  phraseSetKey: string | null;
+  updatedAt: number;
 }
 
 export interface LocalModelStatus {
@@ -283,6 +302,9 @@ export interface PendingEvaluation {
   tabId: number | undefined;
   postUrl: string | null;
   siteId: SiteId;
+  /** True when the post is a reply/comment (permalink-view post). Selects
+   *  the reply-specific AI-text-detection threshold. */
+  isReply: boolean;
 }
 
 // ==================== Chat Messages ====================
@@ -296,7 +318,7 @@ export interface ChatMessage {
 
 export type ContentToBackgroundMessage =
   | { type: 'pageLoad' }
-  | { type: 'evaluatePost'; evaluationId: string; post: string; rawText: string; imageUrls: string[]; postUrl: string | null; siteId: SiteId }
+  | { type: 'evaluatePost'; evaluationId: string; post: string; rawText: string; imageUrls: string[]; postUrl: string | null; siteId: SiteId; isReply?: boolean }
   | { type: 'suggestAnnoyingReasons'; post: string; imageUrls: string[]; siteId?: SiteId }
   | { type: 'clearCache' }
   | { type: 'clearSinglePost'; post: string; imageUrls: string[]; postUrl?: string | null; siteId?: SiteId }
@@ -389,8 +411,14 @@ export type DescriptionKey = `descriptions_${SiteId}`;
 /** Typed schema for chrome.storage.local keys. */
 export type StorageSchema = SettingsBase & {
   authErrorApis: Record<string, boolean>;
-  localModelsEnabled: boolean;
   aiTextFilterExperimental: boolean;
+  // Inferred "user wants AI content removed" state, derived from the backend's
+  // aiFilterIntent signal on filterPost/validatePhrase responses.
+  aiFilterIntent: AiFilterIntentState;
+  // Set when the user explicitly turns OFF an AI-detection toggle while the
+  // inferred intent had auto-enabled it. An explicit off always beats the
+  // inferred signal; cleared when the user explicitly turns a toggle back on.
+  aiFilterIntentOptOut: boolean;
   localModelStatuses: Record<string, LocalModelStatus>;
   evaluationCache: Record<string, EvaluationResult>;
   stats: { filtered: number; evaluated: number; totalCost: number };
@@ -426,6 +454,13 @@ export interface ImbueFilterResponse extends ImbueResponseBase {
   reasoning: string | null;
   category?: string | null;
   rawResponse: string;
+  /** Whether the phrase set (`categories`) sent with this request indicates an
+   *  intent to remove AI-generated content ("AI slop", "midjourney art", ...).
+   *  A property of the phrase set, not the tweet — recomputed per request by
+   *  the backend LLM at temperature 1.0, so it can flip on borderline sets.
+   *  null or absent = unknown (old workers mid-rollout, or the model omitted
+   *  the tag) and must never be treated as false. */
+  aiFilterIntent?: boolean | null;
 }
 
 /** Response from the suggestAnnoying action.

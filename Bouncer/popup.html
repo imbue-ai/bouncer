@@ -34,17 +34,30 @@
       <button id="modalCloseBtn" class="modal-close-btn">&times;</button>
     </header>
 
-    <section>
-      <label>Choose a model</label>
-      <div class="model-dropdown" id="modelDropdown">
-        <div class="model-dropdown-selected" id="modelDropdownSelected">
-          <span class="model-dropdown-text">Imbue (Default)</span>
-          <span class="model-dropdown-arrow">&#9662;</span>
-        </div>
-        <div class="model-dropdown-menu" id="modelDropdownMenu">
-          <!-- Populated by JS -->
-        </div>
+    <!-- Model choice: the two headline options. The full model dropdown
+         (BYOK providers, custom models) lives under Advanced Settings;
+         popup/index.ts keeps these radios and the dropdown in sync via the
+         shared `selectedModel` storage key. -->
+    <section id="modelChoiceSection">
+      <label>Model</label>
+      <div class="model-radio-group" role="radiogroup" aria-label="Model">
+        <label class="model-radio" id="modelRadioImbueRow">
+          <input type="radio" name="modelChoice" id="modelRadioImbue" value="imbue">
+          <span class="model-radio-text">
+            <span class="model-radio-label">Imbue <span class="free-badge">free</span></span>
+            <span class="model-radio-sub">Fast filtering in Imbue's secure cloud.</span>
+          </span>
+        </label>
+        <label class="model-radio" id="modelRadioLocalRow">
+          <input type="radio" name="modelChoice" id="modelRadioLocal" value="local">
+          <span class="model-radio-text">
+            <span class="model-radio-label">Local (E2B)</span>
+            <span class="model-radio-sub">Runs entirely on your device.</span>
+            <span class="model-radio-note hint" id="modelRadioLocalNote" style="display: none;"></span>
+          </span>
+        </label>
       </div>
+      <p class="hint model-radio-advanced-note" id="modelRadioAdvancedNote" style="display: none;"></p>
     </section>
 
     <!-- Local Model Section (only shown when a local model is selected) -->
@@ -60,7 +73,7 @@
           <p class="hint">WebGPU is not supported in your browser. Local inference requires Chrome 113+ with WebGPU enabled.</p>
         </div>
         <div id="localModelNotDownloaded" style="display: none;">
-          <p class="hint" id="localModelDownloadHint">Select a local model from the dropdown above to use local inference.</p>
+          <p class="hint" id="localModelDownloadHint">Select a local model to use local inference.</p>
           <button id="downloadLocalModel" class="local-model-download-btn">
             <span class="download-icon">&#8595;</span>
             Download Model
@@ -81,6 +94,45 @@
         <div id="localModelError" style="display: none;">
           <p class="hint local-model-error-text" id="localModelErrorText">An error occurred.</p>
           <button id="retryLocalModel" class="local-model-retry-btn">Retry</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Filter replies: headline toggle. Same storage key the content
+         script and pipeline already read; the id matches the handler in
+         popup/index.ts (previously rendered inside the Twitter row). -->
+    <section class="filter-replies-section">
+      <label class="toggle-switch">
+        <input type="checkbox" id="enableFilterReplies" checked>
+        <span class="toggle-switch-slider" aria-hidden="true"></span>
+        <span class="toggle-switch-text">
+          <span class="toggle-switch-label">Filter replies</span>
+          <span class="toggle-switch-sub">Apply your filters to replies in conversation threads.</span>
+        </span>
+      </label>
+    </section>
+
+    <!-- Everything below is power-user surface: full model list, per-platform
+         toggles, BYOK providers, AI-slop detection. Collapsed by default. -->
+    <section>
+      <div class="api-provider advanced-settings" id="advancedSettings">
+        <div class="api-provider-header" id="advancedSettingsHeader">
+          <span class="api-provider-name">Advanced Settings</span>
+          <div class="api-provider-header-right">
+            <span class="api-provider-arrow">&#9662;</span>
+          </div>
+        </div>
+        <div class="api-provider-content advanced-settings-content" id="advancedSettingsContent">
+
+    <section>
+      <label>Choose a model</label>
+      <div class="model-dropdown" id="modelDropdown">
+        <div class="model-dropdown-selected" id="modelDropdownSelected">
+          <span class="model-dropdown-text">Imbue (Default)</span>
+          <span class="model-dropdown-arrow">&#9662;</span>
+        </div>
+        <div class="model-dropdown-menu" id="modelDropdownMenu">
+          <!-- Populated by JS -->
         </div>
       </div>
     </section>
@@ -194,14 +246,6 @@
         </div>
       </div>
 
-      <!-- Local models toggle (hidden by default, shown only if WebGPU is supported) -->
-      <div class="local-models-toggle" style="display: none;">
-        <label class="checkbox-label">
-          <input type="checkbox" id="enableLocalModels">
-          <span>Enable local models (Experimental)</span>
-        </label>
-      </div>
-
       <!-- AI text filtering experimental toggle -->
       <div class="experimental-toggle">
         <label class="checkbox-label">
@@ -213,6 +257,7 @@
 
     <section class="ai-text-filter-section">
       <div id="aiTextFilterExperimentalContent" style="display: none;">
+      <p class="hint" id="aiAutoEnabledHint" style="display: none;">Auto-enabled: your filter phrases target AI-generated content. Turn a toggle off to override.</p>
       <label class="toggle-switch">
         <input type="checkbox" id="enableAiTextFilter">
         <span class="toggle-switch-slider" aria-hidden="true"></span>
@@ -232,6 +277,18 @@
           <span>100%</span>
         </div>
         <p class="hint ai-text-threshold-hint">Posts at or above this confidence are hidden. Lower values catch more, higher values catch only obvious cases.</p>
+      </div>
+      <div class="ai-text-threshold-block" id="aiTextReplyThresholdBlock">
+        <div class="ai-text-threshold-header">
+          <span>Comment confidence threshold</span>
+          <span class="ai-text-threshold-value" id="aiTextReplyThresholdValue">30%</span>
+        </div>
+        <input type="range" id="aiTextReplyThreshold" min="0" max="1" step="0.01" value="0.3">
+        <div class="ai-text-threshold-scale">
+          <span>0%</span>
+          <span>100%</span>
+        </div>
+        <p class="hint ai-text-threshold-hint">Applied to replies and comments instead of the threshold above.</p>
       </div>
 
       <label class="toggle-switch">
@@ -260,6 +317,10 @@
     <footer class="pricing-disclaimer">
       <p class="hint">* Free models may have rate limits or daily quotas.<br>Non-Imbue models are charged by their providers.</p>
     </footer>
+
+        </div>
+      </div>
+    </section>
 
     <footer class="contact-footer">
       <p class="hint contact-footer-text">

@@ -65,23 +65,41 @@ public final class ModelDownloader: NSObject, @unchecked Sendable {
         FileManager.default.fileExists(atPath: modelPath.path)
     }
 
-    public static let defaultModelFilename = "gemma-4-E4B-it-qat.litertlm"
+    public static let defaultModelFilename = "model-e2b-detector-v2.litertlm"
 
     // The model file this downloader is currently targeting for download /
     // pause / delete / status. Set by LocalInferenceService before a download
     // so multiple on-device variants can coexist on disk under distinct
-    // filenames. Do NOT change while a download is in flight — the completion
-    // handler moves the finished file to `modelPath` (== this filename).
-    public var activeFilename: String = ModelDownloader.defaultModelFilename {
+    // filenames. Persisted in UserDefaults because iOS can relaunch the app in
+    // the background to deliver a finished transfer — in that path this
+    // singleton is constructed before LocalInferenceService, and a completed
+    // task with no in-memory taskFilenames entry falls back to this value.
+    // Changes are REFUSED while a download task is active: completion already
+    // moves the finished file per the task's pinned filename, but
+    // pause/cancel/status would silently retarget the wrong variant.
+    private static let activeFilenameDefaultsKey = "modelDownloadTargetFilename"
+    public var activeFilename: String =
+        UserDefaults.standard.string(forKey: ModelDownloader.activeFilenameDefaultsKey)
+            ?? ModelDownloader.defaultModelFilename {
         didSet {
-            if oldValue != activeFilename {
-                // Drop the in-memory resume blob so we don't reuse one
-                // variant's partial download for another (on-disk resume
-                // files are per-filename; see resumeDataPath).
-                withLock { resumeData = nil }
+            guard oldValue != activeFilename else { return }
+            if withLock({ activeTask != nil || continuation != nil }) {
+                print("[ModelDownloader] WARN: activeFilename change to \(activeFilename) refused — download in progress")
+                // Assigning within didSet does not re-trigger observers.
+                activeFilename = oldValue
+                return
             }
+            // Drop the in-memory resume blob so we don't reuse one variant's
+            // partial download for another (on-disk resume files are
+            // per-filename; see resumeDataPath).
+            withLock { resumeData = nil }
+            UserDefaults.standard.set(activeFilename, forKey: Self.activeFilenameDefaultsKey)
         }
     }
+
+    // Shown by totalBytesDisplay before the transfer reports a real total.
+    // Set by LocalInferenceService per model (approxSize estimate).
+    public var totalBytesFallbackDisplay: String = "~2.2 GB"
 
     public let modelsDirectory: URL
 
@@ -358,7 +376,7 @@ public final class ModelDownloader: NSObject, @unchecked Sendable {
     }
 
     public var totalBytesDisplay: String {
-        guard totalBytes > 0 else { return "~3.7 GB" }
+        guard totalBytes > 0 else { return totalBytesFallbackDisplay }
         return ByteCountFormatter.string(fromByteCount: totalBytes, countStyle: .file)
     }
 

@@ -262,6 +262,7 @@ final class LocalInferenceService: ObservableObject {
     private var baseConversation: Conversation?
     private var baseSystemMessage: String?
     private var baseRegexConstraint: String?
+    private var baseMaxOutputTokens: Int?
 
     // Detection runs on a DEDICATED engine over the selected model's file —
     // separate from the chat `engine` — to avoid the INTERLEAVE_BUG (running
@@ -326,6 +327,7 @@ final class LocalInferenceService: ObservableObject {
         }
 
         self.downloader.activeFilename = selectedModel.filename
+        self.downloader.totalBytesFallbackDisplay = selectedModel.approxSize
         refreshStatusFromDisk()
         observeDownloader()
         // Pick up any download iOS continued while the app was suspended
@@ -335,11 +337,19 @@ final class LocalInferenceService: ObservableObject {
 
     // MARK: - Public API
 
-    func classify(systemMessage: String, userMessage: String, imageUrls: [String] = [], regexConstraint: String? = nil) async throws -> String {
+    /// `modelName` (from the JS "iosLocal:<id>" key) is validated against the
+    /// selected registry model — with a single-model registry there is nothing
+    /// to switch to, so a mismatch is logged and the selected model is used.
+    /// `maxOutputTokens` overrides the 24-token verdict cap for freeform
+    /// generation callers (e.g. "Bounce a Tweet" phrase suggestions).
+    func classify(systemMessage: String, userMessage: String, imageUrls: [String] = [], regexConstraint: String? = nil, modelName: String? = nil, maxOutputTokens: Int? = nil) async throws -> String {
+        if let modelName, modelName != selectedModel.id {
+            print("[Filter] WARN: requested model \(modelName) ≠ selected \(selectedModel.id) — using selected")
+        }
         return try await classifyInternal(
             tag: "Filter", systemMessage: systemMessage,
             userMessage: userMessage, imageUrls: imageUrls,
-            regexConstraint: regexConstraint)
+            regexConstraint: regexConstraint, maxOutputTokens: maxOutputTokens)
     }
 
     // MARK: - Debug harness
@@ -451,7 +461,7 @@ final class LocalInferenceService: ObservableObject {
     /// production calls).
     private func classifyInternal(
         tag: String, systemMessage: String, userMessage: String, imageUrls: [String] = [],
-        regexConstraint: String? = nil
+        regexConstraint: String? = nil, maxOutputTokens: Int? = nil
     ) async throws -> String {
         try await ensureReady()
         let wallStart = Date()
@@ -472,6 +482,7 @@ final class LocalInferenceService: ObservableObject {
                 let baseStart = Date()
                 let (base, rebuiltBase) = try await self.getOrBuildBase(
                     systemMessage: systemMessage, regexConstraint: regexConstraint,
+                    maxOutputTokens: maxOutputTokens,
                     sampler: sampler, engine: engine)
                 let baseSec = Date().timeIntervalSince(baseStart)
                 let cloneStart = Date()
@@ -550,11 +561,13 @@ final class LocalInferenceService: ObservableObject {
 
     private func getOrBuildBase(
         systemMessage: String, regexConstraint: String?,
+        maxOutputTokens: Int?,
         sampler: SamplerConfig, engine: Engine
     ) async throws -> (Conversation, Bool) {
         if let base = self.baseConversation,
            self.baseSystemMessage == systemMessage,
            self.baseRegexConstraint == regexConstraint,
+           self.baseMaxOutputTokens == maxOutputTokens,
            base.isAlive {
             return (base, false)
         }
@@ -572,6 +585,8 @@ final class LocalInferenceService: ObservableObject {
             missReason = "system-changed"
         } else if self.baseRegexConstraint != regexConstraint {
             missReason = "regex-changed"
+        } else if self.baseMaxOutputTokens != maxOutputTokens {
+            missReason = "max-tokens-changed"
         } else {
             missReason = "unknown"
         }
@@ -586,13 +601,14 @@ final class LocalInferenceService: ObservableObject {
             systemMessage: Message(systemMessage, role: .system),
             samplerConfig: sampler,
             prefillPrefaceOnInit: true,
-            maxOutputTokens: 24,
+            maxOutputTokens: maxOutputTokens ?? 24,
             regexConstraint: regexConstraint
         )
         let base = try await engine.createConversation(with: config)
         self.baseConversation = base
         self.baseSystemMessage = systemMessage
         self.baseRegexConstraint = regexConstraint
+        self.baseMaxOutputTokens = maxOutputTokens
         return (base, true)
     }
 
@@ -600,6 +616,7 @@ final class LocalInferenceService: ObservableObject {
         self.baseConversation = nil
         self.baseSystemMessage = nil
         self.baseRegexConstraint = nil
+        self.baseMaxOutputTokens = nil
     }
 
     private static func fetchImageData(_ urls: [String]) async -> [Data] {
@@ -949,6 +966,7 @@ final class LocalInferenceService: ObservableObject {
     func startDownload(_ model: LocalModel) {
         if case .downloading = downloader.status { return }
         downloader.activeFilename = model.filename
+        downloader.totalBytesFallbackDisplay = model.approxSize
         Task { [weak self] in
             guard let self else { return }
             do {

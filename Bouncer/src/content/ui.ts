@@ -9,7 +9,7 @@ import {
   FILTER_PACK_SHARE_URL_REGEX,
 } from '../shared/share-encoding';
 import type { BackgroundToContentMessage, ContentUIDeps, FilteredPost, PostContent, LocalModelStatus } from '../types';
-import { getStorage, setStorage, getDescriptions, setDescriptions } from '../shared/storage';
+import { getStorage, setStorage, getDescriptions, setDescriptions, aiIntentAutoActive, setAiDetectionToggle } from '../shared/storage';
 import { getReleaseNote } from './release-notes';
 import { runIOSImportAnimation } from './ios';
 
@@ -126,7 +126,13 @@ async function refreshGuestLimitState() {
     guestLimitReached = false;
     return;
   }
-  const { anonFilterCount } = await getStorage(['anonFilterCount']);
+  const { anonFilterCount, selectedModel } = await getStorage(['anonFilterCount', 'selectedModel']);
+  // Local models run on-device and don't touch the Imbue backend, so they're
+  // exempt from the trial (the pipeline also skips counting them).
+  if ((selectedModel || '').startsWith('local:')) {
+    guestLimitReached = false;
+    return;
+  }
   guestLimitReached = (anonFilterCount || 0) >= GUEST_FILTER_LIMIT;
 }
 
@@ -290,8 +296,8 @@ function getSignInHTML() {
       <span class="filter-phrases-box-name">Bouncer</span>
       <div class="filter-signin-prompt">
         ${signinButtonHTML(isSafari ? 'Continue with Apple' : 'Continue with Google')}
-        <button class="skip-signin-btn">Try it without signing in<span class="skip-signin-arrow" aria-hidden="true">→</span></button>
-        <p class="ff-signin-explanation">Signing in helps us prevent abuse. We do not collect or store any identifying data.</p>
+        <button class="skip-signin-btn">Skip sign-in<span class="skip-signin-arrow" aria-hidden="true">→</span></button>
+        <p class="ff-signin-explanation">Signing in helps prevent abuse. We don't collect any identifying data. A local model doesn't require sign-in.</p>
       </div>
     </div>
   `;
@@ -314,6 +320,22 @@ function getGuestLimitHTML() {
 // The appropriate gate screen for the current state.
 function getGateHTML() {
   return guestLimitReached ? getGuestLimitHTML() : getSignInHTML();
+}
+
+// Notice advertising the local model, shown at the bottom of the filter box
+// while the user is on the anonymous free trial (same population that
+// refreshGuestLimitState gates). Hidden again in setupFilterBoxEventHandlers
+// if a local model is already selected — local filtering isn't limited.
+function guestTrialNoticeHTML() {
+  if (process.env.HAS_IMBUE_BACKEND !== 'true' || !isAnonymous || guestLimitReached || _deps.IS_IOS) {
+    return '';
+  }
+  return `
+    <div class="ff-guest-trial-notice">
+      <p class="ff-guest-trial-text">You're on the free trial — it covers your first ${GUEST_FILTER_LIMIT} filtered posts. <em>Want unlimited access?</em> The local model runs on your device, with no limits.</p>
+      <button class="ff-local-model-cta" type="button">Download local model</button>
+    </div>
+  `;
 }
 
 // ==================== Guest-limit popup ====================
@@ -343,7 +365,7 @@ function showSignInPopup(variant: 'signin' | 'guestLimit') {
     ? GUEST_LIMIT_MESSAGE
     : 'Sign in to use Bouncer.';
   const skipButtonHTML = variant === 'signin'
-    ? `<button class="skip-signin-btn">Try it without signing in<span class="skip-signin-arrow" aria-hidden="true">→</span></button>`
+    ? `<button class="skip-signin-btn">Skip sign-in<span class="skip-signin-arrow" aria-hidden="true">→</span></button>`
     : '';
 
   const theme = _deps.adapter.getThemeMode();
@@ -445,6 +467,7 @@ const aiTextToggleHTML = `
     <input type="checkbox" class="filter-ai-text-toggle-input">
     <span class="filter-ai-text-toggle-slider" aria-hidden="true"></span>
     <span class="filter-ai-text-toggle-label">Filter AI-generated text</span>
+    <span class="filter-ai-toggle-auto" style="display: none;" title="Turned on automatically because your filter phrases target AI-generated content. Toggle off to override.">auto</span>
   </label>
 `;
 
@@ -456,6 +479,7 @@ const aiImageToggleHTML = `
     <input type="checkbox" class="filter-ai-text-toggle-input filter-ai-image-toggle-input">
     <span class="filter-ai-text-toggle-slider" aria-hidden="true"></span>
     <span class="filter-ai-text-toggle-label">Filter AI-generated images</span>
+    <span class="filter-ai-toggle-auto" style="display: none;" title="Turned on automatically because your filter phrases target AI-generated content. Toggle off to override.">auto</span>
   </label>
 `;
 
@@ -550,6 +574,7 @@ function buildFilterContainerHTML(showSignOut = false): string {
           ${placeholderHTML}
         </span>
       </div>
+      ${guestTrialNoticeHTML()}
       <div class="filter-model-loading" style="display: none;">
         <div class="model-loading-text">Loading model...</div>
         <div class="model-loading-progress">
@@ -762,6 +787,34 @@ export function injectFilterPhrasesInput() {
   updateSidebarFilterVisibility();
 }
 
+// Sync every AI-detection toggle row on the page to the effective state:
+// explicit toggle OR inferred AI-removal intent (minus explicit opt-out).
+// Rows are visible when the experimental flag is on OR the inferred intent
+// auto-enabled detection — otherwise a user could have AI filtering silently
+// engaged with no visible control to turn it off. Called on filter-box setup
+// and from the storage-change listener in content/index.ts.
+export async function refreshAiToggleUI(): Promise<void> {
+  const data = await getStorage([
+    'aiTextFilterEnabled', 'aiImageFilterEnabled', 'aiTextFilterExperimental',
+    'aiFilterIntent', 'aiFilterIntentOptOut',
+  ]);
+  const auto = aiIntentAutoActive(data);
+  const rowsVisible = data.aiTextFilterExperimental === true || auto;
+
+  const sync = (input: HTMLInputElement, explicitOn: boolean) => {
+    const effective = explicitOn || auto;
+    if (input.checked !== effective) input.checked = effective;
+    const row = input.closest<HTMLElement>('.filter-ai-text-toggle');
+    if (row) row.style.display = rowsVisible ? '' : 'none';
+    const badge = row?.querySelector<HTMLElement>('.filter-ai-toggle-auto');
+    if (badge) badge.style.display = auto && !explicitOn ? '' : 'none';
+  };
+  document.querySelectorAll<HTMLInputElement>('.filter-ai-text-toggle-input:not(.filter-ai-image-toggle-input)')
+    .forEach(el => sync(el, data.aiTextFilterEnabled === true));
+  document.querySelectorAll<HTMLInputElement>('.filter-ai-image-toggle-input')
+    .forEach(el => sync(el, data.aiImageFilterEnabled === true));
+}
+
 // Common event handler setup for filter boxes (sidebar and bottom)
 function setupFilterBoxEventHandlers(container: HTMLElement) {
   // Idempotency guard: a re-entrant inject (e.g. handleDOMMutation firing
@@ -779,18 +832,13 @@ function setupFilterBoxEventHandlers(container: HTMLElement) {
   const aiImageToggle = container.querySelector<HTMLInputElement>('.filter-ai-image-toggle-input');
 
   // AI-text-detection toggle. Cache invalidation + post re-evaluation are
-  // handled by the storage-change listener in background/index.ts.
+  // handled by the storage-change listener in background/index.ts. The checked
+  // state reflects the *effective* value: explicit toggle OR inferred
+  // AI-removal intent (see background/ai-intent.ts); unchecking while the
+  // intent has it auto-enabled records an explicit opt-out, which always wins.
   if (aiTextToggle) {
-    const aiTextToggleRow = aiTextToggle.closest<HTMLElement>('.filter-ai-text-toggle');
-    getStorage(['aiTextFilterEnabled', 'aiTextFilterExperimental']).then(data => {
-      aiTextToggle.checked = data.aiTextFilterEnabled === true;
-      if (aiTextToggleRow) {
-        aiTextToggleRow.style.display = data.aiTextFilterExperimental === true ? '' : 'none';
-      }
-    }).catch(err => console.error('[UI] Failed to load aiTextFilterEnabled:', err));
-
     aiTextToggle.addEventListener('change', () => {
-      chrome.storage.local.set({ aiTextFilterEnabled: aiTextToggle.checked })
+      setAiDetectionToggle('aiTextFilterEnabled', aiTextToggle.checked)
         .catch(err => console.error('[UI] Failed to save aiTextFilterEnabled:', err));
     });
   }
@@ -798,19 +846,13 @@ function setupFilterBoxEventHandlers(container: HTMLElement) {
   // AI-image-detection toggle. Same lifecycle as the text toggle and gated by
   // the same `aiTextFilterExperimental` flag.
   if (aiImageToggle) {
-    const aiImageToggleRow = aiImageToggle.closest<HTMLElement>('.filter-ai-image-toggle');
-    getStorage(['aiImageFilterEnabled', 'aiTextFilterExperimental']).then(data => {
-      aiImageToggle.checked = data.aiImageFilterEnabled === true;
-      if (aiImageToggleRow) {
-        aiImageToggleRow.style.display = data.aiTextFilterExperimental === true ? '' : 'none';
-      }
-    }).catch(err => console.error('[UI] Failed to load aiImageFilterEnabled:', err));
-
     aiImageToggle.addEventListener('change', () => {
-      chrome.storage.local.set({ aiImageFilterEnabled: aiImageToggle.checked })
+      setAiDetectionToggle('aiImageFilterEnabled', aiImageToggle.checked)
         .catch(err => console.error('[UI] Failed to save aiImageFilterEnabled:', err));
     });
   }
+
+  refreshAiToggleUI().catch(err => console.error('[UI] Failed to load AI toggle state:', err));
 
   // Show/hide animated placeholder based on input state and existing phrases
   function updatePlaceholderVisibility() {
@@ -823,6 +865,18 @@ function setupFilterBoxEventHandlers(container: HTMLElement) {
 
   // Settings button click
   settingsBtn.addEventListener('click', () => showSettingsModal());
+
+  // Guest-trial notice: the CTA deep-links to the local model section of the
+  // settings modal. If a local model is already driving filtering, the trial
+  // pitch no longer applies — drop the notice.
+  const trialNotice = container.querySelector<HTMLElement>('.ff-guest-trial-notice');
+  if (trialNotice) {
+    trialNotice.querySelector('.ff-local-model-cta')
+      ?.addEventListener('click', () => showSettingsModal('local'));
+    getStorage(['selectedModel']).then(({ selectedModel }) => {
+      if ((selectedModel || '').startsWith('local:')) trialNotice.remove();
+    }).catch(err => console.error('[UI] Failed to check selectedModel for trial notice:', err));
+  }
 
   // Toggle filtered view on button click
   toggleBtn.addEventListener('click', () => {
@@ -1799,7 +1853,11 @@ export async function removeFilterPhrase(phrase: string) {
 
 // ==================== Settings Modal ====================
 
-export function showSettingsModal() {
+// `section: 'local'` deep-links to the local model setup: the popup sees the
+// #local hash and preselects the Local radio so its download section is
+// immediately visible (extension mode only — the iOS in-app path has no
+// guest trial and never passes a section).
+export function showSettingsModal(section?: 'local') {
   // Remove existing modal if any
   if (settingsModal && settingsModal.isConnected) {
     settingsModal.remove();
@@ -1864,7 +1922,7 @@ export function showSettingsModal() {
     // Extension mode: load popup.html in iframe
     iframe = document.createElement('iframe');
     iframe.className = 'settings-modal-iframe';
-    iframe.src = chrome.runtime.getURL('popup.html');
+    iframe.src = chrome.runtime.getURL('popup.html') + (section === 'local' ? '#local' : '');
 
     // Send current theme to iframe once it loads
     iframe.addEventListener('load', () => {
@@ -2028,7 +2086,18 @@ export function updateModelLoadingProgress(statuses: Record<string, LocalModelSt
 
   if (!status) return;
 
-  const isLoading = status.state === 'downloading' || status.state === 'initializing' || status.state === 'cached';
+  // The in-feed indicator is only for the multi-GB first download — the one
+  // slow operation with real progress to report. Everything else stays
+  // silent by design:
+  //   - 'cached' is the dormant "downloaded but not loaded" state the engine
+  //     rests in after its idle unload; nothing is in flight.
+  //   - 'initializing' covers cache reloads (a few seconds of streaming the
+  //     model from Cache Storage into the GPU, no incremental progress) —
+  //     the per-post processing indicator already conveys activity there.
+  // The runtime only emits download-progress events from the real network
+  // path (see fetchAndCacheModel), so 'downloading' means a genuine download.
+  // The popup shows its own badge for the other states.
+  const isLoading = status.state === 'downloading';
 
   containers.forEach(container => {
     if (container && container.isConnected) {
@@ -2040,16 +2109,8 @@ export function updateModelLoadingProgress(statuses: Record<string, LocalModelSt
         const textEl = loadingEl.querySelector('.model-loading-text')!;
         const fillEl = loadingEl.querySelector<HTMLElement>('.model-loading-progress-fill')!;
 
-        if (status.state === 'cached') {
-          textEl.textContent = 'Loading model...';
-          fillEl.style.width = '0%';
-        } else if (status.text) {
-          textEl.textContent = status.text;
-          fillEl.style.width = `${(status.progress || 0) * 100}%`;
-        } else {
-          textEl.textContent = status.state === 'initializing' ? 'Initializing...' : 'Downloading...';
-          fillEl.style.width = `${(status.progress || 0) * 100}%`;
-        }
+        textEl.textContent = status.text || 'Downloading local model...';
+        fillEl.style.width = `${(status.progress || 0) * 100}%`;
       } else {
         loadingEl.style.display = 'none';
       }
@@ -2059,42 +2120,49 @@ export function updateModelLoadingProgress(statuses: Record<string, LocalModelSt
 }
 
 export function initModelLoadingListener() {
+  // Cache the selected model so download-progress events render synchronously
+  // from changes.newValue. During a model download, localModelStatuses writes
+  // fire many times per second; the previous getStorage() round-trip per
+  // event queued behind that write flood, so the in-feed bar only caught up
+  // in visible clumps. (The popup renders straight from the event payload,
+  // which is why it was smooth while the in-feed bar was chunky.)
+  let selectedModel = '';
+
   // Get initial state
   getStorage(['localModelStatuses', 'selectedModel']).then((data) => {
+    selectedModel = (data.selectedModel as string) || '';
     if (data.localModelStatuses) {
-      updateModelLoadingProgress(
-        data.localModelStatuses,
-        data.selectedModel || ''
-      );
+      updateModelLoadingProgress(data.localModelStatuses, selectedModel);
     }
   }).catch(err => console.error('[UI] Failed to load model statuses:', err));
 
   // Listen for changes
   chrome.storage.onChanged.addListener((changes: Record<string, chrome.storage.StorageChange>, areaName: string) => {
-    if (areaName === 'local' && changes.localModelStatuses) {
-      getStorage(['selectedModel']).then((data) => {
-        const newStatuses = (changes.localModelStatuses.newValue || {}) as Record<string, LocalModelStatus>;
-        const oldStatuses = (changes.localModelStatuses.oldValue || {}) as Record<string, LocalModelStatus>;
-        const selectedModel = data.selectedModel || '';
+    if (areaName !== 'local') return;
 
-        updateModelLoadingProgress(newStatuses, selectedModel);
-
-        // Check if selected local model just became ready - trigger re-evaluation
-        if (selectedModel?.startsWith('local:')) {
-          const modelId = selectedModel.split(':')[1];
-          const oldState = oldStatuses[modelId]?.state;
-          const newState = newStatuses[modelId]?.state;
-
-          if (newState === 'ready' && oldState && oldState !== 'ready') {
-            _deps.processExistingPosts();
-          }
-        }
-      }).catch(err => console.error('[UI] Failed to get selected model:', err));
-    }
-    if (areaName === 'local' && changes.selectedModel) {
+    if (changes.selectedModel) {
+      selectedModel = (changes.selectedModel.newValue as string) || '';
       getStorage(['localModelStatuses']).then((data) => {
-        updateModelLoadingProgress(data.localModelStatuses || {}, changes.selectedModel.newValue as string);
+        updateModelLoadingProgress(data.localModelStatuses || {}, selectedModel);
       }).catch(err => console.error('[UI] Failed to get model statuses:', err));
+    }
+
+    if (changes.localModelStatuses) {
+      const newStatuses = (changes.localModelStatuses.newValue || {}) as Record<string, LocalModelStatus>;
+      const oldStatuses = (changes.localModelStatuses.oldValue || {}) as Record<string, LocalModelStatus>;
+
+      updateModelLoadingProgress(newStatuses, selectedModel);
+
+      // Check if selected local model just became ready - trigger re-evaluation
+      if (selectedModel?.startsWith('local:')) {
+        const modelId = selectedModel.split(':')[1];
+        const oldState = oldStatuses[modelId]?.state;
+        const newState = newStatuses[modelId]?.state;
+
+        if (newState === 'ready' && oldState && oldState !== 'ready') {
+          _deps.processExistingPosts();
+        }
+      }
     }
   });
 }

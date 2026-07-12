@@ -6,12 +6,13 @@ import {
 } from '../shared/utils';
 import { isAnonymousUser } from './auth';
 import { PREDEFINED_MODELS, API_DISPLAY_NAMES, DEFAULT_MODEL } from '../shared/models';
-import { buildAPIMessages } from '../shared/prompts';
+import { buildAPIMessages, parseTableYesnoResponse } from '../shared/prompts';
 import { callDirectAPI, callAnthropicAPI, callImbueAPI, callImbueAiTextDetection, callImbueAiImageDetection } from './providers';
 import { runDetectors, type Detector, type DetectorResult } from './detectors';
 import { callLocalInference, localEngine } from './local-model';
-import { iosLocalClassify, iosLocalAiTextDetect } from './ios-local-bridge';
-import { getStorage, setStorage, removeStorage, getDescriptions, clampThreshold, clampImageThreshold, DEFAULT_AI_TEXT_DETECTION_THRESHOLD, DEFAULT_AI_IMAGE_DETECTION_THRESHOLD } from '../shared/storage';
+import { iosLocalClassify, iosLocalGenerate, iosLocalAiTextDetect } from './ios-local-bridge';
+import { getStorage, setStorage, removeStorage, getDescriptions, clampThreshold, clampImageThreshold, clampReplyThreshold, aiIntentAutoActive, DEFAULT_AI_TEXT_DETECTION_THRESHOLD, DEFAULT_AI_IMAGE_DETECTION_THRESHOLD } from '../shared/storage';
+import { recordAiFilterIntent } from './ai-intent';
 import { PLATFORMS, enabledStorageKey } from '../shared/platforms';
 export { DEFAULT_AI_TEXT_DETECTION_THRESHOLD, DEFAULT_AI_IMAGE_DETECTION_THRESHOLD };
 import type {
@@ -479,7 +480,8 @@ export async function getSettings(siteId?: SiteId): Promise<Settings> {
     'apiKey', 'openaiApiKey', 'openaiApiBase', 'openrouterApiKey', 'geminiApiKey',
     'anthropicApiKey', 'enabled', 'useEmbeddings', 'selectedModel',
     'customModels', 'predefinedModelKwargs', 'aiTextFilterEnabled', 'aiTextDetectionThreshold',
-    'aiImageFilterEnabled', 'aiImageDetectionThreshold',
+    'aiTextReplyDetectionThreshold', 'aiImageFilterEnabled', 'aiImageDetectionThreshold',
+    'aiFilterIntent', 'aiFilterIntentOptOut',
     'filterReplies', 'youtubeShowPlaceholder',
     ...platformEnabledKeys,
   ] as const;
@@ -506,8 +508,10 @@ export async function getSettings(siteId?: SiteId): Promise<Settings> {
     predefinedModelKwargs: data.predefinedModelKwargs || {},
     aiTextFilterEnabled: data.aiTextFilterEnabled === true,
     aiTextDetectionThreshold: clampThreshold(data.aiTextDetectionThreshold),
+    aiTextReplyDetectionThreshold: clampReplyThreshold(data.aiTextReplyDetectionThreshold),
     aiImageFilterEnabled: data.aiImageFilterEnabled === true,
     aiImageDetectionThreshold: clampImageThreshold(data.aiImageDetectionThreshold),
+    aiFilterIntentActive: aiIntentAutoActive(data),
     filterReplies: data.filterReplies !== false,
     platformEnabled,
     youtubeShowPlaceholder: data.youtubeShowPlaceholder === true
@@ -847,8 +851,11 @@ async function processBatch(): Promise<void> {
   // are off we still flow through the tab-dispatch logic below so the popup
   // always shows two tabs (both marked skipped).
   const filterEnabled = !!(settings.descriptions && settings.descriptions.length > 0);
-  const aiToggleOn = settings.aiTextFilterEnabled;
-  const aiImageToggleOn = settings.aiImageFilterEnabled;
+  // Explicit toggles OR the inferred "user wants AI content removed" state
+  // (see ai-intent.ts). An explicit user off is folded into
+  // aiFilterIntentActive already, via the aiFilterIntentOptOut flag.
+  const aiToggleOn = settings.aiTextFilterEnabled || settings.aiFilterIntentActive;
+  const aiImageToggleOn = settings.aiImageFilterEnabled || settings.aiFilterIntentActive;
 
   // Check cache. Use the key computed at enqueue time (cacheKeyFor) rather than
   // recomputing — for YouTube that key is video-id based, not text+image.
@@ -934,6 +941,11 @@ async function processBatch(): Promise<void> {
         return await iosLocalClassify(postData, settings.descriptions, apiConfig.modelConfig as LocalModelDef | null);
       } else if (apiConfig.apiName === 'imbue') {
         const imbueResponse = await callImbueAPI(postData, settings.descriptions, 'filterPost');
+        // Every filterPost result carries the backend's judgment of whether
+        // this phrase set targets AI-generated content — fold it into the
+        // sticky intent state that auto-engages the AI detectors.
+        void recordAiFilterIntent(settings.descriptions, imbueResponse.aiFilterIntent, 'filterPost')
+          .catch(err => console.warn('[AiIntent] record failed:', (err as Error).message));
         return {
           shouldHide: imbueResponse.shouldHide,
           reasoning: imbueResponse.reasoning || 'No reasoning provided',
@@ -970,8 +982,14 @@ async function processBatch(): Promise<void> {
       runFilter,
       rawText: item.rawText,
       imageUrls,
-      aiThreshold: settings.aiTextDetectionThreshold,
+      // Replies/comments use their own (typically lower) threshold.
+      aiThreshold: item.isReply ? settings.aiTextReplyDetectionThreshold : settings.aiTextDetectionThreshold,
       aiImageThreshold: settings.aiImageDetectionThreshold,
+      // The on-device aiText path depends on linear_v3_head.bin, which was
+      // trained on E4B last-token logits — E2B shares the vocab dim so it
+      // would run but produce garbage confidences. Route only E4B locally.
+      // Every registry model is detection-capable (conditional LoRA + head
+      // on the same weights), so any iosLocal selection routes aiText on-device.
       useIosLocalAiText: apiConfig.apiName === 'iosLocal',
     });
 
@@ -1019,11 +1037,13 @@ async function processBatch(): Promise<void> {
 
     // Guest trial: count posts filtered while signed in anonymously, lifetime
     // across all sessions. iOS is permanently anonymous by design (App Check)
-    // and has no Google sign-in path, so it's excluded. When the guest crosses
-    // the limit, prompt every content tab to sign in.
+    // and has no Google sign-in path, so it's excluded. Local models are also
+    // excluded — they run on-device without the Imbue backend, and the trial
+    // notice advertises them as unlimited. When the guest crosses the limit,
+    // prompt every content tab to sign in.
     const isIOS = typeof window !== 'undefined'
       && typeof (window as unknown as Record<string, unknown>).__ff_getAppCheckToken === 'function';
-    if (evalResult.shouldHide && !isIOS && isAnonymousUser()) {
+    if (evalResult.shouldHide && !isIOS && !isLocalModel && isAnonymousUser()) {
       const prev = statsData.anonFilterCount || 0;
       const next = prev + 1;
       await setStorage({ anonFilterCount: next });
@@ -1190,7 +1210,15 @@ function flushPipelineQueues(reason: string): void {
 export async function handleSettingsChange(changes: Record<string, chrome.storage.StorageChange>): Promise<void> {
   flushPipelineQueues('Settings changed, re-evaluating...');
 
-  if (changes.selectedModel) {
+  // Model changes invalidate everything. AI-detection changes (toggles,
+  // thresholds, inferred intent, opt-out) also invalidate: cached verdicts
+  // were computed with a different detector set, and the content script
+  // re-evaluates on these changes expecting fresh results, not cache hits.
+  if (changes.selectedModel
+      || changes.aiTextFilterEnabled || changes.aiTextDetectionThreshold
+      || changes.aiTextReplyDetectionThreshold
+      || changes.aiImageFilterEnabled || changes.aiImageDetectionThreshold
+      || changes.aiFilterIntent || changes.aiFilterIntentOptOut) {
     await clearEvaluationCache();
   }
 
@@ -1224,6 +1252,10 @@ async function validateFilterPhrase(postText: string, imageUrls: string[], phras
   const isIosLocalModel = settings.selectedModel?.startsWith('iosLocal:');
 
   if (process.env.HAS_IMBUE_BACKEND === 'true' && settings.selectedModel === 'imbue') {
+    // Deliberately NOT recorded into the aiFilterIntent state: this screens a
+    // single *candidate* suggestion the user hasn't added (and may never add).
+    // If they do add it, the descriptions-change probe in ai-intent.ts
+    // re-derives intent from the real phrase set.
     const imbueResponse = await callImbueAPI(postData, [phrase], 'validatePhrase');
     return imbueResponse.shouldHide === true;
   } else if (isLocalModel) {
@@ -1255,13 +1287,7 @@ async function validateFilterPhrase(postText: string, imageUrls: string[], phras
 // Generate candidate filter phrases using the configured model
 async function generateCandidatePhrases(postText: string, imageUrls: string[], count: number, rejectPhrases: string[], settings: Settings): Promise<string[]> {
   const isLocalModel = settings.selectedModel?.startsWith('local:');
-
-  // The iOS local bridge only handles classify-shaped prompts, not freeform
-  // generation. Callers should disable phrase suggestions when iosLocal is the
-  // active model.
-  if (settings.selectedModel?.startsWith('iosLocal:')) {
-    throw new Error('Phrase suggestions are not supported on the iOS on-device model.');
-  }
+  const isIosLocalModel = settings.selectedModel?.startsWith('iosLocal:');
 
   const rejected = rejectPhrases.length > 0
     ? ` Do NOT suggest any of these: ${rejectPhrases.join(', ')}.`
@@ -1269,7 +1295,7 @@ async function generateCandidatePhrases(postText: string, imageUrls: string[], c
 
   const hasImages = imageUrls && imageUrls.length > 0;
   const imageNote = hasImages ? ' Consider BOTH the text and any attached images when suggesting categories.' : '';
-  const simpleSystemPrompt = `Given a social media post, suggest exactly ${count} broad content category labels (1-3 words each) that someone might want to filter out because the post is annoying, obnoxious, or unpleasant. Each label must be a general topic or content type such that if another model were asked "does this post relate to [label]?", it would say yes. Focus on what makes the post grating or unwelcome. At least one of the ${count} labels MUST describe a negative emotional tone or off-putting quality of the post. ${imageNote}${rejected} Output ONLY the ${count} category labels, one per line, nothing else.`;
+  const simpleSystemPrompt = `Given a social media post, suggest exactly ${count} filter phrases (1-3 words each) that someone might add to hide posts like this one because it is annoying, obnoxious, or unpleasant. Each phrase must still work as a category: if another model were asked "does this post relate to [phrase]?", it would say yes. Favor phrases that name what is irritating about the post — its negative tone, behavior, or tactic — and make them as specific as possible. Focus on the tone rather than the content. At most one phrase may be a plain topic (like "crypto" or "politics"); every other phrase must carry a clearly negative connotation. Only use an example if it genuinely fits the post.${imageNote}${rejected} Output ONLY the ${count} phrases, one per line, nothing else.`;
   let result: string[];
 
   if (process.env.HAS_IMBUE_BACKEND === 'true' && settings.selectedModel === 'imbue') {
@@ -1285,8 +1311,24 @@ async function generateCandidatePhrases(postText: string, imageUrls: string[], c
       { role: 'system', content: simpleSystemPrompt },
       { role: 'user', content: postText }
     ], 150, { priority: 1, temperature: 0.7 });
+    // Strip list numbering, bullet markers, and markdown emphasis — greedy
+    // decoding on the local Gemma reliably formats the labels as a markdown
+    // list, and leftover `**`/backticks would pollute the filter phrase.
     result = rawText.split('\n')
-      .map(l => l.replace(/^\d+[.)-]\s*/, '').trim())
+      .map(l => l.replace(/^\d+[.)-]\s*/, '').replace(/^[-*•]\s+/, '').replace(/[*_`"]/g, '').trim())
+      .filter(l => l && l.length <= 40 && !l.startsWith('<'))
+      .slice(0, count);
+  } else if (isIosLocalModel) {
+    // Freeform generation over the native bridge — same prompt and markdown
+    // cleanup as the desktop local branch above. Text only: the on-device
+    // generation path doesn't take images.
+    const modelName = settings.selectedModel.split(':')[1];
+    const rawText = await iosLocalGenerate(simpleSystemPrompt, postText, {
+      maxOutputTokens: 150,
+      modelName,
+    });
+    result = rawText.split('\n')
+      .map(l => l.replace(/^\d+[.)-]\s*/, '').replace(/^[-*•]\s+/, '').replace(/[*_`"]/g, '').trim())
       .filter(l => l && l.length <= 40 && !l.startsWith('<'))
       .slice(0, count);
   } else {
@@ -1314,6 +1356,41 @@ async function generateCandidatePhrases(postText: string, imageUrls: string[], c
   return result.map(item => item.toLowerCase());
 }
 
+// Validate all candidate phrases against the local model in one multi-category
+// inference call. Returns the matched phrases (in candidate order), or null
+// when the call errored or the verdict row was malformed — callers should fall
+// back to per-phrase validation in that case.
+async function validatePhrasesBatchedLocal(postText: string, imageUrls: string[], phrases: string[], settings: Settings): Promise<string[] | null> {
+  const modelName = settings.selectedModel.split(':')[1];
+  const modelConfig = PREDEFINED_MODELS.local?.find(m => m.name === modelName) || {} as LocalModelDef;
+  const postData = { text: postText, imageUrls: imageUrls || [] };
+  try {
+    const localResult = await callLocalInference(postData, phrases, modelConfig, modelName, { priority: 1 });
+    const parsed = parseTableYesnoResponse(localResult.rawResponse ?? null, phrases);
+    return parsed.malformed ? null : parsed.matches;
+  } catch (err) {
+    console.warn('[Suggest] batched validation error:', (err as Error).message);
+    return null;
+  }
+}
+
+// iOS twin of validatePhrasesBatchedLocal: one multi-category classify over
+// the native bridge instead of one prefill per phrase on the phone's serial
+// inference queue. Same null-on-malformed contract.
+async function validatePhrasesBatchedIosLocal(postText: string, imageUrls: string[], phrases: string[], settings: Settings): Promise<string[] | null> {
+  const modelName = settings.selectedModel.split(':')[1];
+  const modelConfig = PREDEFINED_MODELS.iosLocal?.find(m => m.name === modelName) ?? null;
+  const postData = { text: postText, imageUrls: imageUrls || [] };
+  try {
+    const result = await iosLocalClassify(postData, phrases, modelConfig);
+    const parsed = parseTableYesnoResponse(result.rawResponse ?? null, phrases);
+    return parsed.malformed ? null : parsed.matches;
+  } catch (err) {
+    console.warn('[Suggest] batched iosLocal validation error:', (err as Error).message);
+    return null;
+  }
+}
+
 // Generate 9 candidate filter phrases up front, then return the first 3 that validate
 export async function suggestAnnoyingReasons(postText: string, imageUrls: string[], siteId?: SiteId, tabId?: number): Promise<string[]> {
   const settings = await getSettings(siteId);
@@ -1332,6 +1409,27 @@ export async function suggestAnnoyingReasons(postText: string, imageUrls: string
         total: 3
       });
     }
+  }
+
+  // Batched fast path for the local model: validate every candidate in one
+  // multi-category call — a single prefill of the post instead of one per
+  // phrase, all on the serial WebGPU queue — using the same verdict-row
+  // format the feed filter runs in production. Falls through to the
+  // per-phrase loop below when the row comes back malformed, so one bad row
+  // costs a retry instead of the whole click.
+  const isLocal = settings.selectedModel?.startsWith('local:');
+  const isIosLocal = settings.selectedModel?.startsWith('iosLocal:');
+  if ((isLocal || isIosLocal) && uniqueCandidates.length > 1) {
+    const matches = isLocal
+      ? await validatePhrasesBatchedLocal(postText, imageUrls, uniqueCandidates, settings)
+      : await validatePhrasesBatchedIosLocal(postText, imageUrls, uniqueCandidates, settings);
+    if (matches !== null) {
+      const finalValidated = matches.slice(0, 3);
+      validatedCount = finalValidated.length;
+      sendProgress();
+      return finalValidated;
+    }
+    console.warn('[Suggest] batched validation failed; falling back to per-phrase validation');
   }
 
   const results = await Promise.all(uniqueCandidates.map(async (phrase) => {
