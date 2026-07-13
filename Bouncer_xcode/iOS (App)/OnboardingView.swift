@@ -13,7 +13,7 @@ struct OnboardingView: View {
 
     @State private var currentPage = 0
     @State private var videoPlayer = PreloadedVideoPlayer(videoName: "filterphrases")
-    @State private var inferenceMode: InferenceMode = .express
+    @State private var inferenceMode: InferenceMode = .cloud
     // True once the user commits to Local and the model transfer starts;
     // onboarding then blocks on the download and auto-finishes when it lands.
     @State private var isDownloadingModel = false
@@ -136,11 +136,11 @@ struct OnboardingView: View {
         }
 
         switch inferenceMode {
-        case .express:
+        case .cloud:
             writeSelectedModel(imbueModelKey)
             completeOnboarding()
-        case .local:
-            // Unreachable via UI (unsupported devices never see the Local
+        case .onDevice:
+            // Unreachable via UI (unsupported devices never see the On-Device
             // option), but keep the RAM invariant local to the write.
             guard LocalInferenceService.models[0].isSupportedOnThisDevice else { return }
             writeSelectedModel(LocalInferenceService.models[0].selectedModelKey)
@@ -378,10 +378,10 @@ private struct VideoOnboardingPage: View {
     }
 }
 
-// MARK: - Inference Mode Page (Express vs Local)
+// MARK: - Inference Mode Page (Cloud vs On-Device)
 
 private enum InferenceMode {
-    case express, local
+    case cloud, onDevice
 }
 
 private struct InferenceModePage: View {
@@ -411,25 +411,25 @@ private struct InferenceModePage: View {
                 Section {
                     Picker("AI mode", selection: $mode) {
                         option(
-                            title: "Express",
+                            title: "Cloud",
                             description: "Fast, free filtering in the cloud.",
                             badge: "Recommended",
                             badgeTint: .green
                         )
-                        .tag(InferenceMode.express)
+                        .tag(InferenceMode.cloud)
 
                         // Inline-Picker rows can't be individually disabled,
-                        // so on low-RAM devices the Local option is omitted
+                        // so on low-RAM devices the On-Device option is omitted
                         // and the footer below explains why.
                         if LocalInferenceService.models[0].isSupportedOnThisDevice {
                             option(
-                                title: "Local",
+                                title: "On-Device",
                                 description: "Runs entirely on your device — no posts ever leave your phone.",
                                 // Badge shows the bare size — the estimate's "~" reads as clutter here.
                                 badge: "\(LocalInferenceService.models[0].approxSize.replacingOccurrences(of: "~", with: "")) download",
                                 badgeIcon: "arrow.down.circle"
                             )
-                            .tag(InferenceMode.local)
+                            .tag(InferenceMode.onDevice)
                         }
                     }
                     .pickerStyle(.inline)
@@ -437,7 +437,7 @@ private struct InferenceModePage: View {
                     .disabled(isDownloading)
                 } footer: {
                     if !LocalInferenceService.models[0].isSupportedOnThisDevice {
-                        Text("Local filtering isn't available on this iPhone — it requires \(LocalInferenceService.models[0].requiredRAMDisplay)+ RAM. You can use Express mode instead.")
+                        Text("On-device filtering isn't available on this iPhone — it requires \(LocalInferenceService.models[0].requiredRAMDisplay)+ RAM. You can use Cloud mode instead.")
                     }
                 }
 

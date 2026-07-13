@@ -298,7 +298,7 @@ function getSignInHTML() {
       <div class="filter-signin-prompt">
         ${signinButtonHTML(isSafari ? 'Continue with Apple' : 'Continue with Google')}
         <button class="skip-signin-btn">Skip sign-in<span class="skip-signin-arrow" aria-hidden="true">→</span></button>
-        <p class="ff-signin-explanation">Signing in helps prevent abuse. We don't collect any identifying data. A local model doesn't require sign-in.</p>
+        <p class="ff-signin-explanation">Signing in helps prevent abuse. We don't collect any identifying data. An on-device model doesn't require sign-in.</p>
       </div>
     </div>
   `;
@@ -800,8 +800,10 @@ export async function refreshAiIndicatorUI(): Promise<void> {
 // every platform's list (the intent state prunes instantly). Off → on: add
 // the seed phrase; the backend judges it and the first response engages
 // detection. `pending` bridges the round trip and is cleared by
-// refreshAiIndicatorUI on the resulting state write.
-async function toggleAiDetectionViaPhrases(): Promise<void> {
+// refreshAiIndicatorUI on the resulting state write. Exported for the iOS
+// native sheet's sparkle indicator, which drives the same mechanism through
+// the __ff_toggleAiDetection bridge (see content/ios.ts).
+export async function toggleAiDetectionViaPhrases(): Promise<void> {
   document.querySelectorAll<HTMLElement>('.filter-ai-indicator')
     .forEach(el => el.classList.add('pending'));
 
@@ -1601,15 +1603,21 @@ function buildImportButton(phrases: string[]): HTMLElement {
 // Three Bouncer layout variants live in the DOM at all times — sidebar (wide),
 // bottom (medium), mobile (narrow) — and media queries display:none all but
 // one. Returns the variant that's currently rendered so the import-flight
-// animation lands on a real, on-screen box. offsetParent is null when the
-// element or any ancestor is display:none, which is the rule the media-query
-// gating relies on.
+// animation lands on a real, on-screen box. checkVisibility() rather than
+// offsetParent: offsetParent is also null for position:fixed elements, which
+// misread the bottom pill (position: fixed) as hidden and silently skipped
+// the animation at medium window widths.
 function pickVisibleBouncerLayout(): HTMLElement | null {
   const layouts = document.querySelectorAll<HTMLElement>(
     '.filter-phrases-sidebar, .filter-phrases-bottom, .filter-phrases-mobile, .filter-phrases-banner',
   );
   for (const layout of layouts) {
-    if (layout.offsetParent !== null) return layout;
+    // Older Safari (<17.4) lacks checkVisibility — fall back to the
+    // offsetParent test there (its known fixed-position blind spot included).
+    const visible = typeof layout.checkVisibility === 'function'
+      ? layout.checkVisibility()
+      : layout.offsetParent !== null;
+    if (visible) return layout;
   }
   return null;
 }
@@ -2096,7 +2104,7 @@ export function updateModelLoadingProgress(statuses: Record<string, LocalModelSt
         const textEl = loadingEl.querySelector('.model-loading-text')!;
         const fillEl = loadingEl.querySelector<HTMLElement>('.model-loading-progress-fill')!;
 
-        textEl.textContent = status.text || 'Downloading local model...';
+        textEl.textContent = status.text || 'Downloading on-device model...';
         fillEl.style.width = `${(status.progress || 0) * 100}%`;
       } else {
         loadingEl.style.display = 'none';

@@ -123,9 +123,18 @@ class FilterSheetViewModel: ObservableObject {
     @Published var currentURL: String = ""
     @Published var isEditingURL = false
     @Published var isFilteredModalOpen = false
-    @Published var aiTextFilterEnabled: Bool = false
+    // AI detection (text + images, one signal) has no manual on/off switch —
+    // it is driven entirely by the user's natural-language filter phrases
+    // (see the extension's background/ai-intent.ts). `aiDetectionOn` mirrors
+    // that derived state: loaded on demand via __ff_getAiTextFilterEnabled
+    // and kept fresh by the aiDetectionOn field of the
+    // feedfilterPhrasesUpdated push. `aiDetectionPending` dims the sheet's
+    // sparkle indicator while the backend round trip that follows a tap is
+    // in flight — the counterpart of the desktop indicator's `.pending`
+    // class.
+    @Published var aiDetectionOn: Bool = false
+    @Published var aiDetectionPending: Bool = false
     @Published var aiTextDetectionThreshold: Double = 0.7
-    @Published var aiImageFilterEnabled: Bool = false
     @Published var aiImageDetectionThreshold: Double = 0.7
     // Mirrors chrome.storage.local["selectedModel"]. Settings views need
     // this on the main settings page to gate AI-text-detection UI: the
@@ -345,7 +354,7 @@ class FilterSheetViewModel: ObservableObject {
         }
     }
 
-    func loadAiTextFilterEnabled() {
+    func loadAiDetectionState() {
         guard let webView = webView else { return }
         Task { @MainActor in
             do {
@@ -356,11 +365,65 @@ class FilterSheetViewModel: ObservableObject {
                     contentWorld: Self.contentWorld
                 )
                 if let value = result as? Bool {
-                    self.aiTextFilterEnabled = value
+                    self.aiDetectionOn = value
                 }
             } catch {
-                print("[FeedFilter] loadAiTextFilterEnabled error: \(error)")
+                print("[FeedFilter] loadAiDetectionState error: \(error)")
             }
+        }
+    }
+
+    // Confirmed state pushed from JS. `confirmed` is true only for pushes
+    // triggered by an aiFilterIntent storage write — the same signal that
+    // clears the desktop indicator's `.pending` class — so unrelated pushes
+    // (phrase edits, filtered-count changes) can't clear the pending dim
+    // early while the backend is still judging the seed phrase.
+    func applyAiDetectionState(_ on: Bool, confirmed: Bool) {
+        aiDetectionOn = on
+        if confirmed {
+            aiDetectionPending = false
+            aiPendingFallbackTask?.cancel()
+            aiPendingFallbackTask = nil
+        }
+    }
+
+    private var aiPendingFallbackTask: Task<Void, Never>?
+
+    // Toggle AI detection through the natural-language phrase mechanism —
+    // the sparkle indicator's tap action, mirroring the desktop indicator
+    // (toggleAiDetectionViaPhrases in content/ui.ts). Off→on adds the seed
+    // phrase "AI slop" and waits for the backend to judge it; on→off deletes
+    // every AI phrase (instant, no round trip). Confirmation arrives via the
+    // feedfilterPhrasesUpdated push; the fallback timer keeps a dropped
+    // round trip from wedging the indicator (desktop has the same failure
+    // mode but re-renders often enough to recover).
+    func toggleAiDetection() {
+        guard let webView = webView else { return }
+        aiDetectionPending = true
+        aiPendingFallbackTask?.cancel()
+        aiPendingFallbackTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 10_000_000_000)
+            guard !Task.isCancelled, let self = self else { return }
+            self.aiDetectionPending = false
+            self.loadAiDetectionState()
+        }
+        Task { @MainActor in
+            do {
+                _ = try await webView.callAsyncJavaScript(
+                    "return await window.__ff_toggleAiDetection()",
+                    arguments: [:],
+                    in: nil,
+                    contentWorld: Self.contentWorld
+                )
+            } catch {
+                print("[FeedFilter] toggleAiDetection error: \(error)")
+                self.aiDetectionPending = false
+                self.aiPendingFallbackTask?.cancel()
+                self.aiPendingFallbackTask = nil
+            }
+            // The seed phrase appears in (or the AI phrases vanish from) the
+            // current site's list immediately — reflect it in the sheet.
+            self.loadPhrases()
         }
     }
 
@@ -380,19 +443,6 @@ class FilterSheetViewModel: ObservableObject {
             } catch {
                 print("[FeedFilter] loadSelectedModel error: \(error)")
             }
-        }
-    }
-
-    func setAiTextFilterEnabled(_ enabled: Bool) {
-        aiTextFilterEnabled = enabled
-        guard let webView = webView else { return }
-        Task {
-            try? await webView.callAsyncJavaScript(
-                "return await window.__ff_setAiTextFilterEnabled(enabled)",
-                arguments: ["enabled": enabled],
-                in: nil,
-                contentWorld: Self.contentWorld
-            )
         }
     }
 
@@ -425,38 +475,6 @@ class FilterSheetViewModel: ObservableObject {
             try? await webView.callAsyncJavaScript(
                 "return await window.__ff_setAiTextDetectionThreshold(value)",
                 arguments: ["value": clamped],
-                in: nil,
-                contentWorld: Self.contentWorld
-            )
-        }
-    }
-
-    func loadAiImageFilterEnabled() {
-        guard let webView = webView else { return }
-        Task { @MainActor in
-            do {
-                let result = try await webView.callAsyncJavaScript(
-                    "return await window.__ff_getAiImageFilterEnabled()",
-                    arguments: [:],
-                    in: nil,
-                    contentWorld: Self.contentWorld
-                )
-                if let value = result as? Bool {
-                    self.aiImageFilterEnabled = value
-                }
-            } catch {
-                print("[FeedFilter] loadAiImageFilterEnabled error: \(error)")
-            }
-        }
-    }
-
-    func setAiImageFilterEnabled(_ enabled: Bool) {
-        aiImageFilterEnabled = enabled
-        guard let webView = webView else { return }
-        Task {
-            try? await webView.callAsyncJavaScript(
-                "return await window.__ff_setAiImageFilterEnabled(enabled)",
-                arguments: ["enabled": enabled],
                 in: nil,
                 contentWorld: Self.contentWorld
             )
@@ -884,6 +902,26 @@ struct FilterPhraseSheet: View {
                     .accessibilityLabel("Reset onboarding (debug)")
                 }
                 #endif
+                // AI-detection indicator, the native counterpart of the
+                // sparkle at the top-right of the desktop filter box
+                // (.filter-ai-indicator in content.css). It reports the
+                // natural-language-derived state AND toggles it — but only
+                // through the phrase mechanism itself; there is no override
+                // switch (see the extension's background/ai-intent.ts).
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        viewModel.toggleAiDetection()
+                    } label: {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 17, weight: .regular))
+                            .foregroundStyle(viewModel.aiDetectionOn ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+                    }
+                    .opacity(viewModel.aiDetectionPending ? 0.55 : 1.0)
+                    .disabled(viewModel.aiDetectionPending)
+                    .accessibilityLabel(viewModel.aiDetectionOn
+                        ? "Removing AI-generated content — your filter phrases ask for it. Tap to stop (removes those phrases)."
+                        : "Tap to remove AI-generated content from your feed (adds the filter phrase \"AI slop\").")
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         viewModel.shareFilterPack()
@@ -907,7 +945,7 @@ struct FilterPhraseSheet: View {
         }
         .scrollDismissesKeyboard(.interactively)
         .onAppear {
-            viewModel.loadAiTextFilterEnabled()
+            viewModel.loadAiDetectionState()
             viewModel.syncPlatformToCurrentSite()
             viewModel.loadPhrases()
         }
@@ -1017,16 +1055,13 @@ struct BouncerSettingsView: View {
             // on iOS — filtered videos are always removed (hidden) on mobile.
 
             // AI text/image detection is available when either Imbue is configured
-            // OR the on-device classifier model has been picked.
+            // OR the on-device classifier model has been picked. There is no
+            // manual on/off toggle — detection is driven entirely by the
+            // user's natural-language filter phrases (mirroring the desktop
+            // popup, which shows only the threshold sliders, gated on the
+            // derived state).
             if hasImbueBackend || viewModel.selectedModel.hasPrefix("iosLocal:") {
                 Section {
-                    Toggle(isOn: Binding(
-                        get: { viewModel.aiTextFilterEnabled },
-                        set: { viewModel.setAiTextFilterEnabled($0) }
-                    )) {
-                        Text("Filter AI-generated text")
-                    }
-
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
                             Text("Confidence threshold")
@@ -1058,12 +1093,12 @@ struct BouncerSettingsView: View {
                         }
                     }
                     .padding(.vertical, 4)
-                    .disabled(!viewModel.aiTextFilterEnabled)
-                    .opacity(viewModel.aiTextFilterEnabled ? 1.0 : 0.5)
+                    .disabled(!viewModel.aiDetectionOn)
+                    .opacity(viewModel.aiDetectionOn ? 1.0 : 0.5)
                 } header: {
                     Text("AI Text Detection")
                 } footer: {
-                    Text("Hide posts whose text appears to be written by AI. Posts at or above this confidence are hidden.")
+                    Text("Hide posts whose text appears to be written by AI. Posts at or above this confidence are hidden. Turns on automatically when your filter phrases ask for AI-generated content to be removed (e.g. \u{201C}AI slop\u{201D}), and off when they don\u{2019}t.")
                 }
             }
 
@@ -1071,13 +1106,6 @@ struct BouncerSettingsView: View {
             // gated on the Imbue backend.
             if hasImbueBackend {
                 Section {
-                    Toggle(isOn: Binding(
-                        get: { viewModel.aiImageFilterEnabled },
-                        set: { viewModel.setAiImageFilterEnabled($0) }
-                    )) {
-                        Text("Filter AI-generated images")
-                    }
-
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
                             Text("Confidence threshold")
@@ -1109,12 +1137,12 @@ struct BouncerSettingsView: View {
                         }
                     }
                     .padding(.vertical, 4)
-                    .disabled(!viewModel.aiImageFilterEnabled)
-                    .opacity(viewModel.aiImageFilterEnabled ? 1.0 : 0.5)
+                    .disabled(!viewModel.aiDetectionOn)
+                    .opacity(viewModel.aiDetectionOn ? 1.0 : 0.5)
                 } header: {
                     Text("AI Image Detection")
                 } footer: {
-                    Text("Hide posts whose images appear to be AI-generated. Posts whose most-suspect image is at or above this confidence are hidden.")
+                    Text("Hide posts whose images appear to be AI-generated. Posts whose most-suspect image is at or above this confidence are hidden. Engages together with AI text detection, driven by your filter phrases.")
                 }
             }
 
@@ -1145,13 +1173,12 @@ struct BouncerSettingsView: View {
         .onAppear {
             viewModel.loadFilterReplies()
             viewModel.loadSelectedModel()
-            // Text-detection settings load whenever the toggle can appear:
+            // Text-detection settings load whenever the section can appear:
             // Imbue available OR on-device model selected. Image-detection
             // settings stay gated on Imbue (no on-device image classifier).
-            viewModel.loadAiTextFilterEnabled()
+            viewModel.loadAiDetectionState()
             viewModel.loadAiTextDetectionThreshold()
             if hasImbueBackend {
-                viewModel.loadAiImageFilterEnabled()
                 viewModel.loadAiImageDetectionThreshold()
             }
         }

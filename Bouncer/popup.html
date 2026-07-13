@@ -44,15 +44,15 @@
         <label class="model-radio" id="modelRadioImbueRow">
           <input type="radio" name="modelChoice" id="modelRadioImbue" value="imbue">
           <span class="model-radio-text">
-            <span class="model-radio-label">Express <span class="free-badge">recommended</span></span>
-            <span class="model-radio-sub">Fast and free, in the cloud.</span>
+            <span class="model-radio-label">Cloud <span class="free-badge">recommended</span></span>
+            <span class="model-radio-sub">Fast and free.</span>
           </span>
         </label>
         <label class="model-radio" id="modelRadioLocalRow">
           <input type="radio" name="modelChoice" id="modelRadioLocal" value="local">
           <span class="model-radio-text">
-            <span class="model-radio-label">Local</span>
-            <span class="model-radio-sub">Runs entirely on your device.</span>
+            <span class="model-radio-label">On-Device</span>
+            <span class="model-radio-sub">Nothing leaves your computer.</span>
             <span class="model-radio-note hint" id="modelRadioLocalNote" style="display: none;"></span>
           </span>
         </label>
@@ -60,19 +60,19 @@
       <p class="hint model-radio-advanced-note" id="modelRadioAdvancedNote" style="display: none;"></p>
     </section>
 
-    <!-- Local Model Section (only shown when a local model is selected) -->
+    <!-- On-device model section (only shown when an on-device model is selected) -->
     <section id="localModelSection" class="local-model-section" style="display: none;">
       <div class="local-model-header">
-        <span class="local-model-title">Local Model</span>
+        <span class="local-model-title">On-Device Model</span>
         <span id="localModelStatusBadge" class="api-status-badge">Checking...</span>
       </div>
       <p id="localModelNoImageWarning" class="hint local-model-no-image-warning" style="display: none;">Can't see images — photo and video posts are filtered less accurately.</p>
       <div id="localModelContent">
         <div id="localModelUnsupported" style="display: none;">
-          <p class="hint">This browser can't run the local model. Use Chrome 113 or newer.</p>
+          <p class="hint">This browser can't run the on-device model. Use Chrome 113 or newer.</p>
         </div>
         <div id="localModelNotDownloaded" style="display: none;">
-          <p class="hint" id="localModelDownloadHint">Choose a local model in Advanced Settings.</p>
+          <p class="hint" id="localModelDownloadHint">Choose an on-device model in Advanced Settings.</p>
           <button id="downloadLocalModel" class="local-model-download-btn">
             <span class="download-icon">&#8595;</span>
             Download Model

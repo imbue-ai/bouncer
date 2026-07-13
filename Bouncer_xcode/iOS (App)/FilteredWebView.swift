@@ -512,6 +512,16 @@ struct FilteredWebView: UIViewRepresentable {
                         vm.filteredCounts[platform] = count
                     }
 
+                    // AI-detection state is global (aiFilterIntent spans all
+                    // platforms), so apply it regardless of which webview
+                    // sent the push — before the selected-platform gate.
+                    if let aiOn = json["aiDetectionOn"] as? Bool {
+                        vm.applyAiDetectionState(
+                            aiOn,
+                            confirmed: json["aiDetectionConfirmed"] as? Bool == true
+                        )
+                    }
+
                     guard senderPlatform == nil || senderPlatform == vm.selectedPlatform else { return }
 
                     // Phrase list is driven by the sheet's platform dropdown

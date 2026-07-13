@@ -724,6 +724,10 @@ import { formatPostForEvaluation } from '../shared/utils';
       if (changes.aiFilterIntent) {
         // Any write re-syncs the passive AI-detection indicator.
         refreshAiIndicatorUI().catch(err => console.error('[Bouncer] refreshAiIndicatorUI failed:', err));
+        // The native iOS sheet's sparkle indicator is the desktop
+        // indicator's counterpart: re-push the state so it confirms (and
+        // clears its pending dim) on the same writes.
+        if (IS_IOS) updateIOSFilteredCount(true);
         // Re-evaluate only when the AI-phrase set itself changed — that's
         // what flips the detectors and changes which phrases are excluded
         // from the filter categories. judgedSetKey-only bookkeeping writes

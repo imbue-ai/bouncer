@@ -1,6 +1,6 @@
 // Bouncer - Popup Script
 
-import type { ModelDef, LocalModelDef, LocalModelStatus, StorageSchema, SiteId } from '../types';
+import type { ModelDef, LocalModelStatus, StorageSchema, SiteId } from '../types';
 import { PREDEFINED_MODELS, DEFAULT_MODEL } from '../shared/models';
 import { escapeHtml, parseHTML } from '../shared/utils';
 import { getStorage, setStorage, removeStorage, clampThreshold, clampImageThreshold, clampReplyThreshold, aiIntentAutoActive } from '../shared/storage';
@@ -61,7 +61,7 @@ let predefinedModelKwargs: Record<string, Record<string, unknown>> = {};
 
 const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
   ...(process.env.HAS_IMBUE_BACKEND === 'true' ? { imbue: 'Imbue (Default)' } : {}),
-  local: 'Local',
+  local: 'On-Device',
   openrouter: 'OpenRouter',
   openai: 'OpenAI',
   anthropic: 'Anthropic',
@@ -77,7 +77,7 @@ const isIOSDevice = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
 // In-app mode detection
 const isInAppMode = typeof chrome !== 'undefined' && chrome._polyfilled;
 
-// Model key the "Local (E2B)" headline radio writes. In the iOS app the
+// Model key the "On-Device (E2B)" headline radio writes. In the iOS app the
 // native bridge runs the on-device model (iosLocal:, entries injected from
 // the Swift registry — see shared/models.ts), everywhere else it's the
 // WebGPU litert-lm web build (local:).
@@ -110,7 +110,7 @@ const LOCAL_ERROR_MESSAGES: Record<string, { display: string; hint: string }> = 
   },
   'webgpu not': {
     display: 'WebGPU not supported',
-    hint: 'Your browser or device does not support local AI models.'
+    hint: 'Your browser or device does not support on-device AI models.'
   },
   'network': {
     display: 'Network error',
@@ -292,7 +292,7 @@ function setupStorageListener() {
       updateLocalModelSectionUI();
       refreshModelDropdownWithLocal().catch(err => console.error('[Popup] refreshModelDropdownWithLocal failed:', err));
     }
-    // Parked Local choice set/cleared (possibly by the background flipping
+    // Parked On-Device choice set/cleared (possibly by the background flipping
     // selectedModel when the download finished) — re-sync radios + panel.
     if (areaName === 'local' && changes.pendingLocalModelSelection) {
       pendingLocalSelection = (changes.pendingLocalModelSelection.newValue as string) || null;
@@ -388,7 +388,7 @@ async function loadSettings() {
   // Load predefined model kwargs overrides
   predefinedModelKwargs = data.predefinedModelKwargs || {};
 
-  // Parked "Local, once downloaded" choice (cleared by the background when
+  // Parked "On-Device, once downloaded" choice (cleared by the background when
   // the download lands, or by any explicit model selection).
   pendingLocalSelection = data.pendingLocalModelSelection || null;
 
@@ -862,7 +862,7 @@ function setupEventListeners() {
 
 }
 
-// The user's parked "switch to Local once it's downloaded" choice. Mirrors
+// The user's parked "switch to On-Device once it's downloaded" choice. Mirrors
 // the pendingLocalModelSelection storage key; while set, the previous model
 // keeps filtering and stays selected in the radios — only the download
 // panel and a note under Local reflect the parked choice. The background
@@ -892,7 +892,7 @@ function setupModelRadios() {
   document.getElementById('modelRadioLocal')?.addEventListener('change', asyncHandler(async () => {
     // Only switch outright when the model is already on disk (or in the iOS
     // app, where the native sheet owns the download flow). Otherwise park
-    // the choice: Express stays selected and filtering, and the download
+    // the choice: Cloud stays selected and filtering, and the download
     // panel appears below.
     if (isInAppMode || localRadioModelDownloaded()) {
       await selectModel(LOCAL_RADIO_MODEL_KEY);
@@ -971,7 +971,7 @@ function closeDropdown() {
 }
 
 async function selectModel(modelKey: string) {
-  // Any explicit selection supersedes a parked "Local, once downloaded"
+  // Any explicit selection supersedes a parked "On-Device, once downloaded"
   // choice — without this, the grey pending radio would linger next to
   // whatever the user just picked.
   await clearPendingLocalSelection();
@@ -1224,10 +1224,10 @@ function updateModelRadioUI() {
   if (!imbueRadio || !localRadio) return;
 
   const selected = dropdownState.selectedModel;
-  // A parked Local choice (model still downloading) leaves the radios
-  // showing what's actually filtering — Express stays checked, Local stays
-  // unchecked — and the row's note explains that Local activates once the
-  // download finishes.
+  // A parked On-Device choice (model still downloading) leaves the radios
+  // showing what's actually filtering — Cloud stays checked, On-Device stays
+  // unchecked — and the row's note explains that On-Device activates once
+  // the download finishes.
   const localPending = !!pendingLocalSelection && selected !== LOCAL_RADIO_MODEL_KEY;
   imbueRadio.checked = selected === 'imbue';
   localRadio.checked = selected === LOCAL_RADIO_MODEL_KEY;
@@ -1244,7 +1244,7 @@ function updateModelRadioUI() {
       : '';
   }
 
-  // Local option is first-class but hardware-gated: WebGPU on desktop, the
+  // The On-Device option is first-class but hardware-gated: WebGPU on desktop, the
   // native bridge + enough device RAM in the iOS app (the support flag comes
   // from the Swift registry via the injected catalog). iOS Safari extension
   // mode has neither.
@@ -1745,7 +1745,7 @@ function updateLocalModelSectionUI() {
     badge.textContent = 'Select a model';
     notDownloaded.style.display = 'block';
     if (downloadHint) {
-      downloadHint.textContent = 'Choose a local model in Advanced Settings.';
+      downloadHint.textContent = 'Choose an on-device model in Advanced Settings.';
     }
     document.getElementById('downloadLocalModel')!.style.display = 'none';
     return;
@@ -1888,7 +1888,7 @@ function setupLocalModelListeners() {
       cancelBtn.disabled = true;
       try {
         await chrome.runtime.sendMessage({ type: 'cancelLocalModelDownload', modelId: selectedLocalModel.name });
-        // Cancelling also un-parks a pending "Local, once downloaded" choice
+        // Cancelling also un-parks a pending "On-Device, once downloaded" choice
         // — otherwise the radio would stay grey-checked with nothing coming.
         await clearPendingLocalSelection();
         updateModelRadioUI();

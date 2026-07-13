@@ -213,9 +213,10 @@ function buildLiveDetectors(args: {
   aiThreshold: number;
   aiImageThreshold: number;
   useIosLocalAiText: boolean;
-  // Whether the strict emoji threshold applies on this platform. Emoji are
-  // an AI-slop tell on Twitter; on other platforms (LinkedIn) they're
-  // ordinary human style, so the rule would mostly hit false positives.
+  // Whether the strict emoji threshold applies to this post. True only for
+  // Twitter replies/comments: emoji are an AI-slop tell in reply spam, while
+  // in main posts — and on other platforms (LinkedIn) — they're ordinary
+  // human style, so the rule would mostly hit false positives.
   emojiRuleApplies: boolean;
 }): Detector[] {
   const detectors: Detector[] = [];
@@ -1018,8 +1019,8 @@ async function processBatch(): Promise<void> {
       // trained on E4B last-token logits — E2B shares the vocab dim so it
       // would run but produce garbage confidences. Route only E4B locally.
       useIosLocalAiText: apiConfig.apiName === 'iosLocal',
-      // Twitter-only: see the emojiRuleApplies doc on buildLiveDetectors.
-      emojiRuleApplies: item.siteId === 'twitter',
+      // Twitter replies only: see the emojiRuleApplies doc on buildLiveDetectors.
+      emojiRuleApplies: item.siteId === 'twitter' && item.isReply,
     });
 
     if (detectors.length === 0) {
