@@ -25,6 +25,9 @@ Bouncer_xcode/iOS (App)/GoogleService-Info-Dev.plist
 # Node
 node_modules/
 
+# Local LiteRT-LM clone (its own git repo; wired in as a local SwiftPM package)
+/LiteRT-LM/
+
 # Playwright / test scripts
 .playwright-profile/
 screenshots/

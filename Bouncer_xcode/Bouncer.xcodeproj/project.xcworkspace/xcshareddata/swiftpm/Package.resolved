@@ -105,7 +105,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/millanatimbue/LiteRT-LM.git",
       "state" : {
-        "revision" : "4e05601aa0e197016b54f2f4246feba9513b1169"
+        "branch" : "release/ios",
+        "revision" : "01020c602a8b6f9344522b0f83e149bf35517ca0"
       }
     },
     {
