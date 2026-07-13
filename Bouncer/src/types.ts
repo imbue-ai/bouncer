@@ -181,12 +181,10 @@ interface SettingsBase {
   selectedModel: string;
   customModels: ModelDef[];
   predefinedModelKwargs: Record<string, Record<string, unknown>>;
-  aiTextFilterEnabled: boolean;
   aiTextDetectionThreshold: number;
   // Threshold applied instead of aiTextDetectionThreshold when the post
   // being evaluated is a reply/comment (permalink-view posts).
   aiTextReplyDetectionThreshold: number;
-  aiImageFilterEnabled: boolean;
   aiImageDetectionThreshold: number;
   // When false, replies on permalink (/status/<id>) pages are not
   // submitted for evaluation. The main timeline is unaffected either way.
@@ -207,21 +205,31 @@ interface SettingsBase {
 
 export interface Settings extends SettingsBase {
   descriptions: string[];
+  /** `descriptions` minus the phrases that only engage AI detection
+   *  (AiFilterIntentState.aiPhrases). The exclusion applies only on the
+   *  Imbue model path — on local/BYOK models (no AI detector) this equals
+   *  `descriptions`. Use this for filtering; `descriptions` remains the
+   *  display/edit surface. */
+  effectiveDescriptions: string[];
   /** Derived at settings-read time: the inferred "user wants AI content
-   *  removed" state is on and the user hasn't explicitly opted out. OR'ed
-   *  with the explicit aiText/aiImage toggles when gating AI detection. */
+   *  removed" state. The sole gate for the AI text/image detectors — there
+   *  is no manual toggle. */
   aiFilterIntentActive: boolean;
 }
 
-/** Persisted derivation of the backend's `aiFilterIntent` signal: does the
- *  user's phrase set indicate they want AI-generated content removed? Written
- *  only by src/background/ai-intent.ts; read wherever the effective AI-detection
- *  toggle state is computed (pipeline, popup, content UI, iOS bridge). */
+/** Persisted derivation of the backend's `aiFilterPhrases` signal: which of
+ *  the user's filter phrases request removal of AI-generated content. Written
+ *  only by src/background/ai-intent.ts; read wherever the AI-detection state
+ *  is computed (pipeline, popup, content UI, iOS bridge). */
 export interface AiFilterIntentState {
-  /** Latched "user wants AI content removed" bit. */
-  intent: boolean;
-  /** Normalized phrase set (see phraseSetKey) the bit was last derived from. */
-  phraseSetKey: string | null;
+  /** Verbatim filter phrases judged as AI-removal requests. Non-empty ⇒ AI
+   *  detection engages; on the Imbue model path these are also excluded from
+   *  the tweet-filter categories (see Settings.effectiveDescriptions). */
+  aiPhrases: string[];
+  /** phraseSetKey of the phrase-set union the last successful validatePhrase
+   *  probe judged — lets refreshAiFilterIntent skip re-probing a set that was
+   *  already judged (each set is judged once, authoritatively). */
+  judgedSetKey: string | null;
   updatedAt: number;
 }
 
@@ -411,14 +419,10 @@ export type DescriptionKey = `descriptions_${SiteId}`;
 /** Typed schema for chrome.storage.local keys. */
 export type StorageSchema = SettingsBase & {
   authErrorApis: Record<string, boolean>;
-  aiTextFilterExperimental: boolean;
   // Inferred "user wants AI content removed" state, derived from the backend's
-  // aiFilterIntent signal on filterPost/validatePhrase responses.
+  // aiFilterPhrases signal on filterPost/validatePhrase responses. The sole
+  // on/off control for AI detection — there is no manual toggle.
   aiFilterIntent: AiFilterIntentState;
-  // Set when the user explicitly turns OFF an AI-detection toggle while the
-  // inferred intent had auto-enabled it. An explicit off always beats the
-  // inferred signal; cleared when the user explicitly turns a toggle back on.
-  aiFilterIntentOptOut: boolean;
   localModelStatuses: Record<string, LocalModelStatus>;
   // Model key ("local:...") the user picked from the headline radios while
   // its weights weren't downloaded yet. The previous model keeps filtering;
@@ -459,13 +463,15 @@ export interface ImbueFilterResponse extends ImbueResponseBase {
   reasoning: string | null;
   category?: string | null;
   rawResponse: string;
-  /** Whether the phrase set (`categories`) sent with this request indicates an
+  /** The verbatim subset of the request's `categories` that indicate an
    *  intent to remove AI-generated content ("AI slop", "midjourney art", ...).
-   *  A property of the phrase set, not the tweet — recomputed per request by
-   *  the backend LLM at temperature 1.0, so it can flip on borderline sets.
-   *  null or absent = unknown (old workers mid-rollout, or the model omitted
-   *  the tag) and must never be treated as false. */
-  aiFilterIntent?: boolean | null;
+   *  Constrained decoding guarantees returned phrases are exact copies of
+   *  sent categories. `[]` = none do. A property of the phrase set, not the
+   *  tweet — recomputed per request by the backend LLM at temperature 1.0,
+   *  so it can flip on borderline phrases. null = backend parse failure;
+   *  absent = old worker. Both mean unknown and must never be treated as
+   *  "no AI phrases". */
+  aiFilterPhrases?: string[] | null;
 }
 
 /** Response from the suggestAnnoying action.

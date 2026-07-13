@@ -9,7 +9,8 @@ import {
   FILTER_PACK_SHARE_URL_REGEX,
 } from '../shared/share-encoding';
 import type { BackgroundToContentMessage, ContentUIDeps, FilteredPost, PostContent, LocalModelStatus } from '../types';
-import { getStorage, setStorage, getDescriptions, setDescriptions, aiIntentAutoActive, setAiDetectionToggle } from '../shared/storage';
+import { getStorage, setStorage, getDescriptions, setDescriptions, aiIntentAutoActive } from '../shared/storage';
+import { PLATFORMS } from '../shared/platforms';
 import { getReleaseNote } from './release-notes';
 import { runIOSImportAnimation } from './ios';
 
@@ -452,7 +453,7 @@ async function maybeRenderUpdateBanner(container: HTMLElement): Promise<void> {
 
 // ==================== Placeholder animation ====================
 
-const PLACEHOLDER_PHRASES = ['politics', 'negativity', 'pessimism', 'political outrage', 'ragebait', 'humblebragging', 'virtue signaling', 'idolizing elites', 'Elon Musk'];
+const PLACEHOLDER_PHRASES = ['AI slop', 'politics', 'negativity', 'pessimism', 'political outrage', 'posts written by AI', 'ragebait', 'humblebragging', 'virtue signaling', 'idolizing elites', 'Elon Musk'];
 const PLACEHOLDER_DURATION = 10; // seconds for full cycle
 
 // Build placeholder HTML and inject dynamic keyframes once
@@ -460,27 +461,21 @@ const placeholderItemsHTML = [...PLACEHOLDER_PHRASES, PLACEHOLDER_PHRASES[0]]
   .map(p => `<span>${p}</span>`).join('');
 const placeholderHTML = `<span class="filter-input-wrapper"><input type="text" class="filter-phrases-input"><span class="filter-placeholder-cycle" aria-hidden="true"><span class="filter-placeholder-track">${placeholderItemsHTML}</span></span></span>`;
 
-// Toggle row injected into every authenticated filter box. Visibility is gated
-// by the same auth check that gates the rest of the box.
-const aiTextToggleHTML = `
-  <label class="filter-ai-text-toggle">
-    <input type="checkbox" class="filter-ai-text-toggle-input">
-    <span class="filter-ai-text-toggle-slider" aria-hidden="true"></span>
-    <span class="filter-ai-text-toggle-label">Filter AI-generated text</span>
-    <span class="filter-ai-toggle-auto" style="display: none;" title="Turned on automatically because your filter phrases target AI-generated content. Toggle off to override.">auto</span>
-  </label>
-`;
-
-// Sibling of the AI-text toggle. Same DOM shape so it picks up the existing
-// `.filter-ai-text-toggle-*` styling; only the input class differs so we can
-// wire change handlers separately.
-const aiImageToggleHTML = `
-  <label class="filter-ai-text-toggle filter-ai-image-toggle">
-    <input type="checkbox" class="filter-ai-text-toggle-input filter-ai-image-toggle-input">
-    <span class="filter-ai-text-toggle-slider" aria-hidden="true"></span>
-    <span class="filter-ai-text-toggle-label">Filter AI-generated images</span>
-    <span class="filter-ai-toggle-auto" style="display: none;" title="Turned on automatically because your filter phrases target AI-generated content. Toggle off to override.">auto</span>
-  </label>
+// AI-detection indicator, top-right of every authenticated filter box. It
+// reports the state AND toggles it — but only through the natural-language
+// mechanism itself: clicking while on deletes the phrases that enabled AI
+// detection; clicking while off adds the seed phrase below. There is still
+// no override switch — the phrase list stays the single source of truth
+// (see background/ai-intent.ts).
+export const AI_DETECTION_SEED_PHRASE = 'AI slop';
+const aiIndicatorHTML = `
+  <button type="button" class="filter-ai-indicator" aria-label="Remove AI-generated content">
+    <svg class="filter-ai-indicator-icon" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+      <path fill="currentColor" d="M12 5.5l1.3 3.6a3.5 3.5 0 0 0 2.1 2.1l3.6 1.3-3.6 1.3a3.5 3.5 0 0 0-2.1 2.1L12 19.5l-1.3-3.6a3.5 3.5 0 0 0-2.1-2.1L5 12.5l3.6-1.3a3.5 3.5 0 0 0 2.1-2.1L12 5.5z"/>
+      <circle class="filter-ai-indicator-slash" cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="1.8"/>
+      <line class="filter-ai-indicator-slash" x1="5" y1="5" x2="19" y2="19" stroke="currentColor" stroke-width="1.8"/>
+    </svg>
+  </button>
 `;
 
 function injectPlaceholderKeyframes() {
@@ -565,6 +560,7 @@ function buildFilterContainerHTML(showSignOut = false): string {
       <div class="bouncer-update-banner-slot"></div>
       <div class="filter-phrases-title-row">
         <span class="filter-phrases-box-name">Bouncer</span>
+        ${aiIndicatorHTML}
       </div>
       <div class="filter-phrases-header">
         <span class="filter-phrases-label">Filter out</span>
@@ -581,8 +577,6 @@ function buildFilterContainerHTML(showSignOut = false): string {
           <div class="model-loading-progress-fill"></div>
         </div>
       </div>
-      ${aiTextToggleHTML}
-      ${aiImageToggleHTML}
       <div class="filter-phrases-actions">
         <div class="filter-phrases-actions-left">
           <button class="filtered-toggle-btn">
@@ -787,32 +781,46 @@ export function injectFilterPhrasesInput() {
   updateSidebarFilterVisibility();
 }
 
-// Sync every AI-detection toggle row on the page to the effective state:
-// explicit toggle OR inferred AI-removal intent (minus explicit opt-out).
-// Rows are visible when the experimental flag is on OR the inferred intent
-// auto-enabled detection — otherwise a user could have AI filtering silently
-// engaged with no visible control to turn it off. Called on filter-box setup
-// and from the storage-change listener in content/index.ts.
-export async function refreshAiToggleUI(): Promise<void> {
-  const data = await getStorage([
-    'aiTextFilterEnabled', 'aiImageFilterEnabled', 'aiTextFilterExperimental',
-    'aiFilterIntent', 'aiFilterIntentOptOut',
-  ]);
-  const auto = aiIntentAutoActive(data);
-  const rowsVisible = data.aiTextFilterExperimental === true || auto;
+// Sync every AI-detection indicator on the page to the inferred AI-removal
+// intent. Called on filter-box setup and from the storage-change listener in
+// content/index.ts whenever aiFilterIntent is written — any state write also
+// clears the transient `pending` set by a click.
+export async function refreshAiIndicatorUI(): Promise<void> {
+  const data = await getStorage(['aiFilterIntent']);
+  const on = aiIntentAutoActive(data);
+  document.querySelectorAll<HTMLElement>('.filter-ai-indicator').forEach(row => {
+    row.classList.toggle('on', on);
+    row.classList.remove('pending');
+    row.title = on
+      ? 'Removing AI-generated content — your filter phrases ask for it. Click to stop (removes those phrases).'
+      : `Click to remove AI-generated content from your feed (adds the filter phrase "${AI_DETECTION_SEED_PHRASE}").`;
+  });
+}
 
-  const sync = (input: HTMLInputElement, explicitOn: boolean) => {
-    const effective = explicitOn || auto;
-    if (input.checked !== effective) input.checked = effective;
-    const row = input.closest<HTMLElement>('.filter-ai-text-toggle');
-    if (row) row.style.display = rowsVisible ? '' : 'none';
-    const badge = row?.querySelector<HTMLElement>('.filter-ai-toggle-auto');
-    if (badge) badge.style.display = auto && !explicitOn ? '' : 'none';
-  };
-  document.querySelectorAll<HTMLInputElement>('.filter-ai-text-toggle-input:not(.filter-ai-image-toggle-input)')
-    .forEach(el => sync(el, data.aiTextFilterEnabled === true));
-  document.querySelectorAll<HTMLInputElement>('.filter-ai-image-toggle-input')
-    .forEach(el => sync(el, data.aiImageFilterEnabled === true));
+// Toggle AI detection through the phrase mechanism — the indicator's click
+// action. On → off: delete every phrase that enables AI detection, from
+// every platform's list (the intent state prunes instantly). Off → on: add
+// the seed phrase; the backend judges it and the first response engages
+// detection. `pending` bridges the round trip and is cleared by
+// refreshAiIndicatorUI on the resulting state write.
+async function toggleAiDetectionViaPhrases(): Promise<void> {
+  document.querySelectorAll<HTMLElement>('.filter-ai-indicator')
+    .forEach(el => el.classList.add('pending'));
+
+  const data = await getStorage(['aiFilterIntent']);
+  const aiPhrases = data.aiFilterIntent?.aiPhrases;
+  if (Array.isArray(aiPhrases) && aiPhrases.length > 0) {
+    const aiKeys = new Set(aiPhrases.map(p => p.trim().toLowerCase()));
+    for (const p of PLATFORMS) {
+      const key = `descriptions_${p.id}` as const;
+      const cur = await getDescriptions(key);
+      const next = cur.filter(d => !aiKeys.has(d.trim().toLowerCase()));
+      if (next.length !== cur.length) await setDescriptions(key, next);
+    }
+    syncFilterPhrases();
+  } else {
+    await addFilterPhrase(AI_DETECTION_SEED_PHRASE);
+  }
 }
 
 // Common event handler setup for filter boxes (sidebar and bottom)
@@ -828,31 +836,12 @@ function setupFilterBoxEventHandlers(container: HTMLElement) {
   const placeholderCycle = container.querySelector('.filter-placeholder-cycle');
   const toggleBtn = container.querySelector('.filtered-toggle-btn:not(.filter-pack-toggle-btn)')!;
   const settingsBtn = container.querySelector('.filter-settings-btn')!;
-  const aiTextToggle = container.querySelector<HTMLInputElement>('.filter-ai-text-toggle-input:not(.filter-ai-image-toggle-input)');
-  const aiImageToggle = container.querySelector<HTMLInputElement>('.filter-ai-image-toggle-input');
 
-  // AI-text-detection toggle. Cache invalidation + post re-evaluation are
-  // handled by the storage-change listener in background/index.ts. The checked
-  // state reflects the *effective* value: explicit toggle OR inferred
-  // AI-removal intent (see background/ai-intent.ts); unchecking while the
-  // intent has it auto-enabled records an explicit opt-out, which always wins.
-  if (aiTextToggle) {
-    aiTextToggle.addEventListener('change', () => {
-      setAiDetectionToggle('aiTextFilterEnabled', aiTextToggle.checked)
-        .catch(err => console.error('[UI] Failed to save aiTextFilterEnabled:', err));
-    });
-  }
-
-  // AI-image-detection toggle. Same lifecycle as the text toggle and gated by
-  // the same `aiTextFilterExperimental` flag.
-  if (aiImageToggle) {
-    aiImageToggle.addEventListener('change', () => {
-      setAiDetectionToggle('aiImageFilterEnabled', aiImageToggle.checked)
-        .catch(err => console.error('[UI] Failed to save aiImageFilterEnabled:', err));
-    });
-  }
-
-  refreshAiToggleUI().catch(err => console.error('[UI] Failed to load AI toggle state:', err));
+  // Seed the AI-detection indicator (kept fresh afterwards by the
+  // storage-change listener in content/index.ts) and wire its click-toggle.
+  refreshAiIndicatorUI().catch(err => console.error('[UI] Failed to load AI indicator state:', err));
+  container.querySelector<HTMLElement>('.filter-ai-indicator')
+    ?.addEventListener('click', asyncHandler(() => toggleAiDetectionViaPhrases()));
 
   // Show/hide animated placeholder based on input state and existing phrases
   function updatePlaceholderVisibility() {
@@ -1313,9 +1302,9 @@ async function runShareFilterPackForIOS(): Promise<void> {
   wrapper.style.fontFamily = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
   wrapper.replaceChildren(parseHTML(buildFilterContainerHTML(false)));
 
-  // Strip elements that don't belong in a shared screenshot — the AI-text /
-  // AI-image toggles are personal settings, not part of the filter pack identity.
-  wrapper.querySelectorAll('.filter-ai-text-toggle').forEach(el => el.remove());
+  // Strip elements that don't belong in a shared screenshot — the AI-detection
+  // indicator is personal state, not part of the filter pack identity.
+  wrapper.querySelectorAll('.filter-ai-indicator').forEach(el => el.remove());
 
   const list = wrapper.querySelector<HTMLElement>('.filter-phrases-list');
   if (list) renderPhrasesInContainer(list, phrases);

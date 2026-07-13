@@ -1868,11 +1868,47 @@ body.dim-mode footer.pricing-disclaimer p {
   opacity: 0.7;
 }
 
-/* Experimental features toggle */
-.experimental-toggle {
+/* Passive AI-detection indicator — status only, not a control. On/off is
+   driven by the inferred AI-removal intent (natural-language filter phrases);
+   applyAiDetectionUI toggles the `.on` class and the state text. */
+.ai-detection-indicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   margin-top: 12px;
   padding-top: 12px;
   border-top: 1px solid #eff3f4;
+  font-size: 13px;
+  font-weight: 600;
+  color: rgb(113, 118, 123);
+  user-select: none;
+}
+
+.ai-detection-indicator-icon {
+  flex-shrink: 0;
+  opacity: 0.6;
+}
+
+.ai-detection-indicator-state {
+  font-size: 11px;
+  line-height: 1;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(113, 118, 123, 0.15);
+  color: rgb(113, 118, 123);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.ai-detection-indicator.on {
+  color: #1d9bf0;
+}
+.ai-detection-indicator.on .ai-detection-indicator-icon {
+  opacity: 1;
+}
+.ai-detection-indicator.on .ai-detection-indicator-state {
+  background: rgba(29, 155, 240, 0.12);
+  color: #1d9bf0;
 }
 
 /* Inline toggle used inside the platform accordion header — sits next to
@@ -2342,8 +2378,14 @@ body.dark-mode footer.pricing-disclaimer p {
   color: rgb(113, 118, 123);
 }
 
-body.dark-mode .experimental-toggle {
+body.dark-mode .ai-detection-indicator {
   border-top-color: rgb(47, 51, 54);
+}
+body.dark-mode .ai-detection-indicator-state {
+  background: rgba(113, 118, 123, 0.25);
+}
+body.dark-mode .ai-detection-indicator.on .ai-detection-indicator-state {
+  background: rgba(29, 155, 240, 0.2);
 }
 
 body.dark-mode .checkbox-label {
@@ -2627,8 +2669,14 @@ body.dim-mode footer.pricing-disclaimer p {
   color: rgb(139, 152, 165);
 }
 
-body.dim-mode .experimental-toggle {
+body.dim-mode .ai-detection-indicator {
   border-top-color: rgb(56, 68, 77);
+}
+body.dim-mode .ai-detection-indicator-state {
+  background: rgba(113, 118, 123, 0.25);
+}
+body.dim-mode .ai-detection-indicator.on .ai-detection-indicator-state {
+  background: rgba(29, 155, 240, 0.2);
 }
 
 body.dim-mode .checkbox-label {

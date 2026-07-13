@@ -3,7 +3,7 @@
 import type { ModelDef, LocalModelStatus, StorageSchema, SiteId } from '../types';
 import { PREDEFINED_MODELS, DEFAULT_MODEL } from '../shared/models';
 import { escapeHtml, parseHTML } from '../shared/utils';
-import { getStorage, setStorage, removeStorage, clampThreshold, clampImageThreshold, clampReplyThreshold, aiIntentAutoActive, setAiDetectionToggle } from '../shared/storage';
+import { getStorage, setStorage, removeStorage, clampThreshold, clampImageThreshold, clampReplyThreshold, aiIntentAutoActive } from '../shared/storage';
 import { asyncHandler } from '../shared/async';
 import { PLATFORMS, enabledStorageKey } from '../shared/platforms';
 
@@ -296,10 +296,8 @@ function setupStorageListener() {
       updateLocalModelSectionVisibility();
       updateLocalModelSectionUI();
     }
-    // Any AI-detection input changed (explicit toggles, experimental gate,
-    // inferred intent, opt-out) — recompute the effective toggle UI from
-    // storage rather than from the single changed value, since the checked
-    // state is a function of several keys.
+    // The inferred AI-removal intent changed — re-sync the passive
+    // AI-detection indicator from storage.
     if (areaName === 'local' && AI_DETECTION_UI_KEYS.some(k => changes[k])) {
       getStorage([...AI_DETECTION_UI_KEYS])
         .then(applyAiDetectionUI)
@@ -372,14 +370,10 @@ async function loadSettings() {
     'anthropicApiKey',
     'predefinedModelKwargs',
     'authErrorApis',
-    'aiTextFilterEnabled',
     'aiTextDetectionThreshold',
     'aiTextReplyDetectionThreshold',
-    'aiImageFilterEnabled',
     'aiImageDetectionThreshold',
-    'aiTextFilterExperimental',
     'aiFilterIntent',
-    'aiFilterIntentOptOut',
     'pendingLocalModelSelection',
     'filterReplies',
     'youtubeShowPlaceholder',
@@ -425,9 +419,9 @@ async function loadSettings() {
   const ytPlaceholderEl = document.getElementById('enableYoutubePlaceholder') as HTMLInputElement | null;
   if (ytPlaceholderEl) ytPlaceholderEl.checked = data.youtubeShowPlaceholder === true;
 
-  // AI-detection toggles (gated on auth via parent mainContainer visibility).
-  // Checked state reflects the effective value: explicit toggle OR inferred
-  // AI-removal intent (minus explicit opt-out).
+  // Passive AI-detection indicator + threshold sliders. On/off state is
+  // driven entirely by the inferred AI-removal intent (natural language) —
+  // there is no manual toggle.
   applyAiDetectionUI(data);
 
   const thresholdEl = document.getElementById('aiTextThreshold') as HTMLInputElement | null;
@@ -463,49 +457,32 @@ async function loadSettings() {
   updateLocalModelSectionVisibility();
 }
 
-// Storage keys that feed the AI-detection toggle UI. Kept in one place so the
+// Storage keys that feed the AI-detection status UI. Kept in one place so the
 // hydration path and the storage-change listener stay in sync.
-const AI_DETECTION_UI_KEYS = [
-  'aiTextFilterEnabled', 'aiImageFilterEnabled', 'aiTextFilterExperimental',
-  'aiFilterIntent', 'aiFilterIntentOptOut',
-] as const;
+const AI_DETECTION_UI_KEYS = ['aiFilterIntent'] as const;
 
-// Sync the AI-detection toggles, the "auto-enabled" hint, and the experimental
-// section's visibility to the effective state: explicit toggle OR inferred
-// AI-removal intent (see background/ai-intent.ts), with an explicit opt-out
-// winning over the inferred signal.
+// Sync the passive AI-detection indicator (and the threshold sliders'
+// enabled state) to the inferred AI-removal intent (see
+// background/ai-intent.ts). Purely informational — AI detection has no
+// manual toggle; it engages and disengages through the user's
+// natural-language filter phrases.
 function applyAiDetectionUI(data: Partial<StorageSchema>) {
-  const auto = aiIntentAutoActive(data);
-  const aiTextEffective = data.aiTextFilterEnabled === true || auto;
-  const aiImageEffective = data.aiImageFilterEnabled === true || auto;
-
-  const aiTextEl = document.getElementById('enableAiTextFilter') as HTMLInputElement | null;
-  if (aiTextEl) aiTextEl.checked = aiTextEffective;
-  setThresholdBlockEnabled(aiTextEffective);
-
-  const aiImageEl = document.getElementById('enableAiImageFilter') as HTMLInputElement | null;
-  if (aiImageEl) aiImageEl.checked = aiImageEffective;
-  setImageThresholdBlockEnabled(aiImageEffective);
-
-  const hintEl = document.getElementById('aiAutoEnabledHint');
-  if (hintEl) hintEl.style.display = auto ? '' : 'none';
-
-  // AI-text-filter experimental gate. The AI detectors are Imbue-only
-  // (callImbueAiTextDetection), so hide the entire UI surface — the
-  // experimental toggle and its content — when the Imbue backend isn't
-  // configured at build time. When the inferred intent auto-enabled
-  // detection, the section is shown even without the experimental flag so
-  // the user can see what engaged and override it.
-  const expEl = document.getElementById('enableAiTextExperimental') as HTMLInputElement | null;
+  // The AI detectors are Imbue-only (callImbueAiTextDetection), so hide the
+  // entire section when the Imbue backend isn't configured at build time.
+  const section = document.getElementById('aiDetectionSection');
   if (process.env.HAS_IMBUE_BACKEND !== 'true') {
-    const expToggle = expEl?.closest<HTMLElement>('.experimental-toggle');
-    if (expToggle) expToggle.style.display = 'none';
-    setAiTextExperimentalContentVisible(false);
-  } else {
-    const expEnabled = data.aiTextFilterExperimental === true;
-    if (expEl) expEl.checked = expEnabled;
-    setAiTextExperimentalContentVisible(expEnabled || auto);
+    if (section) section.style.display = 'none';
+    return;
   }
+
+  const on = aiIntentAutoActive(data);
+  const indicator = document.getElementById('aiDetectionIndicator');
+  if (indicator) indicator.classList.toggle('on', on);
+  const stateEl = document.getElementById('aiDetectionIndicatorState');
+  if (stateEl) stateEl.textContent = on ? 'On' : 'Off';
+
+  setThresholdBlockEnabled(on);
+  setImageThresholdBlockEnabled(on);
 }
 
 // Toggle the AI threshold block's disabled visual + interaction state.
@@ -521,11 +498,6 @@ function setThresholdBlockEnabled(enabled: boolean) {
 function setImageThresholdBlockEnabled(enabled: boolean) {
   const block = document.getElementById('aiImageThresholdBlock');
   if (block) block.setAttribute('aria-disabled', enabled ? 'false' : 'true');
-}
-
-function setAiTextExperimentalContentVisible(visible: boolean) {
-  const content = document.getElementById('aiTextFilterExperimentalContent');
-  if (content) content.style.display = visible ? '' : 'none';
 }
 
 function updateAnthropicEnabledUI(isEnabled: boolean) {
@@ -806,36 +778,6 @@ function setupEventListeners() {
   // OpenRouter sign out
   document.getElementById('openrouterSignOut')!.addEventListener('click', asyncHandler(signOutOpenRouter));
 
-  // AI-text-detection toggle. Cache invalidation + post re-evaluation are
-  // handled by the storage-change listener in background/index.ts. The
-  // threshold slider's enabled/disabled state mirrors this checkbox.
-  document.getElementById('enableAiTextExperimental')?.addEventListener('change', (e) => { (async () => {
-    const enabled = (e.target as HTMLInputElement).checked;
-    setAiTextExperimentalContentVisible(enabled);
-    await setStorage({ aiTextFilterExperimental: enabled });
-    // When experimental is turned off, also disable the underlying AI text and
-    // image filters so the pipeline naturally stops applying them (mirrors how
-    // disabling local models switches a selected local model back to imbue).
-    // If the inferred AI-removal intent had them auto-enabled, record the
-    // explicit opt-out too — otherwise the intent would re-engage them.
-    if (!enabled) {
-      const intentData = await getStorage(['aiFilterIntent', 'aiFilterIntentOptOut']);
-      await setStorage({
-        aiTextFilterEnabled: false,
-        aiImageFilterEnabled: false,
-        ...(aiIntentAutoActive(intentData) && { aiFilterIntentOptOut: true }),
-      });
-    }
-  })().catch(err => console.error('[Popup] enableAiTextExperimental change failed:', err)); });
-
-  document.getElementById('enableAiTextFilter')?.addEventListener('change', (e) => { (async () => {
-    const enabled = (e.target as HTMLInputElement).checked;
-    setThresholdBlockEnabled(enabled);
-    // Turning off while the inferred AI-removal intent had this auto-enabled
-    // also records the explicit opt-out (handled inside the helper).
-    await setAiDetectionToggle('aiTextFilterEnabled', enabled);
-  })().catch(err => console.error('[Popup] enableAiTextFilter change failed:', err)); });
-
   document.getElementById('enableFilterReplies')?.addEventListener('change', (e) => { (async () => {
     const checked = (e.target as HTMLInputElement).checked;
     await setStorage({ filterReplies: checked });
@@ -897,13 +839,7 @@ function setupEventListeners() {
     await setStorage({ aiTextReplyDetectionThreshold: clamped });
   })().catch(err => console.error('[Popup] aiTextReplyThreshold change failed:', err)); });
 
-  // AI-image-detection toggle + threshold (mirrors the AI text controls).
-  document.getElementById('enableAiImageFilter')?.addEventListener('change', (e) => { (async () => {
-    const enabled = (e.target as HTMLInputElement).checked;
-    setImageThresholdBlockEnabled(enabled);
-    await setAiDetectionToggle('aiImageFilterEnabled', enabled);
-  })().catch(err => console.error('[Popup] enableAiImageFilter change failed:', err)); });
-
+  // AI-image-detection threshold (mirrors the AI text threshold above).
   const imageThresholdInputEl = document.getElementById('aiImageThreshold') as HTMLInputElement | null;
   const imageThresholdValueEl = document.getElementById('aiImageThresholdValue');
   const renderImageThresholdPercent = (v: number) => {

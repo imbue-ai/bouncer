@@ -12,7 +12,7 @@ import { runDetectors, type Detector, type DetectorResult } from './detectors';
 import { callLocalInference, localEngine } from './local-model';
 import { iosLocalClassify, iosLocalGenerate, iosLocalAiTextDetect } from './ios-local-bridge';
 import { getStorage, setStorage, removeStorage, getDescriptions, clampThreshold, clampImageThreshold, clampReplyThreshold, aiIntentAutoActive, DEFAULT_AI_TEXT_DETECTION_THRESHOLD, DEFAULT_AI_IMAGE_DETECTION_THRESHOLD } from '../shared/storage';
-import { recordAiFilterIntent } from './ai-intent';
+import { recordFilterPostAiPhrases } from './ai-intent';
 import { PLATFORMS, enabledStorageKey } from '../shared/platforms';
 export { DEFAULT_AI_TEXT_DETECTION_THRESHOLD, DEFAULT_AI_IMAGE_DETECTION_THRESHOLD };
 import type {
@@ -479,9 +479,9 @@ export async function getSettings(siteId?: SiteId): Promise<Settings> {
   const settingsKeys = [
     'apiKey', 'openaiApiKey', 'openaiApiBase', 'openrouterApiKey', 'geminiApiKey',
     'anthropicApiKey', 'enabled', 'useEmbeddings', 'selectedModel',
-    'customModels', 'predefinedModelKwargs', 'aiTextFilterEnabled', 'aiTextDetectionThreshold',
-    'aiTextReplyDetectionThreshold', 'aiImageFilterEnabled', 'aiImageDetectionThreshold',
-    'aiFilterIntent', 'aiFilterIntentOptOut',
+    'customModels', 'predefinedModelKwargs', 'aiTextDetectionThreshold',
+    'aiTextReplyDetectionThreshold', 'aiImageDetectionThreshold',
+    'aiFilterIntent',
     'filterReplies', 'youtubeShowPlaceholder',
     ...platformEnabledKeys,
   ] as const;
@@ -493,6 +493,21 @@ export async function getSettings(siteId?: SiteId): Promise<Settings> {
   for (const p of PLATFORMS) {
     platformEnabled[p.id] = data[enabledStorageKey(p.id)] !== false;
   }
+
+  // Phrases judged as AI-removal requests ("AI slop") only engage the AI
+  // detectors on the Imbue path — exclude them from the filter categories
+  // there. On local/BYOK models the AI detector can't run, so the phrases
+  // keep acting as ordinary filters. Old-shape state (no aiPhrases array)
+  // yields no exclusion.
+  const selectedModel = data.selectedModel || DEFAULT_MODEL;
+  const aiPhrases = Array.isArray(data.aiFilterIntent?.aiPhrases)
+    ? data.aiFilterIntent.aiPhrases : [];
+  let effectiveDescriptions = descriptions;
+  if (process.env.HAS_IMBUE_BACKEND === 'true' && selectedModel === 'imbue' && aiPhrases.length > 0) {
+    const aiKeys = new Set(aiPhrases.map(p => p.trim().toLowerCase()));
+    effectiveDescriptions = descriptions.filter(d => !aiKeys.has(d.trim().toLowerCase()));
+  }
+
   return {
     apiKey: data.apiKey || '',
     openaiApiKey: data.openaiApiKey || '',
@@ -502,14 +517,13 @@ export async function getSettings(siteId?: SiteId): Promise<Settings> {
     anthropicApiKey: data.anthropicApiKey || '',
     enabled: data.enabled !== false,
     descriptions,
+    effectiveDescriptions,
     useEmbeddings: data.useEmbeddings || false,
-    selectedModel: data.selectedModel || DEFAULT_MODEL,
+    selectedModel,
     customModels: data.customModels || [],
     predefinedModelKwargs: data.predefinedModelKwargs || {},
-    aiTextFilterEnabled: data.aiTextFilterEnabled === true,
     aiTextDetectionThreshold: clampThreshold(data.aiTextDetectionThreshold),
     aiTextReplyDetectionThreshold: clampReplyThreshold(data.aiTextReplyDetectionThreshold),
-    aiImageFilterEnabled: data.aiImageFilterEnabled === true,
     aiImageDetectionThreshold: clampImageThreshold(data.aiImageDetectionThreshold),
     aiFilterIntentActive: aiIntentAutoActive(data),
     filterReplies: data.filterReplies !== false,
@@ -850,12 +864,14 @@ async function processBatch(): Promise<void> {
   // Filter and AI detection are independent gating mechanisms. Even when both
   // are off we still flow through the tab-dispatch logic below so the popup
   // always shows two tabs (both marked skipped).
-  const filterEnabled = !!(settings.descriptions && settings.descriptions.length > 0);
-  // Explicit toggles OR the inferred "user wants AI content removed" state
-  // (see ai-intent.ts). An explicit user off is folded into
-  // aiFilterIntentActive already, via the aiFilterIntentOptOut flag.
-  const aiToggleOn = settings.aiTextFilterEnabled || settings.aiFilterIntentActive;
-  const aiImageToggleOn = settings.aiImageFilterEnabled || settings.aiFilterIntentActive;
+  // effectiveDescriptions excludes AI-detection phrases on the Imbue path —
+  // a user whose only phrase is "AI slop" gets the AI detectors, not a
+  // filter that hides human posts about AI slop.
+  const filterEnabled = !!(settings.effectiveDescriptions && settings.effectiveDescriptions.length > 0);
+  // AI detection is driven solely by the inferred "user wants AI content
+  // removed" state (see ai-intent.ts) — natural language, no manual toggle.
+  const aiToggleOn = settings.aiFilterIntentActive;
+  const aiImageToggleOn = settings.aiFilterIntentActive;
 
   // Check cache. Use the key computed at enqueue time (cacheKeyFor) rather than
   // recomputing — for YouTube that key is video-id based, not text+image.
@@ -936,15 +952,16 @@ async function processBatch(): Promise<void> {
         const onInferenceStart = postUrl
           ? () => { void sendToTab(batchTabId, { type: 'processingPost', postUrl }); }
           : undefined;
-        return await callLocalInference(postData, settings.descriptions, apiConfig.modelConfig as LocalModelDef | null, apiConfig.modelName, { onInferenceStart });
+        return await callLocalInference(postData, settings.effectiveDescriptions, apiConfig.modelConfig as LocalModelDef | null, apiConfig.modelName, { onInferenceStart });
       } else if (apiConfig.apiName === 'iosLocal') {
-        return await iosLocalClassify(postData, settings.descriptions, apiConfig.modelConfig as LocalModelDef | null);
+        return await iosLocalClassify(postData, settings.effectiveDescriptions, apiConfig.modelConfig as LocalModelDef | null);
       } else if (apiConfig.apiName === 'imbue') {
-        const imbueResponse = await callImbueAPI(postData, settings.descriptions, 'filterPost');
-        // Every filterPost result carries the backend's judgment of whether
-        // this phrase set targets AI-generated content — fold it into the
-        // sticky intent state that auto-engages the AI detectors.
-        void recordAiFilterIntent(settings.descriptions, imbueResponse.aiFilterIntent, 'filterPost')
+        const imbueResponse = await callImbueAPI(postData, settings.effectiveDescriptions, 'filterPost');
+        // Every filterPost result carries the backend's per-phrase judgment
+        // of AI-removal intent. The first response that flags a phrase turns
+        // AI detection on immediately (see recordFilterPostAiPhrases for the
+        // noise guardrails).
+        void recordFilterPostAiPhrases(imbueResponse.aiFilterPhrases)
           .catch(err => console.warn('[AiIntent] record failed:', (err as Error).message));
         return {
           shouldHide: imbueResponse.shouldHide,
@@ -953,11 +970,11 @@ async function processBatch(): Promise<void> {
           rawResponse: imbueResponse.rawResponse || null,
         };
       } else if (apiConfig.apiName === 'anthropic') {
-        const messages = buildAPIMessages(postData, settings.descriptions);
+        const messages = buildAPIMessages(postData, settings.effectiveDescriptions);
         const rawContent = await callAnthropicAPI(messages, apiConfig);
         return { ...parseAPIResponse(rawContent), rawResponse: rawContent };
       } else {
-        const messages = buildAPIMessages(postData, settings.descriptions);
+        const messages = buildAPIMessages(postData, settings.effectiveDescriptions);
         const rawContent = await callDirectAPI(messages, apiConfig);
         return { ...parseAPIResponse(rawContent), rawResponse: rawContent };
       }
@@ -1208,15 +1225,18 @@ function flushPipelineQueues(reason: string): void {
 export async function handleSettingsChange(changes: Record<string, chrome.storage.StorageChange>): Promise<void> {
   flushPipelineQueues('Settings changed, re-evaluating...');
 
-  // Model changes invalidate everything. AI-detection changes (toggles,
-  // thresholds, inferred intent, opt-out) also invalidate: cached verdicts
-  // were computed with a different detector set, and the content script
-  // re-evaluates on these changes expecting fresh results, not cache hits.
+  // Model changes invalidate everything. AI-detection changes (thresholds,
+  // AI-phrase set changes) also invalidate: cached verdicts were computed
+  // with a different detector set and filter-category set, and the content
+  // script re-evaluates on these changes expecting fresh results, not cache
+  // hits. (The caller only routes aiFilterIntent changes here when the
+  // AI-phrase set actually changed — judgedSetKey-only bookkeeping writes
+  // never reach this path.)
   if (changes.selectedModel
-      || changes.aiTextFilterEnabled || changes.aiTextDetectionThreshold
+      || changes.aiTextDetectionThreshold
       || changes.aiTextReplyDetectionThreshold
-      || changes.aiImageFilterEnabled || changes.aiImageDetectionThreshold
-      || changes.aiFilterIntent || changes.aiFilterIntentOptOut) {
+      || changes.aiImageDetectionThreshold
+      || changes.aiFilterIntent) {
     await clearEvaluationCache();
   }
 

@@ -1,7 +1,7 @@
 // iOS FAB, filtered modal, native sheet bridge
 
 import type { IOSDeps, DescriptionKey, SiteId } from '../types';
-import { clampThreshold, clampImageThreshold, getDescriptions, setDescriptions, getStorage, aiIntentAutoActive, setAiDetectionToggle } from '../shared/storage';
+import { clampThreshold, clampImageThreshold, getDescriptions, setDescriptions, getStorage, aiIntentAutoActive } from '../shared/storage';
 import { platformById, descriptionsStorageKey } from '../shared/platforms';
 import { parseHTML } from '../shared/utils';
 import { shareFilterPackForIOS } from './ui';
@@ -19,12 +19,12 @@ interface FFWindow {
   __ff_addPhraseFor?: (siteId: string, text: string) => Promise<boolean>;
   __ff_removePhraseFor?: (siteId: string, phrase: string) => Promise<void>;
   __ff_showFilteredModal?: () => void;
+  // AI-detection state is read-only: it is driven entirely by the user's
+  // natural-language filter phrases (no manual on/off setters).
   __ff_getAiTextFilterEnabled?: () => Promise<boolean>;
-  __ff_setAiTextFilterEnabled?: (enabled: boolean) => Promise<void>;
   __ff_getAiTextDetectionThreshold?: () => Promise<number>;
   __ff_setAiTextDetectionThreshold?: (value: number) => Promise<void>;
   __ff_getAiImageFilterEnabled?: () => Promise<boolean>;
-  __ff_setAiImageFilterEnabled?: (enabled: boolean) => Promise<void>;
   __ff_getAiImageDetectionThreshold?: () => Promise<number>;
   __ff_setAiImageDetectionThreshold?: (value: number) => Promise<void>;
   __ff_shareFilterPack?: () => Promise<{ ok: boolean; error?: string }>;
@@ -130,19 +130,13 @@ export function initIOS(deps: IOSDeps) {
     }
   };
 
-  // AI-text-detection toggle bridge. The native settings page reads/writes
-  // chrome.storage.local through these; the storage-change listener in
-  // content/index.ts then re-evaluates posts (cache is invalidated by
-  // background/index.ts's settings-change handler).
+  // AI-detection status bridge. Read-only: AI detection has no manual
+  // toggle — it turns on and off purely through the user's natural-language
+  // filter phrases (see background/ai-intent.ts). The native settings page
+  // can display the state but not change it.
   w.__ff_getAiTextFilterEnabled = async (): Promise<boolean> => {
-    // Effective state: explicit toggle OR inferred AI-removal intent
-    // (minus explicit opt-out) — mirrors the pipeline's gating.
-    const data = await getStorage(['aiTextFilterEnabled', 'aiFilterIntent', 'aiFilterIntentOptOut']);
-    return data.aiTextFilterEnabled === true || aiIntentAutoActive(data);
-  };
-  w.__ff_setAiTextFilterEnabled = async (enabled: boolean): Promise<void> => {
-    console.log('[Bouncer][iOS] __ff_setAiTextFilterEnabled:', enabled);
-    await setAiDetectionToggle('aiTextFilterEnabled', enabled === true);
+    const data = await getStorage(['aiFilterIntent']);
+    return aiIntentAutoActive(data);
   };
   w.__ff_getAiTextDetectionThreshold = async (): Promise<number> => {
     const data = await chrome.storage.local.get(['aiTextDetectionThreshold']);
@@ -156,14 +150,11 @@ export function initIOS(deps: IOSDeps) {
     await chrome.storage.local.set({ aiTextDetectionThreshold: clamped });
   };
 
-  // AI-image-detection toggle bridge. Mirrors the AI-text bridge above.
+  // AI-image-detection status bridge. Read-only, same single signal as the
+  // AI-text bridge above — text and images engage together.
   w.__ff_getAiImageFilterEnabled = async (): Promise<boolean> => {
-    const data = await getStorage(['aiImageFilterEnabled', 'aiFilterIntent', 'aiFilterIntentOptOut']);
-    return data.aiImageFilterEnabled === true || aiIntentAutoActive(data);
-  };
-  w.__ff_setAiImageFilterEnabled = async (enabled: boolean): Promise<void> => {
-    console.log('[Bouncer][iOS] __ff_setAiImageFilterEnabled:', enabled);
-    await setAiDetectionToggle('aiImageFilterEnabled', enabled === true);
+    const data = await getStorage(['aiFilterIntent']);
+    return aiIntentAutoActive(data);
   };
   w.__ff_getAiImageDetectionThreshold = async (): Promise<number> => {
     const data = await chrome.storage.local.get(['aiImageDetectionThreshold']);

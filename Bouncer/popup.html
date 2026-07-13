@@ -244,32 +244,25 @@
         </div>
       </div>
 
-      <!-- AI text filtering experimental toggle -->
-      <div class="experimental-toggle">
-        <label class="checkbox-label">
-          <input type="checkbox" id="enableAiTextExperimental">
-          <span>Enable AI Slop Filtering (Experimental)</span>
-        </label>
-      </div>
     </section>
 
-    <section class="ai-text-filter-section">
-      <div id="aiTextFilterExperimentalContent" style="display: none;">
-      <p class="hint" id="aiAutoEnabledHint" style="display: none;">Auto-enabled: your filter phrases target AI-generated content. Turn a toggle off to override.</p>
-      <label class="toggle-switch">
-        <input type="checkbox" id="enableAiTextFilter">
-        <span class="toggle-switch-slider" aria-hidden="true"></span>
-        <span class="toggle-switch-text">
-          <span class="toggle-switch-label">Filter AI-generated text</span>
-          <span class="toggle-switch-sub">Hide posts whose text appears to be written by AI.</span>
-        </span>
-      </label>
+    <section class="ai-text-filter-section" id="aiDetectionSection">
+      <!-- Passive status indicator: AI detection (text + images, one signal)
+           is driven entirely by natural-language filter phrases. Not a control. -->
+      <div class="ai-detection-indicator" id="aiDetectionIndicator" role="status">
+        <svg class="ai-detection-indicator-icon" viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
+          <path d="M12 2.5l1.9 5.4a4.5 4.5 0 0 0 2.7 2.7l5.4 1.9-5.4 1.9a4.5 4.5 0 0 0-2.7 2.7L12 22.5l-1.9-5.4a4.5 4.5 0 0 0-2.7-2.7L2 12.5l5.4-1.9a4.5 4.5 0 0 0 2.7-2.7L12 2.5z"/>
+        </svg>
+        <span class="ai-detection-indicator-label">AI detection</span>
+        <span class="ai-detection-indicator-state" id="aiDetectionIndicatorState">Off</span>
+      </div>
+      <p class="hint">Turns on automatically when your filter phrases ask for AI-generated content to be removed (e.g. &ldquo;AI slop&rdquo;), and off when they don&rsquo;t. Covers both AI-generated text and images.</p>
       <div class="ai-text-threshold-block" id="aiTextThresholdBlock">
         <div class="ai-text-threshold-header">
           <span>Confidence threshold</span>
-          <span class="ai-text-threshold-value" id="aiTextThresholdValue">70%</span>
+          <span class="ai-text-threshold-value" id="aiTextThresholdValue">90%</span>
         </div>
-        <input type="range" id="aiTextThreshold" min="0" max="1" step="0.01" value="0.7">
+        <input type="range" id="aiTextThreshold" min="0" max="1" step="0.01" value="0.9">
         <div class="ai-text-threshold-scale">
           <span>0%</span>
           <span>100%</span>
@@ -289,26 +282,17 @@
         <p class="hint ai-text-threshold-hint">Applied to replies and comments instead of the threshold above.</p>
       </div>
 
-      <label class="toggle-switch">
-        <input type="checkbox" id="enableAiImageFilter">
-        <span class="toggle-switch-slider" aria-hidden="true"></span>
-        <span class="toggle-switch-text">
-          <span class="toggle-switch-label">Filter AI-generated images</span>
-          <span class="toggle-switch-sub">Hide posts whose images appear to be AI-generated.</span>
-        </span>
-      </label>
       <div class="ai-text-threshold-block" id="aiImageThresholdBlock">
         <div class="ai-text-threshold-header">
-          <span>Confidence threshold</span>
-          <span class="ai-text-threshold-value" id="aiImageThresholdValue">70%</span>
+          <span>Image confidence threshold</span>
+          <span class="ai-text-threshold-value" id="aiImageThresholdValue">90%</span>
         </div>
-        <input type="range" id="aiImageThreshold" min="0" max="1" step="0.01" value="0.7">
+        <input type="range" id="aiImageThreshold" min="0" max="1" step="0.01" value="0.9">
         <div class="ai-text-threshold-scale">
           <span>0%</span>
           <span>100%</span>
         </div>
         <p class="hint ai-text-threshold-hint">Posts whose most-suspect image is at or above this confidence are hidden.</p>
-      </div>
       </div>
     </section>
 

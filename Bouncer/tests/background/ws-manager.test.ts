@@ -106,45 +106,49 @@ describe('ImbueWebSocket', () => {
       expect(result.jobId).toBe('job-1');
     });
 
-    it('passes aiFilterIntent through on jobComplete results (true / false / null)', async () => {
-      for (const intent of [true, false, null]) {
+    it('passes aiFilterPhrases through on jobComplete results (list / empty / null)', async () => {
+      for (const phrases of [['AI slop', 'midjourney art'], [], null]) {
+        const jobId = `job-${phrases === null ? 'null' : phrases.length}`;
         const sendPromise = imbueWebSocket.send({ action: 'tweetFilter' });
         await new Promise(r => setTimeout(r, 10));
         const ws = MockWebSocket.lastInstance!;
         const requestId = ws.sentMessages.at(-1)!.requestId;
-        ws.onmessage!({ data: JSON.stringify({ requestId, jobId: `job-${String(intent)}` }) });
+        ws.onmessage!({ data: JSON.stringify({ requestId, jobId }) });
         ws.onmessage!({ data: JSON.stringify({
-          type: 'jobComplete', jobId: `job-${String(intent)}`, processingTime: 1,
+          type: 'jobComplete', jobId, processingTime: 1,
           shouldHide: false, reasoning: null, category: null,
-          aiFilterIntent: intent, rawResponse: '',
+          aiFilterPhrases: phrases, rawResponse: '',
         }) });
-        const result = await sendPromise as { aiFilterIntent?: boolean | null };
-        expect(result.aiFilterIntent).toBe(intent);
+        const result = await sendPromise as { aiFilterPhrases?: string[] | null };
+        expect(result.aiFilterPhrases).toEqual(phrases);
       }
     });
 
-    it('resolves results that omit aiFilterIntent entirely (old workers)', async () => {
+    it('resolves results that omit aiFilterPhrases entirely (old workers)', async () => {
       const sendPromise = imbueWebSocket.send({ action: 'tweetFilter' });
       await new Promise(r => setTimeout(r, 10));
       const ws = MockWebSocket.lastInstance!;
       const requestId = ws.sentMessages.at(-1)!.requestId;
       ws.onmessage!({ data: JSON.stringify({ requestId, jobId: 'job-old' }) });
       ws.onmessage!({ data: JSON.stringify({ jobId: 'job-old', shouldHide: true, rawResponse: 'x' }) });
-      const result = await sendPromise as { shouldHide?: boolean; aiFilterIntent?: boolean | null };
+      const result = await sendPromise as { shouldHide?: boolean; aiFilterPhrases?: string[] | null };
       expect(result.shouldHide).toBe(true);
-      expect(result.aiFilterIntent).toBeUndefined();
+      expect(result.aiFilterPhrases).toBeUndefined();
     });
 
-    it('drops a wrongly-typed aiFilterIntent but still resolves the result', async () => {
-      const sendPromise = imbueWebSocket.send({ action: 'tweetFilter' });
-      await new Promise(r => setTimeout(r, 10));
-      const ws = MockWebSocket.lastInstance!;
-      const requestId = ws.sentMessages.at(-1)!.requestId;
-      ws.onmessage!({ data: JSON.stringify({ requestId, jobId: 'job-bad' }) });
-      ws.onmessage!({ data: JSON.stringify({ jobId: 'job-bad', shouldHide: false, aiFilterIntent: 'yes', rawResponse: 'x' }) });
-      const result = await sendPromise as { shouldHide?: boolean; aiFilterIntent?: boolean | null };
-      expect(result.shouldHide).toBe(false);
-      expect(result.aiFilterIntent).toBeUndefined();
+    it('drops a wrongly-typed aiFilterPhrases but still resolves the result', async () => {
+      for (const bad of ['yes', true, [1, 2], ['ok', 3]]) {
+        const jobId = `job-bad-${JSON.stringify(bad)}`;
+        const sendPromise = imbueWebSocket.send({ action: 'tweetFilter' });
+        await new Promise(r => setTimeout(r, 10));
+        const ws = MockWebSocket.lastInstance!;
+        const requestId = ws.sentMessages.at(-1)!.requestId;
+        ws.onmessage!({ data: JSON.stringify({ requestId, jobId }) });
+        ws.onmessage!({ data: JSON.stringify({ jobId, shouldHide: false, aiFilterPhrases: bad, rawResponse: 'x' }) });
+        const result = await sendPromise as { shouldHide?: boolean; aiFilterPhrases?: string[] | null };
+        expect(result.shouldHide).toBe(false);
+        expect(result.aiFilterPhrases).toBeUndefined();
+      }
     });
 
     it('correlates ack by requestId when backend echoes it', async () => {

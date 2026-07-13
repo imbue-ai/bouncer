@@ -1,8 +1,8 @@
 // Bouncer - Content Script
 // Entry point: post processing, observers, init, storage/message listeners
 
-import type { PlatformAdapter, PostContent, PipelineResponse, BackgroundToContentMessage, DescriptionKey } from '../types';
-import { getStorage, removeStorage, getDescriptions, setDescriptions } from '../shared/storage';
+import type { PlatformAdapter, PostContent, PipelineResponse, BackgroundToContentMessage, DescriptionKey, AiFilterIntentState } from '../types';
+import { getStorage, removeStorage, getDescriptions, setDescriptions, phraseSetKey } from '../shared/storage';
 import { enabledStorageKey } from '../shared/platforms';
 import { FILTER_PACK_CODE_PREFIX } from '../shared/share-encoding';
 
@@ -32,7 +32,7 @@ import {
   initDetectorStates,
   updateDetectorState,
   isGuestLimitReached,
-  refreshAiToggleUI,
+  refreshAiIndicatorUI,
 } from './ui';
 
 import { formatPostForEvaluation } from '../shared/utils';
@@ -721,21 +721,24 @@ import { formatPostForEvaluation } from '../shared/utils';
           clearFilteredPosts();
         }
       }
-      // Any change to the AI-detection enablement inputs — explicit toggles,
-      // the inferred AI-removal intent, the explicit opt-out, or the
-      // experimental gate — re-syncs every filter box's toggle rows to the
-      // effective state (explicit OR auto).
-      if (changes.aiTextFilterEnabled || changes.aiImageFilterEnabled
-          || changes.aiFilterIntent || changes.aiFilterIntentOptOut
-          || changes.aiTextFilterExperimental) {
-        refreshAiToggleUI().catch(err => console.error('[Bouncer] refreshAiToggleUI failed:', err));
-      }
-      // Re-evaluate when the effective detector set changed — the cache has
-      // been invalidated by the background. (aiTextFilterExperimental alone
-      // is only a UI gate; it flips the underlying toggles when turned off.)
-      if (changes.aiTextFilterEnabled || changes.aiImageFilterEnabled
-          || changes.aiFilterIntent || changes.aiFilterIntentOptOut) {
-        reEvaluateAllPosts();
+      if (changes.aiFilterIntent) {
+        // Any write re-syncs the passive AI-detection indicator.
+        refreshAiIndicatorUI().catch(err => console.error('[Bouncer] refreshAiIndicatorUI failed:', err));
+        // Re-evaluate only when the AI-phrase set itself changed — that's
+        // what flips the detectors and changes which phrases are excluded
+        // from the filter categories. judgedSetKey-only bookkeeping writes
+        // must not re-evaluate (that once caused an endless loop). Loop
+        // safety: the validatePhrase probe is the single writer, persists
+        // only on real set changes, and never re-judges an already-judged
+        // set — steady-state filterPost responses produce no writes at all.
+        const aiPhrasesOf = (v: unknown): string[] => {
+          const phrases = (v as AiFilterIntentState | undefined)?.aiPhrases;
+          return Array.isArray(phrases) ? phrases : [];
+        };
+        if (phraseSetKey(aiPhrasesOf(changes.aiFilterIntent.oldValue))
+            !== phraseSetKey(aiPhrasesOf(changes.aiFilterIntent.newValue))) {
+          reEvaluateAllPosts();
+        }
       }
       if (changes.filterReplies) {
         filterReplies = changes.filterReplies.newValue !== false;

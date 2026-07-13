@@ -77,13 +77,16 @@ export async function setDescriptions(descriptionsKey: DescriptionKey, descripti
 
 // Default confidence threshold for the AI-text-detection worker. The worker
 // returns a score in [0, 1]; posts at or above the active threshold are
-// classified as AI-generated.
-export const DEFAULT_AI_TEXT_DETECTION_THRESHOLD = 0.7;
+// classified as AI-generated. High by default so only confident detections
+// hide a post; the reply/comment threshold below is deliberately lower.
+export const DEFAULT_AI_TEXT_DETECTION_THRESHOLD = 0.9;
 
 // Default confidence threshold for the AI-image-detection worker. The worker
 // returns a per-image score in [0, 1]; posts whose max score is at or above
-// the active threshold are classified as AI-generated.
-export const DEFAULT_AI_IMAGE_DETECTION_THRESHOLD = 0.7;
+// the active threshold are classified as AI-generated. Deliberately higher
+// than the text default: image false-positives (photography, digital art)
+// are common enough that only high-confidence detections should hide a post.
+export const DEFAULT_AI_IMAGE_DETECTION_THRESHOLD = 0.9;
 
 /** Clamp a stored threshold to [0, 1] and fall back to the default for missing/non-finite values. */
 export function clampThreshold(v: unknown): number {
@@ -108,31 +111,26 @@ export function clampReplyThreshold(v: unknown): number {
   return Math.min(1, Math.max(0, v));
 }
 
-/** True when the inferred "user wants AI content removed" state should
- *  auto-engage AI detection: the intent bit is latched on and the user hasn't
- *  explicitly opted out. Callers OR this with the explicit aiText/aiImage
- *  toggles to compute the effective enabled state. */
-export function aiIntentAutoActive(data: {
-  aiFilterIntent?: AiFilterIntentState;
-  aiFilterIntentOptOut?: boolean;
-}): boolean {
-  return data.aiFilterIntent?.intent === true && data.aiFilterIntentOptOut !== true;
+/** Normalize a phrase set so the same phrases always produce the same key,
+ *  regardless of order, casing, or duplicates. Lives here (not in
+ *  background/ai-intent.ts, which builds on it) so the content script's
+ *  storage-change listener can compare AI-phrase sets without pulling in
+ *  background-only modules. */
+export function phraseSetKey(categories: string[]): string {
+  return [...new Set(categories.map(c => c.trim().toLowerCase()).filter(Boolean))]
+    .sort()
+    .join('\n');
 }
 
-/** Persist an AI-detection toggle change from any UI surface (popup, in-feed
- *  settings, iOS bridge). Turning ON clears any earlier opt-out; turning OFF
- *  while the inferred intent had it auto-enabled records the opt-out so the
- *  intent can't re-engage detection against the user's explicit choice. The
- *  opt-out is shared by both toggles — the inferred intent is a single
- *  signal, and declining it once declines it everywhere. */
-export async function setAiDetectionToggle(
-  key: 'aiTextFilterEnabled' | 'aiImageFilterEnabled',
-  on: boolean,
-): Promise<void> {
-  if (on) {
-    await setStorage({ [key]: true, aiFilterIntentOptOut: false });
-    return;
-  }
-  const data = await getStorage(['aiFilterIntent', 'aiFilterIntentOptOut']);
-  await setStorage({ [key]: false, ...(aiIntentAutoActive(data) && { aiFilterIntentOptOut: true }) });
+/** True when the inferred "user wants AI content removed" state engages AI
+ *  detection: at least one filter phrase was judged an AI-removal request.
+ *  This is the ONLY way AI detection turns on or off — there is no manual
+ *  toggle; the state is derived from the user's natural-language filter
+ *  phrases (see background/ai-intent.ts). The Array.isArray check also
+ *  tolerates the pre-migration state shape, which lacked aiPhrases. */
+export function aiIntentAutoActive(data: {
+  aiFilterIntent?: AiFilterIntentState;
+}): boolean {
+  const phrases = data.aiFilterIntent?.aiPhrases;
+  return Array.isArray(phrases) && phrases.length > 0;
 }
