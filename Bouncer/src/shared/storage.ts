@@ -81,6 +81,15 @@ export async function setDescriptions(descriptionsKey: DescriptionKey, descripti
 // hide a post; the reply/comment threshold below is deliberately lower.
 export const DEFAULT_AI_TEXT_DETECTION_THRESHOLD = 0.9;
 
+// Threshold applied to AI-text detection when a Twitter post contains at
+// least one emoji (Twitter-only — see emojiRuleApplies in
+// background/pipeline.ts). Emoji-bearing posts are treated as AI-suspect: they are hidden
+// unless the detector is more than 95% confident the text is human-written,
+// i.e. hidden whenever aiConfidence >= 0.05. Applied via min() with the
+// active threshold so a stricter user setting still wins (see
+// buildLiveDetectors in background/pipeline.ts).
+export const EMOJI_AI_TEXT_DETECTION_THRESHOLD = 0.05;
+
 // Default confidence threshold for the AI-image-detection worker. The worker
 // returns a per-image score in [0, 1]; posts whose max score is at or above
 // the active threshold are classified as AI-generated. Deliberately higher

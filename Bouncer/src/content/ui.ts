@@ -472,8 +472,6 @@ const aiIndicatorHTML = `
   <button type="button" class="filter-ai-indicator" aria-label="Remove AI-generated content">
     <svg class="filter-ai-indicator-icon" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
       <path fill="currentColor" d="M12 5.5l1.3 3.6a3.5 3.5 0 0 0 2.1 2.1l3.6 1.3-3.6 1.3a3.5 3.5 0 0 0-2.1 2.1L12 19.5l-1.3-3.6a3.5 3.5 0 0 0-2.1-2.1L5 12.5l3.6-1.3a3.5 3.5 0 0 0 2.1-2.1L12 5.5z"/>
-      <circle class="filter-ai-indicator-slash" cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="1.8"/>
-      <line class="filter-ai-indicator-slash" x1="5" y1="5" x2="19" y2="19" stroke="currentColor" stroke-width="1.8"/>
     </svg>
   </button>
 `;

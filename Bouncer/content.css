@@ -2116,11 +2116,11 @@ article {
 }
 
 /* AI-detection indicator, top-right of the filter box title row: a single
-   sparkle icon. Plain gray sparkle = AI content allowed; blue sparkle with a
-   prohibition ring + slash = AI content being removed. Click toggles via the
-   phrase mechanism (see toggleAiDetectionViaPhrases); the `.on` class is
-   kept in sync by refreshAiIndicatorUI. `.pending` bridges the backend
-   round trip after a click. */
+   sparkle icon. Plain gray sparkle = AI content allowed; brand-orange
+   sparkle = AI content being removed. Click toggles via the phrase
+   mechanism (see toggleAiDetectionViaPhrases); the `.on` class is kept in
+   sync by refreshAiIndicatorUI. `.pending` bridges the backend round trip
+   after a click. */
 .filter-ai-indicator {
   display: flex;
   align-items: center;
@@ -2160,12 +2160,6 @@ article {
 .filter-ai-indicator-icon {
   flex-shrink: 0;
   opacity: 0.65;
-}
-
-/* The prohibition ring + slash only appear when removal is active — the
-   state is carried by the icon's shape, not a separate pill. */
-.filter-ai-indicator:not(.on) .filter-ai-indicator-slash {
-  display: none;
 }
 
 .filter-ai-indicator.on {
