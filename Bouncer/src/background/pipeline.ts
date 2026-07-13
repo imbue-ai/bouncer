@@ -1017,7 +1017,7 @@ async function processBatch(): Promise<void> {
       // The on-device aiText path depends on linear_v3_head.bin, which was
       // trained on E4B last-token logits — E2B shares the vocab dim so it
       // would run but produce garbage confidences. Route only E4B locally.
-      useIosLocalAiText: apiConfig.apiName === 'iosLocal' && apiConfig.modelName === 'gemma-4-e4b',
+      useIosLocalAiText: apiConfig.apiName === 'iosLocal',
       // Twitter-only: see the emojiRuleApplies doc on buildLiveDetectors.
       emojiRuleApplies: item.siteId === 'twitter',
     });

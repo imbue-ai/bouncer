@@ -1018,7 +1018,7 @@ struct BouncerSettingsView: View {
 
             // AI text/image detection is available when either Imbue is configured
             // OR the on-device classifier model has been picked.
-            if hasImbueBackend || viewModel.selectedModel == kIosLocalGemmaModelKey {
+            if hasImbueBackend || viewModel.selectedModel.hasPrefix("iosLocal:") {
                 Section {
                     Toggle(isOn: Binding(
                         get: { viewModel.aiTextFilterEnabled },
@@ -1160,10 +1160,9 @@ struct BouncerSettingsView: View {
 
 // MARK: - Providers Settings
 
-// E4B specifically: it gates the AI-text-filter settings (the on-device
-// AI-text classifier head only works on E4B logits). E2B has its own key
-// via OnDeviceModelVariant.e2b.modelKey.
-private let kIosLocalGemmaModelKey = OnDeviceModelVariant.e4b.modelKey
+// On-device model keys are "iosLocal:<id>" where <id> comes from
+// LocalInferenceService.models. Use LocalInferenceService.model(forKey:) to
+// resolve a selectedModel string to a catalog entry.
 
 private struct ProviderSpec: Identifiable {
     let id: String              // "openai", "anthropic", ...
@@ -1232,7 +1231,7 @@ private let providerSpecs: [ProviderSpec] = [
 // from the popup writes the literal string "imbue" to selectedModel
 // (no "provider:model" prefix like BYOK entries). Keep the sentinel in
 // one place so the comparison in selectModel/active-row logic doesn't
-// drift. Not private: OnboardingView writes it when Express is chosen.
+// drift.
 let imbueModelKey = "imbue"
 
 struct ProvidersSettingsView: View {
@@ -1291,7 +1290,7 @@ struct ProvidersSettingsView: View {
 
     private var currentProviderLabel: String {
         if selectedModel == imbueModelKey { return "Imbue" }
-        if selectedModel.hasPrefix("iosLocal:") { return "On-device" }
+        if LocalInferenceService.model(forKey: selectedModel) != nil { return "On-device" }
         guard let colon = selectedModel.firstIndex(of: ":") else { return "" }
         let providerId = String(selectedModel[..<colon])
         return providerSpecs.first(where: { $0.id == providerId })?.displayName ?? providerId
@@ -1299,9 +1298,7 @@ struct ProvidersSettingsView: View {
 
     private var currentModelLabel: String {
         if selectedModel == imbueModelKey { return "Imbue (default)" }
-        if let variant = OnDeviceModelVariant.allCases.first(where: { $0.modelKey == selectedModel }) {
-            return variant.displayName
-        }
+        if let m = LocalInferenceService.model(forKey: selectedModel) { return "\(m.displayName) (on-device)" }
         guard let colon = selectedModel.firstIndex(of: ":") else { return selectedModel }
         let providerId = String(selectedModel[..<colon])
         let modelId = String(selectedModel[selectedModel.index(after: colon)...])
@@ -1319,7 +1316,7 @@ struct ProvidersSettingsView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Imbue (default)")
                             .foregroundStyle(.primary)
-                        Text("Fast and free filtering on our servers.")
+                        Text("Use Bouncer's bundled hosted model. No API key required.")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
@@ -1330,10 +1327,7 @@ struct ProvidersSettingsView: View {
                     }
                 }
             }
-            // Default (borderless) list-button style: whole row is the tap
-            // target with the native highlight. `.plain` would shrink the
-            // hit area to the rendered content, leaving the Spacer dead.
-            // Texts keep their colors via explicit foregroundStyle.
+            .buttonStyle(.plain)
         } header: {
             Text("Imbue")
         }
@@ -1342,113 +1336,112 @@ struct ProvidersSettingsView: View {
     @ViewBuilder
     private var onDeviceSection: some View {
         Section {
-            ForEach(OnDeviceModelVariant.allCases) { variant in
-                onDeviceRow(variant)
-
-                if variant == localService.activeVariant {
-                    if case .downloading(let progress) = localService.modelStatus {
-                        ProgressView(value: progress)
-                    } else if case .paused(let progress) = localService.modelStatus {
-                        ProgressView(value: progress)
-                    }
-                }
-
-                onDeviceActionButtons(variant)
+            ForEach(LocalInferenceService.models) { model in
+                onDeviceModelRow(model)
             }
         } header: {
             Text("On-device")
         } footer: {
-            Text("Runs Gemma locally for phrase-filter classification — no posts leave your phone. E2B downloads ~2.6 GB and requires an iPhone with 6 GB+ RAM; E4B downloads ~3.7 GB, requires 8 GB+ RAM, and also powers AI-text detection. Requires Wi-Fi.")
+            Text("Runs Gemma locally for phrase filtering and AI-text detection — no posts leave your phone. Download a model, then tap it to make it active. Requires Wi-Fi and an iPhone with 6 GB+ RAM.")
         }
     }
 
     @ViewBuilder
-    private func onDeviceRow(_ variant: OnDeviceModelVariant) -> some View {
-        let isReady = isVariantReady(variant)
-        Button {
-            guard isReady else { return }
-            Task { await selectModel(variant.modelKey) }
-        } label: {
+    private func onDeviceModelRow(_ model: LocalInferenceService.LocalModel) -> some View {
+        if !model.isSupportedOnThisDevice {
+            // Same RAM gate as onboarding and the popup's provider list, in
+            // the greyed-out-with-reason style: no Download button — the
+            // engine can't run within this device's memory budget.
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(variant.displayName)
-                        .foregroundStyle(isReady ? .primary : .secondary)
-                    if let status = onDeviceStatusText(localService.status(for: variant)) {
-                        Text(status)
+                    Text("\(model.displayName) (on-device)")
+                        .foregroundStyle(.secondary)
+                    Text("Not available on this iPhone — requires \(model.requiredRAMDisplay)+ RAM.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+        } else {
+            let status = localService.downloadStatus(for: model)
+            let ready = isReady(status)
+            Button {
+                guard ready else { return }
+                Task { await selectModel(model.selectedModelKey) }
+            } label: {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("\(model.displayName) (on-device)")
+                            .foregroundStyle(ready ? .primary : .secondary)
+                        Text(onDeviceStatusText(model, status))
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
-                }
-                Spacer()
-                if selectedModel == variant.modelKey {
-                    Image(systemName: "checkmark")
-                        .foregroundStyle(.tint)
+                    Spacer()
+                    if selectedModel == model.selectedModelKey {
+                        Image(systemName: "checkmark")
+                            .foregroundStyle(.tint)
+                    }
                 }
             }
+            .buttonStyle(.plain)
+            .disabled(!ready)
+
+            if case .downloading(let progress) = status {
+                ProgressView(value: progress)
+            } else if case .paused(let progress) = status {
+                ProgressView(value: progress)
+            }
+
+            onDeviceActionButtons(model, status)
         }
-        // Default (borderless) list-button style: whole row is the tap
-        // target with the native highlight — `.plain` would leave the
-        // Spacer region dead to taps.
-        .disabled(!isReady)
     }
 
-    private func isVariantReady(_ variant: OnDeviceModelVariant) -> Bool {
-        switch localService.status(for: variant) {
-        case .downloaded, .loading, .ready: return true
+    private func isReady(_ status: LocalInferenceService.ModelStatus) -> Bool {
+        switch status {
+        case .downloaded, .ready: return true
         default: return false
         }
     }
 
-    // Only the downloader-bound variant ever reports downloading/paused
-    // states (see LocalInferenceService.status(for:)), so the byte displays
-    // below always describe the right transfer.
-    // Subtitle only while there's live transfer state (or an error) to
-    // report. Static on-disk state is implied by the row itself: enabled +
-    // selectable means downloaded; a disabled row with a Download button
-    // below means not. Engine runtime state (.loading/.ready) is an
-    // implementation detail — the in-feed pending bars cover
-    // "classification hasn't started yet".
-    private func onDeviceStatusText(_ status: LocalInferenceService.ModelStatus) -> String? {
+    private func onDeviceStatusText(
+        _ model: LocalInferenceService.LocalModel,
+        _ status: LocalInferenceService.ModelStatus
+    ) -> String {
         switch status {
+        case .notDownloaded:
+            return "Not downloaded — \(model.approxSize)"
         case .downloading(let progress):
             let pct = Int((progress * 100).rounded())
             return "Downloading \(pct)% — \(localService.downloadedBytesDisplay) / \(localService.totalBytesDisplay)"
         case .paused(let progress):
             let pct = Int((progress * 100).rounded())
             return "Paused at \(pct)%"
-        case .notDownloaded, .downloaded, .loading, .ready:
-            return nil
+        case .downloaded:
+            return "Downloaded — tap to use"
+        case .loading:
+            return "Loading…"
+        case .ready:
+            return "Ready — active"
         case .error(let message):
             return "Error: \(message)"
         }
     }
 
-    private var isActivelyDownloading: Bool {
-        if case .downloading = localService.modelStatus { return true }
-        return false
-    }
-
     @ViewBuilder
-    private func onDeviceActionButtons(_ variant: OnDeviceModelVariant) -> some View {
-        switch localService.status(for: variant) {
+    private func onDeviceActionButtons(
+        _ model: LocalInferenceService.LocalModel,
+        _ status: LocalInferenceService.ModelStatus
+    ) -> some View {
+        switch status {
         case .notDownloaded, .error:
-            if !variant.isSupportedOnThisDevice {
-                Text("Not available on this iPhone — requires \(variant.requiredRAMDisplay)+ RAM")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            } else {
-                // Single download slot: block starting a second transfer
-                // while the other variant is actively downloading (a paused
-                // one gets cancelled by startDownload's variant switch).
-                Button("Download model") {
-                    localService.startDownload(variant: variant)
-                }
-                .disabled(isActivelyDownloading)
+            Button("Download") {
+                localService.startDownload(model)
             }
         case .downloading:
-            // .borderless button style: without it, both buttons share
-            // one row-wide hit region in Form/List and a single tap fires
-            // every action closure in the row.
+            // .borderless button style: without it, both buttons share one
+            // row-wide hit region in Form/List and a single tap fires every
+            // action closure in the row.
             HStack {
                 Button("Pause") { localService.pauseDownload() }
                     .buttonStyle(.borderless)
@@ -1458,18 +1451,18 @@ struct ProvidersSettingsView: View {
             }
         case .paused:
             HStack {
-                Button("Resume") { localService.startDownload(variant: variant) }
+                Button("Resume") { localService.startDownload(model) }
                     .buttonStyle(.borderless)
                 Spacer()
                 Button("Cancel", role: .destructive) { localService.cancelDownload() }
                     .buttonStyle(.borderless)
             }
         case .downloaded, .ready, .loading:
-            Button("Delete model", role: .destructive) {
-                if selectedModel == variant.modelKey {
+            Button("Delete", role: .destructive) {
+                if selectedModel == model.selectedModelKey {
                     Task { await selectModel(imbueModelKey) }
                 }
-                localService.deleteModel(variant: variant)
+                localService.deleteModel(model)
             }
         }
     }
@@ -1518,9 +1511,7 @@ struct ProvidersSettingsView: View {
                         }
                     }
                 }
-                // Default (borderless) list-button style: whole row is the
-                // tap target with the native highlight — `.plain` would
-                // leave the Spacer region dead to taps.
+                .buttonStyle(.plain)
                 .disabled(!hasKey || isDirty)
                 .opacity((!hasKey || isDirty) ? 0.5 : 1.0)
             }
@@ -1588,6 +1579,11 @@ struct ProvidersSettingsView: View {
 
     @MainActor
     private func selectModel(_ modelKey: String) async {
+        // When an on-device variant is picked, switch the native engine to it
+        // (unloads the current model; the new one lazily loads on next classify).
+        if let model = LocalInferenceService.model(forKey: modelKey) {
+            localService.selectModel(model)
+        }
         await viewModel.setStorage(["selectedModel": modelKey])
         selectedModel = modelKey
         viewModel.selectedModel = modelKey

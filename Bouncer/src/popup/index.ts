@@ -1,6 +1,6 @@
 // Bouncer - Popup Script
 
-import type { ModelDef, LocalModelStatus, StorageSchema, SiteId } from '../types';
+import type { ModelDef, LocalModelDef, LocalModelStatus, StorageSchema, SiteId } from '../types';
 import { PREDEFINED_MODELS, DEFAULT_MODEL } from '../shared/models';
 import { escapeHtml, parseHTML } from '../shared/utils';
 import { getStorage, setStorage, removeStorage, clampThreshold, clampImageThreshold, clampReplyThreshold, aiIntentAutoActive } from '../shared/storage';
@@ -78,9 +78,13 @@ const isIOSDevice = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
 const isInAppMode = typeof chrome !== 'undefined' && chrome._polyfilled;
 
 // Model key the "Local (E2B)" headline radio writes. In the iOS app the
-// native bridge runs the on-device model (iosLocal:), everywhere else it's
-// the WebGPU litert-lm web build (local:).
-const LOCAL_RADIO_MODEL_KEY = isInAppMode ? 'iosLocal:gemma-4-e2b' : 'local:gemma-4-E2B-it-web';
+// native bridge runs the on-device model (iosLocal:, entries injected from
+// the Swift registry — see shared/models.ts), everywhere else it's the
+// WebGPU litert-lm web build (local:).
+const IOS_LOCAL_MODEL = PREDEFINED_MODELS.iosLocal[0];
+const LOCAL_RADIO_MODEL_KEY = isInAppMode && IOS_LOCAL_MODEL
+  ? `iosLocal:${IOS_LOCAL_MODEL.name}`
+  : 'local:gemma-4-E2B-it-web';
 
 // User-friendly error message mapping for local-model errors
 const LOCAL_ERROR_MESSAGES: Record<string, { display: string; hint: string }> = {
@@ -1241,8 +1245,12 @@ function updateModelRadioUI() {
   }
 
   // Local option is first-class but hardware-gated: WebGPU on desktop, the
-  // native bridge in the iOS app. iOS Safari extension mode has neither.
-  const localSupported = webgpuSupported || isInAppMode;
+  // native bridge + enough device RAM in the iOS app (the support flag comes
+  // from the Swift registry via the injected catalog). iOS Safari extension
+  // mode has neither.
+  const localSupported = isInAppMode
+    ? (IOS_LOCAL_MODEL?.isSupportedOnThisDevice ?? false)
+    : webgpuSupported;
   localRadio.disabled = !localSupported;
   document.getElementById('modelRadioLocalRow')?.classList.toggle('disabled', !localSupported);
   const localNote = document.getElementById('modelRadioLocalNote');
@@ -1715,11 +1723,20 @@ function updateLocalModelSectionUI() {
   // Check if a local model is selected
   const selectedLocalModel = getSelectedLocalModel();
 
-  if (!webgpuSupported && !isInAppMode) {
-    // WebGPU not supported (and not in native bridge mode) - show unsupported message
+  const inAppLocalSupported = isInAppMode && (IOS_LOCAL_MODEL?.isSupportedOnThisDevice ?? false);
+  if (isInAppMode ? !inAppLocalSupported : !webgpuSupported) {
+    // Hardware can't run the local model (no WebGPU on desktop; not enough
+    // device RAM in the iOS app) - show unsupported message
     badge.textContent = 'Unsupported';
     badge.classList.add('error');
     unsupported.style.display = 'block';
+    if (isInAppMode) {
+      const hint = unsupported.querySelector('.hint');
+      if (hint) {
+        hint.textContent =
+          `Local inference isn't available on this iPhone — it requires ${IOS_LOCAL_MODEL?.requiredRAMDisplay ?? '6 GB'}+ RAM.`;
+      }
+    }
     return;
   }
 
