@@ -29,10 +29,13 @@
 //     when the same set is later re-created (delete-then-re-add).
 //
 // The derived state persists in chrome.storage.local under `aiFilterIntent`.
-// A non-empty aiPhrases list is the sole gate for the detectAiText /
-// detectAiImage detectors — AI detection has no manual toggle; it turns on
-// and off purely through the user's natural-language filter phrases. On the
-// Imbue model path the pipeline also EXCLUDES these phrases from the
+// aiPhrases spans all platforms (the union is judged so each phrase is
+// judged once), but the detectAiText / detectAiImage detectors gate
+// PER PLATFORM: detection is on for a platform only when that platform's
+// own phrase list contains one of the aiPhrases (aiIntentActiveForSite in
+// shared/storage.ts). AI detection has no manual toggle; it turns on and
+// off purely through each platform's natural-language filter phrases. On
+// the Imbue model path the pipeline also EXCLUDES these phrases from the
 // tweet-filter categories (Settings.effectiveDescriptions): "AI slop"
 // engages the AI detector instead of hiding human posts about AI slop.
 

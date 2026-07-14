@@ -469,7 +469,9 @@ const AI_DETECTION_UI_KEYS = ['aiFilterIntent'] as const;
 // enabled state) to the inferred AI-removal intent (see
 // background/ai-intent.ts). Purely informational — AI detection has no
 // manual toggle; it engages and disengages through the user's
-// natural-language filter phrases.
+// natural-language filter phrases. The popup isn't tied to a platform, so
+// this shows the cross-platform union: "On" means detection is engaged on
+// at least one platform (per-platform state lives in each page's sparkle).
 function applyAiDetectionUI(data: Partial<StorageSchema>) {
   // The AI detectors are Imbue-only (callImbueAiTextDetection), so hide the
   // entire section when the Imbue backend isn't configured at build time.

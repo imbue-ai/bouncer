@@ -503,7 +503,6 @@
   font-style: italic;
   background: rgba(255, 255, 255, 0.04);
   border-radius: 8px;
-  border-left: 3px solid rgba(255, 255, 255, 0.1);
 }
 
 .slop-post-actions {
@@ -2206,8 +2205,8 @@ article {
 }
 
 .filter-ai-indicator.with-badge .filter-ai-indicator-label {
-  /* Comfortably fits "REMOVE AI" at 11px; keeps the collapse animation snappy. */
-  max-width: 80px;
+  /* Comfortably fits "REMOVE AI SLOP?" at 11px; keeps the collapse animation snappy. */
+  max-width: 120px;
   opacity: 1;
 }
 
@@ -3066,10 +3065,10 @@ body.ff-ios .ff-ios-page.dark-mode .ff-ios-page-header {
    possible so it always floats above them. The Twitter in-wrapper constraint
    (stay below z=2 search bar) does not apply to LinkedIn. */
 .filter-phrases-sidebar--linkedin {
-  /* linkedin adaptation: 9999 beats native LinkedIn ads/modals but stays below
+  /* linkedin adaptation: 499 beats native LinkedIn ads/modals but stays below
      the filtered-modal-backdrop (z-index: 10000) so the sidebar appears behind
      the "View filtered" popup rather than floating on top of it. */
-  z-index: 9999;
+  z-index: 499;
 }
 
 /* linkedin adaptation: hide the Twitter-specific "Share filters" button. */

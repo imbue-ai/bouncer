@@ -2,15 +2,14 @@
 
 import { toBlob } from 'html-to-image';
 import { asyncHandler } from '../shared/async';
-import { cleanReasoning, escapeHtml, formatPostForEvaluation, parseHTML, GUEST_FILTER_LIMIT, AI_DETECTION_SEED_PHRASE } from '../shared/utils';
+import { cleanReasoning, escapeHtml, parseHTML, GUEST_FILTER_LIMIT, AI_DETECTION_SEED_PHRASE } from '../shared/utils';
 import { init as initPopup } from '../popup/index';
 import {
   encodeFilterPackCode, decodeFilterPackCode, buildFilterPackShareUrl,
   FILTER_PACK_SHARE_URL_REGEX,
 } from '../shared/share-encoding';
 import type { BackgroundToContentMessage, ContentUIDeps, FilteredPost, PostContent, LocalModelStatus } from '../types';
-import { getStorage, setStorage, getDescriptions, setDescriptions, aiIntentAutoActive } from '../shared/storage';
-import { PLATFORMS } from '../shared/platforms';
+import { getStorage, setStorage, getDescriptions, setDescriptions, aiIntentActiveForSite } from '../shared/storage';
 import { getReleaseNote } from './release-notes';
 import { runIOSImportAnimation } from './ios';
 
@@ -472,7 +471,7 @@ const placeholderHTML = `<span class="filter-input-wrapper"><input type="text" c
 // (see background/ai-intent.ts).
 const aiIndicatorHTML = `
   <button type="button" class="filter-ai-indicator" aria-label="Remove AI-generated content">
-    <span class="filter-ai-indicator-label" aria-hidden="true">REMOVE AI?</span>
+    <span class="filter-ai-indicator-label" aria-hidden="true">REMOVE AI SLOP?</span>
     <svg class="filter-ai-indicator-icon" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
       <path fill="currentColor" d="M12 5.5l1.3 3.6a3.5 3.5 0 0 0 2.1 2.1l3.6 1.3-3.6 1.3a3.5 3.5 0 0 0-2.1 2.1L12 19.5l-1.3-3.6a3.5 3.5 0 0 0-2.1-2.1L5 12.5l3.6-1.3a3.5 3.5 0 0 0 2.1-2.1L12 5.5z"/>
     </svg>
@@ -783,12 +782,19 @@ export function injectFilterPhrasesInput() {
 }
 
 // Sync every AI-detection indicator on the page to the inferred AI-removal
-// intent. Called on filter-box setup and from the storage-change listener in
-// content/index.ts whenever aiFilterIntent is written — any state write also
-// clears the transient `pending` set by a click.
+// intent FOR THIS PLATFORM — the sparkle is on only when one of this
+// platform's own phrases engages detection, so "AI slop" on X doesn't light
+// LinkedIn's indicator. Called on filter-box setup and from the
+// storage-change listener in content/index.ts whenever aiFilterIntent OR
+// this platform's phrase list is written — any such write also clears the
+// transient `pending` set by a click.
 export async function refreshAiIndicatorUI(): Promise<void> {
-  const data = await getStorage(['aiFilterIntent', 'aiIndicatorBadgeDismissed']);
-  const on = aiIntentAutoActive(data);
+  if (!_deps) return;
+  const [data, sitePhrases] = await Promise.all([
+    getStorage(['aiFilterIntent', 'aiIndicatorBadgeDismissed']),
+    getDescriptions(_deps.descriptionsKey),
+  ]);
+  const on = aiIntentActiveForSite(data, sitePhrases);
   // First-run onboarding: the indicator wears a "REMOVE AI" pill badge until
   // the first time detection turns on, then reverts to the plain sparkle
   // forever (the dismissal is persisted, so toggling back off won't revive it).
@@ -807,31 +813,34 @@ export async function refreshAiIndicatorUI(): Promise<void> {
 }
 
 // Toggle AI detection through the phrase mechanism — the indicator's click
-// action. On → off: delete every phrase that enables AI detection, from
-// every platform's list (the intent state prunes instantly). Off → on: add
-// the seed phrase; the backend judges it and the first response engages
-// detection. `pending` bridges the round trip and is cleared by
-// refreshAiIndicatorUI on the resulting state write. Exported for the iOS
-// native sheet's sparkle indicator, which drives the same mechanism through
-// the __ff_toggleAiDetection bridge (see content/ios.ts).
+// action. Per-platform, like the indicator itself. On → off: delete every
+// phrase that enables AI detection from THIS platform's list (the intent
+// state prunes instantly if the phrase exists nowhere else; other platforms
+// keep their own state). Off → on: add the seed phrase to this platform's
+// list; the backend judges it and the first response engages detection.
+// `pending` bridges the round trip and is cleared by refreshAiIndicatorUI on
+// the resulting state/phrase-list write. Exported for the iOS native sheet's
+// sparkle indicator, which drives the same mechanism through the
+// __ff_toggleAiDetection bridge (see content/ios.ts).
 export async function toggleAiDetectionViaPhrases(): Promise<void> {
   document.querySelectorAll<HTMLElement>('.filter-ai-indicator')
     .forEach(el => el.classList.add('pending'));
 
-  const data = await getStorage(['aiFilterIntent']);
+  const [data, sitePhrases] = await Promise.all([
+    getStorage(['aiFilterIntent']),
+    getDescriptions(_deps.descriptionsKey),
+  ]);
   const aiPhrases = data.aiFilterIntent?.aiPhrases;
   if (Array.isArray(aiPhrases) && aiPhrases.length > 0) {
     const aiKeys = new Set(aiPhrases.map(p => p.trim().toLowerCase()));
-    for (const p of PLATFORMS) {
-      const key = `descriptions_${p.id}` as const;
-      const cur = await getDescriptions(key);
-      const next = cur.filter(d => !aiKeys.has(d.trim().toLowerCase()));
-      if (next.length !== cur.length) await setDescriptions(key, next);
+    const next = sitePhrases.filter(d => !aiKeys.has(d.trim().toLowerCase()));
+    if (next.length !== sitePhrases.length) {
+      await setDescriptions(_deps.descriptionsKey, next);
+      syncFilterPhrases();
+      return;
     }
-    syncFilterPhrases();
-  } else {
-    await addFilterPhrase(AI_DETECTION_SEED_PHRASE);
   }
+  await addFilterPhrase(AI_DETECTION_SEED_PHRASE);
 }
 
 // Common event handler setup for filter boxes (sidebar and bottom)
@@ -2793,8 +2802,11 @@ function buildTwitterCard(post: FilteredPost): HTMLElement {
 // ==================== Filtered Post Storage ====================
 
 export function storeFilteredPost(article: HTMLElement, contentObj: PostContent, reasoning: string, rawResponse = '', category: string | null = null) {
-  // Use postUrl or content hash as dedup key
-  const evalText = formatPostForEvaluation(contentObj);
+  // Use postUrl or content hash as dedup key. formatForEvaluation returns
+  // the exact string the post was evaluated as (reply context included) —
+  // evaluationText feeds the Restore button's cache override, which must
+  // land on the evaluated cache key.
+  const evalText = _deps.formatForEvaluation(article, contentObj);
   const key = contentObj.postUrl || evalText.substring(0, 200);
   if (filteredPostKeys.has(key)) {
     return; // Already stored
@@ -3350,7 +3362,7 @@ async function fetchReasoningIfNeeded(article: HTMLElement) {
   try {
     let response: { found?: boolean; shouldHide?: boolean; reasoning?: string; rawResponse?: string } | undefined = await chrome.runtime.sendMessage({
       type: 'getReasoning',
-      post: formatPostForEvaluation(content),
+      post: _deps.formatForEvaluation(article, content),
       imageUrls: content.imageUrls || [],
       postUrl: content.postUrl || null,
       siteId: _deps.adapter.siteId
@@ -3569,7 +3581,7 @@ export function addWhyAnnoyingButton(article: HTMLElement) {
           type: 'sendFeedback',
           siteId: _deps.adapter.siteId,
           postUrl: content.postUrl || null,
-          tweetData: { text: formatPostForEvaluation(content), imageUrls: content.imageUrls || [] },
+          tweetData: { text: _deps.formatForEvaluation(article, content), imageUrls: content.imageUrls || [] },
           rawResponse: reasoning?.rawResponse || '',
           reasoning: reasoning?.reasoning || '',
           decision: 'false_negative'
@@ -3581,7 +3593,7 @@ export function addWhyAnnoyingButton(article: HTMLElement) {
         setTimeout(() => hidePost(article), 300);
         chrome.runtime.sendMessage({
           type: 'overrideCacheEntry',
-          post: formatPostForEvaluation(content),
+          post: _deps.formatForEvaluation(article, content),
           imageUrls: content.imageUrls || [],
           postUrl: content.postUrl || null,
           siteId: _deps.adapter.siteId,
@@ -3654,7 +3666,7 @@ export function addWhyAnnoyingButton(article: HTMLElement) {
         setTimeout(() => hidePost(article), 300);
         chrome.runtime.sendMessage({
           type: 'overrideCacheEntry',
-          post: formatPostForEvaluation(content),
+          post: _deps.formatForEvaluation(article, content),
           imageUrls: content.imageUrls || [],
           postUrl: content.postUrl || null,
           siteId: _deps.adapter.siteId,
@@ -3697,7 +3709,7 @@ export function addWhyAnnoyingButton(article: HTMLElement) {
           type: 'sendFeedback',
           siteId: _deps.adapter.siteId,
           postUrl: content.postUrl || null,
-          tweetData: { text: formatPostForEvaluation(content), imageUrls: content.imageUrls || [] },
+          tweetData: { text: _deps.formatForEvaluation(article, content), imageUrls: content.imageUrls || [] },
           rawResponse: reasoning?.rawResponse || '',
           reasoning: reasoning?.reasoning || '',
           decision: 'false_negative'
@@ -3709,7 +3721,7 @@ export function addWhyAnnoyingButton(article: HTMLElement) {
         setTimeout(() => hidePost(article), 300);
         chrome.runtime.sendMessage({
           type: 'overrideCacheEntry',
-          post: formatPostForEvaluation(content),
+          post: _deps.formatForEvaluation(article, content),
           imageUrls: content.imageUrls || [],
           postUrl: content.postUrl || null,
           siteId: _deps.adapter.siteId,

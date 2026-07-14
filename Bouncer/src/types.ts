@@ -218,8 +218,11 @@ export interface Settings extends SettingsBase {
    *  display/edit surface. */
   effectiveDescriptions: string[];
   /** Derived at settings-read time: the inferred "user wants AI content
-   *  removed" state. The sole gate for the AI text/image detectors — there
-   *  is no manual toggle. */
+   *  removed" state FOR THE SITE these settings were loaded for — true only
+   *  when one of that site's own phrases was judged an AI-removal request
+   *  (aiIntentActiveForSite). The sole gate for the AI text/image detectors —
+   *  there is no manual toggle. Always false when getSettings was called
+   *  without a siteId. */
   aiFilterIntentActive: boolean;
 }
 
@@ -229,9 +232,12 @@ export interface Settings extends SettingsBase {
  *  src/background/ai-intent.ts; read wherever the AI-detection state is
  *  computed (pipeline, popup, content UI, iOS bridge). */
 export interface AiFilterIntentState {
-  /** Verbatim filter phrases judged as AI-removal requests. Non-empty ⇒ AI
-   *  detection engages; on the Imbue model path these are also excluded from
-   *  the tweet-filter categories (see Settings.effectiveDescriptions). */
+  /** Verbatim filter phrases judged as AI-removal requests, across ALL
+   *  platforms (the judge sees the union so each phrase is judged once).
+   *  AI detection engages per platform: only where the platform's own list
+   *  contains one of these (aiIntentActiveForSite). On the Imbue model path
+   *  these are also excluded from the tweet-filter categories (see
+   *  Settings.effectiveDescriptions). */
   aiPhrases: string[];
   /** phraseSetKey of the phrase-set union the last successful intent
    *  judgment covered — lets refreshAiFilterIntent skip re-judging a set
@@ -390,6 +396,12 @@ export interface PostOperations {
   processExistingPosts: () => void;
   evaluatePost: (article: HTMLElement) => Promise<void>;
   reEvaluateSinglePost: (article: HTMLElement) => Promise<void>;
+  /** The exact evaluation string for an article: the string previously sent
+   *  to evaluatePost when available, else recomputed (with main-post reply
+   *  context on permalink pages). Cache-key parity depends on every
+   *  recheck/override/feedback flow using this instead of
+   *  formatPostForEvaluation. */
+  formatForEvaluation: (article: HTMLElement, content: PostContent) => string;
 }
 
 export interface PostState {

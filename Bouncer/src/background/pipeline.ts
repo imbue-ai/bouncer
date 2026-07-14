@@ -11,7 +11,7 @@ import { callDirectAPI, callAnthropicAPI, callImbueAPI, callImbueAiTextDetection
 import { runDetectors, type Detector, type DetectorResult } from './detectors';
 import { callLocalInference, localEngine } from './local-model';
 import { iosLocalClassify, iosLocalGenerate, iosLocalAiTextDetect } from './ios-local-bridge';
-import { getStorage, setStorage, removeStorage, getDescriptions, clampThreshold, clampImageThreshold, clampReplyThreshold, aiIntentAutoActive, DEFAULT_AI_TEXT_DETECTION_THRESHOLD, DEFAULT_AI_IMAGE_DETECTION_THRESHOLD, EMOJI_AI_TEXT_DETECTION_THRESHOLD } from '../shared/storage';
+import { getStorage, setStorage, removeStorage, getDescriptions, clampThreshold, clampImageThreshold, clampReplyThreshold, aiIntentActiveForSite, DEFAULT_AI_TEXT_DETECTION_THRESHOLD, DEFAULT_AI_IMAGE_DETECTION_THRESHOLD, EMOJI_AI_TEXT_DETECTION_THRESHOLD } from '../shared/storage';
 import { canJudgeAiIntent } from './ai-intent';
 import { PLATFORMS, enabledStorageKey } from '../shared/platforms';
 export { DEFAULT_AI_TEXT_DETECTION_THRESHOLD, DEFAULT_AI_IMAGE_DETECTION_THRESHOLD };
@@ -22,6 +22,10 @@ import type {
 } from '../types';
 
 // ==================== Constants ====================
+
+// Resolved at build time (esbuild define) — same flag ui.ts uses to gate the
+// sign-out button. Gates debug detail in user-facing reasoning strings.
+const IS_DEV_BUILD = (process.env.BOUNCER_ENV || '').toLowerCase() === 'dev';
 
 const CACHE_SIZE = 500; // Increased for persistent storage
 const BATCH_DELAY_MS = 1000; // Wait time to collect posts before sending batch
@@ -248,13 +252,16 @@ function buildLiveDetectors(args: {
           ? Math.min(args.aiThreshold, EMOJI_AI_TEXT_DETECTION_THRESHOLD)
           : args.aiThreshold;
         const isAi = confidence >= threshold;
-        const pct = `${(confidence * 100).toFixed(0)}%`;
         const source = args.useIosLocalAiText ? 'on-device' : 'cloud';
+        // The model's probability is debug info — dev builds only.
+        const detail = IS_DEV_BUILD
+          ? `${source}, probability ${(confidence * 100).toFixed(0)}%`
+          : source;
         return {
           shouldHide: isAi,
           reasoning: isAi
-            ? `AI-generated text detected (${source}, probability ${pct})`
-            : `Text not detected as AI-generated (${source}, probability ${pct})`,
+            ? `AI-generated text detected (${detail})`
+            : `Text not detected as AI-generated (${detail})`,
           category: isAi ? 'AI-generated' : null,
           rawResponse: null,
         };
@@ -267,12 +274,14 @@ function buildLiveDetectors(args: {
       promise: (async (): Promise<DetectorResult> => {
         const aiResp = await callImbueAiImageDetection(args.imageUrls);
         const isAi = aiResp.confidence >= args.aiImageThreshold;
-        const pct = `${(aiResp.confidence * 100).toFixed(0)}%`;
+        const detail = IS_DEV_BUILD
+          ? ` (probability ${(aiResp.confidence * 100).toFixed(0)}%)`
+          : '';
         return {
           shouldHide: isAi,
           reasoning: isAi
-            ? `AI-generated image detected (probability ${pct})`
-            : `Images not detected as AI-generated (probability ${pct})`,
+            ? `AI-generated image detected${detail}`
+            : `Images not detected as AI-generated${detail}`,
           category: isAi ? 'AI-generated image' : null,
           rawResponse: null,
         };
@@ -541,7 +550,10 @@ export async function getSettings(siteId?: SiteId): Promise<Settings> {
     aiTextDetectionThreshold: clampThreshold(data.aiTextDetectionThreshold),
     aiTextReplyDetectionThreshold: clampReplyThreshold(data.aiTextReplyDetectionThreshold),
     aiImageDetectionThreshold: clampImageThreshold(data.aiImageDetectionThreshold),
-    aiFilterIntentActive: aiIntentAutoActive(data),
+    // Per-site: only this site's own phrases can engage its detectors.
+    // False when getSettings is called without a siteId (descriptions is
+    // empty then) — those callers never read this field.
+    aiFilterIntentActive: aiIntentActiveForSite(data, descriptions),
     filterReplies: data.filterReplies !== false,
     platformEnabled,
     youtubeShowPlaceholder: data.youtubeShowPlaceholder === true

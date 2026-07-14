@@ -35,7 +35,7 @@ import {
   refreshAiIndicatorUI,
 } from './ui';
 
-import { formatPostForEvaluation } from '../shared/utils';
+import { formatReplyForEvaluation } from '../shared/utils';
 
 (function() {
   'use strict';
@@ -92,6 +92,57 @@ import { formatPostForEvaluation } from '../shared/utils';
   const stuckPostCheckDelay = 5000;
   let isLocalModelActive = false;
   let enabled = true;
+
+  // Main-post context for permalink pages, captured once per pathname and
+  // kept for the page's lifetime. Twitter virtualizes the conversation
+  // timeline, so the main article can leave the DOM while replies far down
+  // the thread are still being evaluated — a live DOM lookup per reply
+  // would silently lose the context (and change cache keys) mid-page.
+  // Failures are NOT cached: a later reply's evaluation retries (e.g. the
+  // store extractor wasn't ready yet).
+  let mainPostContextPath: string | null = null;
+  let mainPostContext: PostContent | null = null;
+  let mainPostContextPromise: Promise<PostContent | null> | null = null;
+
+  async function ensureMainPostContext(): Promise<PostContent | null> {
+    if (!adapter.isPermalinkView()) return null;
+    const path = window.location.pathname;
+    if (mainPostContextPath === path) {
+      if (mainPostContext) return mainPostContext;
+      if (mainPostContextPromise) return mainPostContextPromise; // single-flight
+    } else {
+      mainPostContextPath = path;
+      mainPostContext = null;
+    }
+    mainPostContextPromise = (async (): Promise<PostContent | null> => {
+      const mainArticle = findPosts().find(el => adapter.isMainPost(el));
+      if (!mainArticle) return null;
+      let content: PostContent | null = null;
+      try {
+        content = await adapter.extractPostContentFromStore(mainArticle);
+      } catch { /* store not ready */ }
+      if (!content) content = extractPostContent(mainArticle);
+      if (!content.text.trim()) return null;
+      // SPA-navigation guard: only cache if we're still on the same page.
+      if (window.location.pathname === path) mainPostContext = content;
+      return content;
+    })().finally(() => { mainPostContextPromise = null; });
+    return mainPostContextPromise;
+  }
+
+  // Exact string sent to background for each article's evaluation — the
+  // cache-key basis. The recheck/override/feedback flows must reuse it
+  // verbatim or their cache lookups miss (keys truncate at 200 chars, so
+  // the appended reply context changes the key for short replies).
+  const evaluatedPostText = new WeakMap<HTMLElement, string>();
+
+  function formatForEvaluation(article: HTMLElement, content: PostContent): string {
+    const recorded = evaluatedPostText.get(article);
+    if (recorded) return recorded;
+    const isReply = adapter.isPermalinkView() && !adapter.isMainPost(article);
+    return formatReplyForEvaluation(content, isReply ? mainPostContext : null);
+  }
+
   // Cached `filterReplies` setting; loaded on init and kept current by the
   // storage-change listener below. Defaults to true so the gate is a no-op
   // until the user explicitly opts out.
@@ -116,6 +167,7 @@ import { formatPostForEvaluation } from '../shared/utils';
     processExistingPosts: () => processExistingPosts(),
     evaluatePost: (article: HTMLElement) => evaluatePost(article),
     reEvaluateSinglePost: (article: HTMLElement) => reEvaluateSinglePost(article),
+    formatForEvaluation: (article: HTMLElement, content: PostContent) => formatForEvaluation(article, content),
     // Shared state (refs)
     processedPosts,
     postReasonings,
@@ -189,7 +241,9 @@ import { formatPostForEvaluation } from '../shared/utils';
 
     await chrome.runtime.sendMessage({
       type: 'clearSinglePost',
-      post: formatPostForEvaluation(content),
+      // Must match the string evaluatePost sent (reply context included) or
+      // the wrong cache entry is cleared and re-evaluation hits stale cache.
+      post: formatForEvaluation(article, content),
       imageUrls: content.imageUrls || [],
       postUrl: content.postUrl || null,
       siteId: adapter.siteId
@@ -263,21 +317,29 @@ import { formatPostForEvaluation } from '../shared/utils';
       return;
     }
 
+    // On a permalink page everything below the main post is a
+    // reply/comment — the pipeline applies the reply-specific AI-text
+    // threshold to these, and the topic filter gets the main post appended
+    // as context (formatReplyForEvaluation). rawText stays the reply's own
+    // text: it feeds the AI-text detector, where the main post's prose
+    // would poison the authorship score.
+    const isReply = adapter.isPermalinkView();
+    const mainPost = isReply ? await ensureMainPostContext() : null;
+    const postText = formatReplyForEvaluation(content, mainPost);
+    evaluatedPostText.set(article, postText);
+
     const evaluationId = crypto.randomUUID();
     registerEvaluation(evaluationId, article);
     try {
       const evaluatePromise = chrome.runtime.sendMessage({
           type: 'evaluatePost',
           evaluationId,
-          post: formatPostForEvaluation(content),
+          post: postText,
           rawText: content.text,
           imageUrls: content.imageUrls || [],
           postUrl: content.postUrl || null,
           siteId: adapter.siteId,
-          // On a permalink page everything below the main post is a
-          // reply/comment — the pipeline applies the reply-specific
-          // AI-text threshold to these.
-          isReply: adapter.isPermalinkView()
+          isReply
         });
       const response = await evaluatePromise as PipelineResponse;
       releaseEvaluation(evaluationId);
@@ -708,6 +770,13 @@ import { formatPostForEvaluation } from '../shared/utils';
       }
       if (changes[descriptionsKey]) {
         syncFilterPhrases();
+        // The AI-detection state is per-platform (this platform's phrases ∩
+        // the judged aiPhrases — see aiIntentActiveForSite), so editing this
+        // platform's list can flip the sparkle even when the global
+        // aiFilterIntent state doesn't change (e.g. removing "AI slop" here
+        // while it still exists on another platform). Re-sync it on every
+        // list write; this also clears the toggle's transient `pending`.
+        refreshAiIndicatorUI().catch(err => console.error('[Bouncer] refreshAiIndicatorUI failed:', err));
         const oldDescs = (changes[descriptionsKey].oldValue as string[] | undefined) || [];
         const newDescs = (changes[descriptionsKey].newValue as string[] | undefined) || [];
         // Only re-evaluate when a phrase was added, not removed

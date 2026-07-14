@@ -24,7 +24,7 @@ const {
 const { callImbueDetectAiIntent } = await import('../../src/background/providers.js');
 const { iosLocalJudgeAiIntent } = await import('../../src/background/ios-local-bridge.js');
 const { callLocalAiIntentJudgment } = await import('../../src/background/local-model.js');
-const { aiIntentAutoActive } = await import('../../src/shared/storage.js');
+const { aiIntentAutoActive, aiIntentActiveForSite } = await import('../../src/shared/storage.js');
 type AiFilterIntentState = import('../../src/types.js').AiFilterIntentState;
 
 const mockDetectAiIntent = callImbueDetectAiIntent as unknown as Mock;
@@ -80,6 +80,34 @@ describe('canJudgeAiIntent', () => {
     expect(canJudgeAiIntent('iosLocal:gemma-4-e2b-detector-v2')).toBe(true);
     expect(canJudgeAiIntent('openai:gpt-5-nano')).toBe(false);
     expect(canJudgeAiIntent('')).toBe(false);
+  });
+});
+
+describe('aiIntentActiveForSite', () => {
+  const intent = (aiPhrases: string[]): { aiFilterIntent: AiFilterIntentState } => ({
+    aiFilterIntent: { aiPhrases, judgedSetKey: null, updatedAt: 1 },
+  });
+
+  it('is on only for platforms whose own list contains a judged AI phrase', () => {
+    // "AI slop" lives on Twitter only — LinkedIn/YouTube must stay off even
+    // though the judged aiPhrases union is non-empty (the reported bug: the
+    // sparkle stayed on when switching platforms).
+    const data = intent(['AI slop']);
+    expect(aiIntentActiveForSite(data, ['AI slop', 'politics'])).toBe(true);
+    expect(aiIntentActiveForSite(data, ['politics'])).toBe(false);
+    expect(aiIntentActiveForSite(data, [])).toBe(false);
+    expect(aiIntentAutoActive(data)).toBe(true); // union stays on (popup)
+  });
+
+  it('matches by normalized identity (casing/whitespace)', () => {
+    expect(aiIntentActiveForSite(intent(['AI slop']), ['  ai SLOP '])).toBe(true);
+  });
+
+  it('is off with empty aiPhrases or pre-migration state, whatever the site list', () => {
+    expect(aiIntentActiveForSite(intent([]), ['AI slop'])).toBe(false);
+    const legacy = { aiFilterIntent: { intent: true } as unknown as AiFilterIntentState };
+    expect(aiIntentActiveForSite(legacy, ['AI slop'])).toBe(false);
+    expect(aiIntentActiveForSite({}, ['AI slop'])).toBe(false);
   });
 });
 

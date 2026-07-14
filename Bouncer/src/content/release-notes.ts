@@ -42,7 +42,7 @@ export const RELEASE_NOTES: ReleaseNote[] = [
     title: "What's new in Bouncer 2.0",
     bullets: [
       'You can now remove AI-generated posts!',
-      'On-device mode: nothing leaves your computer.',
+      'On-device mode: nothing leaves your computer. Activate in Settings.',
     ],
   }
 ];

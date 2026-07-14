@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import type { ChatMessage } from '../../src/types';
+import type { ChatMessage, PostContent } from '../../src/types';
 import {
   parseAPIResponse,
   generateCacheKey,
@@ -11,6 +11,9 @@ import {
   convertSystemToUserMessages,
   cleanReasoning,
   hasEmoji,
+  formatPostForEvaluation,
+  formatReplyForEvaluation,
+  REPLY_CONTEXT_MAX_CHARS,
 } from '../../src/shared/utils.js';
 
 // ==================== parseAPIResponse ====================
@@ -85,6 +88,52 @@ Overall it matches sports.</reasoning>
     const result = parseAPIResponse(content);
     expect(result.shouldHide).toBe(true);
     expect(result.reasoning).toContain('multiple topics');
+  });
+});
+
+// ==================== formatReplyForEvaluation ====================
+
+describe('formatReplyForEvaluation', () => {
+  const makePost = (author: string, text: string): PostContent => ({
+    text, author, handle: '', avatarUrl: null, timeText: null, textHtml: '',
+    quote: null, postUrl: null, imageUrls: [], hasMediaContainer: false,
+  });
+
+  const reply = makePost('Bob', 'lol so true');
+  const main = makePost('Alice', 'Everyone should buy my new crypto coin!');
+
+  it('returns the plain evaluation string when there is no main post', () => {
+    expect(formatReplyForEvaluation(reply, null)).toBe(formatPostForEvaluation(reply));
+  });
+
+  it('returns the plain evaluation string when the main post has no text', () => {
+    expect(formatReplyForEvaluation(reply, makePost('Alice', '  '))).toBe(formatPostForEvaluation(reply));
+  });
+
+  it('appends the main post as a bracketed context block', () => {
+    expect(formatReplyForEvaluation(reply, main)).toBe(
+      'Bob: lol so true\n[Replying to Alice: Everyone should buy my new crypto coin!]'
+    );
+  });
+
+  it('omits the author prefix when the main post has no author', () => {
+    expect(formatReplyForEvaluation(reply, makePost('', 'Some post'))).toBe(
+      'Bob: lol so true\n[Replying to Some post]'
+    );
+  });
+
+  it('truncates long main-post text with an ellipsis', () => {
+    const longMain = makePost('Alice', 'x'.repeat(REPLY_CONTEXT_MAX_CHARS + 100));
+    const result = formatReplyForEvaluation(reply, longMain);
+    expect(result).toContain('x'.repeat(REPLY_CONTEXT_MAX_CHARS) + '…]');
+    expect(result).not.toContain('x'.repeat(REPLY_CONTEXT_MAX_CHARS + 1));
+  });
+
+  it('keeps cache keys distinct for short replies under the same long parent (context is appended, not prepended)', () => {
+    const longMain = makePost('Alice', 'y'.repeat(300));
+    const keyA = generateCacheKey(formatReplyForEvaluation(makePost('Bob', 'first'), longMain), []);
+    const keyB = generateCacheKey(formatReplyForEvaluation(makePost('Bob', 'second'), longMain), []);
+    expect(keyA).not.toBe(keyB);
   });
 });
 

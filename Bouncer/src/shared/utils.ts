@@ -19,6 +19,28 @@ export function formatPostForEvaluation(post: PostContent): string {
   return `${post.author}: ${post.text}`;
 }
 
+// Max characters of main-post text appended as context to a reply.
+export const REPLY_CONTEXT_MAX_CHARS = 400;
+
+// Format a reply's evaluation string with the main post it responds to
+// appended as context, in the same bracketed style the Twitter adapter uses
+// for quoted tweets ([Quoted: …]):
+//   `${author}: ${text}\n[Replying to ${mainAuthor}: ${mainText}]`
+// The context is APPENDED, never prepended: the cache key
+// (generateCacheKey) is the first 200 chars of this string, so a prepended
+// parent would collapse every reply in a thread onto one key.
+export function formatReplyForEvaluation(post: PostContent, mainPost: PostContent | null): string {
+  const base = formatPostForEvaluation(post);
+  if (!mainPost) return base;
+  const mainText = mainPost.text?.trim();
+  if (!mainText) return base;
+  const truncated = mainText.length > REPLY_CONTEXT_MAX_CHARS
+    ? mainText.slice(0, REPLY_CONTEXT_MAX_CHARS) + '…'
+    : mainText;
+  const authorPrefix = mainPost.author ? `${mainPost.author}: ` : '';
+  return `${base}\n[Replying to ${authorPrefix}${truncated}]`;
+}
+
 interface ParsedResult {
   shouldHide: boolean;
   reasoning: string;

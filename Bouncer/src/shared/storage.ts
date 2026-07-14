@@ -133,14 +133,33 @@ export function phraseSetKey(categories: string[]): string {
 }
 
 /** True when the inferred "user wants AI content removed" state engages AI
- *  detection: at least one filter phrase was judged an AI-removal request.
- *  This is the ONLY way AI detection turns on or off — there is no manual
- *  toggle; the state is derived from the user's natural-language filter
- *  phrases (see background/ai-intent.ts). The Array.isArray check also
- *  tolerates the pre-migration state shape, which lacked aiPhrases. */
+ *  detection on ANY platform: at least one filter phrase, on any platform's
+ *  list, was judged an AI-removal request. This is the cross-platform union —
+ *  use it only for surfaces not tied to a platform (the popup's status row).
+ *  Per-platform gating (detectors, the in-feed sparkle) goes through
+ *  aiIntentActiveForSite below. The Array.isArray check also tolerates the
+ *  pre-migration state shape, which lacked aiPhrases. */
 export function aiIntentAutoActive(data: {
   aiFilterIntent?: AiFilterIntentState;
 }): boolean {
   const phrases = data.aiFilterIntent?.aiPhrases;
   return Array.isArray(phrases) && phrases.length > 0;
+}
+
+/** Per-platform "AI detection is on": at least one of THIS platform's own
+ *  filter phrases was judged an AI-removal request. The judged aiPhrases are
+ *  a union across all platforms (background/ai-intent.ts judges the union so
+ *  each phrase is judged once), so a platform's on/off state must intersect
+ *  with its own phrase list — otherwise "AI slop" on X would engage the
+ *  detectors and light the sparkle on LinkedIn too. There is still no manual
+ *  toggle; detection turns on and off purely through the platform's
+ *  natural-language filter phrases. */
+export function aiIntentActiveForSite(
+  data: { aiFilterIntent?: AiFilterIntentState },
+  sitePhrases: string[],
+): boolean {
+  const aiPhrases = data.aiFilterIntent?.aiPhrases;
+  if (!Array.isArray(aiPhrases) || aiPhrases.length === 0) return false;
+  const aiKeys = new Set(aiPhrases.map(p => p.trim().toLowerCase()));
+  return sitePhrases.some(p => aiKeys.has(p.trim().toLowerCase()));
 }
