@@ -442,6 +442,10 @@ export type StorageSchema = SettingsBase & {
   // Lifetime count of posts filtered while signed in anonymously. Drives the
   // guest trial gate (see GUEST_FILTER_LIMIT). Persists across sessions.
   anonFilterCount: number;
+  // First-run "REMOVE AI" badge on the AI-detection sparkle. Set (permanently)
+  // the first time AI detection turns on; from then on the indicator renders
+  // as the plain sparkle icon.
+  aiIndicatorBadgeDismissed: boolean;
   googleAuthToken: string;
   openrouterCodeVerifier: string;
   lastSeenVersion: string;

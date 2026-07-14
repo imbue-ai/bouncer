@@ -35,6 +35,15 @@ export const RELEASE_NOTES: ReleaseNote[] = [
       '(Experimental) AI Text and Image Detection',
       'Improved local model: Gemma 4 E4B',
     ],
+  },
+  {
+    version: '2.0.0',
+    platform: 'desktop',
+    title: "What's new in Bouncer 2.0",
+    bullets: [
+      'You can now remove AI-generated posts!',
+      'On-device mode: nothing leaves your computer.',
+    ],
   }
 ];
 

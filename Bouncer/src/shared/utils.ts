@@ -7,6 +7,12 @@ import type { ChatMessage, PostContent, SiteId } from '../types';
 // sessions via the `anonFilterCount` storage key. Tune here.
 export const GUEST_FILTER_LIMIT = 300;
 
+// The phrase the sparkle indicator plants to turn AI detection on. Its
+// meaning is ours by construction, so background/ai-intent.ts engages
+// detection immediately when it appears — without (and regardless of) the
+// LLM intent judgment.
+export const AI_DETECTION_SEED_PHRASE = 'AI slop';
+
 // Format a post's content into the string sent to the AI for evaluation.
 // This is also the basis for cache keys and feedback payloads.
 export function formatPostForEvaluation(post: PostContent): string {

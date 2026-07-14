@@ -2131,7 +2131,10 @@ article {
   padding: 4px;
   margin: -4px 0;
   border-radius: 50%;
-  transition: background 0.15s ease;
+  /* Beyond hover feedback, these let the first-run "REMOVE AI" badge melt
+     gracefully into the plain sparkle when `with-badge` is removed. */
+  transition: background 0.3s ease, color 0.3s ease, padding 0.3s ease,
+    margin 0.3s ease, border-radius 0.3s ease, gap 0.3s ease;
   outline: none;
 }
 
@@ -2155,6 +2158,9 @@ article {
 .filter-ai-indicator-icon {
   flex-shrink: 0;
   opacity: 0.65;
+  /* On the base rule (not .with-badge) so the sparkle grows back smoothly
+     when the first-run badge collapses and the class is removed. */
+  transition: width 0.3s ease, height 0.3s ease, opacity 0.3s ease;
 }
 
 .filter-ai-indicator.on {
@@ -2168,6 +2174,61 @@ article {
 }
 .filter-ai-indicator.on .filter-ai-indicator-icon {
   opacity: 1;
+}
+
+/* First-run "REMOVE AI" badge: until AI detection turns on for the first
+   time, the sparkle wears a brand-orange pill with a label (see the
+   `with-badge` class toggled by refreshAiIndicatorUI). Once detection has
+   been on once, the indicator permanently reverts to the plain sparkle. */
+/* Always rendered (never display:none) so the collapse can animate: without
+   the badge it occupies zero width; with it, max-width opens up. */
+.filter-ai-indicator-label {
+  display: inline-block;
+  max-width: 0;
+  opacity: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  transition: max-width 0.3s ease, opacity 0.2s ease;
+}
+
+.filter-ai-indicator.with-badge {
+  gap: 4px;
+  padding: 3px 8px;
+  /* Cancel the pill's extra height so the title row stays as tall as the
+     "Bouncer" title, mirroring the plain icon's padding/margin trick. */
+  margin: -3px 0;
+  border-radius: 8px;
+  background: rgb(var(--bouncer-brand-rgb));
+  color: #fff;
+}
+
+.filter-ai-indicator.with-badge .filter-ai-indicator-label {
+  /* Comfortably fits "REMOVE AI" at 11px; keeps the collapse animation snappy. */
+  max-width: 80px;
+  opacity: 1;
+}
+
+.filter-ai-indicator.with-badge .filter-ai-indicator-icon {
+  opacity: 1;
+  width: 15px;
+  height: 15px;
+}
+
+.filter-ai-indicator.with-badge:hover {
+  background: rgba(var(--bouncer-brand-rgb), 0.85);
+}
+
+/* Light mode uses the darker brand orange everywhere else (box outline,
+   `.on` sparkle) — keep the badge consistent with it. */
+.light-mode .filter-ai-indicator.with-badge {
+  background: rgb(200, 110, 65);
+  color: #fff;
+}
+.light-mode .filter-ai-indicator.with-badge:hover {
+  background: rgba(200, 110, 65, 0.85);
 }
 
 /* Right side of the actions row: circular Share and Settings icon buttons. */

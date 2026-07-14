@@ -2,7 +2,7 @@
 
 import { toBlob } from 'html-to-image';
 import { asyncHandler } from '../shared/async';
-import { cleanReasoning, escapeHtml, formatPostForEvaluation, parseHTML, GUEST_FILTER_LIMIT } from '../shared/utils';
+import { cleanReasoning, escapeHtml, formatPostForEvaluation, parseHTML, GUEST_FILTER_LIMIT, AI_DETECTION_SEED_PHRASE } from '../shared/utils';
 import { init as initPopup } from '../popup/index';
 import {
   encodeFilterPackCode, decodeFilterPackCode, buildFilterPackShareUrl,
@@ -298,7 +298,7 @@ function getSignInHTML() {
       <div class="filter-signin-prompt">
         ${signinButtonHTML(isSafari ? 'Continue with Apple' : 'Continue with Google')}
         <button class="skip-signin-btn">Skip sign-in<span class="skip-signin-arrow" aria-hidden="true">→</span></button>
-        <p class="ff-signin-explanation">Signing in helps prevent abuse. We don't collect any identifying data. An on-device model doesn't require sign-in.</p>
+        <p class="ff-signin-explanation">Signing in helps prevent abuse. We don't collect any identifying data. On-device mode doesn't require sign-in.</p>
       </div>
     </div>
   `;
@@ -331,12 +331,14 @@ function guestTrialNoticeHTML() {
   if (process.env.HAS_IMBUE_BACKEND !== 'true' || !isAnonymous || guestLimitReached || _deps.IS_IOS) {
     return '';
   }
-  return `
-    <div class="ff-guest-trial-notice">
-      <p class="ff-guest-trial-text">No-login trial: ${GUEST_FILTER_LIMIT} filtered posts.</p>
-      <button class="ff-local-model-cta" type="button">Go unlimited</button>
-    </div>
-  `;
+  // TODO Millan: figure out if we really want this banner, or if it's unnecessary clutter
+  return '';
+  // return `
+  //   <div class="ff-guest-trial-notice">
+  //     <p class="ff-guest-trial-text">No-login trial: ${GUEST_FILTER_LIMIT} filtered posts.</p>
+  //     <button class="ff-local-model-cta" type="button">Go unlimited</button>
+  //   </div>
+  // `;
 }
 
 // ==================== Guest-limit popup ====================
@@ -464,12 +466,13 @@ const placeholderHTML = `<span class="filter-input-wrapper"><input type="text" c
 // AI-detection indicator, top-right of every authenticated filter box. It
 // reports the state AND toggles it — but only through the natural-language
 // mechanism itself: clicking while on deletes the phrases that enabled AI
-// detection; clicking while off adds the seed phrase below. There is still
-// no override switch — the phrase list stays the single source of truth
+// detection; clicking while off adds the seed phrase (see
+// AI_DETECTION_SEED_PHRASE in shared/utils.ts). There is still no override
+// switch — the phrase list stays the single source of truth
 // (see background/ai-intent.ts).
-export const AI_DETECTION_SEED_PHRASE = 'AI slop';
 const aiIndicatorHTML = `
   <button type="button" class="filter-ai-indicator" aria-label="Remove AI-generated content">
+    <span class="filter-ai-indicator-label" aria-hidden="true">REMOVE AI?</span>
     <svg class="filter-ai-indicator-icon" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
       <path fill="currentColor" d="M12 5.5l1.3 3.6a3.5 3.5 0 0 0 2.1 2.1l3.6 1.3-3.6 1.3a3.5 3.5 0 0 0-2.1 2.1L12 19.5l-1.3-3.6a3.5 3.5 0 0 0-2.1-2.1L5 12.5l3.6-1.3a3.5 3.5 0 0 0 2.1-2.1L12 5.5z"/>
     </svg>
@@ -784,10 +787,18 @@ export function injectFilterPhrasesInput() {
 // content/index.ts whenever aiFilterIntent is written — any state write also
 // clears the transient `pending` set by a click.
 export async function refreshAiIndicatorUI(): Promise<void> {
-  const data = await getStorage(['aiFilterIntent']);
+  const data = await getStorage(['aiFilterIntent', 'aiIndicatorBadgeDismissed']);
   const on = aiIntentAutoActive(data);
+  // First-run onboarding: the indicator wears a "REMOVE AI" pill badge until
+  // the first time detection turns on, then reverts to the plain sparkle
+  // forever (the dismissal is persisted, so toggling back off won't revive it).
+  if (on && !data.aiIndicatorBadgeDismissed) {
+    void setStorage({ aiIndicatorBadgeDismissed: true });
+  }
+  const showBadge = !on && !data.aiIndicatorBadgeDismissed;
   document.querySelectorAll<HTMLElement>('.filter-ai-indicator').forEach(row => {
     row.classList.toggle('on', on);
+    row.classList.toggle('with-badge', showBadge);
     row.classList.remove('pending');
     row.title = on
       ? 'Removing AI-generated content — your filter phrases ask for it. Click to stop (removes those phrases).'

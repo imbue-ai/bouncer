@@ -37,6 +37,7 @@
 // engages the AI detector instead of hiding human posts about AI slop.
 
 import { getStorage, setStorage, getDescriptions, phraseSetKey } from '../shared/storage';
+import { AI_DETECTION_SEED_PHRASE } from '../shared/utils';
 import { PLATFORMS } from '../shared/platforms';
 import { DEFAULT_MODEL, PREDEFINED_MODELS } from '../shared/models';
 import { callImbueDetectAiIntent } from './providers';
@@ -60,6 +61,11 @@ export function canJudgeAiIntent(model: string): boolean {
 }
 
 const normalize = (p: string) => p.trim().toLowerCase();
+
+/** The seed phrase our own sparkle indicator plants. Its meaning is known by
+ *  construction, so it engages detection deterministically — no LLM verdict
+ *  needed, and no LLM verdict can override it. */
+const isSeedPhrase = (p: string) => normalize(p) === normalize(AI_DETECTION_SEED_PHRASE);
 
 /** Dedupe by normalized identity, keeping the first verbatim spelling and
  *  dropping blank entries. */
@@ -117,7 +123,11 @@ export function applyAiIntentVerdict(
   now: number,
 ): AiFilterIntentState {
   return {
-    aiPhrases: dedupeNormalized(intersectNormalized(returned, judgedUnion)),
+    // The seed phrase is always kept, whatever the judge said.
+    aiPhrases: dedupeNormalized([
+      ...judgedUnion.filter(isSeedPhrase),
+      ...intersectNormalized(returned, judgedUnion),
+    ]),
     judgedSetKey: phraseSetKey(judgedUnion),
     updatedAt: now,
   };
@@ -218,6 +228,21 @@ export async function refreshAiFilterIntent(): Promise<void> {
   await pruneAiFilterPhrases();
 
   const phrases = await currentPhraseUnion();
+
+  // The seed phrase turns detection on right now — no waiting on (and no
+  // vetoing by) the intent judge. judgedSetKey is left untouched: the rest
+  // of the list still gets judged normally below.
+  const seed = phrases.filter(isSeedPhrase);
+  if (seed.length > 0) {
+    const prev = await getState();
+    if (!prev.aiPhrases.some(isSeedPhrase)) {
+      await persistIfChanged(prev, {
+        ...prev,
+        aiPhrases: dedupeNormalized([...prev.aiPhrases, ...seed]),
+        updatedAt: Date.now(),
+      });
+    }
+  }
 
   if (phrases.length === 0) {
     // No phrases → nothing can be an AI-removal request; judged trivially.

@@ -92,8 +92,14 @@ describe('applyAiIntentVerdict', () => {
   });
 
   it('an empty verdict clears the phrases but still marks the set judged', () => {
-    const r = applyAiIntentVerdict(union, [], 99);
+    const r = applyAiIntentVerdict(['politics', 'crypto'], [], 99);
     expect(r.aiPhrases).toEqual([]);
+    expect(r.judgedSetKey).toBe(phraseSetKey(['politics', 'crypto']));
+  });
+
+  it('the seed phrase survives any verdict, even an empty one', () => {
+    const r = applyAiIntentVerdict(union, [], 99);
+    expect(r.aiPhrases).toEqual(['AI slop']);
     expect(r.judgedSetKey).toBe(phraseSetKey(union));
   });
 
