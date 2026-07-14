@@ -355,11 +355,39 @@ describe('isMainPost', () => {
     expect(adapter.isMainPost(articles[0])).toBe(false);
   });
 
-  it('returns false on a status page with no conversation timeline', () => {
+  // Mobile web layout (the iOS app's WKWebView) has no aria-labelled
+  // conversation container — the adapter falls back to matching the
+  // article's own status id against the page URL.
+
+  function buildArticleWithStatusLink(statusPath: string) {
+    const article = document.createElement('article');
+    article.setAttribute('data-testid', 'tweet');
+    const link = document.createElement('a');
+    link.href = `https://x.com${statusPath}`;
+    const time = document.createElement('time');
+    link.appendChild(time);
+    article.appendChild(link);
+    document.body.appendChild(article);
+    return article;
+  }
+
+  it('no conversation timeline: true for an article with no self status link (main post)', () => {
     setPath('/user/status/12345');
     const article = document.createElement('article');
     article.setAttribute('data-testid', 'tweet');
     document.body.appendChild(article);
+    expect(adapter.isMainPost(article)).toBe(true);
+  });
+
+  it('no conversation timeline: true when the article status id matches the page URL', () => {
+    setPath('/user/status/12345');
+    const article = buildArticleWithStatusLink('/user/status/12345');
+    expect(adapter.isMainPost(article)).toBe(true);
+  });
+
+  it('no conversation timeline: false for a reply (different status id)', () => {
+    setPath('/user/status/12345');
+    const article = buildArticleWithStatusLink('/replier/status/99999');
     expect(adapter.isMainPost(article)).toBe(false);
   });
 });

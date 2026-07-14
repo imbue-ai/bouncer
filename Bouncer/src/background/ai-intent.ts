@@ -1,32 +1,31 @@
-// Derivation of the backend's `aiFilterPhrases` signal into a persistent
-// "which phrases request AI-content removal" state.
+// Derivation of a persistent "which phrases request AI-content removal"
+// state from the user's filter phrases.
 //
-// Every tweetFilter jobComplete for reasons filterPost/validatePhrase carries
-// `aiFilterPhrases: string[] | null` — the verbatim subset of the request's
-// categories that ask for AI-generated content to be removed ("AI slop",
-// "AI-generated images", ...). `[]` means none do; `null` (or absent, on old
-// workers) means unknown.
+// The judge returns `string[] | null` — the verbatim subset of the judged
+// phrases that ask for AI-generated content to be removed ("AI slop",
+// "AI-generated images", ...). `[]` means none do; `null` means unknown
+// (the model's verdict couldn't be parsed). On the Imbue path the judge is
+// the backend's dedicated detectAiIntent WebSocket route; on local models
+// it is a one-off on-device/in-browser inference (see judgeAiIntent).
 //
-// Latency rule: the FIRST server response that flags a phrase turns AI
-// detection on — nothing waits on a debounce or an extra round trip.
+// Judgments happen per phrase-LIST change — on edits (debounced, with a
+// leading edge so typing "AI slop" engages detection as fast as the judge
+// can answer) and once at startup if the current list was never judged.
+// NEVER per tweet: the detectAiIntent route is rate-limited to 60
+// requests/min per user.
 //
 // The judgment comes from an LLM at temperature 1.0, so borderline phrases
-// ("AI hype") can flip between requests. Stability comes from an
-// authoritative probe layered over the fast path:
+// ("AI hype") could flip between requests. Stability rules:
 //
-//   - filterPost responses write immediately, but only ADD phrases, and only
-//     while the current phrase union is UN-judged. That makes typing
-//     "AI slop" engage detection on the very first response back.
-//   - refreshAiFilterIntent probes the backend with the union of all
-//     platforms' phrases and applies the verdict authoritatively (it can
-//     remove fast-path false positives). `judgedSetKey` records which union
-//     was judged; once a union is judged, it is never re-probed and
-//     filterPost noise on it is ignored — so a borderline phrase can't
-//     ping-pong in and out.
+//   - refreshAiFilterIntent judges the union of all platforms' phrases and
+//     applies the verdict authoritatively. `judgedSetKey` records which
+//     union was judged; once a union is judged, it is never re-judged — so
+//     a borderline phrase can't ping-pong in and out, and unchanged lists
+//     cost nothing on startup.
 //   - Deleting phrases prunes the state locally and instantly — no backend
 //     round-trip needed to know a removed phrase can't engage anything.
 //     Pruning clears judgedSetKey: the stored judgment described a union
-//     that no longer exists, and a stale key must not silence the re-probe
+//     that no longer exists, and a stale key must not silence the re-judge
 //     when the same set is later re-created (delete-then-re-add).
 //
 // The derived state persists in chrome.storage.local under `aiFilterIntent`.
@@ -39,11 +38,26 @@
 
 import { getStorage, setStorage, getDescriptions, phraseSetKey } from '../shared/storage';
 import { PLATFORMS } from '../shared/platforms';
-import { DEFAULT_MODEL } from '../shared/models';
-import { callImbueAPI } from './providers';
+import { DEFAULT_MODEL, PREDEFINED_MODELS } from '../shared/models';
+import { callImbueDetectAiIntent } from './providers';
+import { iosLocalJudgeAiIntent } from './ios-local-bridge';
+import { callLocalAiIntentJudgment } from './local-model';
 import type { AiFilterIntentState } from '../types';
 
 export { phraseSetKey };
+
+/** Whether the given filter model can judge phrases for AI-removal intent —
+ *  i.e. whether the NL AI-detection system is live on this model. Imbue and
+ *  the desktop in-browser model also need the Imbue backend, because their
+ *  AI text/image detectors are the cloud workers; the iOS on-device model
+ *  judges AND detects locally, so it needs no backend at all. BYOK models
+ *  are excluded: nothing judges their phrases, so the detectors never
+ *  engage (and the intent state only ever prunes toward off). */
+export function canJudgeAiIntent(model: string): boolean {
+  if (model.startsWith('iosLocal:')) return true;
+  if (process.env.HAS_IMBUE_BACKEND !== 'true') return false;
+  return model === 'imbue' || model.startsWith('local:');
+}
 
 const normalize = (p: string) => p.trim().toLowerCase();
 
@@ -92,12 +106,12 @@ async function persistIfChanged(prev: AiFilterIntentState, next: AiFilterIntentS
   await setStorage({ aiFilterIntent: next });
 }
 
-/** Pure verdict transition — exported for tests. The probe judged
- *  `judgedUnion`; `returned` is the backend's aiFilterPhrases verdict for it.
- *  The intersection is defensive: constrained decoding guarantees returned
- *  phrases are verbatim members of the judged set. `now` is injected so
- *  tests are deterministic. */
-export function applyValidatePhraseVerdict(
+/** Pure verdict transition — exported for tests. The judge covered
+ *  `judgedUnion`; `returned` is its aiFilterPhrases verdict for it. The
+ *  intersection is defensive: the backend promises returned phrases are
+ *  verbatim members of the sent list. `now` is injected so tests are
+ *  deterministic. */
+export function applyAiIntentVerdict(
   judgedUnion: string[],
   returned: string[],
   now: number,
@@ -109,49 +123,16 @@ export function applyValidatePhraseVerdict(
   };
 }
 
-/** Apply a validatePhrase verdict to the persisted state. Tolerates
+/** Apply an intent-judgment verdict to the persisted state. Tolerates
  *  null/undefined (unknown — no-op). Together with the local prune in
  *  refreshAiFilterIntent, the only writer of the state. */
-export async function recordValidatePhraseVerdict(
+export async function recordAiIntentVerdict(
   judgedUnion: string[],
   returned: string[] | null | undefined,
 ): Promise<void> {
   if (!Array.isArray(returned)) return;
   const prev = await getState();
-  await persistIfChanged(prev, applyValidatePhraseVerdict(judgedUnion, returned, Date.now()));
-}
-
-/** Apply a filterPost response's aiFilterPhrases — the fast path. The FIRST
- *  response that flags a phrase turns AI detection on immediately; nothing
- *  waits on the debounced probe. Guardrails against temperature-1.0 noise:
- *  writes only ADD phrases (that still exist in the user's lists), and only
- *  while the current union is un-judged — once the authoritative probe has
- *  judged this exact set, per-request noise on it is ignored, so a
- *  borderline phrase can't ping-pong in and out. Each fast-path write also
- *  schedules the probe so the authoritative verdict lands right after. */
-export async function recordFilterPostAiPhrases(
-  returned: string[] | null | undefined,
-): Promise<void> {
-  if (!Array.isArray(returned) || returned.length === 0) return;
-  const prev = await getState();
-  const known = new Set(prev.aiPhrases.map(normalize));
-  const fresh = returned.filter(p => normalize(p) !== '' && !known.has(normalize(p)));
-  if (fresh.length === 0) return;
-
-  const union = await currentPhraseUnion();
-  // The authoritative probe already judged this exact set — the flagged
-  // phrase was judged NOT an AI request; this response is noise.
-  if (phraseSetKey(union) === prev.judgedSetKey) return;
-  // Only phrases that still exist can engage (the response may be stale).
-  const freshExisting = intersectNormalized(fresh, union);
-  if (freshExisting.length === 0) return;
-
-  await persistIfChanged(prev, {
-    ...prev,
-    aiPhrases: dedupeNormalized([...prev.aiPhrases, ...freshExisting]),
-    updatedAt: Date.now(),
-  });
-  scheduleAiFilterIntentRefresh();
+  await persistIfChanged(prev, applyAiIntentVerdict(judgedUnion, returned, Date.now()));
 }
 
 /** The user's current phrases across all platforms. The backend judges each
@@ -183,12 +164,56 @@ export async function pruneAiFilterPhrases(): Promise<void> {
   }
 }
 
+/** The backend caps a detectAiIntent request at 1000 chars of phrases.
+ *  Greedily keep the phrases that fit, in list order. */
+const DETECT_AI_INTENT_CHAR_BUDGET = 1000;
+function fitToDetectAiIntentBudget(phrases: string[]): string[] {
+  const kept: string[] = [];
+  let budget = DETECT_AI_INTENT_CHAR_BUDGET;
+  for (const p of phrases) {
+    if (p.length > budget) continue;
+    kept.push(p);
+    budget -= p.length;
+  }
+  return kept;
+}
+
+/** Judge `phrases` for AI-removal intent with whichever judge the selected
+ *  model provides: the Imbue detectAiIntent route on the Imbue and
+ *  desktop-local paths, or the on-device model on iOS. On the desktop-local
+ *  path only the one-off judgment goes to Imbue — the per-post filter
+ *  requests never carry the phrases there. Returns the phrases judged as
+ *  AI-removal requests, or null for "unknown" (unparseable verdict / old
+ *  gateway). */
+async function judgeAiIntent(model: string, phrases: string[]): Promise<string[] | null> {
+  if (model.startsWith('iosLocal:')) {
+    const modelName = model.split(':')[1];
+    const modelConfig = PREDEFINED_MODELS.iosLocal?.find(m => m.name === modelName) ?? null;
+    return await iosLocalJudgeAiIntent(phrases, modelConfig);
+  }
+  if (model.startsWith('local:')) {
+    return await callLocalAiIntentJudgment(phrases, model.split(':')[1]);
+  }
+  // Oversized lists are judged partially rather than not at all: phrases
+  // beyond the budget come back un-flagged and keep acting as ordinary
+  // filters. The verdict is still recorded against the full union, so the
+  // set counts as judged and isn't re-sent every trigger.
+  const sendable = fitToDetectAiIntentBudget(phrases);
+  if (sendable.length < phrases.length) {
+    console.warn(`[AiIntent] phrase list exceeds the detectAiIntent budget; judging ${sendable.length}/${phrases.length} phrases`);
+  }
+  if (sendable.length === 0) return null;
+  const response = await callImbueDetectAiIntent(sendable);
+  return response.aiFilterPhrases ?? null;
+}
+
 /** Re-derive the state from the user's current phrases across all platforms.
  *  Called (debounced) on every phrase-list edit, on switching the filter
- *  model to Imbue, and when a filterPost response flags an unknown phrase.
- *  Deletions resolve locally; an empty union resolves deterministically
- *  without the backend; otherwise a validatePhrase probe is sent — unless
- *  this exact set was already judged. */
+ *  model to one that can judge, and once at startup. Deletions resolve
+ *  locally; an empty union resolves deterministically without any model;
+ *  otherwise the phrase set is judged — by the Imbue detectAiIntent route or
+ *  the local model, per canJudgeAiIntent — unless this exact set was already
+ *  judged. */
 export async function refreshAiFilterIntent(): Promise<void> {
   await pruneAiFilterPhrases();
 
@@ -202,12 +227,12 @@ export async function refreshAiFilterIntent(): Promise<void> {
     return;
   }
 
-  if (process.env.HAS_IMBUE_BACKEND !== 'true') return;
-  // Only probe when the Imbue backend is already the filter model — users on
-  // other/local models never send their phrases to Imbue via filterPost, and
-  // this probe shouldn't be the thing that starts doing so.
+  // Only judge on models that have a judge (and working detectors). On BYOK
+  // models the user's phrases are never sent anywhere for judgment — Imbue
+  // never sees phrases it wasn't already receiving via filterPost.
   const { selectedModel } = await getStorage(['selectedModel']);
-  if ((selectedModel || DEFAULT_MODEL) !== 'imbue') return;
+  const model = selectedModel || DEFAULT_MODEL;
+  if (!canJudgeAiIntent(model)) return;
 
   // Each phrase set is judged once, authoritatively. This is also the
   // convergence guard for filterPost-triggered refreshes: a borderline
@@ -221,44 +246,18 @@ export async function refreshAiFilterIntent(): Promise<void> {
 
   inFlightProbeKey = setKey;
   try {
-    // The judgment is a property of the phrase set; the tweet content is
-    // irrelevant, so send a fixed placeholder and discard shouldHide.
-    const response = await callImbueAPI(
-      { text: 'placeholder post for phrase validation', imageUrls: [] },
-      phrases,
-      'validatePhrase',
-    );
-    // A failed probe (or null verdict) leaves judgedSetKey stale on purpose:
-    // the next trigger retries instead of treating the set as judged.
-    await recordValidatePhraseVerdict(phrases, response.aiFilterPhrases ?? null);
+    // A failed probe (timeout, jobFailed, rate limit) or a null verdict
+    // leaves judgedSetKey stale on purpose: the next trigger retries instead
+    // of treating the set as judged. Timeouts are expected — the backend
+    // acks some errors silently and never sends a result — so they are
+    // logged, never surfaced.
+    await recordAiIntentVerdict(phrases, await judgeAiIntent(model, phrases));
   } catch (err) {
-    console.warn('[AiIntent] validatePhrase probe failed:', (err as Error).message);
+    console.warn('[AiIntent] phrase-intent judgment failed:', (err as Error).message);
   } finally {
     inFlightProbeKey = null;
   }
 }
 
-// Phrase-set key of a validatePhrase probe currently awaiting its response.
+// Phrase-set key of an intent judgment currently awaiting its verdict.
 let inFlightProbeKey: string | null = null;
-
-let refreshTimer: ReturnType<typeof setTimeout> | null = null;
-
-/** Debounced refreshAiFilterIntent with a leading edge: the first edit in an
- *  idle period refreshes immediately, so typing "AI slop" engages AI
- *  detection as fast as the backend can judge it. One trailing run `delayMs`
- *  later picks up the rest of a burst (accepting several suggestions) —
- *  the judgedSetKey guard and the in-flight dedupe make that run free when
- *  the set didn't change again. */
-export function scheduleAiFilterIntentRefresh(delayMs = 2000): void {
-  const idle = refreshTimer === null;
-  if (refreshTimer) clearTimeout(refreshTimer);
-  refreshTimer = setTimeout(() => {
-    refreshTimer = null;
-    refreshAiFilterIntent().catch(err =>
-      console.warn('[AiIntent] refresh failed:', (err as Error).message));
-  }, delayMs);
-  if (idle) {
-    refreshAiFilterIntent().catch(err =>
-      console.warn('[AiIntent] refresh failed:', (err as Error).message));
-  }
-}

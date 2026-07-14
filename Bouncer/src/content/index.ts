@@ -324,7 +324,6 @@ import { formatPostForEvaluation } from '../shared/utils';
         // entirely — a red stripe on a tweet is always wrong.
         if (response.error === 'rate_limit') verificationBar.classList.add('pending');
         article.removeAttribute('data-ff-pending');
-        article.classList.add('ff-error');
         return;
       }
 
@@ -732,9 +731,10 @@ import { formatPostForEvaluation } from '../shared/utils';
         // what flips the detectors and changes which phrases are excluded
         // from the filter categories. judgedSetKey-only bookkeeping writes
         // must not re-evaluate (that once caused an endless loop). Loop
-        // safety: the validatePhrase probe is the single writer, persists
-        // only on real set changes, and never re-judges an already-judged
-        // set — steady-state filterPost responses produce no writes at all.
+        // safety: the intent judgment (detectAiIntent probe / local model)
+        // is the single writer, persists only on real set changes, and
+        // never re-judges an already-judged set — steady state produces no
+        // writes at all.
         const aiPhrasesOf = (v: unknown): string[] => {
           const phrases = (v as AiFilterIntentState | undefined)?.aiPhrases;
           return Array.isArray(phrases) ? phrases : [];

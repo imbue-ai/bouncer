@@ -2833,7 +2833,6 @@ export function markPostPending(article: HTMLElement) {
   bar.classList.remove('verified', 'api-error');
   bar.classList.add('pending');
   article.setAttribute('data-ff-pending', '');
-  article.classList.remove('ff-error');
   _deps.pendingPosts.add(article);
   article.dataset.pendingStartTime = Date.now().toString();
 
@@ -2861,7 +2860,6 @@ export function markPostVerified(article: HTMLElement) {
   bar.classList.remove('pending', 'api-error');
   bar.classList.add('verified');
   article.removeAttribute('data-ff-pending');
-  article.classList.remove('ff-error');
   _deps.pendingPosts.delete(article);
   delete article.dataset.pendingStartTime;
   clearPendingDimTimer(article);

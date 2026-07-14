@@ -3,6 +3,7 @@ import {
   buildAPIMessages,
   buildTableYesnoUserMessage,
   buildSingleYesnoUserMessage,
+  buildAiIntentUserMessage,
   parseTableYesnoResponse,
 } from '../../src/shared/prompts.js';
 
@@ -83,6 +84,25 @@ describe('buildTableYesnoUserMessage', () => {
   it('does not mention images when hasImages is false', () => {
     const msg = buildTableYesnoUserMessage('Look at this', ['a'], false);
     expect(msg).not.toContain('images');
+  });
+});
+
+describe('buildAiIntentUserMessage', () => {
+  it('lists phrases in order, comma-separated', () => {
+    const msg = buildAiIntentUserMessage(['AI slop', 'politics']);
+    expect(msg).toContain('Filter phrases (in order): AI slop, politics');
+  });
+
+  it('states the exact expected verdict count', () => {
+    expect(buildAiIntentUserMessage(['a'])).toContain('exactly 1 verdict,');
+    expect(buildAiIntentUserMessage(['a', 'b', 'c'])).toContain('exactly 3 verdicts,');
+  });
+
+  it('parses round-trip with parseTableYesnoResponse against the same phrase list', () => {
+    const phrases = ['AI slop', 'politics', 'crypto'];
+    const { matches, malformed } = parseTableYesnoResponse('| yes | no | yes |', phrases);
+    expect(malformed).toBe(false);
+    expect(matches).toEqual(['AI slop', 'crypto']);
   });
 });
 

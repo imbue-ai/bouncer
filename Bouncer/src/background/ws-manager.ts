@@ -49,9 +49,9 @@ interface WSResultMessage {
   shouldHide?: boolean;
   reasoning?: string | null;
   category?: string | null;
-  // Verbatim subset of the request's categories that indicate AI-removal
-  // intent. [] = none; null = backend parse failure; absent on old workers.
-  // null/absent means unknown.
+  // AI-intent responses (detectAiIntent) — verbatim subset of the request's
+  // phrases that indicate AI-removal intent. [] = none; null = backend parse
+  // failure. null/absent means unknown.
   aiFilterPhrases?: string[] | null;
   // Suggest responses (suggestAnnoying)
   suggestions?: string[];
@@ -236,7 +236,7 @@ class ImbueWebSocket {
             }
           }
         }
-        reject(new Error('Request timed out after 60 seconds.'));
+        reject(new Error(`Request timed out after ${Math.round(timeout / 1000)} seconds.`));
       }, timeout);
 
       this.unackedRequests.set(requestId, {

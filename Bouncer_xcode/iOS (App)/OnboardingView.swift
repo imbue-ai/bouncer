@@ -413,8 +413,6 @@ private struct InferenceModePage: View {
                         option(
                             title: "Cloud",
                             description: "Fast, free filtering in the cloud.",
-                            badge: "Recommended",
-                            badgeTint: .green
                         )
                         .tag(InferenceMode.cloud)
 
@@ -424,7 +422,7 @@ private struct InferenceModePage: View {
                         if LocalInferenceService.models[0].isSupportedOnThisDevice {
                             option(
                                 title: "On-Device",
-                                description: "Runs entirely on your device — no posts ever leave your phone.",
+                                description: "No posts ever leave your phone.",
                                 // Badge shows the bare size — the estimate's "~" reads as clutter here.
                                 badge: "\(LocalInferenceService.models[0].approxSize.replacingOccurrences(of: "~", with: "")) download",
                                 badgeIcon: "arrow.down.circle"

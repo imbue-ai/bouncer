@@ -4,7 +4,7 @@ import { PREDEFINED_MODELS } from '../shared/models';
 import { cacheKeyFor, GUEST_FILTER_LIMIT } from '../shared/utils';
 import { getStorage, setStorage, removeStorage, phraseSetKey } from '../shared/storage';
 import type { AiFilterIntentState, ContentToBackgroundMessage, LocalModelStatus } from '../types';
-import { scheduleAiFilterIntentRefresh, pruneAiFilterPhrases } from './ai-intent';
+import { refreshAiFilterIntent, pruneAiFilterPhrases, canJudgeAiIntent } from './ai-intent';
 import { localEngine } from './local-model';
 import {
   initPipeline, loadCache, saveCache,
@@ -155,13 +155,8 @@ async function migrateStaleLocalSelection(): Promise<void> {
     await migrateStaleLocalSelection();
     await loadCache();
 
-    // Migration: pre-aiFilterPhrases installs stored a boolean intent latch
-    // with no aiPhrases array. Such state reads as "detection off"; re-derive
-    // it from the current phrases so latched users don't stay dark.
-    const { aiFilterIntent } = await getStorage(['aiFilterIntent']);
-    if (aiFilterIntent && !Array.isArray(aiFilterIntent.aiPhrases)) {
-      scheduleAiFilterIntentRefresh();
-    }
+    refreshAiFilterIntent().catch(err =>
+      console.warn('[AiIntent] startup refresh failed:', (err as Error).message));
 
     await refreshAuthToken();
     // Wire up pipeline with shared state
@@ -752,12 +747,13 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
         }
       }
 
-      // Switching TO the Imbue filter model: phrases added while on a
-      // local/BYOK model were never judged for AI-removal intent (the probe
-      // is imbue-gated for privacy) — judge them now so AI detection and the
-      // phrase exclusion engage without waiting for the next phrase edit.
-      if (process.env.HAS_IMBUE_BACKEND === 'true' && newModel === 'imbue') {
-        scheduleAiFilterIntentRefresh();
+      // Switching TO a filter model that has an AI-intent judge (Imbue's
+      // detectAiIntent route, or a local model judging on-device): phrases
+      // added while on a model without one (BYOK) were never judged for
+      // AI-removal intent — judge them now so AI detection and the phrase
+      // exclusion engage without waiting for the next phrase edit.
+      if (typeof newModel === 'string' && canJudgeAiIntent(newModel)) {
+        await refreshAiFilterIntent();
       }
 
       // Model change: flush pipeline state and wipe cache — classifications from a different model are no longer valid.
@@ -793,9 +789,9 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
       pruneAiFilterPhrases().catch(err =>
         console.warn('[AiIntent] prune failed:', (err as Error).message));
       // Phrase edits are also the natural moment to re-derive whether the
-      // user wants AI-generated content removed (validatePhrase probe,
+      // user wants AI-generated content removed (detectAiIntent probe,
       // debounced — it judges added phrases).
-      scheduleAiFilterIntentRefresh();
+      await refreshAiFilterIntent();
     }
 
     // The intent state also persists bookkeeping (judgedSetKey) — only a

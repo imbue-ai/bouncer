@@ -6,19 +6,30 @@ process.env.HAS_IMBUE_BACKEND = 'true';
 
 // Mock providers so no WebSocket machinery (or Firebase auth) is pulled in.
 vi.mock('../../src/background/providers.js', () => ({
-  callImbueAPI: vi.fn(),
+  callImbueDetectAiIntent: vi.fn(),
+}));
+// Mock the local judges so no WKWebView bridge / WebGPU engine is pulled in.
+vi.mock('../../src/background/ios-local-bridge.js', () => ({
+  iosLocalJudgeAiIntent: vi.fn(),
+}));
+vi.mock('../../src/background/local-model.js', () => ({
+  callLocalAiIntentJudgment: vi.fn(),
 }));
 
 const {
-  applyValidatePhraseVerdict, recordValidatePhraseVerdict,
-  recordFilterPostAiPhrases, refreshAiFilterIntent, pruneAiFilterPhrases,
-  phraseSetKey,
+  applyAiIntentVerdict, recordAiIntentVerdict,
+  refreshAiFilterIntent, pruneAiFilterPhrases,
+  phraseSetKey, canJudgeAiIntent,
 } = await import('../../src/background/ai-intent.js');
-const { callImbueAPI } = await import('../../src/background/providers.js');
+const { callImbueDetectAiIntent } = await import('../../src/background/providers.js');
+const { iosLocalJudgeAiIntent } = await import('../../src/background/ios-local-bridge.js');
+const { callLocalAiIntentJudgment } = await import('../../src/background/local-model.js');
 const { aiIntentAutoActive } = await import('../../src/shared/storage.js');
 type AiFilterIntentState = import('../../src/types.js').AiFilterIntentState;
 
-const mockCallImbueAPI = callImbueAPI as unknown as Mock;
+const mockDetectAiIntent = callImbueDetectAiIntent as unknown as Mock;
+const mockIosJudge = iosLocalJudgeAiIntent as unknown as Mock;
+const mockLocalJudge = callLocalAiIntentJudgment as unknown as Mock;
 
 // In-memory chrome.storage.local so persistence round-trips.
 let store: Record<string, unknown> = {};
@@ -34,7 +45,9 @@ beforeEach(() => {
     Object.assign(store, items);
     return Promise.resolve();
   });
-  mockCallImbueAPI.mockReset();
+  mockDetectAiIntent.mockReset();
+  mockIosJudge.mockReset();
+  mockLocalJudge.mockReset();
 });
 
 afterEach(() => {
@@ -44,13 +57,8 @@ afterEach(() => {
 const state = () => store.aiFilterIntent as AiFilterIntentState;
 const setWriteCount = () => (chrome.storage.local.set as Mock).mock.calls.length;
 
-// Drain the microtask queue so fire-and-forget async chains (the leading-edge
-// refresh) settle without advancing timers. All mocks resolve as microtasks.
-const flushMicrotasks = async () => { for (let i = 0; i < 30; i++) await Promise.resolve(); };
-
-const filterResponse = (aiFilterPhrases: string[] | null | undefined) => ({
-  shouldHide: false, reasoning: null, category: null,
-  rawResponse: '', processingTime: 1, jobId: 'j1',
+const intentResponse = (aiFilterPhrases: string[] | null | undefined) => ({
+  reasoning: null, rawResponse: '', processingTime: 1, jobId: 'j1',
   ...(aiFilterPhrases !== undefined && { aiFilterPhrases }),
 });
 
@@ -64,123 +72,89 @@ describe('phraseSetKey', () => {
   });
 });
 
-describe('applyValidatePhraseVerdict', () => {
+describe('canJudgeAiIntent', () => {
+  // HAS_IMBUE_BACKEND is 'true' in this file (set before import above).
+  it('imbue, desktop-local, and iOS on-device models can judge; BYOK cannot', () => {
+    expect(canJudgeAiIntent('imbue')).toBe(true);
+    expect(canJudgeAiIntent('local:gemma-4-E2B-it-web')).toBe(true);
+    expect(canJudgeAiIntent('iosLocal:gemma-4-e2b-detector-v2')).toBe(true);
+    expect(canJudgeAiIntent('openai:gpt-5-nano')).toBe(false);
+    expect(canJudgeAiIntent('')).toBe(false);
+  });
+});
+
+describe('applyAiIntentVerdict', () => {
   const union = ['AI slop', 'politics', 'crypto'];
 
   it('stores the returned phrases verbatim with the judged-set key', () => {
-    const r = applyValidatePhraseVerdict(union, ['AI slop'], 99);
+    const r = applyAiIntentVerdict(union, ['AI slop'], 99);
     expect(r).toEqual({ aiPhrases: ['AI slop'], judgedSetKey: phraseSetKey(union), updatedAt: 99 });
   });
 
   it('an empty verdict clears the phrases but still marks the set judged', () => {
-    const r = applyValidatePhraseVerdict(union, [], 99);
+    const r = applyAiIntentVerdict(union, [], 99);
     expect(r.aiPhrases).toEqual([]);
     expect(r.judgedSetKey).toBe(phraseSetKey(union));
   });
 
   it('defensively drops returned phrases outside the judged set', () => {
-    const r = applyValidatePhraseVerdict(union, ['AI slop', 'not a real phrase'], 99);
+    const r = applyAiIntentVerdict(union, ['AI slop', 'not a real phrase'], 99);
     expect(r.aiPhrases).toEqual(['AI slop']);
   });
 
   it('dedupes by normalized identity and drops blanks', () => {
-    const r = applyValidatePhraseVerdict(union, ['AI slop', ' ai slop ', '  '], 99);
+    const r = applyAiIntentVerdict(union, ['AI slop', ' ai slop ', '  '], 99);
     expect(r.aiPhrases).toEqual(['AI slop']);
   });
 });
 
-describe('recordValidatePhraseVerdict', () => {
+describe('recordAiIntentVerdict', () => {
   const union = ['ai slop', 'politics'];
 
   it('does not write storage for null or undefined verdicts', async () => {
-    await recordValidatePhraseVerdict(union, null);
-    await recordValidatePhraseVerdict(union, undefined);
+    await recordAiIntentVerdict(union, null);
+    await recordAiIntentVerdict(union, undefined);
     expect(state()).toBeUndefined();
   });
 
   it('persists the verdict and engages aiIntentAutoActive', async () => {
-    await recordValidatePhraseVerdict(union, ['ai slop']);
+    await recordAiIntentVerdict(union, ['ai slop']);
     expect(state().aiPhrases).toEqual(['ai slop']);
     expect(aiIntentAutoActive({ aiFilterIntent: state() })).toBe(true);
   });
 
   it('skips the write when neither the phrase set nor the judged-set key changed', async () => {
-    await recordValidatePhraseVerdict(union, ['ai slop']);
+    await recordAiIntentVerdict(union, ['ai slop']);
     const before = setWriteCount();
-    await recordValidatePhraseVerdict(union, ['AI SLOP ']); // same set, normalized
+    await recordAiIntentVerdict(union, ['AI SLOP ']); // same set, normalized
     expect(setWriteCount()).toBe(before);
   });
 
   it('writes when only the judged-set key changed (new union, same verdict)', async () => {
-    await recordValidatePhraseVerdict(union, ['ai slop']);
+    await recordAiIntentVerdict(union, ['ai slop']);
     const before = setWriteCount();
-    await recordValidatePhraseVerdict([...union, 'crypto'], ['ai slop']);
+    await recordAiIntentVerdict([...union, 'crypto'], ['ai slop']);
     expect(setWriteCount()).toBe(before + 1);
     expect(state().judgedSetKey).toBe(phraseSetKey([...union, 'crypto']));
   });
 });
 
-describe('recordFilterPostAiPhrases', () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-    store.selectedModel = 'imbue';
-    store.descriptions_twitter = ['AI slop', 'politics'];
-  });
-
-  it('the first flagged response turns AI detection on immediately — before any probe', async () => {
-    mockCallImbueAPI.mockResolvedValue(filterResponse(['AI slop']));
-    await recordFilterPostAiPhrases(['AI slop']);
-    // On, right now — no debounce, no probe round trip.
-    expect(state().aiPhrases).toEqual(['AI slop']);
-    expect(aiIntentAutoActive({ aiFilterIntent: state() })).toBe(true);
-    // The authoritative probe follows (leading edge) and confirms.
-    await flushMicrotasks();
-    expect(mockCallImbueAPI).toHaveBeenCalledTimes(1);
-    expect(state().judgedSetKey).toBe(phraseSetKey(['AI slop', 'politics']));
-  });
-
-  it('ignores noise on an already-judged union (no ping-pong)', async () => {
-    // Probe judged the full set: "AI hype" is NOT an AI-removal request.
-    store.descriptions_twitter = ['AI hype', 'politics'];
-    await recordValidatePhraseVerdict(['AI hype', 'politics'], []);
-    const before = setWriteCount();
-
-    await recordFilterPostAiPhrases(['AI hype']); // temp-1.0 noise
-    expect(setWriteCount()).toBe(before);
-    expect(state().aiPhrases).toEqual([]);
-    await vi.advanceTimersByTimeAsync(5000);
-    expect(mockCallImbueAPI).not.toHaveBeenCalled();
-  });
-
-  it('already-known phrases, empty lists, null, and deleted phrases are no-ops', async () => {
-    await recordValidatePhraseVerdict(['AI slop', 'politics'], ['AI slop']);
-    const before = setWriteCount();
-    await recordFilterPostAiPhrases(['AI slop']);   // already known
-    await recordFilterPostAiPhrases([]);
-    await recordFilterPostAiPhrases(null);
-    await recordFilterPostAiPhrases(['midjourney']); // stale — phrase no longer exists
-    expect(setWriteCount()).toBe(before);
-    await vi.advanceTimersByTimeAsync(5000);
-    expect(mockCallImbueAPI).not.toHaveBeenCalled();
-  });
-});
-
 describe('pruneAiFilterPhrases', () => {
   it('turns detection off instantly when all triggering phrases are gone, without a backend call', async () => {
-    await recordValidatePhraseVerdict(['AI slop', 'politics'], ['AI slop']);
+    await recordAiIntentVerdict(['AI slop', 'politics'], ['AI slop']);
     expect(aiIntentAutoActive({ aiFilterIntent: state() })).toBe(true);
 
     store.descriptions_twitter = ['politics']; // "AI slop" deleted
     await pruneAiFilterPhrases();
 
-    expect(mockCallImbueAPI).not.toHaveBeenCalled();
+    expect(mockDetectAiIntent).not.toHaveBeenCalled();
     expect(state().aiPhrases).toEqual([]);
     expect(aiIntentAutoActive({ aiFilterIntent: state() })).toBe(false);
   });
 
   it('keeps surviving AI phrases and does not write when nothing was deleted', async () => {
     store.descriptions_twitter = ['AI slop', 'politics'];
-    await recordValidatePhraseVerdict(['AI slop', 'politics'], ['AI slop']);
+    await recordAiIntentVerdict(['AI slop', 'politics'], ['AI slop']);
     const before = setWriteCount();
     await pruneAiFilterPhrases();
     expect(setWriteCount()).toBe(before);
@@ -190,7 +164,7 @@ describe('pruneAiFilterPhrases', () => {
   it('delete then re-add re-activates: pruning clears judgedSetKey so the set is re-judged', async () => {
     store.selectedModel = 'imbue';
     store.descriptions_twitter = ['AI slop'];
-    mockCallImbueAPI.mockResolvedValue(filterResponse(['AI slop']));
+    mockDetectAiIntent.mockResolvedValue(intentResponse(['AI slop']));
     await refreshAiFilterIntent();
     expect(state().aiPhrases).toEqual(['AI slop']);
 
@@ -204,7 +178,7 @@ describe('pruneAiFilterPhrases', () => {
     // already judged (this was a real bug — detection never came back).
     store.descriptions_twitter = ['AI slop'];
     await refreshAiFilterIntent();
-    expect(mockCallImbueAPI).toHaveBeenCalledTimes(2);
+    expect(mockDetectAiIntent).toHaveBeenCalledTimes(2);
     expect(state().aiPhrases).toEqual(['AI slop']);
     expect(aiIntentAutoActive({ aiFilterIntent: state() })).toBe(true);
   });
@@ -212,78 +186,147 @@ describe('pruneAiFilterPhrases', () => {
 
 describe('refreshAiFilterIntent', () => {
   it('clears state deterministically when no phrases exist, without a backend call', async () => {
-    await recordValidatePhraseVerdict(['ai slop'], ['ai slop']);
+    await recordAiIntentVerdict(['ai slop'], ['ai slop']);
     await refreshAiFilterIntent();
-    expect(mockCallImbueAPI).not.toHaveBeenCalled();
+    expect(mockDetectAiIntent).not.toHaveBeenCalled();
     expect(state().aiPhrases).toEqual([]);
     expect(aiIntentAutoActive({ aiFilterIntent: state() })).toBe(false);
   });
 
-  it('probes with the current phrases via validatePhrase and applies the verdict', async () => {
+  it('judges the current phrases via detectAiIntent and applies the verdict', async () => {
     store.descriptions_twitter = ['ai slop', 'politics'];
     store.selectedModel = 'imbue';
-    mockCallImbueAPI.mockResolvedValue(filterResponse(['ai slop']));
+    mockDetectAiIntent.mockResolvedValue(intentResponse(['ai slop']));
 
     await refreshAiFilterIntent();
 
-    expect(mockCallImbueAPI).toHaveBeenCalledTimes(1);
-    const [, categories, reason] = mockCallImbueAPI.mock.calls[0] as [unknown, string[], string];
-    expect(reason).toBe('validatePhrase');
-    expect([...categories].sort()).toEqual(['ai slop', 'politics']);
+    expect(mockDetectAiIntent).toHaveBeenCalledTimes(1);
+    const [phrases] = mockDetectAiIntent.mock.calls[0] as [string[]];
+    expect([...phrases].sort()).toEqual(['ai slop', 'politics']);
     expect(state().aiPhrases).toEqual(['ai slop']);
     expect(state().judgedSetKey).toBe(phraseSetKey(['ai slop', 'politics']));
+  });
+
+  it('sends only the phrases that fit the 1000-char detectAiIntent budget, in order', async () => {
+    const huge = 'x'.repeat(1001);
+    store.descriptions_twitter = [huge, 'ai slop', 'politics'];
+    store.selectedModel = 'imbue';
+    mockDetectAiIntent.mockResolvedValue(intentResponse(['ai slop']));
+
+    await refreshAiFilterIntent();
+
+    const [phrases] = mockDetectAiIntent.mock.calls[0] as [string[]];
+    expect(phrases).toEqual(['ai slop', 'politics']);
+    // Recorded against the full union: the set counts as judged, no re-send.
+    expect(state().judgedSetKey).toBe(phraseSetKey([huge, 'ai slop', 'politics']));
+    expect(state().aiPhrases).toEqual(['ai slop']);
+  });
+
+  it('treats the verdict as unknown when no phrase fits the budget (no request sent)', async () => {
+    store.descriptions_twitter = ['y'.repeat(1001)];
+    store.selectedModel = 'imbue';
+
+    await refreshAiFilterIntent();
+
+    expect(mockDetectAiIntent).not.toHaveBeenCalled();
+    expect(state()?.judgedSetKey ?? null).toBeNull();
   });
 
   it('never re-probes a set that was already judged', async () => {
     store.descriptions_twitter = ['ai slop'];
     store.selectedModel = 'imbue';
-    mockCallImbueAPI.mockResolvedValue(filterResponse(['ai slop']));
+    mockDetectAiIntent.mockResolvedValue(intentResponse(['ai slop']));
 
     await refreshAiFilterIntent();
     await refreshAiFilterIntent();
-    expect(mockCallImbueAPI).toHaveBeenCalledTimes(1);
+    expect(mockDetectAiIntent).toHaveBeenCalledTimes(1);
   });
 
   it('does not double-probe when a second refresh starts while the probe is in flight', async () => {
     store.descriptions_twitter = ['ai slop'];
     store.selectedModel = 'imbue';
     let resolveProbe!: (v: unknown) => void;
-    mockCallImbueAPI.mockImplementation(() => new Promise(r => { resolveProbe = r; }));
+    mockDetectAiIntent.mockImplementation(() => new Promise(r => { resolveProbe = r; }));
 
     const first = refreshAiFilterIntent();
     const second = refreshAiFilterIntent(); // reaches the in-flight guard and returns
     await second;
-    resolveProbe(filterResponse(['ai slop']));
+    resolveProbe(intentResponse(['ai slop']));
     await first;
 
-    expect(mockCallImbueAPI).toHaveBeenCalledTimes(1);
+    expect(mockDetectAiIntent).toHaveBeenCalledTimes(1);
     expect(state().aiPhrases).toEqual(['ai slop']);
   });
 
   it('prunes deleted phrases locally, even when probing is gated (non-Imbue model)', async () => {
-    await recordValidatePhraseVerdict(['ai slop', 'politics'], ['ai slop']);
+    await recordAiIntentVerdict(['ai slop', 'politics'], ['ai slop']);
     store.descriptions_twitter = ['politics']; // "ai slop" deleted
     store.selectedModel = 'openai:gpt-5';
 
     await refreshAiFilterIntent();
 
-    expect(mockCallImbueAPI).not.toHaveBeenCalled();
+    expect(mockDetectAiIntent).not.toHaveBeenCalled();
     expect(state().aiPhrases).toEqual([]);
   });
 
-  it('does not probe when a non-Imbue model is selected', async () => {
+  it('does not probe when a BYOK model is selected', async () => {
     store.descriptions_twitter = ['ai slop'];
     store.selectedModel = 'openai:gpt-5';
     await refreshAiFilterIntent();
-    expect(mockCallImbueAPI).not.toHaveBeenCalled();
+    expect(mockDetectAiIntent).not.toHaveBeenCalled();
+    expect(mockIosJudge).not.toHaveBeenCalled();
+    expect(mockLocalJudge).not.toHaveBeenCalled();
   });
 
-  it('leaves state and judged-set key unchanged when the probe response omits the field (old worker)', async () => {
-    await recordValidatePhraseVerdict(['ai slop'], ['ai slop']);
+  it('judges via the on-device model when iosLocal is selected — no backend call', async () => {
+    store.descriptions_twitter = ['ai slop', 'politics'];
+    store.selectedModel = 'iosLocal:gemma-4-e2b-detector-v2';
+    mockIosJudge.mockResolvedValue(['ai slop']);
+
+    await refreshAiFilterIntent();
+
+    expect(mockDetectAiIntent).not.toHaveBeenCalled();
+    expect(mockIosJudge).toHaveBeenCalledTimes(1);
+    const [phrases] = mockIosJudge.mock.calls[0] as [string[]];
+    expect([...phrases].sort()).toEqual(['ai slop', 'politics']);
+    expect(state().aiPhrases).toEqual(['ai slop']);
+    expect(state().judgedSetKey).toBe(phraseSetKey(['ai slop', 'politics']));
+    expect(aiIntentAutoActive({ aiFilterIntent: state() })).toBe(true);
+  });
+
+  it('judges via the in-browser model when a desktop local model is selected', async () => {
+    store.descriptions_twitter = ['ai slop'];
+    store.selectedModel = 'local:gemma-4-E2B-it-web';
+    mockLocalJudge.mockResolvedValue(['ai slop']);
+
+    await refreshAiFilterIntent();
+
+    expect(mockDetectAiIntent).not.toHaveBeenCalled();
+    expect(mockLocalJudge).toHaveBeenCalledWith(['ai slop'], 'gemma-4-E2B-it-web');
+    expect(state().aiPhrases).toEqual(['ai slop']);
+    expect(state().judgedSetKey).toBe(phraseSetKey(['ai slop']));
+  });
+
+  it('a null (unparseable) local verdict leaves judgedSetKey stale so the next trigger retries', async () => {
+    store.descriptions_twitter = ['ai slop'];
+    store.selectedModel = 'local:gemma-4-E2B-it-web';
+    mockLocalJudge.mockResolvedValueOnce(null);
+
+    await refreshAiFilterIntent();
+    expect(state()?.judgedSetKey ?? null).toBeNull();
+
+    mockLocalJudge.mockResolvedValue(['ai slop']);
+    await refreshAiFilterIntent();
+    expect(mockLocalJudge).toHaveBeenCalledTimes(2);
+    expect(state().aiPhrases).toEqual(['ai slop']);
+  });
+
+  it('leaves state and judged-set key unchanged when the response omits the field (old gateway)', async () => {
+    await recordAiIntentVerdict(['ai slop'], ['ai slop']);
     const judgedBefore = state().judgedSetKey;
     store.descriptions_twitter = ['ai slop', 'politics'];
     store.selectedModel = 'imbue';
-    mockCallImbueAPI.mockResolvedValue(filterResponse(undefined));
+    mockDetectAiIntent.mockResolvedValue(intentResponse(undefined));
 
     await refreshAiFilterIntent();
     expect(state().aiPhrases).toEqual(['ai slop']);
@@ -291,18 +334,19 @@ describe('refreshAiFilterIntent', () => {
     expect(state().judgedSetKey).toBe(judgedBefore);
   });
 
-  it('survives a probe failure without touching state, then retries on the next call', async () => {
-    await recordValidatePhraseVerdict(['ai slop'], ['ai slop']);
+  it('survives a probe failure (timeout / jobFailed / 429) without touching state, then retries on the next call', async () => {
+    await recordAiIntentVerdict(['ai slop'], ['ai slop']);
     store.descriptions_twitter = ['ai slop', 'politics'];
     store.selectedModel = 'imbue';
-    mockCallImbueAPI.mockRejectedValueOnce(new Error('socket closed'));
+    // The silent-error case surfaces as a timeout rejection from the WS layer.
+    mockDetectAiIntent.mockRejectedValueOnce(new Error('Request timed out after 30 seconds.'));
 
     await expect(refreshAiFilterIntent()).resolves.toBeUndefined();
     expect(state().aiPhrases).toEqual(['ai slop']);
 
-    mockCallImbueAPI.mockResolvedValue(filterResponse(['ai slop', 'politics']));
+    mockDetectAiIntent.mockResolvedValue(intentResponse(['ai slop', 'politics']));
     await refreshAiFilterIntent();
-    expect(mockCallImbueAPI).toHaveBeenCalledTimes(2);
+    expect(mockDetectAiIntent).toHaveBeenCalledTimes(2);
     expect(state().aiPhrases).toEqual(['ai slop', 'politics']);
   });
 
@@ -312,7 +356,7 @@ describe('refreshAiFilterIntent', () => {
 
     store.descriptions_twitter = ['ai slop'];
     store.selectedModel = 'imbue';
-    mockCallImbueAPI.mockResolvedValue(filterResponse(['ai slop']));
+    mockDetectAiIntent.mockResolvedValue(intentResponse(['ai slop']));
 
     await refreshAiFilterIntent();
     expect(state().aiPhrases).toEqual(['ai slop']);

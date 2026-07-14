@@ -49,6 +49,28 @@ export const LOCAL_SYSTEM_PROMPT_SINGLE = `You will see a social media post and 
 Answer with a single word: yes or no. Do not output anything else — no pipes, no tables, no second verdict, no explanation.
 `;
 
+// System prompt for the local-model AI-intent judgment: given the user's
+// filter phrases, which ones ask for AI-generated content to be removed?
+// This is the local equivalent of the Imbue backend's detectAiIntent probe
+// (see background/ai-intent.ts) — one debounced call per phrase-set change,
+// never on the per-post hot path. Deliberately the same pipe-delimited
+// verdict-row format as LOCAL_SYSTEM_PROMPT so parseTableYesnoResponse and
+// the iOS LlGuidance regex constraint apply unchanged.
+export const AI_INTENT_LOCAL_SYSTEM_PROMPT = `You will see a list of filter phrases a user wrote to describe posts they want removed from their social media feed. For each phrase, decide whether it asks for AI-generated content to be removed. Phrases like "AI slop", "AI-generated images", or "posts written by AI" do; phrases that merely mention AI as a topic, like "AI news" or "AI companies", do not.
+
+Output exactly one row of pipe-delimited verdicts, one per phrase, in the order they were given. Each verdict is \`yes\` or \`no\`. Output nothing else.
+
+Format example for 3 phrases: | no | yes | no
+`;
+
+// User-message builder for the AI-intent judgment. Mirrors
+// buildTableYesnoUserMessage's shape (list in order, explicit verdict count
+// at the end) for the same small-model anchoring reasons.
+export function buildAiIntentUserMessage(phrases: string[]): string {
+  const n = phrases.length;
+  return `Filter phrases (in order): ${phrases.join(', ')}\n\nOutput the verdict row (exactly ${n} verdict${n === 1 ? '' : 's'}, one per phrase):`;
+}
+
 export function buildSingleYesnoUserMessage(postText: string, category: string, hasImages: boolean): string {
   const mediaDesc = hasImages ? ' (includes images)' : '';
   return `Post${mediaDesc}: ${postText}\n\nCategory: ${category}\n\nDoes the post match the category? Answer with one word, yes or no:`;

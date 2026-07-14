@@ -12,7 +12,7 @@ import { runDetectors, type Detector, type DetectorResult } from './detectors';
 import { callLocalInference, localEngine } from './local-model';
 import { iosLocalClassify, iosLocalGenerate, iosLocalAiTextDetect } from './ios-local-bridge';
 import { getStorage, setStorage, removeStorage, getDescriptions, clampThreshold, clampImageThreshold, clampReplyThreshold, aiIntentAutoActive, DEFAULT_AI_TEXT_DETECTION_THRESHOLD, DEFAULT_AI_IMAGE_DETECTION_THRESHOLD, EMOJI_AI_TEXT_DETECTION_THRESHOLD } from '../shared/storage';
-import { recordFilterPostAiPhrases } from './ai-intent';
+import { canJudgeAiIntent } from './ai-intent';
 import { PLATFORMS, enabledStorageKey } from '../shared/platforms';
 export { DEFAULT_AI_TEXT_DETECTION_THRESHOLD, DEFAULT_AI_IMAGE_DETECTION_THRESHOLD };
 import type {
@@ -72,10 +72,12 @@ interface TabPlanEntry {
 function computeAiSkipReason(
   aiToggleOn: boolean,
   rawText: string,
+  useIosLocalAiText: boolean,
 ): string | null {
-  // AI text detection is currently Imbue-only (callImbueAiTextDetection).
-  // Open-source builds without the Imbue backend always skip this detector.
-  if (process.env.HAS_IMBUE_BACKEND !== 'true') return 'AI detection requires Imbue backend';
+  // Cloud AI text detection is Imbue-only (callImbueAiTextDetection), so
+  // open-source builds without the Imbue backend skip it — except on the
+  // iosLocal path, where the detector runs entirely on-device.
+  if (!useIosLocalAiText && process.env.HAS_IMBUE_BACKEND !== 'true') return 'AI detection requires Imbue backend';
   if (!aiToggleOn) return 'AI detection disabled';
   const wc = countWords(rawText);
   if (wc < AI_TEXT_DETECTION_MIN_WORDS) {
@@ -507,16 +509,18 @@ export async function getSettings(siteId?: SiteId): Promise<Settings> {
     platformEnabled[p.id] = data[enabledStorageKey(p.id)] !== false;
   }
 
-  // Phrases judged as AI-removal requests ("AI slop") only engage the AI
-  // detectors on the Imbue path — exclude them from the filter categories
-  // there. On local/BYOK models the AI detector can't run, so the phrases
-  // keep acting as ordinary filters. Old-shape state (no aiPhrases array)
-  // yields no exclusion.
+  // Phrases judged as AI-removal requests ("AI slop") engage the AI
+  // detectors on models where the NL AI-detection system is live
+  // (canJudgeAiIntent: Imbue, desktop-local, iOS on-device) — exclude them
+  // from the filter categories there so they don't also hide human posts
+  // *about* AI. On BYOK models the AI detector never engages, so the
+  // phrases keep acting as ordinary filters. Old-shape state (no aiPhrases
+  // array) yields no exclusion.
   const selectedModel = data.selectedModel || DEFAULT_MODEL;
   const aiPhrases = Array.isArray(data.aiFilterIntent?.aiPhrases)
     ? data.aiFilterIntent.aiPhrases : [];
   let effectiveDescriptions = descriptions;
-  if (process.env.HAS_IMBUE_BACKEND === 'true' && selectedModel === 'imbue' && aiPhrases.length > 0) {
+  if (canJudgeAiIntent(selectedModel) && aiPhrases.length > 0) {
     const aiKeys = new Set(aiPhrases.map(p => p.trim().toLowerCase()));
     effectiveDescriptions = descriptions.filter(d => !aiKeys.has(d.trim().toLowerCase()));
   }
@@ -612,8 +616,7 @@ function scheduleAutoRetry(): void {
 
   errorRetryTimeout = setTimeout(() => {
     if (errorState.count > 0 && errorState.type === 'rate_limit') {
-      console.log(`[Error] Retry interval elapsed, retrying ${errorState.count} rate-limited posts`);
-      triggerErrorRetry().catch(err => console.error('[Error] triggerErrorRetry failed:', err));
+      triggerErrorRetry().catch(() => {});
     }
   }, RATE_LIMIT_RETRY_INTERVAL_MS);
 }
@@ -625,7 +628,7 @@ function recordLatency(seconds: number): void {
   if (latencyWindow.length > LATENCY_WINDOW_SIZE) {
     latencyWindow.shift();
   }
-  broadcastLatencyStatus().catch(err => console.error('[Latency] Broadcast failed:', err));
+  broadcastLatencyStatus().catch(() => {});
 }
 
 function getMedianLatency(): number {
@@ -708,8 +711,7 @@ export async function loadCache(): Promise<void> {
       evaluationCache = new Map(Object.entries(data.evaluationCache));
     }
     cacheLoaded = true;
-  } catch (err) {
-    console.error('Failed to load cache:', err);
+  } catch {
     cacheLoaded = true;
   }
 }
@@ -970,12 +972,6 @@ async function processBatch(): Promise<void> {
         return await iosLocalClassify(postData, settings.effectiveDescriptions, apiConfig.modelConfig as LocalModelDef | null);
       } else if (apiConfig.apiName === 'imbue') {
         const imbueResponse = await callImbueAPI(postData, settings.effectiveDescriptions, 'filterPost');
-        // Every filterPost result carries the backend's per-phrase judgment
-        // of AI-removal intent. The first response that flags a phrase turns
-        // AI detection on immediately (see recordFilterPostAiPhrases for the
-        // noise guardrails).
-        void recordFilterPostAiPhrases(imbueResponse.aiFilterPhrases)
-          .catch(err => console.warn('[AiIntent] record failed:', (err as Error).message));
         return {
           shouldHide: imbueResponse.shouldHide,
           reasoning: imbueResponse.reasoning || 'No reasoning provided',
@@ -996,7 +992,7 @@ async function processBatch(): Promise<void> {
     // Per-post detector orchestration. Three logical phases: plan tabs and
     // dispatch their initial state to the content script; build the live
     // detector list; race them and capture snapshots for cache persistence.
-    const aiSkipReason = computeAiSkipReason(aiToggleOn, item.rawText);
+    const aiSkipReason = computeAiSkipReason(aiToggleOn, item.rawText, apiConfig.apiName === 'iosLocal');
     const aiEnabled = !aiSkipReason;
 
     const aiImageSkipReason = computeAiImageSkipReason(aiImageToggleOn, imageUrls);

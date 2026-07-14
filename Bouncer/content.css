@@ -597,11 +597,6 @@
   display: none;
 }
 
-/* Keep post content slightly dimmed for error state to indicate something is wrong */
-.ff-error > *:not(.post-verification-bar) {
-  opacity: 0.7;
-}
-
 .reasoning-reeval-btn {
   display: block;
   width: 100%;

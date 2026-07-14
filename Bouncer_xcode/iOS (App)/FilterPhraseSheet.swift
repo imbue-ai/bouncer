@@ -134,8 +134,12 @@ class FilterSheetViewModel: ObservableObject {
     // class.
     @Published var aiDetectionOn: Bool = false
     @Published var aiDetectionPending: Bool = false
-    @Published var aiTextDetectionThreshold: Double = 0.7
-    @Published var aiImageDetectionThreshold: Double = 0.7
+    // Initial values mirror the JS-side defaults (clampThreshold /
+    // clampReplyThreshold / clampImageThreshold in shared/storage.ts);
+    // real values load from storage via the __ff_ bridges.
+    @Published var aiTextDetectionThreshold: Double = 0.9
+    @Published var aiTextReplyDetectionThreshold: Double = 0.3
+    @Published var aiImageDetectionThreshold: Double = 0.9
     // Mirrors chrome.storage.local["selectedModel"]. Settings views need
     // this on the main settings page to gate AI-text-detection UI: the
     // on-device classifier path doesn't require an Imbue backend, so the
@@ -474,6 +478,44 @@ class FilterSheetViewModel: ObservableObject {
         Task {
             try? await webView.callAsyncJavaScript(
                 "return await window.__ff_setAiTextDetectionThreshold(value)",
+                arguments: ["value": clamped],
+                in: nil,
+                contentWorld: Self.contentWorld
+            )
+        }
+    }
+
+    // Reply/comment AI-text threshold. The JS pipeline applies this instead
+    // of aiTextDetectionThreshold when the post is a reply — same storage key
+    // the desktop popup's "Comment confidence threshold" slider writes.
+    func loadAiTextReplyDetectionThreshold() {
+        guard let webView = webView else { return }
+        Task { @MainActor in
+            do {
+                let result = try await webView.callAsyncJavaScript(
+                    "return await window.__ff_getAiTextReplyDetectionThreshold()",
+                    arguments: [:],
+                    in: nil,
+                    contentWorld: Self.contentWorld
+                )
+                if let value = result as? Double {
+                    self.aiTextReplyDetectionThreshold = value
+                } else if let value = result as? NSNumber {
+                    self.aiTextReplyDetectionThreshold = value.doubleValue
+                }
+            } catch {
+                print("[FeedFilter] loadAiTextReplyDetectionThreshold error: \(error)")
+            }
+        }
+    }
+
+    func setAiTextReplyDetectionThreshold(_ value: Double) {
+        let clamped = min(1.0, max(0.0, value))
+        aiTextReplyDetectionThreshold = clamped
+        guard let webView = webView else { return }
+        Task {
+            try? await webView.callAsyncJavaScript(
+                "return await window.__ff_setAiTextReplyDetectionThreshold(value)",
                 arguments: ["value": clamped],
                 in: nil,
                 contentWorld: Self.contentWorld
@@ -961,32 +1003,51 @@ struct FilterPhraseSheet: View {
 
 // MARK: - Settings View
 
+// Mirrors the desktop popup's simplified top level: only the Cloud/On-Device
+// filtering-mode choice, the selected on-device model's download status, and
+// the filter-replies toggle are headline settings. Everything else (full
+// model list, BYOK providers, AI-detection thresholds) lives in
+// AdvancedSettingsView, the counterpart of the popup's collapsed
+// "Advanced Settings" accordion.
 struct BouncerSettingsView: View {
     @ObservedObject var viewModel: FilterSheetViewModel
+    @ObservedObject private var localService = LocalInferenceService.shared
 
-    // Mirrors viewModel.aiTextDetectionThreshold during a drag so the slider
-    // and percentage update smoothly without round-tripping through JS on
-    // every frame. We only persist when the drag ends.
-    @State private var draftThreshold: Double = 0.7
-    @State private var isDragging: Bool = false
-
-    @State private var draftImageThreshold: Double = 0.7
-    @State private var isDraggingImage: Bool = false
-
-    private var displayThreshold: Double {
-        isDragging ? draftThreshold : viewModel.aiTextDetectionThreshold
-    }
-
-    private var displayImageThreshold: Double {
-        isDraggingImage ? draftImageThreshold : viewModel.aiImageDetectionThreshold
-    }
-
-    // AI text detection routes through the Imbue WebSocket gateway, which
-    // requires Firebase App Check. On builds shipped without a
-    // GoogleService-Info plist the feature is unusable, so hide the whole
-    // section.
+    // The Imbue-hosted "Cloud" option requires Firebase App Check. On builds
+    // shipped without a GoogleService-Info plist it is unusable, so hide it.
     private var hasImbueBackend: Bool {
         AppCheckBridge.shared.isAvailable
+    }
+
+    // The headline on-device model, the native counterpart of the popup's
+    // single On-Device radio. The full catalog stays on the AI-providers
+    // page under Advanced Settings.
+    private var headlineLocalModel: LocalInferenceService.LocalModel {
+        LocalInferenceService.models[0]
+    }
+
+    private var selectedLocalModel: LocalInferenceService.LocalModel? {
+        LocalInferenceService.model(forKey: viewModel.selectedModel)
+    }
+
+    // On a fresh install `selectedModel` is unset, but the JS pipeline
+    // defaults to Imbue on Imbue-enabled builds — treat empty as Cloud.
+    private var isCloudSelected: Bool {
+        viewModel.selectedModel == imbueModelKey
+            || (viewModel.selectedModel.isEmpty && hasImbueBackend)
+    }
+
+    // A BYOK model picked on the AI-providers page matches neither headline
+    // row — name it in the section footer, mirroring the popup's
+    // "set in Advanced Settings" note under the radios.
+    private var advancedSelectionLabel: String? {
+        let key = viewModel.selectedModel
+        guard !key.isEmpty, key != imbueModelKey, selectedLocalModel == nil else { return nil }
+        guard let colon = key.firstIndex(of: ":") else { return key }
+        let providerId = String(key[..<colon])
+        let modelId = String(key[key.index(after: colon)...])
+        let spec = providerSpecs.first(where: { $0.id == providerId })
+        return spec?.models.first(where: { $0.id == modelId })?.display ?? modelId
     }
 
     // Load a brand logo PNG out of the bundled icons/ folder reference (same
@@ -1007,6 +1068,264 @@ struct BouncerSettingsView: View {
             }
             Text(text)
         }
+    }
+
+    var body: some View {
+        Form {
+            Section {
+                if hasImbueBackend {
+                    cloudRow
+                }
+                onDeviceRow
+                // Download controls sit directly under the On-Device row —
+                // shown by default (not just once selected), because the
+                // model must be downloaded before On-Device becomes
+                // selectable at all. Counterpart of the popup's
+                // localModelSection.
+                if let model = selectedLocalModel
+                    ?? (headlineLocalModel.isSupportedOnThisDevice ? headlineLocalModel : nil) {
+                    onDeviceStatusRows(model)
+                }
+            } header: {
+                Text("Filtering Mode")
+            } footer: {
+                if let label = advancedSelectionLabel {
+                    Text("Using \(label) (set in Advanced Settings)")
+                }
+            }
+
+            // Headline toggle, same storage key the JS pipeline reads.
+            // Unlike desktop, iOS intentionally omits the per-site "enable
+            // Bouncer" master toggles — filtering is always on per site.
+            Section {
+                Toggle(isOn: Binding(
+                    get: { viewModel.filterReplies },
+                    set: { viewModel.setFilterReplies($0) }
+                )) {
+                    Text("Also filter replies in threads")
+                }
+            }
+
+            // Everything below Advanced Settings is power-user surface:
+            // full model list, BYOK providers, AI-detection thresholds.
+            Section {
+                NavigationLink {
+                    AdvancedSettingsView(viewModel: viewModel)
+                } label: {
+                    HStack {
+                        Image(systemName: "gearshape.2")
+                            .foregroundStyle(.tint)
+                            .frame(width: 24)
+                        Text("Advanced Settings")
+                    }
+                }
+            }
+
+            Section {
+                Link(destination: URL(string: "https://x.com/Millanphilipose")!) {
+                    contactRow(icon: "x-logo", text: "X (@Millanphilipose)")
+                }
+                Link(destination: URL(string: "https://github.com/imbue-ai/bouncer")!) {
+                    contactRow(icon: "github-logo", text: "GitHub")
+                }
+                Link(destination: URL(string: "https://discord.gg/bcG87mkdN9")!) {
+                    contactRow(icon: "discord-logo", text: "Discord")
+                }
+            } header: {
+                Text("Contact us")
+            }
+
+            Section {
+                Link(destination: URL(string: "https://apps.apple.com/us/app/bouncer-heal-your-feed/id6759466393")!) {
+                    Label("Rate us on the App Store", systemImage: "star.fill")
+                }
+            } footer: {
+                Text("Enjoying Bouncer? Leave a review — it really helps.")
+            }
+        }
+        .navigationTitle("Settings")
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            viewModel.loadFilterReplies()
+            viewModel.loadSelectedModel()
+        }
+    }
+
+    private var cloudRow: some View {
+        Button {
+            Task { await selectModel(imbueModelKey) }
+        } label: {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Cloud")
+                        .foregroundStyle(.primary)
+                    Text("Fast and free.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                if isCloudSelected {
+                    Image(systemName: "checkmark")
+                        .foregroundStyle(.tint)
+                }
+            }
+            // Hit-test the whole row, not just the opaque text/checkmark —
+            // the Spacer's transparent area doesn't register taps otherwise.
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private var onDeviceRow: some View {
+        let model = headlineLocalModel
+        if !model.isSupportedOnThisDevice {
+            // Same RAM gate as onboarding and the AI-providers list.
+            VStack(alignment: .leading, spacing: 2) {
+                Text("On-Device")
+                    .foregroundStyle(.secondary)
+                Text("Not available on this iPhone — requires \(model.requiredRAMDisplay)+ RAM.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        } else {
+            // Not selectable until the model's weights are on disk — the
+            // Download button below is the only affordance before that.
+            let ready = localModelIsSelectable(localService.downloadStatus(for: model))
+            Button {
+                guard ready else { return }
+                Task { await selectModel(model.selectedModelKey) }
+            } label: {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("On-Device")
+                            .foregroundStyle(ready ? .primary : .secondary)
+                        Text(ready
+                            ? "Nothing leaves your phone."
+                            : "Nothing leaves your phone. Download the model to enable.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if selectedLocalModel != nil {
+                        Image(systemName: "checkmark")
+                            .foregroundStyle(.tint)
+                    }
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(!ready)
+        }
+    }
+
+    @ViewBuilder
+    private func onDeviceStatusRows(_ model: LocalInferenceService.LocalModel) -> some View {
+        switch localService.downloadStatus(for: model) {
+        case .notDownloaded:
+            Button("Download (\(model.approxSize))") {
+                localService.startDownload(model)
+            }
+        case .error(let message):
+            VStack(alignment: .leading, spacing: 4) {
+                Text(message)
+                    .font(.footnote)
+                    .foregroundStyle(.red)
+                Button("Retry download") {
+                    localService.startDownload(model)
+                }
+            }
+        case .downloading(let progress):
+            VStack(alignment: .leading, spacing: 8) {
+                ProgressView(value: progress)
+                // .borderless button style: without it, both buttons share one
+                // row-wide hit region in Form/List and a single tap fires every
+                // action closure in the row.
+                HStack {
+                    Button("Pause") { localService.pauseDownload() }
+                        .buttonStyle(.borderless)
+                    Spacer()
+                    Text("\(Int((progress * 100).rounded()))%")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                    Spacer()
+                    Button("Cancel", role: .destructive) { localService.cancelDownload() }
+                        .buttonStyle(.borderless)
+                }
+            }
+        case .paused(let progress):
+            VStack(alignment: .leading, spacing: 8) {
+                ProgressView(value: progress)
+                HStack {
+                    Button("Resume") { localService.startDownload(model) }
+                        .buttonStyle(.borderless)
+                    Spacer()
+                    Text("Paused at \(Int((progress * 100).rounded()))%")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                    Spacer()
+                    Button("Cancel", role: .destructive) { localService.cancelDownload() }
+                        .buttonStyle(.borderless)
+                }
+            }
+        case .downloaded, .ready, .loading:
+            EmptyView()
+        }
+    }
+
+    @MainActor
+    private func selectModel(_ modelKey: String) async {
+        // When an on-device variant is picked, switch the native engine to it
+        // (unloads the current model; the new one lazily loads on next classify).
+        if let model = LocalInferenceService.model(forKey: modelKey) {
+            localService.selectModel(model)
+        }
+        await viewModel.setStorage(["selectedModel": modelKey])
+        viewModel.selectedModel = modelKey
+        await viewModel.clearModelCache()
+    }
+}
+
+// MARK: - Advanced Settings
+
+// Power-user surface folded out of the main settings page, mirroring the
+// desktop popup's collapsed "Advanced Settings" accordion: the full model
+// list / BYOK providers and the AI-detection threshold sliders.
+struct AdvancedSettingsView: View {
+    @ObservedObject var viewModel: FilterSheetViewModel
+
+    // Mirrors viewModel.aiTextDetectionThreshold during a drag so the slider
+    // and percentage update smoothly without round-tripping through JS on
+    // every frame. We only persist when the drag ends.
+    @State private var draftThreshold: Double = 0.9
+    @State private var isDragging: Bool = false
+
+    @State private var draftReplyThreshold: Double = 0.3
+    @State private var isDraggingReply: Bool = false
+
+    @State private var draftImageThreshold: Double = 0.9
+    @State private var isDraggingImage: Bool = false
+
+    private var displayThreshold: Double {
+        isDragging ? draftThreshold : viewModel.aiTextDetectionThreshold
+    }
+
+    private var displayReplyThreshold: Double {
+        isDraggingReply ? draftReplyThreshold : viewModel.aiTextReplyDetectionThreshold
+    }
+
+    private var displayImageThreshold: Double {
+        isDraggingImage ? draftImageThreshold : viewModel.aiImageDetectionThreshold
+    }
+
+    // AI text detection routes through the Imbue WebSocket gateway, which
+    // requires Firebase App Check. On builds shipped without a
+    // GoogleService-Info plist the feature is unusable, so hide the whole
+    // section.
+    private var hasImbueBackend: Bool {
+        AppCheckBridge.shared.isAvailable
     }
 
     var body: some View {
@@ -1036,23 +1355,6 @@ struct BouncerSettingsView: View {
                     Text("This build has no bundled backend. Bring your own OpenAI, Anthropic, Gemini, or OpenRouter API key to classify posts.")
                 }
             }
-
-            // Site-specific settings, mirroring the desktop popup's per-platform
-            // accordions. Unlike desktop, iOS intentionally omits the per-site
-            // "enable Bouncer" master toggles — filtering is always on per site.
-            Section {
-                Toggle(isOn: Binding(
-                    get: { viewModel.filterReplies },
-                    set: { viewModel.setFilterReplies($0) }
-                )) {
-                    Text("Filter replies in conversations")
-                }
-            } header: {
-                Text("X (Twitter)")
-            }
-
-            // Note: YouTube's "show placeholder" toggle is intentionally omitted
-            // on iOS — filtered videos are always removed (hidden) on mobile.
 
             // AI text/image detection is available when either Imbue is configured
             // OR the on-device classifier model has been picked. There is no
@@ -1091,6 +1393,47 @@ struct BouncerSettingsView: View {
                                 viewModel.setAiTextDetectionThreshold(draftThreshold)
                             }
                         }
+                    }
+                    .padding(.vertical, 4)
+                    .disabled(!viewModel.aiDetectionOn)
+                    .opacity(viewModel.aiDetectionOn ? 1.0 : 0.5)
+
+                    // Replies/comments get their own (typically lower)
+                    // threshold — the desktop popup's "Comment confidence
+                    // threshold" slider. Same storage key the pipeline reads
+                    // for reply posts.
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text("Comment confidence threshold")
+                            Spacer()
+                            Text("\(Int(round(displayReplyThreshold * 100)))%")
+                                .foregroundStyle(.secondary)
+                                .monospacedDigit()
+                        }
+                        Slider(
+                            value: Binding(
+                                get: { displayReplyThreshold },
+                                set: { draftReplyThreshold = $0 }
+                            ),
+                            in: 0...1
+                        ) {
+                            Text("Comment confidence threshold")
+                        } minimumValueLabel: {
+                            Text("0%").font(.caption2).foregroundStyle(.secondary)
+                        } maximumValueLabel: {
+                            Text("100%").font(.caption2).foregroundStyle(.secondary)
+                        } onEditingChanged: { editing in
+                            if editing {
+                                draftReplyThreshold = viewModel.aiTextReplyDetectionThreshold
+                                isDraggingReply = true
+                            } else {
+                                isDraggingReply = false
+                                viewModel.setAiTextReplyDetectionThreshold(draftReplyThreshold)
+                            }
+                        }
+                        Text("Applied to replies and comments instead of the threshold above.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
                     }
                     .padding(.vertical, 4)
                     .disabled(!viewModel.aiDetectionOn)
@@ -1145,39 +1488,17 @@ struct BouncerSettingsView: View {
                     Text("Hide posts whose images appear to be AI-generated. Posts whose most-suspect image is at or above this confidence are hidden. Engages together with AI text detection, driven by your filter phrases.")
                 }
             }
-
-            Section {
-                Link(destination: URL(string: "https://x.com/Millanphilipose")!) {
-                    contactRow(icon: "x-logo", text: "X (@Millanphilipose)")
-                }
-                Link(destination: URL(string: "https://github.com/imbue-ai/bouncer")!) {
-                    contactRow(icon: "github-logo", text: "GitHub")
-                }
-                Link(destination: URL(string: "https://discord.gg/bcG87mkdN9")!) {
-                    contactRow(icon: "discord-logo", text: "Discord")
-                }
-            } header: {
-                Text("Contact us")
-            }
-
-            Section {
-                Link(destination: URL(string: "https://apps.apple.com/us/app/bouncer-heal-your-feed/id6759466393")!) {
-                    Label("Rate us on the App Store", systemImage: "star.fill")
-                }
-            } footer: {
-                Text("Enjoying Bouncer? Leave a review — it really helps.")
-            }
         }
-        .navigationTitle("Settings")
+        .navigationTitle("Advanced Settings")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
-            viewModel.loadFilterReplies()
             viewModel.loadSelectedModel()
             // Text-detection settings load whenever the section can appear:
             // Imbue available OR on-device model selected. Image-detection
             // settings stay gated on Imbue (no on-device image classifier).
             viewModel.loadAiDetectionState()
             viewModel.loadAiTextDetectionThreshold()
+            viewModel.loadAiTextReplyDetectionThreshold()
             if hasImbueBackend {
                 viewModel.loadAiImageDetectionThreshold()
             }
@@ -1260,6 +1581,45 @@ private let providerSpecs: [ProviderSpec] = [
 // one place so the comparison in selectModel/active-row logic doesn't
 // drift.
 let imbueModelKey = "imbue"
+
+// Shared by the main settings page's On-Device Model section and the
+// AI-providers model rows so the two surfaces never describe the same
+// download state differently.
+private func localModelStatusText(
+    _ model: LocalInferenceService.LocalModel,
+    _ status: LocalInferenceService.ModelStatus,
+    service: LocalInferenceService
+) -> String {
+    switch status {
+    case .notDownloaded:
+        return "Not downloaded — \(model.approxSize)"
+    case .downloading(let progress):
+        let pct = Int((progress * 100).rounded())
+        return "Downloading \(pct)% — \(service.downloadedBytesDisplay) / \(service.totalBytesDisplay)"
+    case .paused(let progress):
+        let pct = Int((progress * 100).rounded())
+        return "Paused at \(pct)%"
+    case .downloaded:
+        return "Downloaded — tap to use"
+    case .loading:
+        return "Loading…"
+    case .ready:
+        return "Ready — active"
+    case .error(let message):
+        return "Error: \(message)"
+    }
+}
+
+// Selection gate shared by the main settings page's On-Device row and the
+// AI-providers model rows: a local model is only selectable once its weights
+// are on disk. Before that the row is greyed out and the Download button
+// below it is the only affordance.
+private func localModelIsSelectable(_ status: LocalInferenceService.ModelStatus) -> Bool {
+    switch status {
+    case .downloaded, .ready: return true
+    default: return false
+    }
+}
 
 struct ProvidersSettingsView: View {
     @ObservedObject var viewModel: FilterSheetViewModel
@@ -1391,7 +1751,7 @@ struct ProvidersSettingsView: View {
             }
         } else {
             let status = localService.downloadStatus(for: model)
-            let ready = isReady(status)
+            let ready = localModelIsSelectable(status)
             Button {
                 guard ready else { return }
                 Task { await selectModel(model.selectedModelKey) }
@@ -1400,7 +1760,7 @@ struct ProvidersSettingsView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("\(model.displayName) (on-device)")
                             .foregroundStyle(ready ? .primary : .secondary)
-                        Text(onDeviceStatusText(model, status))
+                        Text(localModelStatusText(model, status, service: localService))
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
@@ -1421,37 +1781,6 @@ struct ProvidersSettingsView: View {
             }
 
             onDeviceActionButtons(model, status)
-        }
-    }
-
-    private func isReady(_ status: LocalInferenceService.ModelStatus) -> Bool {
-        switch status {
-        case .downloaded, .ready: return true
-        default: return false
-        }
-    }
-
-    private func onDeviceStatusText(
-        _ model: LocalInferenceService.LocalModel,
-        _ status: LocalInferenceService.ModelStatus
-    ) -> String {
-        switch status {
-        case .notDownloaded:
-            return "Not downloaded — \(model.approxSize)"
-        case .downloading(let progress):
-            let pct = Int((progress * 100).rounded())
-            return "Downloading \(pct)% — \(localService.downloadedBytesDisplay) / \(localService.totalBytesDisplay)"
-        case .paused(let progress):
-            let pct = Int((progress * 100).rounded())
-            return "Paused at \(pct)%"
-        case .downloaded:
-            return "Downloaded — tap to use"
-        case .loading:
-            return "Loading…"
-        case .ready:
-            return "Ready — active"
-        case .error(let message):
-            return "Error: \(message)"
         }
     }
 

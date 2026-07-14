@@ -1,7 +1,7 @@
 // iOS FAB, filtered modal, native sheet bridge
 
 import type { IOSDeps, DescriptionKey, SiteId } from '../types';
-import { clampThreshold, clampImageThreshold, getDescriptions, setDescriptions, getStorage, aiIntentAutoActive } from '../shared/storage';
+import { clampThreshold, clampImageThreshold, clampReplyThreshold, getDescriptions, setDescriptions, getStorage, aiIntentAutoActive } from '../shared/storage';
 import { platformById, descriptionsStorageKey } from '../shared/platforms';
 import { parseHTML } from '../shared/utils';
 import { shareFilterPackForIOS, toggleAiDetectionViaPhrases } from './ui';
@@ -28,6 +28,8 @@ interface FFWindow {
   __ff_getAiTextFilterEnabled?: () => Promise<boolean>;
   __ff_getAiTextDetectionThreshold?: () => Promise<number>;
   __ff_setAiTextDetectionThreshold?: (value: number) => Promise<void>;
+  __ff_getAiTextReplyDetectionThreshold?: () => Promise<number>;
+  __ff_setAiTextReplyDetectionThreshold?: (value: number) => Promise<void>;
   __ff_getAiImageFilterEnabled?: () => Promise<boolean>;
   __ff_getAiImageDetectionThreshold?: () => Promise<number>;
   __ff_setAiImageDetectionThreshold?: (value: number) => Promise<void>;
@@ -159,6 +161,21 @@ export function initIOS(deps: IOSDeps) {
     const clamped = clampThreshold(n);
     console.log('[Bouncer][iOS] __ff_setAiTextDetectionThreshold:', clamped);
     await chrome.storage.local.set({ aiTextDetectionThreshold: clamped });
+  };
+
+  // Reply/comment AI-text threshold — the pipeline applies this instead of
+  // aiTextDetectionThreshold when the post is a reply (see the aiThreshold
+  // selection in background/pipeline.ts).
+  w.__ff_getAiTextReplyDetectionThreshold = async (): Promise<number> => {
+    const data = await chrome.storage.local.get(['aiTextReplyDetectionThreshold']);
+    return clampReplyThreshold(data.aiTextReplyDetectionThreshold);
+  };
+  w.__ff_setAiTextReplyDetectionThreshold = async (value: number): Promise<void> => {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return;
+    const clamped = clampReplyThreshold(n);
+    console.log('[Bouncer][iOS] __ff_setAiTextReplyDetectionThreshold:', clamped);
+    await chrome.storage.local.set({ aiTextReplyDetectionThreshold: clamped });
   };
 
   // AI-image-detection status bridge. Read-only, same single signal as the
