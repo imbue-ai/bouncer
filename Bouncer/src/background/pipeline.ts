@@ -250,12 +250,11 @@ function buildLiveDetectors(args: {
         const isAi = confidence >= threshold;
         const pct = `${(confidence * 100).toFixed(0)}%`;
         const source = args.useIosLocalAiText ? 'on-device' : 'cloud';
-        const emojiNote = emojiStrict ? ', strict emoji rule' : '';
         return {
           shouldHide: isAi,
           reasoning: isAi
-            ? `AI-generated text detected (${source}, confidence ${pct}${emojiNote})`
-            : `Text not detected as AI-generated (${source}, confidence ${pct}${emojiNote})`,
+            ? `AI-generated text detected (${source}, confidence ${pct})`
+            : `Text not detected as AI-generated (${source}, confidence ${pct})`,
           category: isAi ? 'AI-generated' : null,
           rawResponse: null,
         };
