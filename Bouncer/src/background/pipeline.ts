@@ -253,8 +253,8 @@ function buildLiveDetectors(args: {
         return {
           shouldHide: isAi,
           reasoning: isAi
-            ? `AI-generated text detected (${source}, confidence ${pct})`
-            : `Text not detected as AI-generated (${source}, confidence ${pct})`,
+            ? `AI-generated text detected (${source}, probability ${pct})`
+            : `Text not detected as AI-generated (${source}, probability ${pct})`,
           category: isAi ? 'AI-generated' : null,
           rawResponse: null,
         };
@@ -271,8 +271,8 @@ function buildLiveDetectors(args: {
         return {
           shouldHide: isAi,
           reasoning: isAi
-            ? `AI-generated image detected (confidence ${pct})`
-            : `Images not detected as AI-generated (confidence ${pct})`,
+            ? `AI-generated image detected (probability ${pct})`
+            : `Images not detected as AI-generated (probability ${pct})`,
           category: isAi ? 'AI-generated image' : null,
           rawResponse: null,
         };
