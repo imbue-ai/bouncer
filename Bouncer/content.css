@@ -2,13 +2,6 @@
 
 :root {
   --green-border-width: 2px;
-
-  /* Brand palette — single source of truth for Bouncer accent colors.
-   * Update these and every accent in the extension follows. */
-  --bouncer-accent: rgb(232, 153, 153);        /* #E89999 — primary pink (matches icon background) */
-  --bouncer-accent-border: rgb(212, 132, 132); /* #D48484 — outlines / card borders, slightly deeper for contrast on white */
-  --bouncer-accent-deep: rgb(196, 113, 113);   /* #C47171 — strong accents (rarely used) */
-  --bouncer-accent-soft: rgba(232, 153, 153, 0.1); /* tinted backgrounds, hover fills */
 }
 
 /* Base font for all Bouncer UI — applies directly to every child element
@@ -567,7 +560,10 @@
   bottom: -1px;
   width: var(--green-border-width);
   pointer-events: none;
-  z-index: 9999;
+  /* Above the post's own content, but well below page chrome (YT masthead
+     ~2030, our popover 2300). Previously 9999, which punched through the
+     YouTube masthead and chip rail when a pending post scrolled under them. */
+  z-index: 1;
   transition: background-color 0.3s ease;
 }
 
@@ -691,7 +687,7 @@
   width: 34px;
   border: none;
   background: transparent;
-  color: var(--bouncer-accent);
+  color: rgb(234, 133, 84);
   border-radius: 50%;
   cursor: pointer;
   padding: 0;
@@ -710,7 +706,7 @@
 }
 
 .ff-why-annoying-btn.ff-unfilter-btn:hover {
-  background: var(--bouncer-accent-soft);
+  background: rgba(234, 133, 84, 0.1);
 }
 
 .ff-why-annoying-btn svg {
@@ -772,6 +768,13 @@ article {
   border-top: 1px solid rgb(47, 51, 54);
 }
 
+/* Left-aligned: tooltip extends rightward from the button, so move the arrow
+ * to the left edge to keep it pointing at the button. */
+.ff-annoying-tooltip--align-left::after {
+  right: auto;
+  left: 12px;
+}
+
 @media (prefers-color-scheme: light) {
   .ff-annoying-tooltip::after {
     background: #ffffff;
@@ -793,7 +796,7 @@ article {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--bouncer-accent);
+  background: rgb(234, 133, 84);
   animation: ff-bounce 1.2s infinite ease-in-out;
 }
 
@@ -833,7 +836,7 @@ article {
 .ff-progress-fill {
   height: 100%;
   width: 5%;
-  background: var(--bouncer-accent);
+  background: rgb(234, 133, 84);
   border-radius: 2px;
   transition: width 0.4s ease;
 }
@@ -867,8 +870,8 @@ article {
 }
 
 .ff-annoying-chip:hover {
-  background: var(--bouncer-accent);
-  border-color: var(--bouncer-accent);
+  background: rgb(234, 133, 84);
+  border-color: rgb(234, 133, 84);
   color: #fff;
 }
 
@@ -900,7 +903,7 @@ article {
 }
 
 .ff-annoying-custom-wrapper:focus-within {
-  border-color: var(--bouncer-accent);
+  border-color: rgb(234, 133, 84);
 }
 
 .ff-annoying-custom-input {
@@ -935,7 +938,7 @@ article {
   height: 20px;
   margin-right: 5px;
   padding: 0;
-  background: var(--bouncer-accent);
+  background: rgb(234, 133, 84);
   border: none;
   border-radius: 50%;
   cursor: pointer;
@@ -1007,9 +1010,9 @@ article {
   border-color: #cfd9de;
 }
 .twitter-light .ff-annoying-chip:hover {
-  background: var(--bouncer-accent);
+  background: rgb(234, 133, 84);
   color: #fff;
-  border-color: var(--bouncer-accent);
+  border-color: rgb(234, 133, 84);
 }
 .twitter-light .ff-annoying-thinking {
   color: #536471;
@@ -1024,7 +1027,7 @@ article {
   border-color: #cfd9de;
 }
 .twitter-light .ff-annoying-custom-wrapper:focus-within {
-  border-color: var(--bouncer-accent);
+  border-color: rgb(234, 133, 84);
 }
 .twitter-light .ff-annoying-custom-input {
   color: #0f1419;
@@ -1272,7 +1275,7 @@ article {
 .filter-phrases-container {
   padding: 12px 16px;
   background-color: rgb(0, 0, 0);
-  border: var(--green-border-width) solid var(--bouncer-accent-border);
+  border: var(--green-border-width) solid rgb(234, 133, 84);
   border-radius: 16px;
   display: flex;
   flex-direction: column
@@ -1288,37 +1291,60 @@ article {
 }
 
 .ff-signin-explanation {
-  margin: 8px 0 0;
-  font-size: 13px;
-  color: rgba(255, 255, 255, 0.5);
+  margin: 14px 0 0;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.45);
   text-align: center;
-  line-height: 1.4;
+  /* Distribute words evenly across lines instead of a long first line with
+     a short orphan below. */
+  text-wrap: balance;
+  line-height: 1.45;
 }
 
 .light-mode .ff-signin-explanation {
-  color: rgba(0, 0, 0, 0.45);
+  color: rgba(0, 0, 0, 0.4);
 }
 
+/* Outlined in the same orange as the filter-box border (see
+   .filter-phrases-container), transparent fill so it sits on any theme. */
 .google-signin-btn {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 10px 20px;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.08);
+  padding: 15px 20px;
+  border: 1.5px solid rgb(234, 133, 84);
+  border-radius: 10px;
+  background: rgba(234, 133, 84, 0.08);
   color: inherit;
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 15px;
+  font-weight: 700;
   cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
+  transition: background 0.15s;
   width: 100%;
   justify-content: center;
 }
 
 .google-signin-btn:hover {
-  background: rgba(255, 255, 255, 0.14);
-  border-color: rgba(255, 255, 255, 0.35);
+  background: rgba(234, 133, 84, 0.18);
+}
+
+/* Instant feedback on press: transition disabled so the color changes on the
+   very frame of the click. The .signing-in class (set while the auth request
+   is in flight) holds the same pressed look until the auth window opens.
+   CASCADE TRAP: you're hovering while you click, so any hover rule that
+   outranks these selectors (higher specificity, or equal specificity later
+   in the file — e.g. a .light-mode hover override) silently masks the
+   pressed state. Keep these the last background rules for this button. */
+.google-signin-btn:active,
+.google-signin-btn.signing-in,
+.light-mode .google-signin-btn:active,
+.light-mode .google-signin-btn.signing-in {
+  transition: none;
+  background: rgba(234, 133, 84, 0.32);
+}
+
+.google-signin-btn.signing-in {
+  cursor: default;
 }
 
 .google-signin-btn .google-icon {
@@ -1327,14 +1353,150 @@ article {
   flex-shrink: 0;
 }
 
-.light-mode .google-signin-btn {
-  border-color: rgba(0, 0, 0, 0.15);
-  background: rgba(0, 0, 0, 0.04);
+.skip-signin-btn {
+  margin: 12px 0 0;
+  padding: 4px 8px;
+  border: none;
+  background: none;
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 13px;
+  cursor: pointer;
+  transition: color 0.15s;
 }
 
-.light-mode .google-signin-btn:hover {
-  background: rgba(0, 0, 0, 0.08);
-  border-color: rgba(0, 0, 0, 0.25);
+.skip-signin-btn:hover {
+  color: #ffffff;
+}
+
+.skip-signin-arrow {
+  margin-left: 4px;
+  font-size: 11px;
+  transition: transform 0.15s;
+}
+
+.skip-signin-btn:hover .skip-signin-arrow {
+  transform: translateX(2px);
+}
+
+/* While anonymous sign-in is in flight, the arrow becomes a spinner: a
+   tapered arc (comet) rather than a full ring, so the rotation is visible. */
+.skip-signin-arrow.spinning {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  vertical-align: -1.5px;
+  border-radius: 50%;
+  background: conic-gradient(from 0deg, transparent 0deg 60deg, currentColor 360deg);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 1.5px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 1.5px));
+  transition: none;
+  /* Promote to its own compositor layer so the rotation stays smooth even
+     while the page's main thread is busy. */
+  will-change: transform;
+  backface-visibility: hidden;
+  animation: skip-signin-spin 0.45s linear infinite;
+}
+
+/* Both keyframes are explicit so the animation is a pure rotation. With only
+   a `to`, the implicit `from` inherits the hover translateX(2px), and the
+   browser matrix-interpolates between mismatched transforms — a wobbly path
+   that also can't composite, so it freezes while the main thread is busy. */
+@keyframes skip-signin-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.light-mode .skip-signin-btn {
+  color: rgba(0, 0, 0, 0.85);
+}
+
+.light-mode .skip-signin-btn:hover {
+  color: #000000;
+}
+
+/* Guest-limit popup (shown when an anonymous user exhausts their free filters) */
+.bouncer-guest-popup-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+  animation: backdrop-fade-in 0.1s ease-out;
+}
+
+@keyframes backdrop-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.bouncer-guest-popup {
+  position: relative;
+  box-sizing: border-box;
+  width: min(360px, calc(100vw - 40px));
+  padding: 28px 24px 24px;
+  border-radius: 16px;
+  background: #15202b;
+  border: 1px solid #38444d;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+  color: #ffffff;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  text-align: center;
+  animation: popup-fade-in 0.15s ease-out;
+}
+
+.dim-mode .bouncer-guest-popup {
+  background: #1e2732;
+}
+
+.light-mode .bouncer-guest-popup {
+  background: #ffffff;
+  border-color: rgba(0, 0, 0, 0.12);
+  color: #0f1419;
+}
+
+.bouncer-guest-popup-close {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  border: none;
+  background: none;
+  color: inherit;
+  opacity: 0.6;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 6px;
+  transition: opacity 0.15s;
+}
+
+.bouncer-guest-popup-close:hover {
+  opacity: 1;
+}
+
+.bouncer-guest-popup-msg {
+  margin: 0 0 20px;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.45;
+}
+
+/* The popup reuses .google-signin-btn for the sign-in action */
+.bouncer-guest-popup .google-signin-btn {
+  width: 100%;
+}
+
+/* Guest-limit variant is the headline of its state, not fine print — keep it
+   at full message size despite the smaller .ff-signin-explanation base. */
+.ff-guest-limit-msg {
+  margin: 12px 0 0;
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .filter-phrases-header {
@@ -1395,7 +1557,7 @@ article {
 }
 
 .filter-phrases-container .filter-phrases-input:focus {
-  border-bottom-color: var(--bouncer-accent) !important;
+  border-bottom-color: rgb(234, 133, 84) !important;
   box-shadow: none !important;
 }
 
@@ -1405,6 +1567,12 @@ article {
   top: 0;
   left: 4px;
   right: 4px;
+  /* `1.2em` would resolve against whatever font-size the parent inherits
+     (16px on Twitter, 14px on YouTube), but the spans inside are sized to
+     1.2 × 15px = 18px. Pin font-size to 15px so the container height
+     matches the span height regardless of platform — otherwise the bottom
+     of the text gets clipped (e.g. on YT). */
+  font-size: 15px;
   height: 1.2em;
   overflow: hidden;
   pointer-events: none;
@@ -1581,7 +1749,7 @@ article {
 /* Light mode styles */
 .light-mode .filter-phrases-container {
   background-color: rgb(255, 255, 255);
-  border-color: var(--bouncer-accent-border);
+  border-color: rgb(200, 110, 65);
 }
 
 .light-mode .filter-phrases-label,
@@ -1726,7 +1894,7 @@ article {
   bottom: 0;
   z-index: 10000;
   background-color: rgb(0, 0, 0);
-  border: 2px solid var(--bouncer-accent);
+  border: 2px solid rgb(234, 133, 84);
   border-bottom: none;
   border-radius: 16px 16px 0 0;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -1749,7 +1917,7 @@ article {
   height: 0;
   border-left: 6px solid transparent;
   border-right: 6px solid transparent;
-  border-top: 6px solid var(--bouncer-accent);
+  border-top: 6px solid rgb(234, 133, 84);
   transition: transform 0.2s;
 }
 
@@ -1809,7 +1977,7 @@ article {
 
 .filter-phrases-mobile .filter-phrases-container {
   background-color: rgb(0, 0, 0);
-  border: 2px solid var(--bouncer-accent);
+  border: 2px solid rgb(234, 133, 84);
   border-radius: 16px;
   padding: 12px 16px;
 }
@@ -2658,11 +2826,10 @@ body.ff-ios .ff-ios-page.dark-mode .ff-ios-page-header {
 .bouncer-update-banner {
   position: relative;
   margin-bottom: 10px;
-  padding: 10px 32px 10px 14px;
+  padding: 10px 32px 10px 12px;
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-left: 4px solid var(--bouncer-accent);
+  background: rgba(255, 196, 87, 0.10);
+  border: 1px solid rgba(255, 196, 87, 0.35);
   font-size: 13px;
   line-height: 1.35;
 }
@@ -2670,7 +2837,6 @@ body.ff-ios .ff-ios-page.dark-mode .ff-ios-page-header {
 .bouncer-update-banner-title {
   font-weight: 700;
   margin-bottom: 4px;
-  color: var(--bouncer-accent);
 }
 
 .bouncer-update-banner-bullets {
@@ -2703,14 +2869,9 @@ body.ff-ios .ff-ios-page.dark-mode .ff-ios-page-header {
 }
 
 .light-mode .bouncer-update-banner {
-  background: rgba(0, 0, 0, 0.025);
-  border-color: rgba(0, 0, 0, 0.08);
-  border-left-color: var(--bouncer-accent);
-  color: rgb(15, 20, 25);
-}
-
-.light-mode .bouncer-update-banner-title {
-  color: var(--bouncer-accent-deep);
+  background: rgba(190, 130, 40, 0.10);
+  border-color: rgba(190, 130, 40, 0.35);
+  color: rgb(80, 50, 0);
 }
 
 .dim-mode .bouncer-update-banner,
@@ -2785,5 +2946,275 @@ body.ff-ios .ff-ios-page.dark-mode .ff-ios-page-header {
 .ff-capture .filter-settings-btn,
 .ff-capture .filter-signout-btn {
   display: none;
+}
+
+/* ======================================
+   linkedin adaptation: sidebar z-index + filtered-posts card style
+   ====================================== */
+
+/* linkedin adaptation: LinkedIn's promoted cards and "People also viewed" rails
+   can have very high z-index values. Raise the filter sidebar as high as
+   possible so it always floats above them. The Twitter in-wrapper constraint
+   (stay below z=2 search bar) does not apply to LinkedIn. */
+.filter-phrases-sidebar--linkedin {
+  /* linkedin adaptation: 9999 beats native LinkedIn ads/modals but stays below
+     the filtered-modal-backdrop (z-index: 10000) so the sidebar appears behind
+     the "View filtered" popup rather than floating on top of it. */
+  z-index: 9999;
+}
+
+/* linkedin adaptation: hide the Twitter-specific "Share filters" button. */
+.filter-phrases-sidebar--linkedin .filter-pack-share-btn {
+  display: none;
+}
+
+/* linkedin adaptation: the ::before fill is a Twitter-specific hack that masks
+   "Subscribe to Premium" content scrolling under the fixed box. LinkedIn has
+   no such element and the fill bleeds into the nav bar — disable it entirely. */
+.filter-phrases-sidebar--linkedin::before {
+  display: none;
+}
+
+/* ---- LinkedIn-style filtered posts panel ---- */
+
+/* linkedin adaptation: column layout — header row (avatar+meta) above full-width body. */
+.slop-post--linkedin {
+  flex-direction: column;
+  padding: 0;
+  gap: 0;
+}
+.slop-post-linkedin-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 12px 16px 6px;
+}
+
+/* linkedin adaptation: pin the category tag to the top-right of the card.
+   The meta column varies in height (1–2 line headlines), so the default
+   `align-items: center` floats the tag to the vertical middle. Anchor it to the
+   top instead so it sits consistently beside the author's name row. */
+.filtered-view-container--linkedin .slop-post-top {
+  align-items: flex-start;
+}
+.filtered-view-container--linkedin .slop-category-tag {
+  margin-top: 2px;
+}
+
+/* Name row: [name] [badge] • [degree] — all inline, centered. */
+.slop-post-name-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.slop-li-badge-icon {
+  flex-shrink: 0;
+  vertical-align: middle;
+}
+.slop-post-degree-sep,
+.slop-post-degree {
+  font-size: 13px;
+  color: rgba(0, 0, 0, 0.55);
+}
+
+/* Headline: truncate with ellipsis to keep the header compact. */
+.slop-post-linkedin-headline {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: normal !important;
+}
+
+/* Timestamp row: [time] • [globe] */
+.slop-post-time-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 12px;
+  color: rgba(0, 0, 0, 0.55);
+  margin-top: 2px;
+}
+.slop-li-globe-icon {
+  color: rgba(0, 0, 0, 0.55);
+  flex-shrink: 0;
+}
+
+/* linkedin adaptation: feed background matches LinkedIn's off-white (#f3f2ef). */
+.filtered-view-container--linkedin .slop-posts-container {
+  background: #f3f2ef;
+  padding: 8px;
+  gap: 0;
+}
+
+/* linkedin adaptation: each post is a white card with rounded corners and a
+   subtle shadow — identical to LinkedIn's feed card appearance. */
+.filtered-view-container--linkedin .slop-post-wrapper {
+  background: #fff;
+  border: none;
+  border-radius: 8px;
+  margin-bottom: 8px;
+  overflow: hidden;
+}
+.filtered-view-container--linkedin .slop-post-link {
+  color: inherit;
+}
+.filtered-view-container--linkedin .slop-post-link:hover {
+  background: rgba(0, 0, 0, 0.02);
+}
+
+/* linkedin adaptation: 48px avatar, no circular crop (LinkedIn uses square with
+   rounded corners for company logos; circular for people). Keep circle. */
+.filtered-view-container--linkedin .slop-post-avatar {
+  width: 48px;
+  height: 48px;
+  flex-shrink: 0;
+}
+.filtered-view-container--linkedin .slop-avatar-initial {
+  font-size: 20px;
+}
+
+/* linkedin adaptation: post row padding matches LinkedIn's card inner spacing. */
+.filtered-view-container--linkedin .slop-post {
+  padding: 12px 16px 0;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+/* linkedin adaptation: author name + timestamp stacked vertically.
+   LinkedIn shows name, then headline, then "Xd •" timestamp — no @handle. */
+.filtered-view-container--linkedin .slop-post-meta {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0;
+}
+.filtered-view-container--linkedin .slop-post-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: rgba(0, 0, 0, 0.9);
+  line-height: 1.4;
+}
+/* The "handle" slot holds headline + timestamp on LinkedIn. */
+.filtered-view-container--linkedin .slop-post-handle {
+  font-size: 12px;
+  color: rgba(0, 0, 0, 0.6);
+  white-space: normal;
+  line-height: 1.3;
+}
+
+/* linkedin adaptation: post body text — LinkedIn uses 14px, black, with
+   natural paragraph spacing. */
+.filtered-view-container--linkedin .slop-post-text {
+  font-size: 14px;
+  color: rgba(0, 0, 0, 0.9);
+  line-height: 1.5;
+  margin-bottom: 0;
+  padding: 8px 16px 0;
+}
+.filtered-view-container--linkedin .slop-post-body {
+  padding-bottom: 0;
+}
+
+/* linkedin adaptation: truncation — collapse to ~5 lines and fade the bottom. */
+.filtered-view-container--linkedin .slop-post-text--collapsible {
+  max-height: 7.5em;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(to bottom, black 55%, transparent 100%);
+  mask-image: linear-gradient(to bottom, black 55%, transparent 100%);
+}
+
+/* linkedin adaptation: "...more" expand button styled like LinkedIn's inline link. */
+.slop-post-expand-btn {
+  display: block;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px 16px 0;
+  font-size: 14px;
+  font-weight: 400;
+  color: rgba(0, 0, 0, 0.6);
+}
+.slop-post-expand-btn:hover {
+  color: rgba(0, 0, 0, 0.9);
+  text-decoration: underline;
+}
+
+/* linkedin adaptation: LinkedIn blue links. */
+.filtered-view-container--linkedin .slop-post-text a,
+.filtered-view-container--linkedin .slop-quote-text a {
+  color: #0a66c2;
+}
+
+/* linkedin adaptation: reasoning box inside the card, full-width. */
+.filtered-view-container--linkedin .slop-post-reasoning {
+  margin: 8px 16px 0;
+  border-left-color: rgba(0, 0, 0, 0.12);
+  background: rgba(0, 0, 0, 0.03);
+  color: rgba(0, 0, 0, 0.55);
+}
+
+/* linkedin adaptation: actions row padding. */
+.filtered-view-container--linkedin .slop-post-actions {
+  padding: 6px 16px 12px;
+}
+.filtered-view-container--linkedin .slop-restore {
+  color: rgba(0, 0, 0, 0.55);
+  font-size: 14px;
+}
+.filtered-view-container--linkedin .slop-restore:hover {
+  color: rgba(0, 0, 0, 0.9);
+}
+
+/* ---- Dark-mode overrides for the LinkedIn panel ---- */
+.filtered-view-container--linkedin.dark-mode .slop-posts-container {
+  background: #1b1f23;
+}
+.filtered-view-container--linkedin.dark-mode .slop-post-wrapper {
+  background: #1d2226;
+}
+.filtered-view-container--linkedin.dark-mode .slop-post-name {
+  color: rgba(255, 255, 255, 0.9);
+}
+.filtered-view-container--linkedin.dark-mode .slop-post-handle {
+  color: rgba(255, 255, 255, 0.6);
+}
+.filtered-view-container--linkedin.dark-mode .slop-post-text {
+  color: rgba(255, 255, 255, 0.9);
+}
+.filtered-view-container--linkedin.dark-mode .slop-post-reasoning {
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.55);
+  border-left-color: rgba(255, 255, 255, 0.12);
+}
+.filtered-view-container--linkedin.dark-mode .slop-restore {
+  color: rgba(255, 255, 255, 0.55);
+}
+.filtered-view-container--linkedin.dark-mode .slop-restore:hover {
+  color: rgba(255, 255, 255, 0.9);
+}
+.filtered-view-container--linkedin.dark-mode .slop-post-text a,
+.filtered-view-container--linkedin.dark-mode .slop-quote-text a {
+  color: #70b5f9;
+}
+.filtered-view-container--linkedin.dark-mode .slop-post-link:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+.filtered-view-container--linkedin.dark-mode .slop-post-expand-btn {
+  color: rgba(255, 255, 255, 0.6);
+}
+.filtered-view-container--linkedin.dark-mode .slop-post-expand-btn:hover {
+  color: rgba(255, 255, 255, 0.9);
+}
+.filtered-view-container--linkedin.dark-mode .slop-post-degree-sep,
+.filtered-view-container--linkedin.dark-mode .slop-post-degree {
+  color: rgba(255, 255, 255, 0.55);
+}
+.filtered-view-container--linkedin.dark-mode .slop-post-time-row {
+  color: rgba(255, 255, 255, 0.55);
+}
+.filtered-view-container--linkedin.dark-mode .slop-li-globe-icon {
+  color: rgba(255, 255, 255, 0.55);
 }
 
