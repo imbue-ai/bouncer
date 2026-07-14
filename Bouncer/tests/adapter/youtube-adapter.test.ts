@@ -237,8 +237,8 @@ describe('insertActionButton', () => {
     const svg = btn.querySelector('svg')!;
     expect(svg).not.toBeNull();
     expect(svg.getAttribute('data-icon')).toBeNull();
-    // First path of the YT-native "not interested" circle-with-slash glyph.
-    expect(svg.querySelector('path')?.getAttribute('d')).toMatch(/^M12 1C5\.925 1 1 5\.925/);
+    // First path of CANCEL_SVG, the YT-styled trash glyph.
+    expect(svg.querySelector('path')?.getAttribute('d')).toMatch(/^M3 6h18/);
   });
 
   it('clones YT button-shape classes and wrapper so YT styling drives the look', () => {
