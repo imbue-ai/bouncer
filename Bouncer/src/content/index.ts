@@ -3,6 +3,7 @@
 
 import type { PlatformAdapter, PostContent, PipelineResponse, BackgroundToContentMessage, DescriptionKey } from '../types';
 import { getStorage, removeStorage, getDescriptions, setDescriptions } from '../shared/storage';
+import { enabledStorageKey } from '../shared/platforms';
 import { FILTER_PACK_CODE_PREFIX } from '../shared/share-encoding';
 
 import {
@@ -17,6 +18,7 @@ import {
   getFilteredPosts, getFilteredTabActive,
   updateTheme,
   injectFilterPhrasesInput, injectBottomFilterBox, injectMobileFilterBox,
+  injectBannerFilterBox,
   syncFilterPhrases, addFilterPhrase, removeFilterPhrase,
   showSettingsModal, renderFilteredPostsView,
   initModelLoadingListener,
@@ -29,6 +31,7 @@ import {
   setupSearchBarHide,
   initDetectorStates,
   updateDetectorState,
+  isGuestLimitReached,
 } from './ui';
 
 import { formatPostForEvaluation } from '../shared/utils';
@@ -186,7 +189,9 @@ import { formatPostForEvaluation } from '../shared/utils';
     await chrome.runtime.sendMessage({
       type: 'clearSinglePost',
       post: formatPostForEvaluation(content),
-      imageUrls: content.imageUrls || []
+      imageUrls: content.imageUrls || [],
+      postUrl: content.postUrl || null,
+      siteId: adapter.siteId
     });
 
     postReasonings.delete(article);
@@ -195,32 +200,51 @@ import { formatPostForEvaluation } from '../shared/utils';
 
   const MAX_STORE_RETRIES = 3;
 
+  // In-app WKWebView mode. The store extractors are injected into the page
+  // world natively (see FilteredWebView.swift), so the same store-based
+  // extraction desktop uses works here too. We prefer the store and fall back
+  // to DOM only for surfaces the extractor doesn't cover (e.g. mobile YouTube
+  // watch cards), rather than the desktop retry-via-observer dance.
+  const isInApp = typeof chrome !== 'undefined' && chrome._polyfilled;
+
   // Evaluate a post using the background script
   async function evaluatePost(article: HTMLElement) {
+    console.log('[Bouncer] evaluatePost called, isInApp:', isInApp);
+    // Guest trial exhausted — stop filtering until the user signs in.
+    if (isGuestLimitReached()) return;
+
     let content: PostContent | undefined;
 
-    // Extract post content from platform store (preferred source). On iOS the
-    // fiber-extractor is injected into the page's main world by the native
-    // host (see FilteredWebView.swift), so the same store path works there.
-    try {
-      content = await adapter.extractPostContentFromStore(article) ?? undefined;
-    } catch { /* store not ready */ }
+    if (isInApp) {
+      // Prefer store extraction (same path as desktop); fall back to DOM for
+      // surfaces the page-world extractor doesn't cover (e.g. mobile watch).
+      try {
+        content = await adapter.extractPostContentFromStore(article) ?? undefined;
+      } catch { /* extractor not ready */ }
+      if (!content) content = extractPostContent(article);
+      console.log('[Bouncer] extraction (fromStore=' + (content?.fromStore === true) + '):', content?.text?.substring(0, 80));
+    } else {
+      // Extension: extract post content from platform store (preferred source)
+      try {
+        content = await adapter.extractPostContentFromStore(article) ?? undefined;
+      } catch { /* store not ready */ }
 
-    // If store returned nothing, defer for MutationObserver to retry
-    if (!content) {
-      const retries = parseInt(article.dataset.ffStoreRetries || '0', 10);
-      if (retries >= MAX_STORE_RETRIES) {
-        console.warn('[Bouncer] Store extraction failed after', MAX_STORE_RETRIES, 'retries, skipping post');
-        postReasonings.set(article, {
-          shouldHide: false,
-          reasoning: 'Could not extract post data from store.'
-        });
-        markPostVerified(article);
+      // If store returned nothing, defer for MutationObserver to retry
+      if (!content) {
+        const retries = parseInt(article.dataset.ffStoreRetries || '0', 10);
+        if (retries >= MAX_STORE_RETRIES) {
+          console.warn('[Bouncer] Store extraction failed after', MAX_STORE_RETRIES, 'retries, skipping post');
+          postReasonings.set(article, {
+            shouldHide: false,
+            reasoning: 'Could not extract post data from store.'
+          });
+          markPostVerified(article);
+          return;
+        }
+        article.dataset.ffStoreRetries = String(retries + 1);
+        processedPosts.delete(article);
         return;
       }
-      article.dataset.ffStoreRetries = String(retries + 1);
-      processedPosts.delete(article);
-      return;
     }
 
     // Clear retry counter on success
@@ -241,7 +265,6 @@ import { formatPostForEvaluation } from '../shared/utils';
     const evaluationId = crypto.randomUUID();
     registerEvaluation(evaluationId, article);
     try {
-      console.log('[Bouncer] Sending evaluatePost message for:', content.text?.substring(0, 60));
       const evaluatePromise = chrome.runtime.sendMessage({
           type: 'evaluatePost',
           evaluationId,
@@ -253,7 +276,6 @@ import { formatPostForEvaluation } from '../shared/utils';
         });
       const response = await evaluatePromise as PipelineResponse;
       releaseEvaluation(evaluationId);
-      console.log('[Bouncer] evaluatePost response:', JSON.stringify(response)?.substring(0, 200));
 
       // Clear processing tracker when this post's evaluation completes
       if (content.postUrl && content.postUrl === currentlyProcessingPostUrl) {
@@ -516,6 +538,20 @@ import { formatPostForEvaluation } from '../shared/utils';
       if (getFilteredTabActive() || getFFPageActive()) return;
 
       for (const mutation of mutations) {
+        // SPA back-nav case: YT re-renders the inner subtree of an existing
+        // post (e.g. swaps the metadata host) WITHOUT re-adding the
+        // `yt-lockup-view-model` wrapper, so `selectors.mutations` below
+        // misses it. Walk up from the mutation target to find the
+        // containing post and re-attach the trash button if it's been
+        // wiped. The button-add call is idempotent, so this is a no-op
+        // when nothing was lost.
+        if (mutation.target instanceof Element && mutation.addedNodes.length > 0) {
+          const containerPost = mutation.target.closest<HTMLElement>(adapter.selectors.post);
+          if (containerPost && !containerPost.querySelector('.ff-why-annoying-btn')) {
+            addWhyAnnoyingButton(containerPost);
+          }
+        }
+
         for (const node of mutation.addedNodes) {
           if (node.nodeType !== Node.ELEMENT_NODE) continue;
           const el = node as HTMLElement;
@@ -533,6 +569,10 @@ import { formatPostForEvaluation } from '../shared/utils';
               const article = mutEl.closest<HTMLElement>(adapter.selectors.post);
               if (article) {
                 schedulePostReeval(article);
+                // Re-hydration may have wiped out our trash button (its anchor
+                // is a child of the freshly rendered lockup). Re-inject — the
+                // call is idempotent, so it's a no-op when the button survives.
+                addWhyAnnoyingButton(article);
               }
             });
         }
@@ -548,11 +588,37 @@ import { formatPostForEvaluation } from '../shared/utils';
   // ==================== Init ====================
 
   async function init() {
-    const data = await getStorage(['enabled', 'filterReplies']);
-    enabled = data.enabled !== false;
+    // Per-platform master switch. `adapter.siteId` is the source of truth
+    // for which storage key gates this run. Default true so installs that
+    // pre-date the toggle keep filtering as before. The {id}Enabled naming
+    // convention is centralized in the platform registry.
+    const platformKey = enabledStorageKey(adapter.siteId);
+    const data = await getStorage(['enabled', 'filterReplies', platformKey]);
+    let globalEnabled = data.enabled !== false;
+    const platformEnabled = data[platformKey] !== false;
+    enabled = globalEnabled && platformEnabled;
     // Treat undefined as true so users on builds released before this
     // setting existed keep their current behavior.
     filterReplies = data.filterReplies !== false;
+
+    // Platform is off — don't inject any UI, don't observe posts, don't
+    // wire up any listeners beyond the one that watches for re-enable.
+    // The adapter constructor may have already injected platform-specific
+    // chrome (e.g. YT's mini-guide entry); strip it now and let CSS
+    // (`body.bouncer-disabled`) suppress anything its observers re-add.
+    if (!platformEnabled) {
+      document.body.classList.add('bouncer-disabled');
+      document.querySelectorAll('.bouncer-mini-guide-entry, .bouncer-title-logo').forEach(el => el.remove());
+      // A full reload is the cleanest way to bring all Bouncer UI back
+      // when the user flips the toggle on — re-threading observers and
+      // injectors mid-page isn't worth the maintenance burden.
+      chrome.storage.onChanged.addListener((changes) => {
+        if (changes[platformKey] && changes[platformKey].newValue !== false) {
+          location.reload();
+        }
+      });
+      return;
+    }
 
     await checkLocalModelActive();
     await checkAuthStatus();
@@ -562,14 +628,19 @@ import { formatPostForEvaluation } from '../shared/utils';
       processExistingPosts();
     }
 
+
     // Always run the import-code transform, even on pages where filter
     // classification is gated off (profiles, notifications, lists, etc.) —
     // users should be able to import shared filter packs from anywhere.
     observeImportCodes();
 
-    injectFilterPhrasesInput();
-    injectBottomFilterBox();
-    injectMobileFilterBox();
+    if (adapter.filterBoxPlacement === 'banner') {
+      injectBannerFilterBox();
+    } else {
+      injectFilterPhrasesInput();
+      injectBottomFilterBox();
+      injectMobileFilterBox();
+    }
 
     initModelLoadingListener();
 
@@ -600,8 +671,15 @@ import { formatPostForEvaluation } from '../shared/utils';
 
     // Listen for settings changes
     chrome.storage.onChanged.addListener((changes) => {
+      // Platform toggle flipped off — reload so the script re-runs into the
+      // disabled branch and tears everything down cleanly.
+      if (changes[platformKey] && changes[platformKey].newValue === false) {
+        location.reload();
+        return;
+      }
       if (changes.enabled) {
-        enabled = changes.enabled.newValue as boolean;
+        globalEnabled = changes.enabled.newValue !== false;
+        enabled = globalEnabled && platformEnabled;
         if (enabled) {
           observePosts();
           processExistingPosts();
@@ -804,14 +882,26 @@ import { formatPostForEvaluation } from '../shared/utils';
       }
       case 'getPositions': {
         const positions: Record<string, number> = {};
-        const viewportCenter = window.innerHeight / 2;
+        // Anchor on viewport bottom so "about to be seen" tweets get top
+        // priority (classify before the user scrolls them into view) and
+        // already-scrolled-past tweets are heavily deprioritized — hiding
+        // them after the user has already read them provides no UX benefit.
+        const ABOVE_VIEWPORT_PENALTY = 1e6;
         const postUrlsSet = new Set<string>(message.postUrls || []);
         const evaluationIds = message.evaluationIds || [];
 
         const distanceFor = (article: HTMLElement) => {
           const rect = article.getBoundingClientRect();
+          if (rect.bottom <= 0) {
+            // Fully above viewport (scrolled past) — penalize.
+            return ABOVE_VIEWPORT_PENALTY + (-rect.bottom);
+          }
+          // In viewport or below — distance from the bottom edge. Tweets
+          // just below the fold score ~0 (highest priority); tweets at the
+          // top of the viewport score ~vh (still get classified, but after
+          // upcoming tweets).
           const postCenter = rect.top + rect.height / 2;
-          return Math.abs(postCenter - viewportCenter);
+          return Math.abs(postCenter - window.innerHeight);
         };
 
         const allPosts = findPosts();

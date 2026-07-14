@@ -35,7 +35,20 @@ export const PREDEFINED_MODELS: PredefinedModelsMap = {
   ],
   anthropic: [
     { name: 'claude-haiku-4-5-20251001', display: 'Claude Haiku 4.5' }
-  ]
+  ],
+  iosLocal: [
+    {
+      name: 'gemma-4-e4b',
+      display: 'Gemma 4 E4B (on-device)',
+      isLocal: true,
+      supportsImages: false,
+      // ~3.7 GB base .litertlm (upstream Gemma 4 E4B IT from litert-community).
+      // AI-text classification runs in Swift on top of the chat decode logits
+      // via the bundled linear_v3_head.bin (LayerNorm + Linear → 4 classes),
+      // so no separate adapter download is needed.
+      sizeGB: 3.7,
+    },
+  ],
 };
 
 // Default model: 'imbue' when the Imbue backend is configured at build
@@ -51,7 +64,8 @@ export const API_DISPLAY_NAMES: Record<string, string> = {
   anthropic: 'Anthropic',
   openrouter: 'OpenRouter',
   imbue: 'Imbue',
-  local: 'Local'
+  local: 'Local',
+  iosLocal: 'On-device (iOS)'
 };
 
 export const API_BASE_URLS: Record<string, string> = {

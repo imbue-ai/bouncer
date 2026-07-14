@@ -3,6 +3,8 @@ import type { ChatMessage } from '../../src/types';
 import {
   parseAPIResponse,
   generateCacheKey,
+  cacheKeyFor,
+  youtubeVideoIdFromUrl,
   checkRateLimitError,
   checkApiError,
   checkAuthenticationError,
@@ -133,6 +135,59 @@ describe('generateCacheKey', () => {
     const key3 = generateCacheKey('test', []);
     expect(key1).toBe(key3);
     expect(key2).toBe(key3);
+  });
+});
+
+// ==================== youtubeVideoIdFromUrl ====================
+
+describe('youtubeVideoIdFromUrl', () => {
+  it('extracts the id from a /watch?v= URL', () => {
+    expect(youtubeVideoIdFromUrl('https://www.youtube.com/watch?v=dQw4w9WgXcQ')).toBe('dQw4w9WgXcQ');
+  });
+
+  it('extracts the id from a /shorts/ URL', () => {
+    expect(youtubeVideoIdFromUrl('https://www.youtube.com/shorts/shortID12345')).toBe('shortID12345');
+  });
+
+  it('ignores extra query params and keeps the v id', () => {
+    expect(youtubeVideoIdFromUrl('https://www.youtube.com/watch?v=abc123XYZ_-&list=PL1&t=30')).toBe('abc123XYZ_-');
+  });
+
+  it('returns null for non-video / malformed URLs', () => {
+    expect(youtubeVideoIdFromUrl('https://www.youtube.com/feed/subscriptions')).toBeNull();
+    expect(youtubeVideoIdFromUrl('')).toBeNull();
+    expect(youtubeVideoIdFromUrl(null)).toBeNull();
+    expect(youtubeVideoIdFromUrl('not a url')).toBeNull();
+  });
+});
+
+// ==================== cacheKeyFor ====================
+
+describe('cacheKeyFor', () => {
+  it('keys YouTube purely on the video id, ignoring title/channel and thumbnail', () => {
+    const a = cacheKeyFor('youtube', 'Rick Astley: Never Gonna Give You Up',
+      ['https://i.ytimg.com/vi/dQw4w9WgXcQ/mqdefault.jpg'], 'https://www.youtube.com/watch?v=dQw4w9WgXcQ');
+    // Same video, different rendered title text + different thumbnail variant.
+    const b = cacheKeyFor('youtube', 'Rick Astley: Never Gonna Give You Up (Official Video)',
+      ['https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg'], 'https://www.youtube.com/watch?v=dQw4w9WgXcQ');
+    expect(a).toBe('yt:dQw4w9WgXcQ');
+    expect(a).toBe(b);
+  });
+
+  it('gives different YouTube keys for different videos', () => {
+    const a = cacheKeyFor('youtube', 'same title', [], 'https://www.youtube.com/watch?v=AAAAAAAAAAA');
+    const b = cacheKeyFor('youtube', 'same title', [], 'https://www.youtube.com/watch?v=BBBBBBBBBBB');
+    expect(a).not.toBe(b);
+  });
+
+  it('falls back to the text/image key for YouTube when no video id is derivable', () => {
+    const key = cacheKeyFor('youtube', 'Channel: Title', ['http://a.jpg'], null);
+    expect(key).toBe(generateCacheKey('Channel: Title', ['http://a.jpg']));
+  });
+
+  it('uses the text/image key for non-YouTube platforms', () => {
+    const key = cacheKeyFor('twitter', 'user: tweet text', ['http://a.jpg'], 'https://x.com/user/status/1');
+    expect(key).toBe(generateCacheKey('user: tweet text', ['http://a.jpg']));
   });
 });
 

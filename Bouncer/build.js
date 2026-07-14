@@ -102,8 +102,11 @@ const imbuePlugins = hasImbue ? [] : [imbueStubPlugin];
 
 const litertlmStub = { '@litert-lm/core': path.join(__dirname, 'litertlm-stub.js') };
 
-const adapterTsPath = path.join(__dirname, 'adapters/twitter/TwitterAdapter.ts');
-const hasAdapterTs = fs.existsSync(adapterTsPath);
+const adapters = [
+  { name: 'TwitterAdapter', path: path.join(__dirname, 'adapters/twitter/TwitterAdapter.ts') },
+  { name: 'YouTubeAdapter', path: path.join(__dirname, 'adapters/youtube/YouTubeAdapter.ts') },
+  { name: 'LinkedInAdapter', path: path.join(__dirname, 'adapters/linkedin/LinkedInAdapter.ts') },
+].filter((a) => fs.existsSync(a.path));
 
 // Copy LiteRT-LM's wasm loader + binaries into dist/litertlm-wasm/ so the
 // offscreen document can resolve them via chrome.runtime.getURL(...). The
@@ -231,11 +234,13 @@ async function build() {
 
   const contexts = [bgCtx, offscreenCtx, otherCtx, signinBridgeCtx, ...stubbedIifeCtxs];
 
-  // Type-strip the adapter (unbundled, standalone content script)
-  if (hasAdapterTs) {
+  // Type-strip each platform adapter (unbundled, standalone content script).
+  // Each adapter ships as its own dist/<Name>.js and is loaded by the manifest
+  // entry for that site, so adding a new adapter is just a new entry here.
+  for (const adapter of adapters) {
     const adapterCtx = await esbuild.context({
-      entryPoints: [adapterTsPath],
-      outfile: path.join(__dirname, 'dist/TwitterAdapter.js'),
+      entryPoints: [adapter.path],
+      outfile: path.join(__dirname, `dist/${adapter.name}.js`),
       bundle: false,
       format: 'iife',
       platform: 'browser',
@@ -251,8 +256,9 @@ async function build() {
     await Promise.all(contexts.map(c => c.rebuild()));
     await Promise.all(contexts.map(c => c.dispose()));
 
+    const adapterOutputs = adapters.map((a) => `dist/${a.name}.js`).join(', ');
     console.log(`Build complete (env: ${env}): dist/background.js, dist/offscreen.js, dist/popup.js, dist/content.js, dist/background-app.js, dist/popup-app.js` +
-      (hasAdapterTs ? ', dist/TwitterAdapter.js' : ''));
+      (adapterOutputs ? `, ${adapterOutputs}` : ''));
   }
 }
 

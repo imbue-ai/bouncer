@@ -2,7 +2,7 @@
 
 import { toBlob } from 'html-to-image';
 import { asyncHandler } from '../shared/async';
-import { cleanReasoning, escapeHtml, formatPostForEvaluation, parseHTML } from '../shared/utils';
+import { cleanReasoning, escapeHtml, formatPostForEvaluation, parseHTML, GUEST_FILTER_LIMIT } from '../shared/utils';
 import { init as initPopup } from '../popup/index';
 import {
   encodeFilterPackCode, decodeFilterPackCode, buildFilterPackShareUrl,
@@ -25,7 +25,7 @@ export function initUI(deps: ContentUIDeps) {
   // injection guards think no box exists — resulting in duplicate UI.
   // Proactively remove any leftover boxes from a prior injection.
   const stale = document.querySelectorAll(
-    '.filter-phrases-sidebar, .filter-phrases-bottom, .filter-phrases-mobile'
+    '.filter-phrases-sidebar, .filter-phrases-bottom, .filter-phrases-mobile, .filter-phrases-banner'
   );
   console.log('[Bouncer] initUI: clearing', stale.length, 'stale filter box(es) from prior injection');
   stale.forEach((el) => el.remove());
@@ -40,12 +40,26 @@ export function initUI(deps: ContentUIDeps) {
     if (message.type === 'authStateChanged') {
       console.log('[Bouncer] authStateChanged received:', message);
       isAuthenticated = message.authenticated;
+      if (typeof message.isAnonymous === 'boolean') {
+        isAnonymous = message.isAnonymous;
+      }
+      // A real (non-anonymous) sign-in lifts the guest gate; dismiss any popup.
+      if (isAuthenticated && !isAnonymous) {
+        guestLimitReached = false;
+        dismissGuestLimitPopup();
+      }
       if (isAuthenticated) {
         console.log('[Bouncer] Calling refreshAllFilterBoxes after auth');
         refreshAllFilterBoxes();
       } else {
         console.log('[Bouncer] authenticated=false, skipping refresh');
       }
+    } else if (message.type === 'guestLimitReached') {
+      console.log('[Bouncer] guestLimitReached received');
+      guestLimitReached = true;
+      showGuestLimitPopup();
+      // Re-render boxes into the gated state behind the popup.
+      refreshAllFilterBoxes();
     }
   });
 }
@@ -93,6 +107,29 @@ let apiKeyWarningShown = false;
 // can't drop us back onto it.
 let isAuthenticated = process.env.HAS_IMBUE_BACKEND !== 'true';
 
+// Guest trial state. `isAnonymous` is true when the user chose "Skip for now"
+// (Firebase anonymous auth) rather than signing in with Google/Apple.
+// `guestLimitReached` gates the UI and post processing once an anonymous user
+// has filtered GUEST_FILTER_LIMIT posts (counted persistently in the
+// background as `anonFilterCount`).
+let isAnonymous = false;
+let guestLimitReached = false;
+
+// Whether the guest trial is exhausted — read by the content script to stop
+// submitting posts for evaluation.
+export function isGuestLimitReached() { return guestLimitReached; }
+
+// Recompute `guestLimitReached` from the persistent count. Only anonymous
+// desktop users are ever gated; iOS is always anonymous by design and excluded.
+async function refreshGuestLimitState() {
+  if (process.env.HAS_IMBUE_BACKEND !== 'true' || !isAnonymous || _deps.IS_IOS) {
+    guestLimitReached = false;
+    return;
+  }
+  const { anonFilterCount } = await getStorage(['anonFilterCount']);
+  guestLimitReached = (anonFilterCount || 0) >= GUEST_FILTER_LIMIT;
+}
+
 // Check auth status from background and cache it
 async function checkAuthStatus() {
   if (process.env.HAS_IMBUE_BACKEND !== 'true') {
@@ -100,11 +137,14 @@ async function checkAuthStatus() {
     return isAuthenticated;
   }
   try {
-    const response: { authenticated?: boolean; isSafari?: boolean } = await chrome.runtime.sendMessage({ type: 'getAuthStatus' });
+    const response: { authenticated?: boolean; isSafari?: boolean; isAnonymous?: boolean } = await chrome.runtime.sendMessage({ type: 'getAuthStatus' });
     isAuthenticated = response?.authenticated ?? false;
+    isAnonymous = response?.isAnonymous ?? false;
   } catch {
     isAuthenticated = false;
+    isAnonymous = false;
   }
+  await refreshGuestLimitState();
   return isAuthenticated;
 }
 
@@ -119,8 +159,37 @@ const isSafari = /^((?!chrome|android|crios|fxios|edg|opr).)*safari/i.test(navig
 // lowercase "dev" — case-insensitive compare covers both.
 const IS_DEV_BUILD = (process.env.BOUNCER_ENV || '').toLowerCase() === 'dev';
 
-// Launch sign-in via background script (Google on Chrome, Apple on Safari)
-async function launchSignIn() {
+// Shown when an anonymous guest exhausts their free filters. The no-break
+// space glues the em dash to "limit" so a line break lands after the dash,
+// not before it.
+const GUEST_LIMIT_MESSAGE = "You've reached the guest limit — sign in to keep using Bouncer.";
+
+// Markup for the Google (Chrome) / Apple (Safari) sign-in button, shared by the
+// initial prompt, the guest-limit prompt, and the guest-limit popup.
+function signinButtonHTML(label: string) {
+  if (isSafari) {
+    return `<button class="google-signin-btn">${escapeHtml(label)}</button>`;
+  }
+  return `
+    <button class="google-signin-btn">
+      <svg class="google-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#4285F4"/>
+        <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+        <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
+        <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+      </svg>
+      ${escapeHtml(label)}
+    </button>`;
+}
+
+// Launch sign-in via background script (Google on Chrome, Apple on Safari).
+// The button is disabled against double-clicks until the flow resolves, but
+// visually returns to its normal color on release — a held pressed look reads
+// as lag during the pause before the auth window opens.
+async function launchSignIn(btn?: HTMLButtonElement) {
+  if (btn) {
+    btn.disabled = true;
+  }
   try {
     if (isSafari) {
       // Safari: opens sign-in page in a new tab. Auth state change will come via broadcast.
@@ -131,11 +200,56 @@ async function launchSignIn() {
     console.log('[Bouncer] Launching Google sign-in...');
     const response: { success?: boolean } = await chrome.runtime.sendMessage({ type: 'launchAuth' });
     if (response?.success) {
+      // Real Google sign-in — clears the guest gate permanently.
       isAuthenticated = true;
+      isAnonymous = false;
+      guestLimitReached = false;
+      dismissGuestLimitPopup();
       refreshAllFilterBoxes();
     }
   } catch (err) {
     console.error('[Bouncer] Sign-in failed:', err);
+  } finally {
+    // On success the surrounding UI is torn down anyway, so this only
+    // matters on failure/cancel — re-enable so the user can retry.
+    if (btn) {
+      btn.disabled = false;
+    }
+  }
+}
+
+// "Skip for now" — sign in anonymously via the background script so the user
+// can use Bouncer without a Google/Apple account. While the request is in
+// flight, the button's arrow becomes a spinner; on success the surrounding UI
+// is torn down anyway, so the arrow is only restored on failure.
+async function skipSignIn(btn?: HTMLButtonElement) {
+  const arrow = btn?.querySelector<HTMLElement>('.skip-signin-arrow');
+  if (btn) btn.disabled = true;
+  if (arrow) {
+    arrow.textContent = '';
+    arrow.classList.add('spinning');
+  }
+  const restoreArrow = () => {
+    if (btn) btn.disabled = false;
+    if (arrow) {
+      arrow.classList.remove('spinning');
+      arrow.textContent = '→';
+    }
+  };
+  try {
+    console.log('[Bouncer] Skipping sign-in (anonymous auth)...');
+    const response: { success?: boolean } = await chrome.runtime.sendMessage({ type: 'skipAuth' });
+    if (response?.success) {
+      isAuthenticated = true;
+      isAnonymous = true;
+      dismissGuestLimitPopup();
+      refreshAllFilterBoxes();
+    } else {
+      restoreArrow();
+    }
+  } catch (err) {
+    restoreArrow();
+    console.error('[Bouncer] Anonymous sign-in failed:', err);
   }
 }
 
@@ -145,7 +259,7 @@ async function launchSignIn() {
 // (Safari re-injects when the user changes per-site permissions).
 function refreshAllFilterBoxes() {
   const existing = document.querySelectorAll(
-    '.filter-phrases-sidebar, .filter-phrases-bottom, .filter-phrases-mobile'
+    '.filter-phrases-sidebar, .filter-phrases-bottom, .filter-phrases-mobile, .filter-phrases-banner'
   );
   console.log('[Bouncer] refreshAllFilterBoxes: removing', existing.length, 'existing box(es)');
   existing.forEach((el) => el.remove());
@@ -153,65 +267,126 @@ function refreshAllFilterBoxes() {
   bottomFilterContainer = null;
   mobileFilterContainer = null;
 
-  injectFilterPhrasesInput();
-  injectBottomFilterBox();
-  injectMobileFilterBox();
+  if (_deps.adapter.filterBoxPlacement === 'banner') {
+    injectBannerFilterBox();
+  } else {
+    injectFilterPhrasesInput();
+    injectBottomFilterBox();
+    injectMobileFilterBox();
+  }
 
-  // Trigger post processing now that we're authenticated
-  if (isAuthenticated && _deps.processExistingPosts) {
+  // Trigger post processing now that we're authenticated (but not while the
+  // guest trial is exhausted — filtering stays paused until sign-in).
+  if (isAuthenticated && !guestLimitReached && _deps.processExistingPosts) {
     _deps.processExistingPosts();
   }
 }
 
-// HTML for the sign-in state shown inside filter boxes
+// HTML for the initial sign-in state shown inside filter boxes (with the
+// "Try it without signing in" guest option).
 function getSignInHTML() {
-  if (isSafari) {
-    return `
-      <div class="filter-phrases-container">
-        <span class="filter-phrases-box-name">Bouncer</span>
-        <div class="filter-signin-prompt">
-          <button class="google-signin-btn">
-            Activate Bouncer
-          </button>
-          <p class="ff-signin-explanation">Sign in to start filtering your feed</p>
-        </div>
-      </div>
-    `;
-  }
   return `
     <div class="filter-phrases-container">
       <span class="filter-phrases-box-name">Bouncer</span>
       <div class="filter-signin-prompt">
-        <button class="google-signin-btn">
-          <svg class="google-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-            <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#4285F4"/>
-            <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
-            <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
-            <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
-          </svg>
-          Activate Bouncer
-        </button>
-        <p class="ff-signin-explanation">Google sign-in helps us prevent abuse</p>
+        ${signinButtonHTML(isSafari ? 'Continue with Apple' : 'Continue with Google')}
+        <button class="skip-signin-btn">Try it without signing in<span class="skip-signin-arrow" aria-hidden="true">→</span></button>
+        <p class="ff-signin-explanation">Signing in helps us prevent abuse. We do not collect or store any identifying data.</p>
       </div>
     </div>
   `;
 }
 
-// Wire up the sign-in button click handler inside a container
+// HTML for the guest-limit state — shown after an anonymous user hits the
+// trial limit. Same sign-in button, but no "Skip for now" (trial is used).
+function getGuestLimitHTML() {
+  return `
+    <div class="filter-phrases-container">
+      <span class="filter-phrases-box-name">Bouncer</span>
+      <div class="filter-signin-prompt">
+        ${signinButtonHTML(isSafari ? 'Sign in with Apple' : 'Sign in with Google')}
+        <p class="ff-signin-explanation ff-guest-limit-msg">${escapeHtml(GUEST_LIMIT_MESSAGE)}</p>
+      </div>
+    </div>
+  `;
+}
+
+// The appropriate gate screen for the current state.
+function getGateHTML() {
+  return guestLimitReached ? getGuestLimitHTML() : getSignInHTML();
+}
+
+// ==================== Guest-limit popup ====================
+
+let guestLimitPopup: HTMLElement | null = null;
+
+function dismissGuestLimitPopup() {
+  if (guestLimitPopup) {
+    guestLimitPopup.remove();
+    guestLimitPopup = null;
+  }
+}
+
+// Centered modal sign-in popup. Two variants:
+//  - 'signin': the user isn't signed in at all (hasn't chosen Google/Apple or
+//    the guest trial). Offers the sign-in button plus the "Trial without
+//    signing in" guest option.
+//  - 'guestLimit': an anonymous user has exhausted the trial. Offers sign-in
+//    only — no skip, since the trial is used up.
+// The X or a click on the backdrop dismisses the popup (any gated filter box
+// stays gated underneath); the sign-in button runs the normal Google/Apple flow.
+function showSignInPopup(variant: 'signin' | 'guestLimit') {
+  if (guestLimitPopup && guestLimitPopup.isConnected) return; // idempotent
+  dismissGuestLimitPopup();
+
+  const message = variant === 'guestLimit'
+    ? GUEST_LIMIT_MESSAGE
+    : 'Sign in to use Bouncer.';
+  const skipButtonHTML = variant === 'signin'
+    ? `<button class="skip-signin-btn">Try it without signing in<span class="skip-signin-arrow" aria-hidden="true">→</span></button>`
+    : '';
+
+  const theme = _deps.adapter.getThemeMode();
+  const backdrop = document.createElement('div');
+  backdrop.className = `bouncer-guest-popup-backdrop ${theme}-mode`;
+  backdrop.replaceChildren(parseHTML(`
+    <div class="bouncer-guest-popup" role="dialog" aria-modal="true">
+      <button class="bouncer-guest-popup-close" aria-label="Close">×</button>
+      <p class="bouncer-guest-popup-msg">${escapeHtml(message)}</p>
+      ${signinButtonHTML(isSafari ? 'Sign in with Apple' : 'Sign in with Google')}
+      ${skipButtonHTML}
+    </div>
+  `));
+  document.body.appendChild(backdrop);
+  guestLimitPopup = backdrop;
+
+  backdrop.querySelector('.bouncer-guest-popup-close')
+    ?.addEventListener('click', () => dismissGuestLimitPopup());
+  backdrop.addEventListener('click', (e) => {
+    if (e.target === backdrop) dismissGuestLimitPopup();
+  });
+  const popupSigninBtn = backdrop.querySelector<HTMLButtonElement>('.google-signin-btn');
+  popupSigninBtn?.addEventListener('click', asyncHandler(() => launchSignIn(popupSigninBtn)));
+  const popupSkipBtn = backdrop.querySelector<HTMLButtonElement>('.skip-signin-btn');
+  popupSkipBtn?.addEventListener('click', asyncHandler(() => skipSignIn(popupSkipBtn)));
+}
+
+// Shown the moment an anonymous user crosses the trial limit (broadcast from
+// the background). Thin wrapper over the shared popup.
+function showGuestLimitPopup() {
+  showSignInPopup('guestLimit');
+}
+
+// Wire up the sign-in button click handler inside a container.
+// launchSignIn handles the platform split (Google popup vs Apple tab).
 function setupSignInButton(container: HTMLElement) {
-  if (isSafari) {
-    const btn = container.querySelector('.google-signin-btn');
-    if (btn) {
-      btn.addEventListener('click', asyncHandler(async () => {
-        console.log('[Bouncer] Opening sign-in page...');
-        await chrome.runtime.sendMessage({ type: 'launchAuth' });
-      }));
-    }
-  } else {
-    const btn = container.querySelector('.google-signin-btn');
-    if (btn) {
-      btn.addEventListener('click', asyncHandler(launchSignIn));
-    }
+  const signinBtn = container.querySelector<HTMLButtonElement>('.google-signin-btn');
+  if (signinBtn) {
+    signinBtn.addEventListener('click', asyncHandler(() => launchSignIn(signinBtn)));
+  }
+  const skipBtn = container.querySelector<HTMLButtonElement>('.skip-signin-btn');
+  if (skipBtn) {
+    skipBtn.addEventListener('click', asyncHandler(() => skipSignIn(skipBtn)));
   }
 }
 
@@ -530,9 +705,14 @@ export function injectFilterPhrasesInput() {
   filterPhrasesContainer.className = usingWrapper
     ? 'filter-phrases-sidebar filter-phrases-sidebar--in-wrapper'
     : 'filter-phrases-sidebar';
+  // linkedin adaptation: raise z-index so LinkedIn promoted/ad cards in the
+  // right rail don't overlap the filter box.
+  if (_deps.adapter.siteId === 'linkedin') {
+    filterPhrasesContainer.classList.add('filter-phrases-sidebar--linkedin');
+  }
 
-  if (process.env.HAS_IMBUE_BACKEND === 'true' && !isAuthenticated) {
-    filterPhrasesContainer.replaceChildren(parseHTML(getSignInHTML()));
+  if (process.env.HAS_IMBUE_BACKEND === 'true' && (!isAuthenticated || guestLimitReached)) {
+    filterPhrasesContainer.replaceChildren(parseHTML(getGateHTML()));
     insertParent.insertBefore(filterPhrasesContainer, insertBeforeRef);
     if (usingWrapper && wrapper) setupFixedInWrapper(filterPhrasesContainer, wrapper);
     updateTheme();
@@ -757,12 +937,12 @@ export function injectBottomFilterBox() {
   bottomFilterContainer = document.createElement('div');
   bottomFilterContainer.className = 'filter-phrases-bottom expanded';
 
-  if (process.env.HAS_IMBUE_BACKEND === 'true' && !isAuthenticated) {
+  if (process.env.HAS_IMBUE_BACKEND === 'true' && (!isAuthenticated || guestLimitReached)) {
     bottomFilterContainer.replaceChildren(parseHTML(`
       <div class="filter-collapse-handle">
         <span class="filter-collapse-chevron"></span>
       </div>
-      ${getSignInHTML()}
+      ${getGateHTML()}
     `));
     document.body.appendChild(bottomFilterContainer);
     updateBottomFilterPosition();
@@ -851,8 +1031,8 @@ export function injectMobileFilterBox() {
   mobileFilterContainer = document.createElement('div');
   mobileFilterContainer.className = 'filter-phrases-mobile';
 
-  if (process.env.HAS_IMBUE_BACKEND === 'true' && !isAuthenticated) {
-    mobileFilterContainer.replaceChildren(parseHTML(getSignInHTML()));
+  if (process.env.HAS_IMBUE_BACKEND === 'true' && (!isAuthenticated || guestLimitReached)) {
+    mobileFilterContainer.replaceChildren(parseHTML(getGateHTML()));
     nav.parentNode!.insertBefore(mobileFilterContainer, nav);
     updateTheme();
     setupSignInButton(mobileFilterContainer);
@@ -875,6 +1055,100 @@ export function injectMobileFilterBox() {
 
   // Update visibility based on current page
   updateMobileFilterVisibility();
+}
+
+// ==================== Banner Filter ====================
+// Used by platforms whose `filterBoxPlacement === 'banner'` (e.g. YouTube).
+// Reuses the same `filterPhrasesContainer` slot as the Twitter sidebar variant
+// so updateTheme(), syncFilterPhrases(), and refreshAllFilterBoxes() continue
+// to find and update the active filter UI without special-casing each
+// placement. The inserted node carries `.filter-phrases-banner` instead of
+// `.filter-phrases-sidebar` so platform-specific CSS can style it differently.
+
+function updateBannerFilterVisibility() {
+  if (!filterPhrasesContainer || !filterPhrasesContainer.isConnected) return;
+  if (!_deps.adapter.shouldProcessCurrentPage()) {
+    filterPhrasesContainer.remove();
+    filterPhrasesContainer = null;
+    return;
+  }
+  // SPA navigation between two processable pages (e.g. YT home ↔ watch)
+  // doesn't change `shouldProcessCurrentPage`, but `getFilterBoxAnchor`
+  // can return a different parent per page (drawer on home, `#secondary`
+  // on watch). When the box's current parent no longer matches the
+  // adapter's chosen anchor, tear it down so `handleDOMMutation` can
+  // re-inject at the right location.
+  const expected = _deps.adapter.getFilterBoxAnchor?.();
+  if (!expected) return;
+  if (filterPhrasesContainer.parentElement !== expected.parent) {
+    filterPhrasesContainer.remove();
+    filterPhrasesContainer = null;
+    return;
+  }
+  // Adapter pointed at the same parent, but YT may have inserted its own
+  // widgets (e.g. the watch-page autoplay/next panel) above our box after
+  // injection. Re-anchor so we stay at the top — needed for the sticky
+  // positioning on the watch sidebar to land above YT's own header row.
+  if (expected.insertBefore && filterPhrasesContainer !== expected.insertBefore
+      && filterPhrasesContainer.previousElementSibling) {
+    expected.parent.insertBefore(filterPhrasesContainer, expected.insertBefore);
+  }
+}
+
+export function injectBannerFilterBox() {
+  const adapter = _deps.adapter;
+  if (!adapter.getFilterBoxAnchor) {
+    console.warn('[Bouncer] injectBannerFilterBox: adapter has no getFilterBoxAnchor');
+    return;
+  }
+
+  // Adopt any existing banner from a prior content-script injection
+  if (!filterPhrasesContainer || !filterPhrasesContainer.isConnected) {
+    filterPhrasesContainer = document.querySelector<HTMLElement>('.filter-phrases-banner');
+  }
+  if (filterPhrasesContainer && filterPhrasesContainer.isConnected) {
+    updateBannerFilterVisibility();
+    return;
+  }
+
+  if (!adapter.shouldProcessCurrentPage()) return;
+
+  const anchor = adapter.getFilterBoxAnchor();
+  if (!anchor) return; // page chrome not ready yet — DOM observer will retry
+
+  filterPhrasesContainer = document.createElement('div');
+  filterPhrasesContainer.className = `filter-phrases-banner filter-phrases-banner--${adapter.siteId}`;
+
+  if (process.env.HAS_IMBUE_BACKEND === 'true' && !isAuthenticated) {
+    filterPhrasesContainer.replaceChildren(parseHTML(getSignInHTML()));
+    anchor.parent.insertBefore(filterPhrasesContainer, anchor.insertBefore);
+    updateTheme();
+    setupSignInButton(filterPhrasesContainer);
+    updateBannerFilterVisibility();
+    return;
+  }
+
+  const showSignOut = IS_DEV_BUILD && !_deps.IS_IOS;
+  filterPhrasesContainer.replaceChildren(parseHTML(buildFilterContainerHTML(showSignOut)));
+  anchor.parent.insertBefore(filterPhrasesContainer, anchor.insertBefore);
+
+  updateTheme();
+  updateFilteredTabCount();
+
+  setupFilterBoxEventHandlers(filterPhrasesContainer);
+  maybeRenderUpdateBanner(filterPhrasesContainer).catch(err =>
+    console.error('[UI] maybeRenderUpdateBanner failed (banner):', err));
+
+  const signOutBtn = filterPhrasesContainer.querySelector('.filter-signout-btn');
+  if (signOutBtn) {
+    signOutBtn.addEventListener('click', asyncHandler(async () => {
+      await chrome.runtime.sendMessage({ type: 'signOut' });
+      isAuthenticated = false;
+      refreshAllFilterBoxes();
+    }));
+  }
+
+  updateBannerFilterVisibility();
 }
 
 // ==================== Filter Phrases ====================
@@ -1291,7 +1565,7 @@ function buildImportButton(phrases: string[]): HTMLElement {
 // gating relies on.
 function pickVisibleBouncerLayout(): HTMLElement | null {
   const layouts = document.querySelectorAll<HTMLElement>(
-    '.filter-phrases-sidebar, .filter-phrases-bottom, .filter-phrases-mobile',
+    '.filter-phrases-sidebar, .filter-phrases-bottom, .filter-phrases-mobile, .filter-phrases-banner',
   );
   for (const layout of layouts) {
     if (layout.offsetParent !== null) return layout;
@@ -1685,6 +1959,19 @@ export function updateFilteredTabCount() {
   const shouldAnimate = newCount > previousFilteredCount;
   previousFilteredCount = newCount;
 
+  // Publish the count in two places so platform adapters can stay in sync:
+  //   1. A data attribute on `document.documentElement` — the persistent
+  //      mirror. Newly-injected consumers (e.g. YT's mini-guide badge
+  //      that gets created late) can read the current value directly.
+  //   2. A CustomEvent — the change notifier. Consumers already in place
+  //      re-render in response.
+  // `filteredPosts.length` remains the single source of truth; these are
+  // just publish surfaces.
+  document.documentElement.dataset.bouncerFilteredCount = String(newCount);
+  document.dispatchEvent(new CustomEvent('bouncer:filtered-count-changed', {
+    detail: { count: newCount, animate: shouldAnimate },
+  }));
+
   const containers = [filterPhrasesContainer, bottomFilterContainer, mobileFilterContainer];
   containers.forEach(container => {
     if (container && container.isConnected) {
@@ -1825,6 +2112,11 @@ export function toggleFilteredTab(active: boolean) {
 
       filteredViewContainer = document.createElement('div');
       filteredViewContainer.className = 'filtered-view-container';
+      // linkedin adaptation: tag the panel so its posts adopt LinkedIn's
+      // card visual style (white card, off-white feed background, etc.).
+      if (_deps.adapter.siteId === 'linkedin') {
+        filteredViewContainer.classList.add('filtered-view-container--linkedin');
+      }
 
       const header = document.createElement('div');
       header.className = 'filtered-modal-header';
@@ -1832,7 +2124,7 @@ export function toggleFilteredTab(active: boolean) {
         <button class="filtered-modal-close" aria-label="Close">
           <svg viewBox="0 0 24 24"><path d="M10.59 12L4.54 5.96l1.42-1.42L12 10.59l6.04-6.05 1.42 1.42L13.41 12l6.05 6.04-1.42 1.42L12 13.41l-6.04 6.05-1.42-1.42L10.59 12z"></path></svg>
         </button>
-        <span class="filtered-modal-title">Filtered posts</span>
+        <span class="filtered-modal-title">${_deps.adapter.siteId === 'youtube' ? 'Filtered videos' : 'Filtered posts'}</span>
       `));
 
       const content = document.createElement('div');
@@ -1877,13 +2169,202 @@ export function toggleFilteredTab(active: boolean) {
   }
 }
 
+// Builds the "Restore" button shared by every filtered-post layout. Clicking
+// it reports a false positive, removes the post from the panel, unhides the
+// original article in the feed, and overrides the cache so re-evaluation keeps
+// the post visible.
+function createRestoreButton(post: FilteredPost, postContent: PostContent): HTMLButtonElement {
+  const restoreBtn = document.createElement('button');
+  restoreBtn.className = 'slop-restore';
+  restoreBtn.textContent = 'Restore';
+  restoreBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    chrome.runtime.sendMessage({
+      type: 'sendFeedback',
+      siteId: _deps.adapter.siteId,
+      postUrl: postContent.postUrl || null,
+      tweetData: { text: post.evaluationText, imageUrls: postContent.imageUrls || [] },
+      rawResponse: post.rawResponse || '',
+      reasoning: post.reasoning || '',
+      decision: 'false_positive'
+    }).catch(err => console.error('[Bouncer] Undo feedback error:', err));
+
+    // Remove from filtered posts list
+    const key = postContent.postUrl || post.evaluationText.substring(0, 200);
+    const idx = filteredPosts.findIndex(p => (p.post.postUrl || p.evaluationText.substring(0, 200)) === key);
+    if (idx !== -1) filteredPosts.splice(idx, 1);
+    filteredPostKeys.delete(key);
+
+    // Try to unhide original article in the feed
+    for (const article of _deps.findPosts()) {
+      const postUrl = _deps.adapter.getPostUrl(article);
+      if (postUrl && postContent.postUrl && postUrl.includes(postContent.postUrl)) {
+        const container = _deps.adapter.getPostContainer(article);
+        container.style.display = '';
+        container.style.visibility = '';
+        delete container.dataset.filteredByExtension;
+        article.style.opacity = '';
+        article.style.transition = '';
+        _deps.processedPosts.delete(article);
+        markPostVerified(article);
+        break;
+      }
+    }
+
+    // Override cache so re-evaluation keeps post visible
+    chrome.runtime.sendMessage({
+      type: 'overrideCacheEntry',
+      post: post.evaluationText,
+      imageUrls: postContent.imageUrls || [],
+      postUrl: postContent.postUrl || null,
+      siteId: _deps.adapter.siteId,
+      shouldHide: false,
+      reasoning: 'User reported: false positive'
+    }).catch(err => console.error('[Bouncer] Override cache error:', err));
+
+    updateFilteredTabCount();
+    const outerContainer = restoreBtn.closest('.filtered-view-container') || restoreBtn.closest('.ff-ios-filtered-modal-backdrop');
+    const innerContainer = outerContainer?.querySelector('.filtered-modal-content') || outerContainer?.querySelector('.ff-ios-filtered-modal-content');
+    if (innerContainer) renderFilteredPostsView(innerContainer);
+  });
+  return restoreBtn;
+}
+
+// Wraps a built card in an <a> (so middle-click / ctrl-click open natively)
+// while keeping clicks on buttons/actions from navigating.
+function wrapInPostLink(card: HTMLElement, postUrl: string | null | undefined): HTMLElement {
+  if (!postUrl) return card;
+  const link = document.createElement('a');
+  link.href = postUrl;
+  link.className = 'slop-post-link';
+  link.addEventListener('click', (e) => {
+    if ((e.target as Element).closest('button, [role="button"], .slop-restore, .slop-post-actions')) {
+      e.preventDefault();
+    }
+  });
+  link.appendChild(card);
+  return link;
+}
+
+// YouTube-specific filtered-post card: thumbnail on top, then a channel-avatar
+// row with the video title, channel name and view/age metadata — mirroring
+// YouTube's own grid video lockups rather than the Twitter tweet layout.
+function buildYouTubeCard(post: FilteredPost): HTMLElement {
+  const { post: postContent } = post;
+  const isShort = !!postContent.postUrl?.includes('/shorts/');
+
+  const wrapper = document.createElement('div');
+  wrapper.className = 'slop-post-wrapper yt-card';
+
+  const card = document.createElement('div');
+  card.className = 'yt-card-inner';
+
+  // Category tag sits in its own right-aligned row above the thumbnail.
+  if (post.category) {
+    const tagRow = document.createElement('div');
+    tagRow.className = 'yt-card-tag-row';
+    const tag = document.createElement('span');
+    tag.className = 'slop-category-tag yt-card-tag';
+    tag.textContent = post.category.toUpperCase();
+    tagRow.appendChild(tag);
+    card.appendChild(tagRow);
+  }
+
+  // Thumbnail (prefer the adapter's higher-quality display URL)
+  const displayUrls = postContent.displayImageUrls?.length
+    ? postContent.displayImageUrls
+    : postContent.imageUrls;
+  const thumb = document.createElement('div');
+  thumb.className = 'yt-card-thumb';
+  if (isShort) thumb.classList.add('yt-card-thumb-short');
+  if (displayUrls && displayUrls.length > 0 && !postContent.mediaBlurred) {
+    const img = document.createElement('img');
+    img.src = displayUrls[0];
+    img.loading = 'lazy';
+    thumb.appendChild(img);
+  } else {
+    thumb.classList.add('yt-card-thumb-empty');
+  }
+  card.appendChild(thumb);
+
+  // Info row: channel avatar + text column
+  const info = document.createElement('div');
+  info.className = 'yt-card-info';
+
+  const avatar = document.createElement('div');
+  avatar.className = 'yt-card-avatar';
+  if (postContent.avatarUrl) {
+    const img = document.createElement('img');
+    img.src = postContent.avatarUrl;
+    avatar.appendChild(img);
+  } else if (isShort) {
+    avatar.classList.add('slop-avatar-shorts');
+    avatar.replaceChildren(parseHTML(
+      '<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
+      '<path d="M17.77 10.32l-1.2-.5L18 9.06a3.74 3.74 0 0 0-3.5-6.62L6.18 6.83a3.74 3.74 0 0 0 .04 6.62l1.2.5L6 14.94a3.74 3.74 0 0 0 3.5 6.62l8.32-4.39a3.74 3.74 0 0 0-.04-6.85zM10 15.5v-7l6 3.5-6 3.5z" fill="currentColor"/>' +
+      '</svg>'
+    ));
+  } else {
+    const initial = (postContent.author?.[0] || '?').toUpperCase();
+    const fallback = document.createElement('span');
+    fallback.className = 'slop-avatar-initial';
+    fallback.textContent = initial;
+    avatar.appendChild(fallback);
+  }
+  info.appendChild(avatar);
+
+  const textCol = document.createElement('div');
+  textCol.className = 'yt-card-text';
+
+  const title = document.createElement('div');
+  title.className = 'yt-card-title';
+  if (postContent.textHtml) {
+    title.replaceChildren(DOMPurify.sanitize(postContent.textHtml, { RETURN_DOM_FRAGMENT: true }));
+  } else {
+    title.textContent = postContent.text || post.evaluationText;
+  }
+  textCol.appendChild(title);
+
+  if (postContent.author) {
+    const channel = document.createElement('div');
+    channel.className = 'yt-card-channel';
+    channel.textContent = postContent.author;
+    textCol.appendChild(channel);
+  }
+  if (postContent.timeText) {
+    const meta = document.createElement('div');
+    meta.className = 'yt-card-meta';
+    meta.textContent = postContent.timeText;
+    textCol.appendChild(meta);
+  }
+  info.appendChild(textCol);
+  card.appendChild(info);
+
+  // Reasoning
+  const reasoning = document.createElement('div');
+  reasoning.className = 'slop-post-reasoning yt-card-reasoning';
+  reasoning.textContent = cleanReasoning(post.reasoning) || 'Filtered';
+  card.appendChild(reasoning);
+
+  // Actions
+  const actions = document.createElement('div');
+  actions.className = 'slop-post-actions';
+  actions.appendChild(createRestoreButton(post, postContent));
+  card.appendChild(actions);
+
+  wrapper.appendChild(wrapInPostLink(card, postContent.postUrl));
+  return wrapper;
+}
+
 export function renderFilteredPostsView(container: Element) {
+  const noun = _deps.adapter.siteId === 'youtube' ? 'videos' : 'posts';
   if (filteredPosts.length === 0) {
     container.replaceChildren(parseHTML(`
       <div class="filtered-posts-container">
         <div class="filtered-posts-empty">
-          No posts have been filtered out in this session.<br>
-          Removed posts will appear here.
+          No ${noun} have been filtered out in this session.<br>
+          Removed ${noun} will appear here.
         </div>
       </div>
     `));
@@ -1894,43 +2375,162 @@ export function renderFilteredPostsView(container: Element) {
   container.replaceChildren(parseHTML('<div class="slop-posts-container"></div>'));
   const postsContainer = container.querySelector('.slop-posts-container')!;
 
-  // Render posts in reverse order (newest first)
+  const isYouTube = _deps.adapter.siteId === 'youtube';
+
+  // Render posts in reverse order (newest first); YouTube uses video lockups,
+  // every other platform uses the tweet-style card.
   [...filteredPosts].reverse().forEach((post) => {
-    const { post: postContent } = post;
-    const wrapper = document.createElement('div');
-    wrapper.className = 'slop-post-wrapper';
+    postsContainer.appendChild(isYouTube ? buildYouTubeCard(post) : buildTwitterCard(post));
+  });
+}
 
-    // Main post row: avatar + body
-    const postRow = document.createElement('div');
-    postRow.className = 'slop-post';
+// linkedin adaptation: static SVG icons used inside LinkedIn filtered-post
+// cards. Defined here so buildTwitterCard's LinkedIn branch can pull them in
+// without leaking the implementation into a public/exported surface.
+function _liLinkedInBadge(): SVGElement {
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('width', '16'); svg.setAttribute('height', '16');
+  svg.setAttribute('viewBox', '0 0 16 16');
+  svg.setAttribute('aria-label', 'LinkedIn'); svg.setAttribute('role', 'img');
+  svg.classList.add('slop-li-badge-icon');
+  const bg = document.createElementNS(ns, 'rect');
+  bg.setAttribute('width', '16'); bg.setAttribute('height', '16');
+  bg.setAttribute('rx', '3'); bg.setAttribute('fill', '#0A66C2');
+  svg.appendChild(bg);
+  const iStem = document.createElementNS(ns, 'rect');
+  iStem.setAttribute('x', '2.5'); iStem.setAttribute('y', '6');
+  iStem.setAttribute('width', '2'); iStem.setAttribute('height', '7');
+  iStem.setAttribute('fill', 'white');
+  svg.appendChild(iStem);
+  const iDot = document.createElementNS(ns, 'circle');
+  iDot.setAttribute('cx', '3.5'); iDot.setAttribute('cy', '4'); iDot.setAttribute('r', '1.2');
+  iDot.setAttribute('fill', 'white');
+  svg.appendChild(iDot);
+  const n = document.createElementNS(ns, 'path');
+  n.setAttribute('fill', 'white');
+  n.setAttribute('d', 'M6.5 6h2v1.1C8.8 6.4 9.5 6 10.5 6 12.2 6 12.5 7.2 12.5 8.8V13h-2V9.3c0-.8-.2-1.4-1-1.4-.9 0-1 .6-1 1.5V13H6.5V6z');
+  svg.appendChild(n);
+  return svg;
+}
+function _liGlobeIcon(): SVGElement {
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('width', '14'); svg.setAttribute('height', '14');
+  svg.setAttribute('viewBox', '0 0 16 16');
+  svg.setAttribute('aria-hidden', 'true');
+  svg.classList.add('slop-li-globe-icon');
+  const p = document.createElementNS(ns, 'path');
+  p.setAttribute('fill', 'currentColor');
+  p.setAttribute('d', 'M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zM3.1 8.5h2.1c.1.9.3 1.8.6 2.5A5.5 5.5 0 0 1 3.1 8.5zm0-1A5.5 5.5 0 0 1 5.8 5c-.3.7-.5 1.6-.6 2.5H3.1zM8 13c-.5 0-1.4-1.6-1.6-3.5h3.2C9.4 11.4 8.5 13 8 13zm-1.6-4.5c.1-1.1.4-2 .8-2.7.2-.3.5-.5.8-.5s.6.2.8.5c.4.7.7 1.6.8 2.7H6.4zm4.5 0c-.1-.9-.3-1.8-.6-2.5A5.5 5.5 0 0 1 12.9 8.5h-2zm2 1a5.5 5.5 0 0 1-2.8 2.5c.3-.7.5-1.6.6-2.5h2.2z');
+  svg.appendChild(p);
+  return svg;
+}
 
-    // Avatar — show image if available, otherwise show initial as fallback
-    const avatar = document.createElement('div');
-    avatar.className = 'slop-post-avatar';
-    if (postContent.avatarUrl) {
-      const img = document.createElement('img');
-      img.src = postContent.avatarUrl;
-      avatar.appendChild(img);
-    } else {
-      // Fallback: show first letter of display name or handle
-      const initial = (postContent.author?.[0] || postContent.handle?.[1] || '?').toUpperCase();
-      const fallback = document.createElement('span');
-      fallback.className = 'slop-avatar-initial';
-      fallback.textContent = initial;
-      avatar.appendChild(fallback);
-    }
+// Twitter-style filtered-post card: avatar + body (name/handle, text, optional
+// quote, media, reasoning). LinkedIn shares this function but rearranges
+// avatar+meta into a header above a full-width body, swaps in LinkedIn-style
+// name/headline/time elements, and adds a "…more" expander for long text.
+// See buildYouTubeCard for the thumbnail-first YouTube layout.
+function buildTwitterCard(post: FilteredPost): HTMLElement {
+  const isLinkedIn = _deps.adapter.siteId === 'linkedin';
+  const { post: postContent } = post;
+  const wrapper = document.createElement('div');
+  wrapper.className = 'slop-post-wrapper';
+
+  // Main post row: avatar + body
+  const postRow = document.createElement('div');
+  postRow.className = 'slop-post';
+
+  // Avatar — show image if available, otherwise show initial as fallback
+  const avatar = document.createElement('div');
+  avatar.className = 'slop-post-avatar';
+  const isShort = !!postContent.postUrl?.includes('/shorts/');
+  if (postContent.avatarUrl) {
+    const img = document.createElement('img');
+    img.src = postContent.avatarUrl;
+    avatar.appendChild(img);
+  } else if (isShort) {
+    // Shorts don't expose channel info in the lockup payload, so an avatar
+    // initial would just be "?". Render the Shorts glyph instead.
+    avatar.classList.add('slop-avatar-shorts');
+    avatar.replaceChildren(parseHTML(
+      '<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
+      '<path d="M17.77 10.32l-1.2-.5L18 9.06a3.74 3.74 0 0 0-3.5-6.62L6.18 6.83a3.74 3.74 0 0 0 .04 6.62l1.2.5L6 14.94a3.74 3.74 0 0 0 3.5 6.62l8.32-4.39a3.74 3.74 0 0 0-.04-6.85zM10 15.5v-7l6 3.5-6 3.5z" fill="currentColor"/>' +
+      '</svg>'
+    ));
+  } else {
+    // Fallback: show first letter of display name or handle
+    const initial = (postContent.author?.[0] || postContent.handle?.[1] || '?').toUpperCase();
+    const fallback = document.createElement('span');
+    fallback.className = 'slop-avatar-initial';
+    fallback.textContent = initial;
+    avatar.appendChild(fallback);
+  }
+  // linkedin adaptation: avatar gets appended later as part of the header row
+  // (above the body). For everything else it goes side-by-side with the body.
+  if (!isLinkedIn) {
     postRow.appendChild(avatar);
+  }
 
-    // Body
-    const body = document.createElement('div');
-    body.className = 'slop-post-body';
+  // Body
+  const body = document.createElement('div');
+  body.className = 'slop-post-body';
 
-    // Top row: meta + category tag
-    const top = document.createElement('div');
-    top.className = 'slop-post-top';
+  // Top row: meta + category tag
+  const top = document.createElement('div');
+  top.className = 'slop-post-top';
 
-    const meta = document.createElement('div');
-    meta.className = 'slop-post-meta';
+  const meta = document.createElement('div');
+  meta.className = 'slop-post-meta';
+  if (isLinkedIn) {
+    // linkedin adaptation: structured 3-row header matching LinkedIn's
+    // native card. Row 1: [name] [in badge] • [degree]; Row 2: [headline,
+    // truncated]; Row 3: [time] • [globe icon].
+    const nameRow = document.createElement('div');
+    nameRow.className = 'slop-post-name-row';
+    if (postContent.author) {
+      const nameSpan = document.createElement('span');
+      nameSpan.className = 'slop-post-name';
+      nameSpan.textContent = postContent.author;
+      nameRow.appendChild(nameSpan);
+    }
+    nameRow.appendChild(_liLinkedInBadge());
+    if (postContent.degree) {
+      const sep = document.createElement('span');
+      sep.className = 'slop-post-degree-sep';
+      sep.setAttribute('aria-hidden', 'true');
+      sep.textContent = ' • ';
+      nameRow.appendChild(sep);
+      const degSpan = document.createElement('span');
+      degSpan.className = 'slop-post-degree';
+      degSpan.textContent = postContent.degree;
+      nameRow.appendChild(degSpan);
+    }
+    meta.appendChild(nameRow);
+
+    if (postContent.handle) {
+      // LinkedIn re-purposes the handle slot as the author's headline.
+      const headline = document.createElement('span');
+      headline.className = 'slop-post-handle slop-post-linkedin-headline';
+      headline.textContent = postContent.handle;
+      meta.appendChild(headline);
+    }
+
+    if (postContent.timeText) {
+      const timeRow = document.createElement('div');
+      timeRow.className = 'slop-post-time-row';
+      const timeSpan = document.createElement('span');
+      timeSpan.textContent = postContent.timeText;
+      timeRow.appendChild(timeSpan);
+      const sep = document.createElement('span');
+      sep.setAttribute('aria-hidden', 'true');
+      sep.textContent = ' • ';
+      timeRow.appendChild(sep);
+      timeRow.appendChild(_liGlobeIcon());
+      meta.appendChild(timeRow);
+    }
+  } else {
     if (postContent.author) {
       // Extract display name — author field has "DisplayName@handle · time" concatenated
       // Use handle to split if available, otherwise use full author string
@@ -1944,198 +2544,176 @@ export function renderFilteredPostsView(container: Element) {
       nameSpan.textContent = displayName;
       meta.appendChild(nameSpan);
     }
-    if (postContent.handle || postContent.timeText) {
+    // YouTube's `handle` (e.g. "/@channel") and `timeText` (e.g. "1.2M views • 3 months ago")
+    // aren't meaningful identity in the filtered card the way Twitter's `@handle` / "2h" are.
+    if ((postContent.handle || postContent.timeText) && _deps.adapter.siteId !== 'youtube') {
       const handleSpan = document.createElement('span');
       handleSpan.className = 'slop-post-handle';
       const parts = [postContent.handle, postContent.timeText].filter(Boolean);
       handleSpan.textContent = parts.join(' · ');
       meta.appendChild(handleSpan);
     }
-    top.appendChild(meta);
+  }
+  top.appendChild(meta);
 
-    if (post.category) {
-      // table_yesno (LiteRT-LM local Gemma) produces a comma-joined list of
-      // matched categories; the single-category XML path stores one name.
-      // Either way, split + render one badge per match. Wrap the tags in a
-      // flex group so `.slop-post-top`'s `justify-content: space-between`
-      // doesn't distribute siblings across the right column — keep them
-      // 5px apart instead.
-      const names = post.category.split(',').map(s => s.trim()).filter(Boolean);
-      if (names.length > 0) {
-        const tagGroup = document.createElement('div');
-        tagGroup.style.display = 'flex';
-        tagGroup.style.gap = '5px';
-        tagGroup.style.marginLeft = '8px';
-        for (const name of names) {
-          const tag = document.createElement('span');
-          tag.className = 'slop-category-tag';
-          tag.style.marginLeft = '0';
-          tag.textContent = name.toUpperCase();
-          tagGroup.appendChild(tag);
-        }
-        top.appendChild(tagGroup);
+  if (post.category) {
+    // table_yesno (LiteRT-LM local Gemma) produces a comma-joined list of
+    // matched categories; the single-category XML path stores one name.
+    // Either way, split + render one badge per match. Wrap the tags in a
+    // flex group so `.slop-post-top`'s `justify-content: space-between`
+    // doesn't distribute siblings across the right column — keep them
+    // 5px apart instead.
+    const names = post.category.split(',').map(s => s.trim()).filter(Boolean);
+    if (names.length > 0) {
+      const tagGroup = document.createElement('div');
+      tagGroup.style.display = 'flex';
+      tagGroup.style.gap = '5px';
+      tagGroup.style.marginLeft = '8px';
+      for (const name of names) {
+        const tag = document.createElement('span');
+        tag.className = 'slop-category-tag';
+        tag.style.marginLeft = '0';
+        tag.textContent = name.toUpperCase();
+        tagGroup.appendChild(tag);
       }
+      top.appendChild(tagGroup);
     }
-    body.appendChild(top);
+  }
+  body.appendChild(top);
 
-    // Tweet text — use sanitized HTML to preserve links/emojis/formatting
-    if (postContent.textHtml) {
-      const textDiv = document.createElement('div');
-      textDiv.className = 'slop-post-text';
-      textDiv.replaceChildren(DOMPurify.sanitize(postContent.textHtml, { RETURN_DOM_FRAGMENT: true }));
-      body.appendChild(textDiv);
-    } else if (post.evaluationText) {
-      const textDiv = document.createElement('div');
-      textDiv.className = 'slop-post-text';
-      textDiv.textContent = post.evaluationText;
-      body.appendChild(textDiv);
-    }
+  // Tweet text — use sanitized HTML to preserve links/emojis/formatting
+  let textDiv: HTMLElement | null = null;
+  if (postContent.textHtml) {
+    textDiv = document.createElement('div');
+    textDiv.className = 'slop-post-text';
+    textDiv.replaceChildren(DOMPurify.sanitize(postContent.textHtml, { RETURN_DOM_FRAGMENT: true }));
+    body.appendChild(textDiv);
+  } else if (post.evaluationText) {
+    textDiv = document.createElement('div');
+    textDiv.className = 'slop-post-text';
+    textDiv.textContent = post.evaluationText;
+    body.appendChild(textDiv);
+  }
 
-    // Quote tweet — render as a mini-card with avatar, author, and text
-    if (postContent.quote) {
-      const quoteBox = document.createElement('div');
-      quoteBox.className = 'slop-quote-box';
-
-      // Quote header: avatar + author info
-      const quoteHeader = document.createElement('div');
-      quoteHeader.className = 'slop-quote-header';
-
-      if (postContent.quote.avatarUrl) {
-        const qAvatar = document.createElement('img');
-        qAvatar.className = 'slop-quote-avatar';
-        qAvatar.src = postContent.quote.avatarUrl;
-        quoteHeader.appendChild(qAvatar);
-      }
-
-      if (postContent.quote.author) {
-        let qDisplayName = postContent.quote.author;
-        if (postContent.quote.handle) {
-          const idx = qDisplayName.indexOf(postContent.quote.handle);
-          if (idx > 0) qDisplayName = qDisplayName.substring(0, idx);
-        }
-        const qName = document.createElement('span');
-        qName.className = 'slop-quote-name';
-        qName.textContent = qDisplayName;
-        quoteHeader.appendChild(qName);
-      }
-      if (postContent.quote.handle || postContent.quote.timeText) {
-        const qMeta = document.createElement('span');
-        qMeta.className = 'slop-quote-handle';
-        const parts = [postContent.quote.handle, postContent.quote.timeText].filter(Boolean);
-        qMeta.textContent = parts.join(' · ');
-        quoteHeader.appendChild(qMeta);
-      }
-      quoteBox.appendChild(quoteHeader);
-
-      // Quote text
-      if (postContent.quote.textHtml) {
-        const quoteText = document.createElement('div');
-        quoteText.className = 'slop-quote-text';
-        quoteText.replaceChildren(DOMPurify.sanitize(postContent.quote.textHtml, { RETURN_DOM_FRAGMENT: true }));
-        quoteBox.appendChild(quoteText);
-      }
-
-      body.appendChild(quoteBox);
-    }
-
-    // Images (skip if media was blurred/age-restricted on the platform)
-    if (postContent.imageUrls && postContent.imageUrls.length > 0 && !postContent.mediaBlurred) {
-      const mediaContainer = document.createElement('div');
-      mediaContainer.className = 'slop-media-container';
-      postContent.imageUrls.forEach(url => {
-        const img = document.createElement('img');
-        img.src = url;
-        img.className = 'slop-media-image';
-        img.loading = 'lazy';
-        mediaContainer.appendChild(img);
+  // linkedin adaptation: collapse long posts to ~5 lines with a "…more"
+  // button, matching LinkedIn's own expandable post behaviour.
+  if (isLinkedIn && textDiv) {
+    const textLen = textDiv.textContent?.length ?? 0;
+    if (textLen > 280) {
+      const collapsibleEl = textDiv;
+      collapsibleEl.classList.add('slop-post-text--collapsible');
+      const expandBtn = document.createElement('button');
+      expandBtn.className = 'slop-post-expand-btn';
+      expandBtn.textContent = '…more';
+      expandBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        collapsibleEl.classList.remove('slop-post-text--collapsible');
+        expandBtn.remove();
       });
-      body.appendChild(mediaContainer);
+      body.appendChild(expandBtn);
+    }
+  }
+
+  // Quote tweet — render as a mini-card with avatar, author, and text
+  if (postContent.quote) {
+    const quoteBox = document.createElement('div');
+    quoteBox.className = 'slop-quote-box';
+
+    // Quote header: avatar + author info
+    const quoteHeader = document.createElement('div');
+    quoteHeader.className = 'slop-quote-header';
+
+    if (postContent.quote.avatarUrl) {
+      const qAvatar = document.createElement('img');
+      qAvatar.className = 'slop-quote-avatar';
+      qAvatar.src = postContent.quote.avatarUrl;
+      quoteHeader.appendChild(qAvatar);
     }
 
-    // Reasoning
-    const reasoning = document.createElement('div');
-    reasoning.className = 'slop-post-reasoning';
-    reasoning.textContent = cleanReasoning(post.reasoning) || 'Filtered';
-    body.appendChild(reasoning);
-
-    // Actions row
-    const actions = document.createElement('div');
-    actions.className = 'slop-post-actions';
-
-    const restoreBtn = document.createElement('button');
-    restoreBtn.className = 'slop-restore';
-    restoreBtn.textContent = 'Restore';
-    restoreBtn.addEventListener('click', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      chrome.runtime.sendMessage({
-        type: 'sendFeedback',
-        siteId: _deps.adapter.siteId,
-        tweetData: { text: post.evaluationText, imageUrls: postContent.imageUrls || [] },
-        rawResponse: post.rawResponse || '',
-        reasoning: post.reasoning || '',
-        decision: 'false_positive'
-      }).catch(err => console.error('[Bouncer] Undo feedback error:', err));
-
-      // Remove from filtered posts list
-      const key = postContent.postUrl || post.evaluationText.substring(0, 200);
-      const idx = filteredPosts.findIndex(p => (p.post.postUrl || p.evaluationText.substring(0, 200)) === key);
-      if (idx !== -1) filteredPosts.splice(idx, 1);
-      filteredPostKeys.delete(key);
-
-      // Try to unhide original article in the feed
-      for (const article of _deps.findPosts()) {
-        const postUrl = _deps.adapter.getPostUrl(article);
-        if (postUrl && postContent.postUrl && postUrl.includes(postContent.postUrl)) {
-          const container = _deps.adapter.getPostContainer(article);
-          container.style.display = '';
-          container.style.visibility = '';
-          delete container.dataset.filteredByExtension;
-          article.style.opacity = '';
-          article.style.transition = '';
-          _deps.processedPosts.delete(article);
-          markPostVerified(article);
-          break;
-        }
+    if (postContent.quote.author) {
+      let qDisplayName = postContent.quote.author;
+      if (postContent.quote.handle) {
+        const idx = qDisplayName.indexOf(postContent.quote.handle);
+        if (idx > 0) qDisplayName = qDisplayName.substring(0, idx);
       }
+      const qName = document.createElement('span');
+      qName.className = 'slop-quote-name';
+      qName.textContent = qDisplayName;
+      quoteHeader.appendChild(qName);
+    }
+    if (postContent.quote.handle || postContent.quote.timeText) {
+      const qMeta = document.createElement('span');
+      qMeta.className = 'slop-quote-handle';
+      const parts = [postContent.quote.handle, postContent.quote.timeText].filter(Boolean);
+      qMeta.textContent = parts.join(' · ');
+      quoteHeader.appendChild(qMeta);
+    }
+    quoteBox.appendChild(quoteHeader);
 
-      // Override cache so re-evaluation keeps post visible
-      chrome.runtime.sendMessage({
-        type: 'overrideCacheEntry',
-        post: post.evaluationText,
-        imageUrls: postContent.imageUrls || [],
-        shouldHide: false,
-        reasoning: 'User reported: false positive'
-      }).catch(err => console.error('[Bouncer] Override cache error:', err));
+    // Quote text
+    if (postContent.quote.textHtml) {
+      const quoteText = document.createElement('div');
+      quoteText.className = 'slop-quote-text';
+      quoteText.replaceChildren(DOMPurify.sanitize(postContent.quote.textHtml, { RETURN_DOM_FRAGMENT: true }));
+      quoteBox.appendChild(quoteText);
+    }
 
-      updateFilteredTabCount();
-      const outerContainer = restoreBtn.closest('.filtered-view-container') || restoreBtn.closest('.ff-ios-filtered-modal-backdrop');
-      const innerContainer = outerContainer?.querySelector('.filtered-modal-content') || outerContainer?.querySelector('.ff-ios-filtered-modal-content');
-      if (innerContainer) renderFilteredPostsView(innerContainer);
+    body.appendChild(quoteBox);
+  }
+
+  // Images (skip if media was blurred/age-restricted on the platform).
+  // Prefer the adapter's higher-quality display URLs when present
+  // (e.g. YouTube's original AVIF/JPEG lockup thumb); fall back to the
+  // classifier payload (smaller, JPEG-only).
+  const displayUrls = postContent.displayImageUrls?.length
+    ? postContent.displayImageUrls
+    : postContent.imageUrls;
+  if (displayUrls && displayUrls.length > 0 && !postContent.mediaBlurred) {
+    const mediaContainer = document.createElement('div');
+    mediaContainer.className = 'slop-media-container';
+    displayUrls.forEach(url => {
+      const img = document.createElement('img');
+      img.src = url;
+      img.className = 'slop-media-image';
+      img.loading = 'lazy';
+      mediaContainer.appendChild(img);
     });
-    actions.appendChild(restoreBtn);
-    body.appendChild(actions);
+    body.appendChild(mediaContainer);
+  }
 
+  // Reasoning
+  const reasoning = document.createElement('div');
+  reasoning.className = 'slop-post-reasoning';
+  reasoning.textContent = cleanReasoning(post.reasoning) || 'Filtered';
+  body.appendChild(reasoning);
+
+  // Actions row
+  const actions = document.createElement('div');
+  actions.className = 'slop-post-actions';
+  actions.appendChild(createRestoreButton(post, postContent));
+  body.appendChild(actions);
+
+  if (isLinkedIn) {
+    // linkedin adaptation: header row (avatar + meta/top) sits ABOVE the
+    // full-width body. The top block was appended to body earlier; pull it
+    // back out so it lives in the header instead.
+    const liHeader = document.createElement('div');
+    liHeader.className = 'slop-post-linkedin-header';
+    liHeader.appendChild(avatar);
+    body.removeChild(top);
+    liHeader.appendChild(top);
+    postRow.classList.add('slop-post--linkedin');
+    postRow.appendChild(liHeader);
     postRow.appendChild(body);
+  } else {
+    postRow.appendChild(body);
+  }
 
-    // Wrap in a real <a> so middle-click / ctrl-click open in new tab natively
-    if (postContent.postUrl) {
-      const link = document.createElement('a');
-      link.href = postContent.postUrl;
-      link.className = 'slop-post-link';
-      link.addEventListener('click', (e) => {
-        if ((e.target as Element).closest('button, [role="button"], .slop-restore, .slop-post-actions')) {
-          e.preventDefault();
-        }
-      });
-      link.appendChild(postRow);
-      wrapper.appendChild(link);
-    } else {
-      wrapper.appendChild(postRow);
-    }
+  // Wrap in a real <a> so middle-click / ctrl-click open in new tab natively
+  wrapper.appendChild(wrapInPostLink(postRow, postContent.postUrl));
 
-    postsContainer.appendChild(wrapper);
-  });
+  return wrapper;
 }
 
 // ==================== Filtered Post Storage ====================
@@ -2387,6 +2965,12 @@ export function showReasoningPopup(article: HTMLElement, x: number, y: number) {
   // Suggest annoying reasons button handler
   popup.querySelector('.reasoning-suggest-btn')!.addEventListener('click', (e) => {
     (async () => {
+      // Gate the backend request behind sign-in / trial state, same as the
+      // trash-can button. iOS is auto-authenticated via App Check.
+      if (!_deps.IS_IOS) {
+        if (!isAuthenticated) { showSignInPopup('signin'); return; }
+        if (guestLimitReached) { showSignInPopup('guestLimit'); return; }
+      }
       const btn = e.currentTarget as HTMLButtonElement;
       const suggestionsDiv = popup.querySelector('.reasoning-suggestions')!;
       btn.disabled = true;
@@ -2695,7 +3279,9 @@ async function fetchReasoningIfNeeded(article: HTMLElement) {
     let response: { found?: boolean; shouldHide?: boolean; reasoning?: string; rawResponse?: string } | undefined = await chrome.runtime.sendMessage({
       type: 'getReasoning',
       post: formatPostForEvaluation(content),
-      imageUrls: content.imageUrls || []
+      imageUrls: content.imageUrls || [],
+      postUrl: content.postUrl || null,
+      siteId: _deps.adapter.siteId
     });
 
     // If not found, try with plain text (DOM re-renders may change HTML but not text)
@@ -2703,7 +3289,9 @@ async function fetchReasoningIfNeeded(article: HTMLElement) {
       response = await chrome.runtime.sendMessage({
         type: 'getReasoning',
         post: content.text,
-        imageUrls: content.imageUrls || []
+        imageUrls: content.imageUrls || [],
+        postUrl: content.postUrl || null,
+        siteId: _deps.adapter.siteId
       });
     }
 
@@ -2750,16 +3338,19 @@ export function addWhyAnnoyingButton(article: HTMLElement) {
     e.preventDefault();
     e.stopPropagation();
 
-    // Require authentication before allowing suggest annoyances
-    // iOS: App Check provides auth automatically — no Google sign-in needed
-    if (!isAuthenticated && !_deps.IS_IOS) {
-      document.querySelectorAll('.ff-annoying-tooltip').forEach(t => t.remove());
-      const tooltip = document.createElement('div');
-      tooltip.className = 'ff-annoying-tooltip';
-      btn.style.position = 'relative';
-      tooltip.replaceChildren(parseHTML(`<span class="ff-annoying-empty">Sign in ${isSafari ? 'with Apple' : 'with Google'} to use this feature</span>`));
-      btn.appendChild(tooltip);
-      return;
+    // Gate the backend request behind sign-in / trial state.
+    // iOS: App Check provides auth automatically — no Google sign-in needed.
+    if (!_deps.IS_IOS) {
+      // Never signed in (no Google/Apple, no guest trial) → full sign-in popup.
+      if (!isAuthenticated) {
+        showSignInPopup('signin');
+        return;
+      }
+      // Anonymous guest who has used up the trial → sign-in-only popup.
+      if (guestLimitReached) {
+        showSignInPopup('guestLimit');
+        return;
+      }
     }
 
     // If tooltip already open on this button, close it
@@ -2784,8 +3375,49 @@ export function addWhyAnnoyingButton(article: HTMLElement) {
     // Position the tooltip above the button
     const positionTooltip = () => {
       const btnRect = btn.getBoundingClientRect();
+      const viewportW = document.documentElement.clientWidth;
+      const edgeMargin = 8;
+      const tipW = tooltip.offsetWidth;
       tooltip.style.position = 'fixed';
-      tooltip.style.right = `${document.documentElement.clientWidth - btnRect.right}px`;
+      // Horizontal: three-way fit check.
+      //  1. Right-align (default): tooltip extends leftward from btn.right.
+      //  2. Left-align: tooltip extends rightward from btn.left (used when the
+      //     button is close to the left edge — common on narrow YouTube mobile).
+      //  3. Center-align: neither directional placement fits; clamp the tooltip
+      //     into the viewport and slide the notch inline so it still points at
+      //     the button.
+      tooltip.style.left = '';
+      tooltip.style.right = '';
+      tooltip.classList.remove('ff-annoying-tooltip--align-left');
+      tooltip.classList.remove('ff-annoying-tooltip--align-center');
+      tooltip.style.removeProperty('--ff-notch-x');
+      const fitsRightAligned = btnRect.right - tipW >= edgeMargin;
+      const fitsLeftAligned = btnRect.left + tipW <= viewportW - edgeMargin;
+      if (fitsRightAligned) {
+        tooltip.style.right = `${viewportW - btnRect.right}px`;
+      } else if (fitsLeftAligned) {
+        tooltip.style.left = `${Math.max(edgeMargin, btnRect.left)}px`;
+        tooltip.classList.add('ff-annoying-tooltip--align-left');
+      } else {
+        const btnCenterX = btnRect.left + btnRect.width / 2;
+        const idealLeft = btnCenterX - tipW / 2;
+        const clampedLeft = Math.min(
+          Math.max(edgeMargin, idealLeft),
+          viewportW - edgeMargin - tipW,
+        );
+        tooltip.style.left = `${clampedLeft}px`;
+        tooltip.classList.add('ff-annoying-tooltip--align-center');
+        // Notch x measured from tooltip's own left edge; center of the 10px
+        // notch lands on btnCenterX in viewport coords. Clamp inside the
+        // rounded corners so the notch never draws into the border-radius arc.
+        const notchInset = 12;
+        const rawNotchX = btnCenterX - clampedLeft - 5;
+        const notchX = Math.min(
+          Math.max(notchInset, rawNotchX),
+          tipW - notchInset - 10,
+        );
+        tooltip.style.setProperty('--ff-notch-x', `${notchX}px`);
+      }
       // Place above the button; if clipped, place below
       tooltip.style.bottom = '';
       tooltip.style.top = '';
@@ -2864,6 +3496,7 @@ export function addWhyAnnoyingButton(article: HTMLElement) {
         chrome.runtime.sendMessage({
           type: 'sendFeedback',
           siteId: _deps.adapter.siteId,
+          postUrl: content.postUrl || null,
           tweetData: { text: formatPostForEvaluation(content), imageUrls: content.imageUrls || [] },
           rawResponse: reasoning?.rawResponse || '',
           reasoning: reasoning?.reasoning || '',
@@ -2878,6 +3511,8 @@ export function addWhyAnnoyingButton(article: HTMLElement) {
           type: 'overrideCacheEntry',
           post: formatPostForEvaluation(content),
           imageUrls: content.imageUrls || [],
+          postUrl: content.postUrl || null,
+          siteId: _deps.adapter.siteId,
           shouldHide: true,
           reasoning: 'User reported: should have been filtered'
         }).catch(err => console.error('[Bouncer] Override cache error:', err));
@@ -2949,6 +3584,8 @@ export function addWhyAnnoyingButton(article: HTMLElement) {
           type: 'overrideCacheEntry',
           post: formatPostForEvaluation(content),
           imageUrls: content.imageUrls || [],
+          postUrl: content.postUrl || null,
+          siteId: _deps.adapter.siteId,
           shouldHide: true,
           reasoning
         }).catch(err => console.error('[Bouncer] Override cache error:', err));
@@ -2987,6 +3624,7 @@ export function addWhyAnnoyingButton(article: HTMLElement) {
         chrome.runtime.sendMessage({
           type: 'sendFeedback',
           siteId: _deps.adapter.siteId,
+          postUrl: content.postUrl || null,
           tweetData: { text: formatPostForEvaluation(content), imageUrls: content.imageUrls || [] },
           rawResponse: reasoning?.rawResponse || '',
           reasoning: reasoning?.reasoning || '',
@@ -3001,6 +3639,8 @@ export function addWhyAnnoyingButton(article: HTMLElement) {
           type: 'overrideCacheEntry',
           post: formatPostForEvaluation(content),
           imageUrls: content.imageUrls || [],
+          postUrl: content.postUrl || null,
+          siteId: _deps.adapter.siteId,
           shouldHide: true,
           reasoning: 'User reported: should have been filtered'
         }).catch(err => console.error('[Bouncer] Override cache error:', err));
@@ -3068,6 +3708,14 @@ export function handleDOMMutation() {
   }
   if (mobileFilterContainer && !mobileFilterContainer.isConnected) {
     mobileFilterContainer = null;
+  }
+  if (_deps.adapter.filterBoxPlacement === 'banner') {
+    if (!filterPhrasesContainer) {
+      injectBannerFilterBox();
+    } else {
+      updateBannerFilterVisibility();
+    }
+    return;
   }
   // Inject filter phrases input if not present
   if (!filterPhrasesContainer && document.querySelector(_deps.adapter.selectors.sidebar)) {

@@ -1870,6 +1870,83 @@ body.dim-mode footer.pricing-disclaimer p {
   border-top: 1px solid #eff3f4;
 }
 
+/* Inline toggle used inside the platform accordion header — sits next to
+ * the chevron and must not propagate clicks to the header (handled in JS).
+ * The label is an explicit, fixed-size positioned box so it ignores text
+ * metrics entirely; the slider absolutely fills it. Inline-flex with text
+ * baseline was leaving a 1–2px vertical offset against the chevron. */
+.ts-inline {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 18px;
+  cursor: pointer;
+  user-select: none;
+  vertical-align: middle;
+  flex-shrink: 0;
+  /* The global `label` rule applies `margin-bottom: 6px`, which flexbox
+   * counts as part of the label's margin-box — that's what was shifting
+   * the visible toggle off-center. Zero it out. */
+  margin: 0;
+}
+.ts-inline input[type="checkbox"] {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+/* Track: explicit 30×16 so it's slightly smaller than the label box and
+ * is centered inside it by the label's flex centering. */
+.ts-inline-slider {
+  position: relative;
+  display: block;
+  width: 30px;
+  height: 16px;
+  background: #cfd9de;
+  border-radius: 999px;
+  transition: background 0.15s ease;
+}
+/* Thumb: 12×12, 2px margin on every side of the 30×16 track. Off-state
+ * thumb sits at left: 2, top: 2. Checked-state translates by
+ *   track-width − thumb-width − 2 (left margin) − 2 (right margin) = 14px. */
+.ts-inline-slider::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  background: #ffffff;
+  border-radius: 50%;
+  transition: transform 0.15s ease;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+.ts-inline input:checked + .ts-inline-slider {
+  background: #1d9bf0;
+}
+.ts-inline input:checked + .ts-inline-slider::after {
+  transform: translateX(14px);
+}
+
+/* Dim the body when the platform's master toggle is off, so the body's
+ * sub-settings clearly read as "doesn't matter right now". */
+.platform-provider.disabled .api-provider-content {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+/* Collapse the line-box of the header chevron next to the toggle. The
+ * `▾` glyph in `.api-provider-arrow` is 18px font-size; its default
+ * `line-height: normal` (~1.2) gives it a ~21px box, which `align-items:
+ * center` then anchors to. The toggle is 18px tall, so the box-mismatch
+ * pushes the toggle visually below the chevron. Forcing `line-height: 1`
+ * collapses the chevron's box to its glyph height, putting both on the
+ * same vertical center. */
+.platform-provider .api-provider-header-right {
+  line-height: 1;
+}
+
 .checkbox-label {
   display: flex;
   align-items: center;
@@ -2271,6 +2348,8 @@ body.dark-mode .checkbox-label {
 
 body.dark-mode .toggle-switch { color: #e7e9ea; }
 body.dark-mode .toggle-switch-slider { background: #2f3336; }
+body.dark-mode .ts-inline-slider { background: #2f3336; }
+body.dim-mode .ts-inline-slider { background: #3e4d5d; }
 body.dark-mode .toggle-switch-sub { color: #71767b; }
 body.dark-mode .ai-text-threshold-block { border-top-color: rgb(47, 51, 54); }
 body.dark-mode .ai-text-threshold-header { color: #e7e9ea; }

@@ -1,4 +1,9 @@
 import type { PlatformAdapter, PlatformSelectors, PostContent, QuoteContent } from '../../src/types';
+// NOTE: adapters are built with esbuild bundle:false (standalone IIFE per
+// manifest content_scripts entry), so we CANNOT import shared/platforms
+// here — esbuild would leave `require(...)` calls that fail in the browser.
+// Keep the hostname check inline. Must match the `twitter` entry in
+// src/shared/platforms.ts (PLATFORM_RUNTIME.twitter.hostPattern).
 
 /** Shape of the tweet data returned by the fiber-extractor main-world script. */
 interface TweetStoreData {
@@ -26,8 +31,13 @@ interface StoreResult {
   error?: string;
 }
 
-window.BouncerAdapter = class TwitterAdapter implements PlatformAdapter {
+// Assigned to `window.BouncerAdapter` only when running on an X/Twitter host
+// (see the guarded assignment at the bottom of this file). On iOS both the
+// Twitter and YouTube adapters are injected into every page, so each must
+// claim the global slot only for its own site or they'd clobber each other.
+const BouncerTwitterAdapter = class TwitterAdapter implements PlatformAdapter {
   siteId = 'twitter' as const;
+  filterBoxPlacement = 'sidebar' as const;
 
   selectors: PlatformSelectors = {
     post: 'article[data-testid="tweet"]',
@@ -565,3 +575,10 @@ window.BouncerAdapter = class TwitterAdapter implements PlatformAdapter {
     return document.querySelector('form[aria-label="Search"]');
   }
 };
+
+// Self-guard by hostname so the LinkedIn / YouTube adapter scripts injected
+// alongside this one on iOS don't claim window.BouncerAdapter on x.com.
+// Regex mirrors src/shared/platforms.ts PLATFORM_RUNTIME.twitter.hostPattern.
+if (/(^|\.)(x|twitter)\.com$/i.test(location.hostname)) {
+  window.BouncerAdapter = BouncerTwitterAdapter;
+}

@@ -32,3 +32,18 @@ globalThis.chrome = {
     sendMessage: vi.fn(),
   },
 } as unknown as typeof chrome;
+
+// DOMPurify is loaded as a separate content script at runtime (see
+// manifest.json content_scripts → dompurify.js), so it's a runtime global
+// rather than an import. Tests that exercise `parseHTML` need it stubbed.
+// Use the test DOM parser directly — sanitization isn't what's being tested.
+(globalThis as unknown as { DOMPurify: { sanitize: (html: string, opts?: { RETURN_DOM_FRAGMENT?: boolean }) => DocumentFragment | string } }).DOMPurify = {
+  sanitize(html: string, opts?: { RETURN_DOM_FRAGMENT?: boolean }) {
+    if (opts?.RETURN_DOM_FRAGMENT) {
+      const tpl = document.createElement('template');
+      tpl.innerHTML = html;
+      return tpl.content;
+    }
+    return html;
+  },
+};

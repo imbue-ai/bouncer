@@ -1,0 +1,9 @@
+[
+  {
+    "id": "twitter",
+    "manifestHost": "https://x.com/*",
+    "adapterScript": "dist/TwitterAdapter.js",
+    "cssPath": "adapters/twitter/twitter.css",
+    "extraWebAccessible": ["adapters/twitter/fiber-extractor.js"]
+  }
+]

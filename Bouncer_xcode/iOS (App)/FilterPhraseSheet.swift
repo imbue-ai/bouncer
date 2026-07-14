@@ -27,13 +27,97 @@ struct BouncerButtonTip: Tip {
     }
 }
 
+// MARK: - WebView Cache
+
+// Owns the per-platform WKWebView instances so a platform switch just flips
+// visibility instead of navigating. First tap on a platform creates and
+// registers its webview via WebViewFactory (which also kicks off the initial
+// navigation); subsequent taps just call showPlatform to make it visible.
+//
+// Off-screen webviews are muted and have their media paused via a small JS
+// injection. WKWebView doesn't expose a supported way to freeze JS timers
+// in a hidden page, so background feed polling / MutationObservers keep
+// running; that's an acceptable trade-off for v1 (see the multi-webview
+// plan file).
+@MainActor
+final class WebViewCache: ObservableObject {
+    // Ordered list of platforms the user has visited this session. Drives the
+    // ForEach in FilteredWebViewContainer so newly-visited platforms slot into
+    // the ZStack without disturbing existing webviews. Publish so SwiftUI
+    // re-runs the ForEach when the first visit to a new platform happens.
+    @Published private(set) var visitedPlatforms: [String] = []
+    private var webViews: [String: WKWebView] = [:]
+
+    // Single shared Coordinator across all cached webviews. Message handlers
+    // already disambiguate senders via `message.webView`; navigation state
+    // (canGoBack / URL) is tracked only for whichever webview is currently
+    // active (see Coordinator.activate).
+    let coordinator: FilteredWebView.WebCoordinator
+
+    init(coordinator: FilteredWebView.WebCoordinator) {
+        self.coordinator = coordinator
+    }
+
+    // Non-creating lookup. Used by the ViewModel's computed `webView` accessor
+    // so incidental reads don't spawn webviews for platforms the user hasn't
+    // visited. Pass create: true from `showPlatform` where creation is the
+    // intent.
+    func webView(for platform: String, create: Bool = false) -> WKWebView? {
+        if let existing = webViews[platform] { return existing }
+        guard create, let def = Platforms.byId(platform) else { return nil }
+        let wv = FilteredWebView.WebViewFactory.make(platform: def, coordinator: coordinator)
+        webViews[platform] = wv
+        visitedPlatforms.append(platform)
+        return wv
+    }
+
+    // Make `active`'s webview the audible / focused one; pause + mute media
+    // on every other cached webview. Also re-points KVO observations at the
+    // newly active webview so canGoBack / canGoForward / currentURL reflect
+    // it. Actual show/hide of the SwiftUI mounts is driven by opacity /
+    // allowsHitTesting in the container view — this method only handles the
+    // "hidden webview shouldn't sing" side of things.
+    //
+    // WKWebView doesn't expose an `isMuted` property, so pausing + muting is
+    // done via JS: pause every playing <video>/<audio> and set .muted = true.
+    // The mute survives a later user-driven .play() call (media stays silent
+    // until we un-mute on switch back).
+    func showPlatform(_ active: String) {
+        guard let activeWV = webView(for: active, create: true) else { return }
+        coordinator.activate(activeWV)
+        for (id, wv) in webViews {
+            let isActive = (id == active)
+            let js = isActive
+                ? "document.querySelectorAll('video, audio').forEach(m => { m.muted = false; });"
+                : "document.querySelectorAll('video, audio').forEach(m => { m.pause(); m.muted = true; });"
+            wv.evaluateJavaScript(js, in: nil, in: FilteredWebView.extensionWorld) { _ in }
+        }
+    }
+}
+
 // MARK: - ViewModel
 
+// @MainActor: this ObservableObject holds a WebViewCache that touches
+// WKWebView (UIKit, main-actor-isolated) and mutates @Published state that
+// drives SwiftUI. All existing call sites are already on the main thread
+// (SwiftUI view code + explicit DispatchQueue.main.async / Task { @MainActor
+// in ... } patterns), so tagging the class matches how it was already used.
+@MainActor
 class FilterSheetViewModel: ObservableObject {
     @Published var isPresented = false
     @Published var phrases: [String] = []
     @Published var themeMode: String = "dark"  // kept for JS bridge communication
-    @Published var filteredCount: Int = 0
+    // Per-platform filtered-post counts. Each cached webview reports its own
+    // count via feedfilterShowSheet / feedfilterPhrasesUpdated; the badge and
+    // "View filtered posts (N)" label read the active platform's slot through
+    // the `filteredCount` computed property below.
+    @Published var filteredCounts: [String: Int] = [:]
+
+    // Reads the currently-visible platform's count. SwiftUI re-computes it
+    // when either `filteredCounts` or `selectedPlatform` changes, so
+    // switching X → YouTube instantly reflects YT's count (or 0 if we
+    // haven't heard from that webview yet) without waiting for a fresh push.
+    var filteredCount: Int { filteredCounts[selectedPlatform] ?? 0 }
     @Published var canGoBack = false
     @Published var canGoForward = false
     @Published var currentURL: String = ""
@@ -43,21 +127,152 @@ class FilterSheetViewModel: ObservableObject {
     @Published var aiTextDetectionThreshold: Double = 0.7
     @Published var aiImageFilterEnabled: Bool = false
     @Published var aiImageDetectionThreshold: Double = 0.7
+    // Mirrors chrome.storage.local["selectedModel"]. Settings views need
+    // this on the main settings page to gate AI-text-detection UI: the
+    // on-device classifier path doesn't require an Imbue backend, so the
+    // toggle has to appear whenever EITHER Imbue is configured OR the user
+    // has the on-device model selected.
+    @Published var selectedModel: String = ""
     @Published var filterReplies: Bool = true
+    // Which platform's filter phrases the sheet is currently viewing/editing.
+    // Also drives which cached webview is visible / audible — the
+    // FilteredWebViewContainer's ForEach reads this to pick the active mount.
+    @Published var selectedPlatform: String = "twitter"
 
-    weak var webView: WKWebView?
+    // Per-platform WKWebView cache. Lazy so we can pass `self` into the
+    // Coordinator's init without a chicken-and-egg problem. Held strongly by
+    // the ViewModel; the Coordinator holds a strong sheetViewModel back —
+    // that's a cycle in principle, but the ViewModel is the app's single
+    // @StateObject singleton and never deallocates during runtime.
+    lazy var cache: WebViewCache = WebViewCache(
+        coordinator: FilteredWebView.WebCoordinator(sheetViewModel: self)
+    )
+
+    // Every existing call site keeps its `guard let webView = self.webView`
+    // shape; the getter transparently resolves to the active platform's
+    // webview via the cache. Non-creating — never spawns a webview on incident
+    // reads. Returns nil until `selectPlatformAndNavigate` has run at least
+    // once for `selectedPlatform`.
+    var webView: WKWebView? { cache.webView(for: selectedPlatform, create: false) }
 
     static let contentWorld = WKContentWorld.world(name: "feedfilter")
 
-    func addPhrase(_ text: String) {
+    // Default the sheet's phrase list to the platform of the page currently
+    // loaded — registry-driven so adding a new platform doesn't require a new
+    // host-substring branch here.
+    //
+    // With the multi-webview cache, `selectedPlatform` also drives which
+    // webview is visible; only overwrite it when the current URL matches a
+    // known platform. Unknown hosts (e.g., an external link the user tapped
+    // and hasn't backed out of yet) leave the selection alone so we don't
+    // spuriously flip the visible webview.
+    func syncPlatformToCurrentSite() {
+        let host = (URL(string: currentURL)?.host ?? "").lowercased()
+        if let match = Platforms.fromHost(host)?.id {
+            selectedPlatform = match
+        }
+    }
+
+    func selectPlatform(_ platform: String) {
+        guard platform != selectedPlatform else { return }
+        selectedPlatform = platform
+        loadPhrases()
+    }
+
+    // Called by the PlatformPickerView + the NavBarView dropdown when the user
+    // picks a platform. Sets the active platform immediately, then defers the
+    // (potentially heavy) WebView build + phrase reload to the next main-
+    // runloop tick.
+    //
+    // Why deferred: on the very first tap in the platform picker, the caller
+    // also triggers a NavigationStack push (`navPath.append(...)`) in the
+    // same runloop tick. If we synchronously build the WebView here — script
+    // bundle loads, injection, WKWebView init, initial navigation — SwiftUI
+    // can't commit the push animation to CoreAnimation until this returns,
+    // and the first ~200-300ms of the slide stalls. Dispatching the heavy
+    // work to the next tick lets SwiftUI commit first; the WebView then
+    // spins up on main while the animation runs independently on the render
+    // thread. On subsequent visits (already-cached webview), the deferred
+    // work is trivially fast — the tick delay is invisible.
+    //
+    // No explicit `.load(...)` here: `cache.showPlatform` creates a new
+    // webview on first visit via `WebViewFactory.make`, which kicks off the
+    // initial feed navigation. Subsequent visits just flip visibility.
+    func selectPlatformAndNavigate(_ platform: String) {
+        selectedPlatform = platform
+        // Two paths, distinguished by whether a fresh WebView needs to be
+        // built:
+        //
+        // - Already cached: `showPlatform` is fast (KVO re-point + a small
+        //   JS pause/mute per webview). Run synchronously — there's no
+        //   animation to protect and any deferral is wasted latency.
+        //
+        // - Not cached: `showPlatform` will call `WebViewFactory.make`,
+        //   which does bundle disk-reads for ChromePolyfill / background-app
+        //   / content.js / DOMPurify / three adapter scripts / three CSS
+        //   files, base64 + string concatenation for the popup bridge,
+        //   WKUserContentController wiring, WKWebView init, and the initial
+        //   `.load(URLRequest(...))`. That's 150-300ms of main-thread work.
+        //   If a NavigationStack push is animating concurrently (the picker
+        //   case), blocking main during it stalls the slide. Sleep for the
+        //   animation duration (~350ms + buffer) so the transition
+        //   completes on CoreAnimation before we sink into the build.
+        let needsCreation = cache.webView(for: platform, create: false) == nil
+        if needsCreation {
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 400_000_000)
+                guard let self = self else { return }
+                self.cache.showPlatform(platform)
+                self.loadPhrases()
+            }
+        } else {
+            cache.showPlatform(platform)
+            loadPhrases()
+        }
+    }
+
+    // Load the selected platform's phrases from the (shared, native-backed)
+    // store via the per-platform bridge — works regardless of which site the
+    // WebView is on.
+    func loadPhrases() {
         guard let webView = webView else { return }
-        Task {
-            try? await webView.callAsyncJavaScript(
-                "return await window.__ff_addPhrase(text)",
-                arguments: ["text": text],
+        let platform = selectedPlatform
+        Task { @MainActor in
+            do {
+                let result = try await webView.callAsyncJavaScript(
+                    "return await window.__ff_getPhrases(siteId)",
+                    arguments: ["siteId": platform],
+                    in: nil,
+                    contentWorld: Self.contentWorld
+                )
+                // Ignore a stale response if the user switched platforms mid-flight.
+                guard platform == self.selectedPlatform else { return }
+                if let arr = result as? [String] {
+                    self.phrases = arr
+                } else if let arr = result as? [Any] {
+                    self.phrases = arr.compactMap { $0 as? String }
+                }
+            } catch {
+                print("[FeedFilter] loadPhrases error: \(error)")
+            }
+        }
+    }
+
+    func addPhrase(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return }
+        // Optimistic insert for snappiness; loadPhrases reconciles afterward.
+        if !phrases.contains(trimmed) { phrases.append(trimmed) }
+        guard let webView = webView else { return }
+        let platform = selectedPlatform
+        Task { @MainActor in
+            _ = try? await webView.callAsyncJavaScript(
+                "return await window.__ff_addPhraseFor(siteId, text)",
+                arguments: ["siteId": platform, "text": trimmed],
                 in: nil,
                 contentWorld: Self.contentWorld
             )
+            self.loadPhrases()
         }
     }
 
@@ -66,10 +281,11 @@ class FilterSheetViewModel: ObservableObject {
             phrases.removeAll { $0 == phrase }
         }
         guard let webView = webView else { return }
-        Task {
-            try? await webView.callAsyncJavaScript(
-                "return await window.__ff_removePhrase(phrase)",
-                arguments: ["phrase": phrase],
+        let platform = selectedPlatform
+        Task { @MainActor in
+            _ = try? await webView.callAsyncJavaScript(
+                "return await window.__ff_removePhraseFor(siteId, phrase)",
+                arguments: ["siteId": platform, "phrase": phrase],
                 in: nil,
                 contentWorld: Self.contentWorld
             )
@@ -144,6 +360,25 @@ class FilterSheetViewModel: ObservableObject {
                 }
             } catch {
                 print("[FeedFilter] loadAiTextFilterEnabled error: \(error)")
+            }
+        }
+    }
+
+    func loadSelectedModel() {
+        guard let webView = webView else { return }
+        Task { @MainActor in
+            do {
+                let result = try await webView.callAsyncJavaScript(
+                    "const d = await window.__ff_getStorage(['selectedModel']); return d.selectedModel || '';",
+                    arguments: [:],
+                    in: nil,
+                    contentWorld: Self.contentWorld
+                )
+                if let value = result as? String {
+                    self.selectedModel = value
+                }
+            } catch {
+                print("[FeedFilter] loadSelectedModel error: \(error)")
             }
         }
     }
@@ -271,8 +506,17 @@ class FilterSheetViewModel: ObservableObject {
     // filter-pack screenshot + caption already pasted in; the user just hits
     // Post.
     func shareFilterPack() {
-        guard let webView = webView else { return }
         isPresented = false
+        // Share must run on the Twitter webview — the JS bridge clicks X's
+        // compose link, which only exists on x.com. If the user is currently
+        // viewing YouTube or LinkedIn, switch first (creates the Twitter
+        // webview if it wasn't visited yet). ensureOnX below still runs to
+        // handle the case where the Twitter webview happens to be on a
+        // non-feed page.
+        if selectedPlatform != "twitter" {
+            selectPlatformAndNavigate("twitter")
+        }
+        guard let webView = webView else { return }
         Task { @MainActor in
             await ensureOnX(webView: webView)
             do {
@@ -325,7 +569,9 @@ class FilterSheetViewModel: ObservableObject {
     @MainActor
     func getStorage(keys: [String]) async -> [String: Any] {
         guard let webView = webView else { return [:] }
-        await ensureOnX(webView: webView)
+        // No ensureOnX: chrome.storage is now a native store shared across
+        // origins, and the __ff_* bridge is present on whatever site (x.com /
+        // m.youtube.com) the WebView is currently showing.
         do {
             let result = try await webView.callAsyncJavaScript(
                 "return await window.__ff_getStorage(keys)",
@@ -343,7 +589,8 @@ class FilterSheetViewModel: ObservableObject {
     @MainActor
     func setStorage(_ items: [String: Any]) async {
         guard let webView = webView else { return }
-        await ensureOnX(webView: webView)
+        // No ensureOnX — see getStorage. Writing the current site's key fires
+        // chrome.storage.onChanged in-page so content.js re-evaluates.
         do {
             let _ = try await webView.callAsyncJavaScript(
                 "return await window.__ff_setStorage(items)",
@@ -621,6 +868,22 @@ struct FilterPhraseSheet: View {
             .navigationTitle("Filter out")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                #if DEBUG
+                // Dev-only: wipe the onboarding flag and dismiss the sheet.
+                // @AppStorage in FilteredWebViewContainer observes UserDefaults
+                // and re-shows OnboardingView as soon as the value flips, so no
+                // relaunch is needed. Ladybug icon matches Xcode's debug idiom.
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        UserDefaults.standard.set(false, forKey: "hasCompletedOnboarding")
+                        viewModel.isPresented = false
+                    } label: {
+                        Image(systemName: "ladybug")
+                            .font(.system(size: 17, weight: .regular))
+                    }
+                    .accessibilityLabel("Reset onboarding (debug)")
+                }
+                #endif
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         viewModel.shareFilterPack()
@@ -645,6 +908,8 @@ struct FilterPhraseSheet: View {
         .scrollDismissesKeyboard(.interactively)
         .onAppear {
             viewModel.loadAiTextFilterEnabled()
+            viewModel.syncPlatformToCurrentSite()
+            viewModel.loadPhrases()
         }
     }
 
@@ -734,6 +999,9 @@ struct BouncerSettingsView: View {
                 }
             }
 
+            // Site-specific settings, mirroring the desktop popup's per-platform
+            // accordions. Unlike desktop, iOS intentionally omits the per-site
+            // "enable Bouncer" master toggles — filtering is always on per site.
             Section {
                 Toggle(isOn: Binding(
                     get: { viewModel.filterReplies },
@@ -741,9 +1009,16 @@ struct BouncerSettingsView: View {
                 )) {
                     Text("Filter replies in conversations")
                 }
+            } header: {
+                Text("X (Twitter)")
             }
 
-            if hasImbueBackend {
+            // Note: YouTube's "show placeholder" toggle is intentionally omitted
+            // on iOS — filtered videos are always removed (hidden) on mobile.
+
+            // AI text/image detection is available when either Imbue is configured
+            // OR the on-device classifier model has been picked.
+            if hasImbueBackend || viewModel.selectedModel == kIosLocalGemmaModelKey {
                 Section {
                     Toggle(isOn: Binding(
                         get: { viewModel.aiTextFilterEnabled },
@@ -790,7 +1065,11 @@ struct BouncerSettingsView: View {
                 } footer: {
                     Text("Hide posts whose text appears to be written by AI. Posts at or above this confidence are hidden.")
                 }
+            }
 
+            // No on-device image classifier yet — image-detection UI stays
+            // gated on the Imbue backend.
+            if hasImbueBackend {
                 Section {
                     Toggle(isOn: Binding(
                         get: { viewModel.aiImageFilterEnabled },
@@ -865,9 +1144,13 @@ struct BouncerSettingsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
             viewModel.loadFilterReplies()
+            viewModel.loadSelectedModel()
+            // Text-detection settings load whenever the toggle can appear:
+            // Imbue available OR on-device model selected. Image-detection
+            // settings stay gated on Imbue (no on-device image classifier).
+            viewModel.loadAiTextFilterEnabled()
+            viewModel.loadAiTextDetectionThreshold()
             if hasImbueBackend {
-                viewModel.loadAiTextFilterEnabled()
-                viewModel.loadAiTextDetectionThreshold()
                 viewModel.loadAiImageFilterEnabled()
                 viewModel.loadAiImageDetectionThreshold()
             }
@@ -876,6 +1159,8 @@ struct BouncerSettingsView: View {
 }
 
 // MARK: - Providers Settings
+
+private let kIosLocalGemmaModelKey = "iosLocal:gemma-4-e4b"
 
 private struct ProviderSpec: Identifiable {
     let id: String              // "openai", "anthropic", ...
@@ -949,6 +1234,7 @@ private let imbueModelKey = "imbue"
 
 struct ProvidersSettingsView: View {
     @ObservedObject var viewModel: FilterSheetViewModel
+    @ObservedObject private var localService = LocalInferenceService.shared
 
     // provider id -> current key text in the field
     @State private var keys: [String: String] = [:]
@@ -987,6 +1273,8 @@ struct ProvidersSettingsView: View {
                 imbueSection
             }
 
+            onDeviceSection
+
             ForEach(providerSpecs) { spec in
                 providerSection(spec)
             }
@@ -1000,6 +1288,7 @@ struct ProvidersSettingsView: View {
 
     private var currentProviderLabel: String {
         if selectedModel == imbueModelKey { return "Imbue" }
+        if selectedModel == kIosLocalGemmaModelKey { return "On-device" }
         guard let colon = selectedModel.firstIndex(of: ":") else { return "" }
         let providerId = String(selectedModel[..<colon])
         return providerSpecs.first(where: { $0.id == providerId })?.displayName ?? providerId
@@ -1007,6 +1296,7 @@ struct ProvidersSettingsView: View {
 
     private var currentModelLabel: String {
         if selectedModel == imbueModelKey { return "Imbue (default)" }
+        if selectedModel == kIosLocalGemmaModelKey { return "Gemma 4 E4B (on-device)" }
         guard let colon = selectedModel.firstIndex(of: ":") else { return selectedModel }
         let providerId = String(selectedModel[..<colon])
         let modelId = String(selectedModel[selectedModel.index(after: colon)...])
@@ -1038,6 +1328,109 @@ struct ProvidersSettingsView: View {
             .buttonStyle(.plain)
         } header: {
             Text("Imbue")
+        }
+    }
+
+    @ViewBuilder
+    private var onDeviceSection: some View {
+        Section {
+            Button {
+                guard isOnDeviceReady else { return }
+                Task { await selectModel(kIosLocalGemmaModelKey) }
+            } label: {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Gemma 4 E4B (on-device)")
+                            .foregroundStyle(isOnDeviceReady ? .primary : .secondary)
+                        Text(onDeviceStatusText)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if selectedModel == kIosLocalGemmaModelKey {
+                        Image(systemName: "checkmark")
+                            .foregroundStyle(.tint)
+                    }
+                }
+            }
+            .buttonStyle(.plain)
+            .disabled(!isOnDeviceReady)
+
+            if case .downloading(let progress) = localService.modelStatus {
+                ProgressView(value: progress)
+            } else if case .paused(let progress) = localService.modelStatus {
+                ProgressView(value: progress)
+            }
+
+            onDeviceActionButtons
+        } header: {
+            Text("On-device")
+        } footer: {
+            Text("Runs Gemma 4 E4B locally for phrase-filter classification and AI-text detection — no posts leave your phone. Downloads ~3.7 GB. Requires Wi-Fi and an iPhone with 6 GB+ RAM.")
+        }
+    }
+
+    private var isOnDeviceReady: Bool {
+        switch localService.modelStatus {
+        case .downloaded, .ready: return true
+        default: return false
+        }
+    }
+
+    private var onDeviceStatusText: String {
+        switch localService.modelStatus {
+        case .notDownloaded:
+            return "Not downloaded"
+        case .downloading(let progress):
+            let pct = Int((progress * 100).rounded())
+            return "Downloading \(pct)% — \(localService.downloadedBytesDisplay) / \(localService.totalBytesDisplay)"
+        case .paused(let progress):
+            let pct = Int((progress * 100).rounded())
+            return "Paused at \(pct)%"
+        case .downloaded:
+            return "Downloaded — ready to load"
+        case .loading:
+            return "Loading…"
+        case .ready:
+            return "Ready"
+        case .error(let message):
+            return "Error: \(message)"
+        }
+    }
+
+    @ViewBuilder
+    private var onDeviceActionButtons: some View {
+        switch localService.modelStatus {
+        case .notDownloaded, .error:
+            Button("Download model") {
+                localService.startDownload()
+            }
+        case .downloading:
+            // .borderless button style: without it, both buttons share
+            // one row-wide hit region in Form/List and a single tap fires
+            // every action closure in the row.
+            HStack {
+                Button("Pause") { localService.pauseDownload() }
+                    .buttonStyle(.borderless)
+                Spacer()
+                Button("Cancel", role: .destructive) { localService.cancelDownload() }
+                    .buttonStyle(.borderless)
+            }
+        case .paused:
+            HStack {
+                Button("Resume") { localService.startDownload() }
+                    .buttonStyle(.borderless)
+                Spacer()
+                Button("Cancel", role: .destructive) { localService.cancelDownload() }
+                    .buttonStyle(.borderless)
+            }
+        case .downloaded, .ready, .loading:
+            Button("Delete model", role: .destructive) {
+                if selectedModel == kIosLocalGemmaModelKey {
+                    Task { await selectModel(imbueModelKey) }
+                }
+                localService.deleteModel()
+            }
         }
     }
 
@@ -1129,6 +1522,7 @@ struct ProvidersSettingsView: View {
         } else {
             self.selectedModel = stored
         }
+        viewModel.selectedModel = self.selectedModel
         self.isLoaded = true
     }
 
@@ -1145,6 +1539,7 @@ struct ProvidersSettingsView: View {
             let fallback = hasImbueBackend ? imbueModelKey : ""
             await viewModel.setStorage(["selectedModel": fallback])
             selectedModel = fallback
+            viewModel.selectedModel = fallback
         }
         await viewModel.clearModelCache()
     }
@@ -1153,6 +1548,7 @@ struct ProvidersSettingsView: View {
     private func selectModel(_ modelKey: String) async {
         await viewModel.setStorage(["selectedModel": modelKey])
         selectedModel = modelKey
+        viewModel.selectedModel = modelKey
         await viewModel.clearModelCache()
     }
 }
@@ -1161,66 +1557,32 @@ struct ProvidersSettingsView: View {
 
 struct FilteredWebViewContainer: View {
     @StateObject var viewModel = FilterSheetViewModel()
-    @State private var isOnboarded = UserDefaults.standard.bool(forKey: "hasCompletedOnboarding")
+    // @AppStorage so external UserDefaults writes (e.g. the DEBUG-only "reset
+    // onboarding" button in the filter sheet toolbar) propagate reactively —
+    // no explicit re-read required for the change to re-show OnboardingView.
+    @AppStorage("hasCompletedOnboarding") private var isOnboarded: Bool = false
+    // NavigationStack path: empty means the picker is the visible root; a
+    // single appended platform id means the user has picked and the feed is
+    // pushed on top. There's no way back to the picker within a session, so
+    // the path is append-once — the iOS-native push transition (slide + parallax
+    // + Reduce-Motion cross-fade) fires exactly once on that first append.
+    @State private var navPath: [String] = []
+
     var body: some View {
         ZStack {
-            VStack(spacing: 0) {
-                ZStack {
-                    if isOnboarded {
-                        FilteredWebView(sheetViewModel: viewModel)
-                    }
-
-                    if viewModel.isEditingURL {
-                        Color.clear
-                            .contentShape(Rectangle())
-                            .ignoresSafeArea(edges: .top)
-                            .transition(.opacity)
-                            .onTapGesture {
-                                UIApplication.shared.sendAction(
-                                    #selector(UIResponder.resignFirstResponder),
-                                    to: nil, from: nil, for: nil
-                                )
-                            }
-                    }
-
-                    if viewModel.isPresented {
-                        Color.clear
-                            .contentShape(Rectangle())
-                            .ignoresSafeArea(edges: .top)
-                            .onTapGesture {
-                                viewModel.isPresented = false
-                            }
-                    }
+            NavigationStack(path: $navPath) {
+                PlatformPickerView { platformId in
+                    viewModel.selectPlatformAndNavigate(platformId)
+                    navPath.append(platformId)
                 }
-                .animation(.easeInOut(duration: 0.2), value: viewModel.isEditingURL)
-
-                if !viewModel.isFilteredModalOpen {
-                    NavBarView(viewModel: viewModel)
-                }
-            }
-            .background(Color(.systemBackground))
-            .sheet(isPresented: $viewModel.isPresented) {
-                viewModel.setPanelOpen(false)
-            } content: {
-                FilterPhraseSheet(viewModel: viewModel)
-                    .padding(.top, {
-                        if #available(iOS 26.0, *) { return CGFloat(0) }
-                        else { return CGFloat(16) }
-                    }())
-                    .presentationDetents([.medium, .large])
-                    .presentationDragIndicator(.visible)
-                    .presentationBackgroundInteraction(.enabled(upThrough: .medium))
-                    .presentationBackground {
-                        if #available(iOS 26.0, *) {
-                            Color(.systemBackground).opacity(0.85)
-                        } else {
-                            Color(.systemBackground)
-                        }
-                    }
-            }
-            .onChange(of: viewModel.isPresented) { _, newValue in
-                if newValue {
-                    viewModel.setPanelOpen(true)
+                .toolbar(.hidden, for: .navigationBar)
+                .navigationDestination(for: String.self) { _ in
+                    MainFeedView(viewModel: viewModel)
+                        // Suppress the back button + edge-swipe pop so the
+                        // WebView's own `allowsBackForwardNavigationGestures`
+                        // keeps working for in-page history.
+                        .navigationBarBackButtonHidden(true)
+                        .toolbar(.hidden, for: .navigationBar)
                 }
             }
 
@@ -1234,6 +1596,99 @@ struct FilteredWebViewContainer: View {
             }
         }
         .animation(.easeOut(duration: 0.35), value: isOnboarded)
+        // If onboarding is re-triggered (DEBUG-only via the ladybug button),
+        // pop the NavigationStack back to its root so the platform picker
+        // shows again after the user completes onboarding. Otherwise the
+        // previously-pushed MainFeedView would still be on top and the
+        // picker would be skipped entirely.
+        .onChange(of: isOnboarded) { _, newValue in
+            if !newValue {
+                navPath.removeAll()
+            }
+        }
+    }
+}
+
+// MARK: - Main Feed View
+//
+// The pushed destination behind the platform picker. Owns the WebView cache
+// mounts, the URL-editing / sheet-tap dismissal overlays, the bottom
+// NavBarView, and the presentation of the filter sheet. Lifted out of
+// FilteredWebViewContainer so the NavigationStack has a clean destination
+// to render — no logic changes vs. the previous inline structure.
+
+private struct MainFeedView: View {
+    @ObservedObject var viewModel: FilterSheetViewModel
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ZStack {
+                // Mount every WebView the cache has created — one per
+                // visited platform. `.opacity` + `.allowsHitTesting` show
+                // only the active one; the rest stay hydrated in the view
+                // hierarchy so a switch back is instant.
+                ForEach(viewModel.cache.visitedPlatforms, id: \.self) { platformId in
+                    if let wv = viewModel.cache.webView(for: platformId) {
+                        let isActive = viewModel.selectedPlatform == platformId
+                        FilteredWebView(webView: wv)
+                            .opacity(isActive ? 1 : 0)
+                            .allowsHitTesting(isActive)
+                    }
+                }
+
+                if viewModel.isEditingURL {
+                    Color.clear
+                        .contentShape(Rectangle())
+                        .ignoresSafeArea(edges: .top)
+                        .transition(.opacity)
+                        .onTapGesture {
+                            UIApplication.shared.sendAction(
+                                #selector(UIResponder.resignFirstResponder),
+                                to: nil, from: nil, for: nil
+                            )
+                        }
+                }
+
+                if viewModel.isPresented {
+                    Color.clear
+                        .contentShape(Rectangle())
+                        .ignoresSafeArea(edges: .top)
+                        .onTapGesture {
+                            viewModel.isPresented = false
+                        }
+                }
+            }
+            .animation(.easeInOut(duration: 0.2), value: viewModel.isEditingURL)
+
+            if !viewModel.isFilteredModalOpen {
+                NavBarView(viewModel: viewModel)
+            }
+        }
+        .background(Color(.systemBackground))
+        .sheet(isPresented: $viewModel.isPresented) {
+            viewModel.setPanelOpen(false)
+        } content: {
+            FilterPhraseSheet(viewModel: viewModel)
+                .padding(.top, {
+                    if #available(iOS 26.0, *) { return CGFloat(0) }
+                    else { return CGFloat(16) }
+                }())
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+                .presentationBackgroundInteraction(.enabled(upThrough: .medium))
+                .presentationBackground {
+                    if #available(iOS 26.0, *) {
+                        Color(.systemBackground).opacity(0.85)
+                    } else {
+                        Color(.systemBackground)
+                    }
+                }
+        }
+        .onChange(of: viewModel.isPresented) { _, newValue in
+            if newValue {
+                viewModel.setPanelOpen(true)
+            }
+        }
     }
 }
 
@@ -1241,48 +1696,36 @@ struct FilteredWebViewContainer: View {
 
 struct NavBarView: View {
     @ObservedObject var viewModel: FilterSheetViewModel
-    @State private var urlText: String = ""
     var bouncerTip = BouncerButtonTip()
 
-    private var isEditing: Bool { viewModel.isEditingURL }
+    // Registry-driven so a new platform in Platforms.all shows up in the
+    // dropdown without touching this view.
+    private var currentPlatformName: String {
+        Platforms.byId(viewModel.selectedPlatform)?.displayName ?? "X (Twitter)"
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             Divider()
 
-            // URL bar row
-            HStack(spacing: 6) {
-                if !isEditing {
-                    Image(systemName: "lock.fill")
-                        .font(.system(size: 12, weight: .regular))
-                        .foregroundStyle(.secondary)
-                }
-
-                URLBarTextField(
-                    text: $urlText,
-                    placeholder: "Search or enter address",
-                    onSubmit: {
-                        viewModel.navigateTo(urlString: urlText)
-                        viewModel.isEditingURL = false
-                        urlText = displayURL(viewModel.currentURL)
-                    },
-                    onBeginEditing: {
-                        viewModel.isEditingURL = true
-                        urlText = viewModel.currentURL
-                    },
-                    onEndEditing: {
-                        viewModel.isEditingURL = false
-                        urlText = displayURL(viewModel.currentURL)
-                    }
+            // Platform dropdown — native SwiftUI Picker with .menu style.
+            // Renders the selected platform in the accent color followed by
+            // the standard up/down chevron glyph, and shows a checkmark on the
+            // active row in the popup. Picking navigates the WebView.
+            Picker(
+                "Platform",
+                selection: Binding(
+                    get: { viewModel.selectedPlatform },
+                    set: { viewModel.selectPlatformAndNavigate($0) }
                 )
-                .frame(height: 22)
+            ) {
+                ForEach(Platforms.all, id: \.id) { platform in
+                    Text(platform.displayName).tag(platform.id)
+                }
             }
-            .frame(maxWidth: .infinity)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .background(Color(.tertiarySystemFill))
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .padding(.horizontal, 16)
+            .pickerStyle(.menu)
+            .labelsHidden()
+            .frame(maxWidth: .infinity, alignment: .center)
             .padding(.top, 8)
             .padding(.bottom, 4)
 
@@ -1350,34 +1793,12 @@ struct NavBarView: View {
             .padding(.bottom, 2)
         }
         .background(.bar)
-        .onAppear {
-            urlText = displayURL(viewModel.currentURL)
-        }
         .onChange(of: viewModel.currentURL) { _, newURL in
-            if !isEditing {
-                urlText = displayURL(newURL)
-            }
             if newURL.contains("x.com/home") || newURL.contains("twitter.com/home") {
                 UserDefaults.standard.set(true, forKey: "hasLoggedIn")
                 Task { await BouncerButtonTip.loggedIn.donate() }
-//                 // Delay so the tip doesn't appear during auth redirects
-//                 DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
-//                     if viewModel.currentURL.contains("x.com/home") || viewModel.currentURL.contains("twitter.com/home") {
-//                         Task { await BouncerButtonTip.loggedIn.donate() }
-//                     }
-//                 }
             }
         }
-    }
-
-    private func displayURL(_ urlString: String) -> String {
-        guard let url = URL(string: urlString),
-              let host = url.host else { return urlString }
-        let path = url.path
-        if path.isEmpty || path == "/" {
-            return host
-        }
-        return host + path
     }
 }
 

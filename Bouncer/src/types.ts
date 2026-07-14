@@ -1,7 +1,24 @@
 // ==================== Site IDs ====================
 
-/** Known platform adapter identifiers. Add new entries when adding adapters. */
-export type SiteId = 'twitter';
+/** Known platform adapter identifiers — derived from the PLATFORMS literal
+ *  in shared/platforms.ts. Adding a new platform there automatically extends
+ *  this union. Re-exported here so existing `import { SiteId } from '../types'`
+ *  call sites keep working without touching every consumer. */
+import type { SiteId } from './shared/platforms';
+export type { SiteId };
+
+/** Where the filter box is rendered on a platform.
+ *  - `sidebar`: Twitter-style — pinned in the right-hand column, with companion
+ *    bottom and mobile variants injected as well.
+ *  - `banner`: full-width strip inserted above the main feed. Used on
+ *    platforms without a usable right-hand column. */
+export type FilterBoxPlacement = 'sidebar' | 'banner';
+
+/** Where a banner-style adapter wants the filter box inserted. */
+export interface FilterBoxAnchor {
+  parent: HTMLElement;
+  insertBefore: Node | null;
+}
 
 // ==================== Core Evaluation ====================
 
@@ -78,9 +95,18 @@ export interface PostContent {
   quote: QuoteContent | null;
   postUrl: string | null;
   imageUrls: string[];
+  /** Optional higher-quality URLs for the filtered-posts panel. `imageUrls`
+   *  is what we send to the classifier (small, JPEG-guaranteed); when an
+   *  adapter wants the panel to display a richer image (e.g. YouTube's
+   *  hqdefault thumbnail vs. the classifier's mqdefault), it sets this.
+   *  Falls back to `imageUrls` when absent. */
+  displayImageUrls?: string[];
   hasMediaContainer: boolean;
   fromStore?: boolean;
   mediaBlurred?: boolean;
+  /** LinkedIn-only: connection degree ("1st", "2nd", "3rd+", or null when
+   *  not surfaced by the post). Other adapters leave this undefined. */
+  degree?: string | null;
 }
 
 /** Stored for the "filtered posts" panel — includes captured display data for re-rendering. */
@@ -128,6 +154,7 @@ export interface LocalModelDef extends ModelDef {
 /** Typed map for PREDEFINED_MODELS — local models get extended fields. */
 export interface PredefinedModelsMap {
   local: LocalModelDef[];
+  iosLocal: LocalModelDef[];
   [provider: string]: (ModelDef | LocalModelDef)[];
 }
 
@@ -162,6 +189,17 @@ interface SettingsBase {
   // submitted for evaluation. The main timeline is unaffected either way.
   // Defaults to true to preserve historical behavior.
   filterReplies: boolean;
+  // Per-platform master switches. Default to true so existing installs
+  // keep filtering on every supported platform; the content script reads
+  // the matching key based on `adapter.siteId` and skips all processing
+  // when its platform's switch is off. Stored in chrome.storage.local under
+  // `${siteId}Enabled` keys (see enabledStorageKey in shared/platforms.ts);
+  // this map is derived from those keys at settings-read time.
+  platformEnabled: Partial<Record<SiteId, boolean>>;
+  // When true on YouTube, filtered videos are left in the grid and shown
+  // as a "Filtered by Bouncer" placeholder card (see youtube.css). Default
+  // false — remove the card outright, matching Twitter's behavior.
+  youtubeShowPlaceholder: boolean;
 }
 
 export interface Settings extends SettingsBase {
@@ -193,6 +231,13 @@ export interface PlatformSelectors {
 export interface PlatformAdapter {
   siteId: SiteId;
   selectors: PlatformSelectors;
+  /** Where to render the filter box on this platform. Defaults to `'sidebar'`
+   *  when omitted, for backwards compatibility with the original Twitter adapter. */
+  filterBoxPlacement?: FilterBoxPlacement;
+  /** Banner-style adapters return the anchor (parent + insertBefore reference)
+   *  where the banner should be inserted in the page. Sidebar-style adapters
+   *  don't need this — they use `selectors.sidebar`. */
+  getFilterBoxAnchor?(): FilterBoxAnchor | null;
   extractPostContent(article: HTMLElement): PostContent;
   shouldProcessCurrentPage(): boolean;
   isMainPost(article: HTMLElement): boolean;
@@ -254,18 +299,19 @@ export type ContentToBackgroundMessage =
   | { type: 'evaluatePost'; evaluationId: string; post: string; rawText: string; imageUrls: string[]; postUrl: string | null; siteId: SiteId }
   | { type: 'suggestAnnoyingReasons'; post: string; imageUrls: string[]; siteId?: SiteId }
   | { type: 'clearCache' }
-  | { type: 'clearSinglePost'; post: string; imageUrls: string[] }
+  | { type: 'clearSinglePost'; post: string; imageUrls: string[]; postUrl?: string | null; siteId?: SiteId }
   | { type: 'getStats' }
-  | { type: 'getReasoning'; post: string; imageUrls: string[] }
+  | { type: 'getReasoning'; post: string; imageUrls: string[]; postUrl?: string | null; siteId?: SiteId }
   | { type: 'getErrorStatus' }
   | { type: 'getAllLocalModelStatuses' }
   | { type: 'initializeLocalModel'; modelId: string }
   | { type: 'cancelLocalModelDownload'; modelId: string }
   | { type: 'preemptInference' }
-  | { type: 'overrideCacheEntry'; post: string; imageUrls: string[]; shouldHide: boolean; reasoning?: string }
-  | { type: 'sendFeedback'; decision: string; tweetData: { text: string; imageUrls: string[] }; reasoning?: string; rawResponse?: string; siteId?: SiteId }
+  | { type: 'overrideCacheEntry'; post: string; imageUrls: string[]; shouldHide: boolean; reasoning?: string; postUrl?: string | null; siteId?: SiteId }
+  | { type: 'sendFeedback'; decision: string; tweetData: { text: string; imageUrls: string[] }; reasoning?: string; rawResponse?: string; siteId?: SiteId; postUrl?: string | null }
   | { type: 'getAuthStatus' }
   | { type: 'launchAuth' }
+  | { type: 'skipAuth' }
   | { type: 'appleSignIn'; idToken: string; rawNonce: string }
   | { type: 'nativeAppleSignIn' }
   | { type: 'signOut' }
@@ -280,7 +326,8 @@ export type BackgroundToContentMessage =
   | { type: 'getPositions'; postUrls: string[]; evaluationIds?: string[] }
   | { type: 'processingPost'; postUrl: string }
   | { type: 'annoyingProgress'; verified: number; total: number }
-  | { type: 'authStateChanged'; authenticated: boolean }
+  | { type: 'authStateChanged'; authenticated: boolean; isAnonymous?: boolean }
+  | { type: 'guestLimitReached' }
   | { type: 'evaluationStarted'; evaluationId: string; detectorNames: string[] }
   | { type: 'detectorResponse'; evaluationId: string; detectorName: string; shouldHide?: boolean; reasoning?: string; category?: string | null; error?: string; skipped?: boolean; skipReason?: string };
 
@@ -332,6 +379,10 @@ export interface IOSDeps {
 /** Per-site description keys, derived from SiteId. */
 type DescriptionKeys = { [K in SiteId as `descriptions_${K}`]: string[] };
 
+/** Per-platform master-switch keys, derived from SiteId. Adding a new
+ *  platform automatically extends this map. */
+type PlatformEnabledKeys = { [K in SiteId as `${K}Enabled`]: boolean };
+
 /** Valid storage keys for site-specific descriptions. */
 export type DescriptionKey = `descriptions_${SiteId}`;
 
@@ -343,10 +394,13 @@ export type StorageSchema = SettingsBase & {
   localModelStatuses: Record<string, LocalModelStatus>;
   evaluationCache: Record<string, EvaluationResult>;
   stats: { filtered: number; evaluated: number; totalCost: number };
+  // Lifetime count of posts filtered while signed in anonymously. Drives the
+  // guest trial gate (see GUEST_FILTER_LIMIT). Persists across sessions.
+  anonFilterCount: number;
   googleAuthToken: string;
   openrouterCodeVerifier: string;
   lastSeenVersion: string;
-} & DescriptionKeys;
+} & DescriptionKeys & PlatformEnabledKeys;
 
 // ==================== API Response Types ====================
 

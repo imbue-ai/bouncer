@@ -1,0 +1,788 @@
+/* YouTube-specific styles for Bouncer.
+ *
+ * Two surfaces live here:
+ *   1. The mini-guide entry — a Bouncer button injected into
+ *      `ytd-mini-guide-renderer #items`, styled to match the native
+ *      Home / Shorts / Subscriptions / You entries. Clicking it presses
+ *      YT's hamburger to open the drawer.
+ *   2. The inline filter box — `.filter-phrases-banner--youtube`, anchored
+ *      inside `ytd-guide-renderer #sections` after the first section.
+ *      The box's DOM is the same Bouncer markup used on every platform;
+ *      these rules restyle it to feel native to YT's guide rail.
+ *
+ * Adding another platform: write its own `<site>.css` with the same
+ * `.filter-phrases-banner--<siteId>` selector and matching theme rules.
+ * Nothing here needs to be touched. */
+
+/* When the YouTube platform toggle is off, the content script's init flow
+ * adds `body.bouncer-disabled` and removes adapter-injected chrome. The
+ * adapter's mini-guide observer keeps trying to re-add the entry on every
+ * DOM mutation — CSS hides what slips through. */
+body.bouncer-disabled .bouncer-mini-guide-entry,
+body.bouncer-disabled .filter-phrases-banner,
+body.bouncer-disabled .ff-why-annoying-btn {
+  display: none !important;
+}
+
+/* The left-edge "processing" bar (grey pulse while a post is classified) is a
+ * Twitter affordance — it reads as a stray grey line down the side of a
+ * YouTube video card, which doesn't have a tweet's left gutter. Suppress it on
+ * YouTube; the post still dims while pending via the shared [data-ff-pending]
+ * rule. */
+body.site-youtube .post-verification-bar {
+  display: none;
+}
+
+/* ===== Mini-guide entry ===== */
+/* Matches `ytd-mini-guide-entry-renderer`: 74px square button, icon on
+ * top, 10px label below. Native hover/active feedback. */
+
+.bouncer-mini-guide-entry {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  /* Fill the mini-guide column the same way native entries do — they
+   * stretch to whatever width `ytd-mini-guide-renderer` provides, so
+   * their icons end up centered in the column. A fixed `width: 74px`
+   * here left-anchored the icon and pushed it off-center vs the
+   * neighbors. */
+  width: 100%;
+  min-height: 74px;
+  padding: 16px 0 14px;
+  margin: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 10px;
+  cursor: pointer;
+  font-family: "YouTube Sans", "Roboto", "Arial", sans-serif;
+  color: inherit;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.bouncer-mini-guide-entry:hover {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+.bouncer-mini-guide-entry:active {
+  background: rgba(0, 0, 0, 0.08);
+}
+
+html[dark] .bouncer-mini-guide-entry:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+html[dark] .bouncer-mini-guide-entry:active {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.bouncer-mini-guide-entry__icon-wrap {
+  position: relative;
+  width: 24px;
+  height: 24px;
+  display: block;
+}
+
+.bouncer-mini-guide-entry__icon {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: block;
+}
+
+.bouncer-mini-guide-entry__label {
+  margin-top: 6px;
+  font-size: 10px;
+  font-weight: 400;
+  letter-spacing: 0;
+  line-height: 14px;
+  color: #0f0f0f;
+}
+
+html[dark] .bouncer-mini-guide-entry__label {
+  color: #f1f1f1;
+}
+
+/* Count badge — circular overlay anchored to the top-right of the icon.
+ * Hidden visually (just a "0") until at least one post is filtered. */
+.bouncer-mini-guide-entry__count {
+  position: absolute;
+  top: -6px;
+  right: -10px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: transparent;
+  color: transparent;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+  pointer-events: none;
+  box-sizing: border-box;
+}
+
+.bouncer-mini-guide-entry__count--nonzero {
+  background: rgb(200, 110, 65);
+  color: #fff;
+}
+
+/* ===== Share button — hide on YT (Twitter-only feature) ===== */
+.filter-phrases-banner--youtube .filter-pack-share-btn {
+  display: none !important;
+}
+
+/* ===== Inline filter box in the full guide ===== */
+
+/* Outlined card frame — matches the rounded card styling YouTube uses for
+ * companion ad slots and lockup cards in the watch sidebar. Same treatment
+ * on the home guide rail so both surfaces read as native YT cards. */
+.filter-phrases-banner.filter-phrases-banner--youtube {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 8px 0 12px;
+  font-family: "Roboto", "Arial", sans-serif;
+  box-sizing: border-box;
+}
+
+.filter-phrases-banner--youtube .filter-phrases-container {
+  padding: 12px 16px;
+  background-color: #ffffff !important;
+  /* Brand orange outline — matches the Twitter panel. Color comes from the
+   * `--bouncer-brand-rgb` variable defined in content.css's :root. */
+  border: var(--green-border-width) solid rgb(var(--bouncer-brand-rgb)) !important;
+  border-radius: 12px !important;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+html[dark] .filter-phrases-banner--youtube .filter-phrases-container {
+  background-color: #0f0f0f !important;
+}
+
+/* Title row: bold "Bouncer" header. No accent dot — the orange border
+ * around the card already carries the brand. */
+.filter-phrases-banner--youtube .filter-phrases-title-row {
+  padding-bottom: 2px;
+}
+
+.filter-phrases-banner--youtube .filter-phrases-box-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 0;
+  font-family: "Roboto", "Arial", sans-serif;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.1px;
+  color: #0f0f0f;
+  text-transform: none;
+}
+
+html[dark] .filter-phrases-banner--youtube .filter-phrases-box-name {
+  color: #f1f1f1;
+}
+
+/* Header row ("Filter out X, Y and ___"). The narrow guide column doesn't
+ * have room for label + tags + input on one line, so we force the input
+ * to its own row (`flex-basis: 100%`). Result:
+ *   row 1: "Filter out" + phrase tags (wraps naturally if many)
+ *   row 2: "and [input field    ]"
+ * Same DOM as on Twitter — only the CSS row-break differs. */
+.filter-phrases-banner--youtube .filter-phrases-header {
+  column-gap: 4px;
+  row-gap: 4px;
+}
+
+.filter-phrases-banner--youtube .filter-phrases-and-input {
+  flex-basis: 100%;
+  margin-top: 2px;
+}
+
+.filter-phrases-banner--youtube .filter-phrases-label,
+.filter-phrases-banner--youtube .filter-phrases-and {
+  font-size: 14px;
+  font-weight: 400;
+  color: #0f0f0f;
+}
+
+html[dark] .filter-phrases-banner--youtube .filter-phrases-label,
+html[dark] .filter-phrases-banner--youtube .filter-phrases-and {
+  color: #f1f1f1;
+}
+
+/* Phrase tags — italicized to read as user content, native hover feedback. */
+.filter-phrases-banner--youtube .filter-phrase-inline {
+  font-size: 14px;
+  font-weight: 600;
+  color: #606060;
+}
+
+html[dark] .filter-phrases-banner--youtube .filter-phrase-inline {
+  color: #aaa;
+}
+
+.filter-phrases-banner--youtube .filter-phrase-inline:hover {
+  color: #cc0000;
+}
+
+.filter-phrases-banner--youtube .filter-phrase-separator {
+  font-size: 14px;
+  color: #0f0f0f;
+}
+
+html[dark] .filter-phrases-banner--youtube .filter-phrase-separator {
+  color: #f1f1f1;
+}
+
+/* Input — flat underline in YT's grey, focused state uses YT's accent red. */
+.filter-phrases-banner--youtube .filter-phrases-container .filter-phrases-input {
+  font-size: 14px;
+  font-weight: 600;
+  color: #0f0f0f;
+  border-bottom: 2px solid rgba(0, 0, 0, 0.2) !important;
+  padding: 0 2px 2px !important;
+}
+
+.filter-phrases-banner--youtube .filter-phrases-container .filter-phrases-input:focus {
+  border-bottom-color: rgb(var(--bouncer-brand-rgb)) !important;
+}
+
+html[dark] .filter-phrases-banner--youtube .filter-phrases-container .filter-phrases-input {
+  color: #f1f1f1;
+  border-bottom-color: rgba(255, 255, 255, 0.2) !important;
+}
+
+html[dark] .filter-phrases-banner--youtube .filter-phrases-container .filter-phrases-input:focus {
+  border-bottom-color: rgb(var(--bouncer-brand-rgb)) !important;
+}
+
+/* Nudge the cycling placeholder up 2px so its baseline aligns with the
+ * input's typed text on YT (the input uses a slightly different font metric
+ * than the shared placeholder pin). */
+.filter-phrases-banner--youtube .filter-placeholder-cycle {
+  top: -2px;
+}
+
+/* Actions row — "View filtered" pill + icon buttons, sized for the column. */
+.filter-phrases-banner--youtube .filter-phrases-actions {
+  margin-top: 4px;
+}
+
+.filter-phrases-banner--youtube .filter-phrases-container .filtered-toggle-btn {
+  padding: 6px 12px;
+  background: rgba(0, 0, 0, 0.05);
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 18px;
+  color: #0f0f0f;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.filter-phrases-banner--youtube .filtered-toggle-btn:hover {
+  background: rgba(0, 0, 0, 0.08);
+  border-color: rgba(0, 0, 0, 0.15);
+}
+
+html[dark] .filter-phrases-banner--youtube .filter-phrases-container .filtered-toggle-btn {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.15);
+  color: #f1f1f1;
+}
+
+html[dark] .filter-phrases-banner--youtube .filtered-toggle-btn:hover {
+  background: rgba(255, 255, 255, 0.15);
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
+.filter-phrases-banner--youtube .filtered-toggle-count {
+  color: inherit;
+}
+
+/* Settings icon button — circular, YT secondary text color, accent on hover. */
+.filter-phrases-banner--youtube .filter-phrases-container .filter-settings-btn {
+  color: #606060;
+}
+
+.filter-phrases-banner--youtube .filter-phrases-container .filter-settings-btn:hover {
+  background: rgba(0, 0, 0, 0.05);
+  color: #0f0f0f;
+}
+
+html[dark] .filter-phrases-banner--youtube .filter-phrases-container .filter-settings-btn {
+  color: #aaa;
+}
+
+html[dark] .filter-phrases-banner--youtube .filter-phrases-container .filter-settings-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #f1f1f1;
+}
+
+/* AI-text toggle row — YT secondary text, tighter spacing. */
+.filter-phrases-banner--youtube .filter-ai-text-toggle {
+  margin-top: 0;
+  font-size: 12px;
+  color: #606060;
+}
+
+html[dark] .filter-phrases-banner--youtube .filter-ai-text-toggle {
+  color: #aaa;
+}
+
+/* Sign-in prompt — neutral soft button. The card already carries the
+ * orange brand via its border; the CTA stays out of the way (white card
+ * on light theme, light-grey card on dark theme) so it doesn't fight
+ * with the box frame. */
+.filter-phrases-banner--youtube .google-signin-btn {
+  background: #ffffff !important;
+  border: 1px solid rgba(0, 0, 0, 0.12) !important;
+  color: #0f0f0f !important;
+  font-weight: 500;
+}
+
+/* Keep "Activate Bouncer" on one line in the narrow YT guide column —
+ * without this the two-word label wraps and pushes the button height. */
+.filter-phrases-banner--youtube .google-signin-btn-label {
+  white-space: nowrap;
+}
+
+.filter-phrases-banner--youtube .google-signin-btn:hover {
+  background: #f2f2f2 !important;
+  border-color: rgba(0, 0, 0, 0.2) !important;
+}
+
+html[dark] .filter-phrases-banner--youtube .google-signin-btn {
+  background: #3f3f3f !important;
+  border-color: rgba(255, 255, 255, 0.15) !important;
+  color: #f1f1f1 !important;
+}
+
+html[dark] .filter-phrases-banner--youtube .google-signin-btn:hover {
+  background: #525252 !important;
+  border-color: rgba(255, 255, 255, 0.25) !important;
+}
+
+/* ===== Watch-page sidebar: sticky to top of the scroll area =====
+ * The up-next column scrolls with the page on YT's watch layout. Pin the
+ * filter box just below the masthead (56px tall) so it stays in view as
+ * the user scrolls suggested videos. `z-index` keeps it above the cards
+ * while sticky. */
+ytd-watch-flexy #secondary .filter-phrases-banner.filter-phrases-banner--youtube {
+  position: sticky;
+  top: 56px;
+  /* Draw on top of anything YT renders in the up-next column (the autoplay
+   * "Next" arrow, etc.). `z-index` only takes effect on positioned
+   * elements — `position: sticky` qualifies. `isolation: isolate` forces
+   * a new stacking context so descendant contexts can't escape it, and
+   * the high value beats YT's own widget stacking. */
+  z-index: 9999;
+  isolation: isolate;
+  padding: 0;
+  margin-bottom: 12px;
+  background-color: #ffffff;
+}
+
+html[dark] ytd-watch-flexy #secondary .filter-phrases-banner.filter-phrases-banner--youtube {
+  background-color: #0f0f0f;
+}
+
+/* ===== Filtered-video placeholder =====
+ * When the `youtubeShowPlaceholder` setting is on (controlled from the
+ * popup), the YouTube adapter stamps <html> with `bouncer-yt-show-placeholder`
+ * AND appends a `.bouncer-yt-placeholder` element into each filtered card.
+ * The mode class on <html> is intentionally distinct from the element's
+ * class — otherwise `.bouncer-yt-placeholder { display: none }` would also
+ * hit <html> and blank the whole page.
+ * These rules hide the card's real content and show the placeholder
+ * (logo + "Filtered by Bouncer" label inside a thumbnail-shaped panel,
+ * with a skeleton avatar + text bars below). Outside this class, filtered
+ * cards keep the default `display: none` set by `hidePost`. */
+
+/* Anchor the absolutely-positioned placeholder. The card retains its
+ * natural layout because children below use `visibility: hidden` (which
+ * preserves their occupied space) rather than `display: none`. */
+html.bouncer-yt-show-placeholder ytd-rich-item-renderer[data-filtered-by-extension="true"],
+html.bouncer-yt-show-placeholder yt-lockup-view-model[data-filtered-by-extension="true"] {
+  position: relative;
+}
+
+/* Hide the original card content visually but keep it in flow so the
+ * card's intrinsic height (16:9 thumb + meta row) is preserved. The
+ * placeholder then overlays it. */
+html.bouncer-yt-show-placeholder ytd-rich-item-renderer[data-filtered-by-extension="true"] > *:not(.bouncer-yt-placeholder),
+html.bouncer-yt-show-placeholder yt-lockup-view-model[data-filtered-by-extension="true"] > *:not(.bouncer-yt-placeholder) {
+  visibility: hidden;
+}
+
+/* Hide the placeholder element itself by default (so it's invisible when
+ * not in placeholder mode or when the card isn't filtered). It only shows
+ * when its parent has both the page-level class and the filtered flag. */
+.bouncer-yt-placeholder { display: none; }
+html.bouncer-yt-show-placeholder ytd-rich-item-renderer[data-filtered-by-extension="true"] > .bouncer-yt-placeholder,
+html.bouncer-yt-show-placeholder yt-lockup-view-model[data-filtered-by-extension="true"] > .bouncer-yt-placeholder {
+  display: block;
+  position: absolute;
+  inset: 0;
+  font-family: "Roboto", "Arial", sans-serif;
+}
+
+/* Thumbnail-shaped panel: matches a real YT thumbnail's 16:9 aspect + 12px
+ * radius. Logo above the label, both centered. The logo is the Bouncer
+ * icon as-is (not forced into a circle) so its actual shape reads. */
+.bouncer-yt-placeholder-thumb {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: 12px;
+  background: #f2f2f2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px;
+  box-sizing: border-box;
+}
+.bouncer-yt-placeholder-logo {
+  width: 40px;
+  height: 40px;
+  display: block;
+}
+.bouncer-yt-placeholder-label {
+  font-size: 14px;
+  font-weight: 500;
+  color: #606060;
+}
+
+/* Byline-shaped skeleton row below the thumbnail: 36px avatar circle on
+ * the left, three text bars on the right that decrease in width to mimic
+ * a real video's title (2 lines) + byline (1 line). */
+.bouncer-yt-placeholder-meta {
+  display: flex;
+  gap: 12px;
+  margin-top: 12px;
+  align-items: flex-start;
+}
+.bouncer-yt-placeholder-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: #e5e5e5;
+  flex-shrink: 0;
+}
+.bouncer-yt-placeholder-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+.bouncer-yt-placeholder-bar {
+  background: #e5e5e5;
+  border-radius: 4px;
+  height: 12px;
+}
+.bouncer-yt-placeholder-bar.long  { width: 95%; }
+.bouncer-yt-placeholder-bar.short { width: 60%; }
+.bouncer-yt-placeholder-bar.tiny  { width: 45%; height: 10px; }
+
+/* Shorts variant: tall 2:3 thumb (matches `ytThumbnailViewModelAspectRatio2By3`)
+ * and a simpler meta row with no avatar — shorts cards don't render one.
+ * Without these overrides the 16:9 thumb leaves a wide empty band at the
+ * bottom of the tall shorts cell. */
+.bouncer-yt-placeholder--short .bouncer-yt-placeholder-thumb {
+  aspect-ratio: 2 / 3;
+}
+.bouncer-yt-placeholder--short .bouncer-yt-placeholder-meta {
+  gap: 0;
+}
+
+/* Dark theme: switch to YT's dark surface colors. Desktop-only (`html[dark]`):
+ * the placeholder is never shown on mobile/iOS (filtered videos are removed
+ * outright there), and desktop carries `darker-dark-theme` even in light mode. */
+html[dark] .bouncer-yt-placeholder-thumb {
+  background: #1f1f1f;
+}
+html[dark] .bouncer-yt-placeholder-label {
+  color: #aaa;
+}
+html[dark] .bouncer-yt-placeholder-avatar,
+html[dark] .bouncer-yt-placeholder-bar {
+  background: #2b2b2b;
+}
+
+/* ===== Filtered-videos panel cards =====
+ * On YouTube the filtered panel renders video lockups (thumbnail-first) via
+ * `buildYouTubeCard`, not the Twitter tweet layout. Colors follow YouTube's
+ * own palette and key off the modal's `.light-mode` / `.dark-mode` class so
+ * the panel matches the page theme. */
+
+/* Stack cards with breathing room instead of full-width dividers. */
+body.site-youtube .slop-posts-container {
+  gap: 4px;
+  padding: 8px 0;
+}
+
+body.site-youtube .yt-card {
+  border-bottom: none;
+}
+
+body.site-youtube .yt-card-inner {
+  padding: 8px 16px 12px;
+}
+
+/* Thumbnail: 16:9 (or portrait for Shorts), rounded like native lockups. */
+body.site-youtube .yt-card-thumb {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.1);
+}
+
+body.site-youtube .dark-mode .yt-card-thumb {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+body.site-youtube .yt-card-thumb-short {
+  aspect-ratio: 9 / 16;
+  max-width: 200px;
+  margin: 0 auto;
+}
+
+body.site-youtube .yt-card-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* Category tag sits in a right-aligned row just above the thumbnail (no
+ * overlap), echoing Twitter where the tag ends the post header row. */
+body.site-youtube .yt-card-tag-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 8px;
+}
+
+body.site-youtube .yt-card-tag {
+  margin-left: 0;
+}
+
+/* Info row: channel avatar + title/channel/metadata column. */
+body.site-youtube .yt-card-info {
+  display: flex;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+body.site-youtube .yt-card-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.1);
+}
+
+body.site-youtube .dark-mode .yt-card-avatar {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+body.site-youtube .yt-card-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* Shorts have no channel avatar in the payload — render the Shorts glyph. */
+body.site-youtube .yt-card-avatar.slop-avatar-shorts {
+  background-color: #ff0033;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+body.site-youtube .yt-card-avatar.slop-avatar-shorts svg {
+  width: 60%;
+  height: 60%;
+}
+
+body.site-youtube .yt-card-text {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Title: up to two lines, then ellipsis — matches YouTube's grid lockups. */
+body.site-youtube .yt-card-title {
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.3;
+  margin: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  color: #0f0f0f;
+}
+
+body.site-youtube .yt-card-channel,
+body.site-youtube .yt-card-meta {
+  font-size: 12px;
+  line-height: 1.3;
+  margin-top: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #606060;
+}
+
+body.site-youtube .yt-card-meta {
+  margin-top: 2px;
+}
+
+/* Dark-mode text colors (YouTube's own light-on-dark grays). */
+body.site-youtube .dark-mode .yt-card-title {
+  color: #f1f1f1;
+}
+
+body.site-youtube .dark-mode .yt-card-channel,
+body.site-youtube .dark-mode .yt-card-meta {
+  color: #aaa;
+}
+
+body.site-youtube .yt-card-reasoning {
+  margin-top: 10px;
+}
+
+/* ===== "Bounce this video" action button ===== */
+/* Per-card cancel icon — sized to match YT's own 24×24 icon-button so it
+ * reads as a native sibling of the 3-dot "More actions" menu, then tinted
+ * with the Bouncer brand orange so users can recognise it as our control.
+ * The 34px default sizing from content.css is overridden here. */
+
+.ff-why-annoying-btn.ff-yt-under-menu,
+.ff-why-annoying-btn.ff-yt-inline-meta {
+  /* Sizing for our two fallback placements only. The next-to-menu placement
+   * is intentionally excluded — it carries the cloned YT button-shape
+   * classes and needs to size from YT's own rules so its baseline lines up
+   * with the 3-dot button next to it. */
+  width: 24px;
+  height: 24px;
+  /* Bouncer brand accent. Defined in content.css :root as
+   * `--bouncer-brand-rgb`. */
+  color: rgb(var(--bouncer-brand-rgb));
+}
+
+/* For the next-to-menu placement we can't rely on inherited `color` driving
+ * `stroke: currentcolor` — YT's `.ytSpecButtonShapeNext*` rules set their own
+ * `color` on the host. Force `stroke` directly on the SVG so the brand orange
+ * wins regardless of YT's icon-color cascade. */
+.ff-why-annoying-btn.ff-yt-next-to-menu svg {
+  stroke: rgb(var(--bouncer-brand-rgb));
+}
+
+.ff-why-annoying-btn.ff-yt-under-menu:hover,
+.ff-why-annoying-btn.ff-yt-inline-meta:hover {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+html[dark] .ff-why-annoying-btn.ff-yt-under-menu:hover,
+html[dark] .ff-why-annoying-btn.ff-yt-inline-meta:hover,
+html[darker-dark-theme] body.ff-ios .ff-why-annoying-btn.ff-yt-under-menu:hover,
+html[darker-dark-theme] body.ff-ios .ff-why-annoying-btn.ff-yt-inline-meta:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.ff-why-annoying-btn.ff-yt-under-menu svg,
+.ff-why-annoying-btn.ff-yt-inline-meta svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* Sits as an inline sibling immediately before the 3-dot "More actions"
+ * button. Hover treatment and inner layout come from the cloned
+ * `ytSpecButtonShape*` classes on the element; color and outer sizing are
+ * set in the shared block above. This rule just adds the gap between us
+ * and the 3-dots. */
+.ff-why-annoying-btn.ff-yt-next-to-menu {
+  margin-right: 4px;
+  vertical-align: middle;
+}
+
+/* Sponsored ad row uses `display: flex` with default `align-items: stretch`,
+ * so the badges' text top-aligns inside the row while our 24×24 button
+ * centers its SVG — that's what pulls our icon below the "Sponsored •
+ * <advertiser>" baseline. Force the row to center its items so the
+ * trashcan vertically aligns with the text. Applied unconditionally
+ * because YT-only rows have short items and don't change visually. */
+.ytwFeedAdMetadataViewModelHostMetadataAdBadgeDetailsLineContainerStyleStandard {
+  align-items: center;
+}
+
+/* Regular videos: inline at the end of the views/age metadata row,
+ * baseline-aligned with the text so it sits right of "2 years ago". */
+.ff-why-annoying-btn.ff-yt-inline-meta {
+  display: inline-flex;
+  vertical-align: middle;
+  margin-left: 4px;
+}
+
+/* Regular videos + ads: 3-dots sits at the top-right of the metadata host.
+ * Place the trash icon just to its left, aligned with the title's first line. */
+.ff-why-annoying-btn.ff-yt-under-menu {
+  position: absolute;
+  top: 4px;
+  right: 32px;
+  z-index: 10;
+}
+
+/* Mobile Shorts: the title is overlaid on the thumbnail, so the trash can't be
+ * inline in it. Place it absolutely just under the 3-dot menu (a top-right
+ * overlay on the shorts host), with a scrim so it's legible over any
+ * thumbnail — hence theme-independent white-on-dark rather than the inherited
+ * metadata color. */
+.ff-why-annoying-btn.ff-yt-short-menu {
+  position: absolute;
+  top: 40px;
+  right: 6px;
+  z-index: 10;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+}
+.ff-why-annoying-btn.ff-yt-short-menu:hover {
+  background: rgba(0, 0, 0, 0.75);
+  color: #fff;
+}
+.ff-why-annoying-btn.ff-yt-short-menu svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* Lockup metadata column. Pulling the 3-dot menu out of absolute
+ * positioning (below) lets the text container claim full width and flow
+ * naturally next to the buttons instead of running underneath them. */
+.ytLockupMetadataViewModelTextContainer {
+  width: 100%;
+}
+
+.ytLockupMetadataViewModelMenuButton {
+  position: static !important;
+  transform: translateX(13px);
+}
+
+/* Watch-page sidebar lockups clamp the 3-dot button to a fixed width that
+ * crowds the cancel icon next to it. Letting it size to content matches
+ * the home feed. */
+ytd-item-section-renderer .ytSpecButtonShapeNextSizeM.ytSpecButtonShapeNextIconButton {
+  width: unset;
+}
+
