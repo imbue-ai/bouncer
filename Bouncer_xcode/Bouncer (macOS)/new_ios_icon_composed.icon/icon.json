@@ -6,9 +6,11 @@
     {
       "layers" : [
         {
+          "blend-mode" : "normal",
+          "fill" : "automatic",
           "glass" : false,
-          "image-name" : "bouncer-1024 3.png",
-          "name" : "bouncer-1024 3"
+          "image-name" : "iOS app icon.png",
+          "name" : "iOS app icon"
         }
       ],
       "shadow" : {
