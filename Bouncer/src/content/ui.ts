@@ -2,7 +2,7 @@
 
 import { toBlob } from 'html-to-image';
 import { asyncHandler } from '../shared/async';
-import { cleanReasoning, escapeHtml, parseHTML, GUEST_FILTER_LIMIT, AI_DETECTION_SEED_PHRASE } from '../shared/utils';
+import { cleanReasoning, escapeHtml, formatPostForEvaluation, parseHTML, GUEST_FILTER_LIMIT, AI_DETECTION_SEED_PHRASE } from '../shared/utils';
 import { init as initPopup } from '../popup/index';
 import {
   encodeFilterPackCode, decodeFilterPackCode, buildFilterPackShareUrl,
@@ -2802,11 +2802,8 @@ function buildTwitterCard(post: FilteredPost): HTMLElement {
 // ==================== Filtered Post Storage ====================
 
 export function storeFilteredPost(article: HTMLElement, contentObj: PostContent, reasoning: string, rawResponse = '', category: string | null = null) {
-  // Use postUrl or content hash as dedup key. formatForEvaluation returns
-  // the exact string the post was evaluated as (reply context included) —
-  // evaluationText feeds the Restore button's cache override, which must
-  // land on the evaluated cache key.
-  const evalText = _deps.formatForEvaluation(article, contentObj);
+  // Use postUrl or content hash as dedup key
+  const evalText = formatPostForEvaluation(contentObj);
   const key = contentObj.postUrl || evalText.substring(0, 200);
   if (filteredPostKeys.has(key)) {
     return; // Already stored
@@ -3362,7 +3359,7 @@ async function fetchReasoningIfNeeded(article: HTMLElement) {
   try {
     let response: { found?: boolean; shouldHide?: boolean; reasoning?: string; rawResponse?: string } | undefined = await chrome.runtime.sendMessage({
       type: 'getReasoning',
-      post: _deps.formatForEvaluation(article, content),
+      post: formatPostForEvaluation(content),
       imageUrls: content.imageUrls || [],
       postUrl: content.postUrl || null,
       siteId: _deps.adapter.siteId
@@ -3581,7 +3578,7 @@ export function addWhyAnnoyingButton(article: HTMLElement) {
           type: 'sendFeedback',
           siteId: _deps.adapter.siteId,
           postUrl: content.postUrl || null,
-          tweetData: { text: _deps.formatForEvaluation(article, content), imageUrls: content.imageUrls || [] },
+          tweetData: { text: formatPostForEvaluation(content), imageUrls: content.imageUrls || [] },
           rawResponse: reasoning?.rawResponse || '',
           reasoning: reasoning?.reasoning || '',
           decision: 'false_negative'
@@ -3593,7 +3590,7 @@ export function addWhyAnnoyingButton(article: HTMLElement) {
         setTimeout(() => hidePost(article), 300);
         chrome.runtime.sendMessage({
           type: 'overrideCacheEntry',
-          post: _deps.formatForEvaluation(article, content),
+          post: formatPostForEvaluation(content),
           imageUrls: content.imageUrls || [],
           postUrl: content.postUrl || null,
           siteId: _deps.adapter.siteId,
@@ -3666,7 +3663,7 @@ export function addWhyAnnoyingButton(article: HTMLElement) {
         setTimeout(() => hidePost(article), 300);
         chrome.runtime.sendMessage({
           type: 'overrideCacheEntry',
-          post: _deps.formatForEvaluation(article, content),
+          post: formatPostForEvaluation(content),
           imageUrls: content.imageUrls || [],
           postUrl: content.postUrl || null,
           siteId: _deps.adapter.siteId,
@@ -3709,7 +3706,7 @@ export function addWhyAnnoyingButton(article: HTMLElement) {
           type: 'sendFeedback',
           siteId: _deps.adapter.siteId,
           postUrl: content.postUrl || null,
-          tweetData: { text: _deps.formatForEvaluation(article, content), imageUrls: content.imageUrls || [] },
+          tweetData: { text: formatPostForEvaluation(content), imageUrls: content.imageUrls || [] },
           rawResponse: reasoning?.rawResponse || '',
           reasoning: reasoning?.reasoning || '',
           decision: 'false_negative'
@@ -3721,7 +3718,7 @@ export function addWhyAnnoyingButton(article: HTMLElement) {
         setTimeout(() => hidePost(article), 300);
         chrome.runtime.sendMessage({
           type: 'overrideCacheEntry',
-          post: _deps.formatForEvaluation(article, content),
+          post: formatPostForEvaluation(content),
           imageUrls: content.imageUrls || [],
           postUrl: content.postUrl || null,
           siteId: _deps.adapter.siteId,

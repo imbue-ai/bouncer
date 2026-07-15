@@ -396,12 +396,6 @@ export interface PostOperations {
   processExistingPosts: () => void;
   evaluatePost: (article: HTMLElement) => Promise<void>;
   reEvaluateSinglePost: (article: HTMLElement) => Promise<void>;
-  /** The exact evaluation string for an article: the string previously sent
-   *  to evaluatePost when available, else recomputed (with main-post reply
-   *  context on permalink pages). Cache-key parity depends on every
-   *  recheck/override/feedback flow using this instead of
-   *  formatPostForEvaluation. */
-  formatForEvaluation: (article: HTMLElement, content: PostContent) => string;
 }
 
 export interface PostState {
