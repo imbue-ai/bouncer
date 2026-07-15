@@ -11,9 +11,6 @@
 		4E38A4CF2F72199A00496A14 /* AppCheckProviderFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E38A4CD2F72199A00496A14 /* AppCheckProviderFactory.swift */; };
 		4E38A4D32F721C2500496A14 /* FirebaseAppCheck in Frameworks */ = {isa = PBXBuildFile; productRef = 4E38A4D22F721C2500496A14 /* FirebaseAppCheck */; };
 		4E3B363A2F857BE400A929AD /* iosicon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 4E3B36392F857BE300A929AD /* iosicon.icon */; };
-		SP00000100000000000000SP /* SplashIcon.png in Resources */ = {isa = PBXBuildFile; fileRef = SP00000400000000000000SP /* SplashIcon.png */; };
-		SP00000200000000000000SP /* SplashIcon@2x.png in Resources */ = {isa = PBXBuildFile; fileRef = SP00000500000000000000SP /* SplashIcon@2x.png */; };
-		SP00000300000000000000SP /* SplashIcon@3x.png in Resources */ = {isa = PBXBuildFile; fileRef = SP00000600000000000000SP /* SplashIcon@3x.png */; };
 		4EC0EC652FEB068700F3FCDE /* GoogleService-Info-Dev.plist in Resources */ = {isa = PBXBuildFile; fileRef = 4EC0EC642FEB068700F3FCDE /* GoogleService-Info-Dev.plist */; };
 		4EC0EC812FEB06DD00F3FCDE /* GoogleService-Info.plist in Resources */ = {isa = PBXBuildFile; fileRef = 4EC0EC802FEB06DD00F3FCDE /* GoogleService-Info.plist */; };
 		4EC0EDD330059DE400F3FCDE /* new_ios_icon_composed.icon in Resources */ = {isa = PBXBuildFile; fileRef = 4EC0EDD230059DE400F3FCDE /* new_ios_icon_composed.icon */; };
@@ -64,6 +61,9 @@
 		SF00000800000000000000SF /* dist in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BCF2F3EB56D00F8BF65 /* dist */; };
 		SF00000900000000000000SF /* icons in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BD92F3EB56D00F8BF65 /* icons */; };
 		SF00001000000000000000SF /* adapters in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BD62F3EB56D00F8BF65 /* adapters */; };
+		SP00000100000000000000SP /* SplashIcon.png in Resources */ = {isa = PBXBuildFile; fileRef = SP00000400000000000000SP /* SplashIcon.png */; };
+		SP00000200000000000000SP /* SplashIcon@2x.png in Resources */ = {isa = PBXBuildFile; fileRef = SP00000500000000000000SP /* SplashIcon@2x.png */; };
+		SP00000300000000000000SP /* SplashIcon@3x.png in Resources */ = {isa = PBXBuildFile; fileRef = SP00000600000000000000SP /* SplashIcon@3x.png */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -94,9 +94,6 @@
 		4E38A4CC2F72199A00496A14 /* AppCheckBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppCheckBridge.swift; sourceTree = "<group>"; };
 		4E38A4CD2F72199A00496A14 /* AppCheckProviderFactory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppCheckProviderFactory.swift; sourceTree = "<group>"; };
 		4E3B36392F857BE300A929AD /* iosicon.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = iosicon.icon; sourceTree = "<group>"; };
-		SP00000400000000000000SP /* SplashIcon.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = SplashIcon.png; sourceTree = "<group>"; };
-		SP00000500000000000000SP /* SplashIcon@2x.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "SplashIcon@2x.png"; sourceTree = "<group>"; };
-		SP00000600000000000000SP /* SplashIcon@3x.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "SplashIcon@3x.png"; sourceTree = "<group>"; };
 		4EC0EC642FEB068700F3FCDE /* GoogleService-Info-Dev.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "GoogleService-Info-Dev.plist"; sourceTree = "<group>"; };
 		4EC0EC802FEB06DD00F3FCDE /* GoogleService-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "GoogleService-Info.plist"; sourceTree = "<group>"; };
 		4EC0EDD230059DE400F3FCDE /* new_ios_icon_composed.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = new_ios_icon_composed.icon; sourceTree = "<group>"; };
@@ -139,6 +136,9 @@
 		DA00LISFILE00000000DA003 /* LocalInferenceService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalInferenceService.swift; sourceTree = "<group>"; };
 		DA00MDFILE0000000000DA005 /* ModelDownloader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelDownloader.swift; sourceTree = "<group>"; };
 		EE00000100000000000000EE /* manifest.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = manifest.json; sourceTree = "<group>"; };
+		SP00000400000000000000SP /* SplashIcon.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = SplashIcon.png; sourceTree = "<group>"; };
+		SP00000500000000000000SP /* SplashIcon@2x.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "SplashIcon@2x.png"; sourceTree = "<group>"; };
+		SP00000600000000000000SP /* SplashIcon@3x.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "SplashIcon@3x.png"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -904,7 +904,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.2.2;
+				MARKETING_VERSION = 2.0.0;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",
@@ -954,7 +954,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.2.2;
+				MARKETING_VERSION = 2.0.0;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",
