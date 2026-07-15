@@ -504,7 +504,7 @@ const BouncerTwitterAdapter = class TwitterAdapter implements PlatformAdapter {
       art.style.display = '';
       art.style.opacity = '1';
       art.style.transform = '';
-      art.classList.remove('ff-pending', 'ff-error');
+      art.classList.remove('ff-pending');
       art.removeAttribute('data-filtered-by-extension');
       const bar = art.querySelector('.post-verification-bar');
       if (bar) bar.remove();
