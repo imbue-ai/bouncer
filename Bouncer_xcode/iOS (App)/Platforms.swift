@@ -74,20 +74,21 @@ enum Platforms {
                 "pbs.twimg.com", "abs.twimg.com", "video.twimg.com",
             ]
         ),
-        PlatformDef(
-            id: "youtube",
-            displayName: "YouTube",
-            feedURL: "https://www.youtube.com/",
-            loginURL: nil,
-            adapterScriptName: "YouTubeAdapter",
-            cssFile: "youtube",
-            cssSubdir: "adapters/youtube",
-            hostRoots: [
-                "youtube.com", "m.youtube.com", "youtu.be",
-                "ytimg.com", "ggpht.com", "googlevideo.com",
-                "accounts.youtube.com",
-            ]
-        ),
+// Millan todo: add back YT to ios
+//         PlatformDef(
+//             id: "youtube",
+//             displayName: "YouTube",
+//             feedURL: "https://www.youtube.com/",
+//             loginURL: nil,
+//             adapterScriptName: "YouTubeAdapter",
+//             cssFile: "youtube",
+//             cssSubdir: "adapters/youtube",
+//             hostRoots: [
+//                 "youtube.com", "m.youtube.com", "youtu.be",
+//                 "ytimg.com", "ggpht.com", "googlevideo.com",
+//                 "accounts.youtube.com",
+//             ]
+//         ),
         PlatformDef(
             id: "linkedin",
             displayName: "LinkedIn",
