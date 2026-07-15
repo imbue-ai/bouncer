@@ -1,10 +1,10 @@
 // iOS FAB, filtered modal, native sheet bridge
 
 import type { IOSDeps, DescriptionKey, SiteId } from '../types';
-import { clampThreshold, clampImageThreshold, getDescriptions, setDescriptions } from '../shared/storage';
+import { clampThreshold, clampImageThreshold, clampReplyThreshold, getDescriptions, setDescriptions, getStorage, aiIntentActiveForSite } from '../shared/storage';
 import { platformById, descriptionsStorageKey } from '../shared/platforms';
 import { parseHTML } from '../shared/utils';
-import { shareFilterPackForIOS } from './ui';
+import { shareFilterPackForIOS, toggleAiDetectionViaPhrases } from './ui';
 
 // Bridge globals exposed to native Swift (added to window) and WebKit message
 // handler injected by WKWebView. Declaring them here gives ESLint/TS proper
@@ -19,12 +19,19 @@ interface FFWindow {
   __ff_addPhraseFor?: (siteId: string, text: string) => Promise<boolean>;
   __ff_removePhraseFor?: (siteId: string, phrase: string) => Promise<void>;
   __ff_showFilteredModal?: () => void;
+  // AI-detection state is driven entirely by the user's natural-language
+  // filter phrases — there are no direct on/off setters, and the state is
+  // per-platform (the current page's phrases decide). The toggle below
+  // operates through the phrase mechanism itself (same as the desktop
+  // sparkle indicator): off→on adds the seed phrase to this platform's
+  // list, on→off deletes this platform's AI phrases.
+  __ff_toggleAiDetection?: () => Promise<void>;
   __ff_getAiTextFilterEnabled?: () => Promise<boolean>;
-  __ff_setAiTextFilterEnabled?: (enabled: boolean) => Promise<void>;
   __ff_getAiTextDetectionThreshold?: () => Promise<number>;
   __ff_setAiTextDetectionThreshold?: (value: number) => Promise<void>;
+  __ff_getAiTextReplyDetectionThreshold?: () => Promise<number>;
+  __ff_setAiTextReplyDetectionThreshold?: (value: number) => Promise<void>;
   __ff_getAiImageFilterEnabled?: () => Promise<boolean>;
-  __ff_setAiImageFilterEnabled?: (enabled: boolean) => Promise<void>;
   __ff_getAiImageDetectionThreshold?: () => Promise<number>;
   __ff_setAiImageDetectionThreshold?: (value: number) => Promise<void>;
   __ff_shareFilterPack?: () => Promise<{ ok: boolean; error?: string }>;
@@ -130,17 +137,25 @@ export function initIOS(deps: IOSDeps) {
     }
   };
 
-  // AI-text-detection toggle bridge. The native settings page reads/writes
-  // chrome.storage.local through these; the storage-change listener in
-  // content/index.ts then re-evaluates posts (cache is invalidated by
-  // background/index.ts's settings-change handler).
-  w.__ff_getAiTextFilterEnabled = async (): Promise<boolean> => {
-    const data = await chrome.storage.local.get(['aiTextFilterEnabled']);
-    return data.aiTextFilterEnabled === true;
+  // AI-detection bridge. There is no direct on/off setter — detection turns
+  // on and off purely through the user's natural-language filter phrases
+  // (see background/ai-intent.ts). The native sheet's sparkle indicator
+  // toggles it the same way the desktop indicator does: through the phrase
+  // list itself. State confirmation flows back via the
+  // feedfilterPhrasesUpdated push (updateIOSFilteredCount below), which the
+  // aiFilterIntent storage listener in content/index.ts re-sends on every
+  // state write.
+  w.__ff_toggleAiDetection = async (): Promise<void> => {
+    await toggleAiDetectionViaPhrases();
   };
-  w.__ff_setAiTextFilterEnabled = async (enabled: boolean): Promise<void> => {
-    console.log('[Bouncer][iOS] __ff_setAiTextFilterEnabled:', enabled);
-    await chrome.storage.local.set({ aiTextFilterEnabled: enabled === true });
+  w.__ff_getAiTextFilterEnabled = async (): Promise<boolean> => {
+    // Per-platform: only the current page's own phrases count (see
+    // aiIntentActiveForSite) — matches what the pipeline actually gates on.
+    const [data, sitePhrases] = await Promise.all([
+      getStorage(['aiFilterIntent']),
+      getDescriptions(_deps.descriptionsKey),
+    ]);
+    return aiIntentActiveForSite(data, sitePhrases);
   };
   w.__ff_getAiTextDetectionThreshold = async (): Promise<number> => {
     const data = await chrome.storage.local.get(['aiTextDetectionThreshold']);
@@ -154,14 +169,29 @@ export function initIOS(deps: IOSDeps) {
     await chrome.storage.local.set({ aiTextDetectionThreshold: clamped });
   };
 
-  // AI-image-detection toggle bridge. Mirrors the AI-text bridge above.
-  w.__ff_getAiImageFilterEnabled = async (): Promise<boolean> => {
-    const data = await chrome.storage.local.get(['aiImageFilterEnabled']);
-    return data.aiImageFilterEnabled === true;
+  // Reply/comment AI-text threshold — the pipeline applies this instead of
+  // aiTextDetectionThreshold when the post is a reply (see the aiThreshold
+  // selection in background/pipeline.ts).
+  w.__ff_getAiTextReplyDetectionThreshold = async (): Promise<number> => {
+    const data = await chrome.storage.local.get(['aiTextReplyDetectionThreshold']);
+    return clampReplyThreshold(data.aiTextReplyDetectionThreshold);
   };
-  w.__ff_setAiImageFilterEnabled = async (enabled: boolean): Promise<void> => {
-    console.log('[Bouncer][iOS] __ff_setAiImageFilterEnabled:', enabled);
-    await chrome.storage.local.set({ aiImageFilterEnabled: enabled === true });
+  w.__ff_setAiTextReplyDetectionThreshold = async (value: number): Promise<void> => {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return;
+    const clamped = clampReplyThreshold(n);
+    console.log('[Bouncer][iOS] __ff_setAiTextReplyDetectionThreshold:', clamped);
+    await chrome.storage.local.set({ aiTextReplyDetectionThreshold: clamped });
+  };
+
+  // AI-image-detection status bridge. Read-only, same single signal as the
+  // AI-text bridge above — text and images engage together.
+  w.__ff_getAiImageFilterEnabled = async (): Promise<boolean> => {
+    const [data, sitePhrases] = await Promise.all([
+      getStorage(['aiFilterIntent']),
+      getDescriptions(_deps.descriptionsKey),
+    ]);
+    return aiIntentActiveForSite(data, sitePhrases);
   };
   w.__ff_getAiImageDetectionThreshold = async (): Promise<number> => {
     const data = await chrome.storage.local.get(['aiImageDetectionThreshold']);
@@ -279,14 +309,27 @@ export function hideIOSFilteredModal() {
   }
 }
 
-// Push updated filtered count to native Swift UI
-export function updateIOSFilteredCount() {
+// Push updated filtered count (plus the NL-driven AI-detection state) to the
+// native Swift UI. `aiStateWrite` is true only when called from the
+// aiFilterIntent storage listener in content/index.ts — the native sheet
+// clears its sparkle indicator's pending dim solely on those pushes, the
+// same signal that clears the desktop indicator's `.pending` class. That
+// listener can fire before initIOS on a fresh page — hence the _deps guard.
+export function updateIOSFilteredCount(aiStateWrite = false) {
+  if (!_deps) return;
   if (typeof webkit !== 'undefined' && webkit.messageHandlers?.feedfilterPhrasesUpdated) {
     const count = _deps.getFilteredPosts().length;
-    chrome.storage.local.get([_deps.descriptionsKey], (data) => {
+    chrome.storage.local.get([_deps.descriptionsKey, 'aiFilterIntent'], (data) => {
       const phrases = (data[_deps.descriptionsKey] as string[] | undefined) || [];
       webkit.messageHandlers.feedfilterPhrasesUpdated?.postMessage(
-        JSON.stringify({ phrases, filteredCount: count })
+        JSON.stringify({
+          phrases,
+          filteredCount: count,
+          // Per-platform: on only when one of this page's own phrases
+          // engages detection (aiIntentActiveForSite).
+          aiDetectionOn: aiIntentActiveForSite(data, phrases),
+          aiDetectionConfirmed: aiStateWrite,
+        })
       );
     });
   }

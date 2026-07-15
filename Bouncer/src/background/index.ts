@@ -2,8 +2,9 @@
 
 import { PREDEFINED_MODELS } from '../shared/models';
 import { cacheKeyFor, GUEST_FILTER_LIMIT } from '../shared/utils';
-import { getStorage, setStorage, removeStorage } from '../shared/storage';
-import type { ContentToBackgroundMessage, LocalModelStatus } from '../types';
+import { getStorage, setStorage, removeStorage, phraseSetKey } from '../shared/storage';
+import type { AiFilterIntentState, ContentToBackgroundMessage, LocalModelStatus } from '../types';
+import { refreshAiFilterIntent, pruneAiFilterPhrases, canJudgeAiIntent } from './ai-intent';
 import { localEngine } from './local-model';
 import {
   initPipeline, loadCache, saveCache,
@@ -153,6 +154,10 @@ async function migrateStaleLocalSelection(): Promise<void> {
   try {
     await migrateStaleLocalSelection();
     await loadCache();
+
+    refreshAiFilterIntent().catch(err =>
+      console.warn('[AiIntent] startup refresh failed:', (err as Error).message));
+
     await refreshAuthToken();
     // Wire up pipeline with shared state
     initPipeline(activeContentTabs);
@@ -237,7 +242,7 @@ async function handleMessage(
       // Check if already in queue - add another resolver for this item
       if (tabId !== undefined && isKeyPending(tabId, cacheKey)) {
         return new Promise(resolve => {
-          const item = { evaluationId: message.evaluationId, post: message.post, rawText: message.rawText, imageUrls, resolve, cacheKey, tabId, postUrl: message.postUrl, siteId: message.siteId };
+          const item = { evaluationId: message.evaluationId, post: message.post, rawText: message.rawText, imageUrls, resolve, cacheKey, tabId, postUrl: message.postUrl, siteId: message.siteId, isReply: message.isReply === true };
           enqueuePost(tabId, item);
         });
       }
@@ -245,7 +250,7 @@ async function handleMessage(
       // Queue for batch processing
       // processBatch will prioritize posts closest to viewport center for local models
       const resultPromise = new Promise(resolve => {
-        const item = { evaluationId: message.evaluationId, post: message.post, rawText: message.rawText, imageUrls, resolve, cacheKey, tabId, postUrl: message.postUrl, siteId: message.siteId };
+        const item = { evaluationId: message.evaluationId, post: message.post, rawText: message.rawText, imageUrls, resolve, cacheKey, tabId, postUrl: message.postUrl, siteId: message.siteId, isReply: message.isReply === true };
         enqueuePost(tabId!, item);
       });
       console.log('[Bouncer][diag] evaluatePost enqueued for tab', tabId);
@@ -742,8 +747,36 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
         }
       }
 
+      // Switching TO a filter model that has an AI-intent judge (Imbue's
+      // detectAiIntent route, or a local model judging on-device): phrases
+      // added while on a model without one (BYOK) were never judged for
+      // AI-removal intent — judge them now so AI detection and the phrase
+      // exclusion engage without waiting for the next phrase edit.
+      if (typeof newModel === 'string' && canJudgeAiIntent(newModel)) {
+        await refreshAiFilterIntent();
+      }
+
       // Model change: flush pipeline state and wipe cache — classifications from a different model are no longer valid.
       await handleSettingsChange(changes);
+    }
+
+    // A headline-radio Local pick made before the model was downloaded is
+    // parked in pendingLocalModelSelection (the prior model keeps filtering).
+    // Complete the switch here, off the model-status stream, so it happens
+    // even when the popup that parked it is long closed.
+    if (changes.localModelStatuses) {
+      const { pendingLocalModelSelection } = await getStorage(['pendingLocalModelSelection']);
+      if (pendingLocalModelSelection) {
+        const statuses = (changes.localModelStatuses.newValue || {}) as Record<string, LocalModelStatus>;
+        const state = statuses[pendingLocalModelSelection.split(':')[1]]?.state;
+        if (state === 'ready' || state === 'cached') {
+          console.log('[Background] Pending local model downloaded — switching to', pendingLocalModelSelection);
+          await removeStorage('pendingLocalModelSelection');
+          // This write re-enters this listener as a selectedModel change,
+          // which flushes the pipeline and wipes the classification cache.
+          await setStorage({ selectedModel: pendingLocalModelSelection });
+        }
+      }
     }
 
     const filtersChanged = Object.keys(changes).some(
@@ -751,10 +784,34 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
     );
     if (filtersChanged) {
       handleFilterPackChange();
+      // Deletions resolve locally and immediately: dropping the last AI
+      // phrase turns AI detection off right now, not after the debounce.
+      pruneAiFilterPhrases().catch(err =>
+        console.warn('[AiIntent] prune failed:', (err as Error).message));
+      // Phrase edits are also the natural moment to re-derive whether the
+      // user wants AI-generated content removed (detectAiIntent probe,
+      // debounced — it judges added phrases).
+      await refreshAiFilterIntent();
     }
 
-    if (changes.aiTextFilterEnabled || changes.aiTextDetectionThreshold
-        || changes.aiImageFilterEnabled || changes.aiImageDetectionThreshold) {
+    // The intent state also persists bookkeeping (judgedSetKey) — only a
+    // change to the AI-phrase set itself warrants flushing the pipeline: it
+    // flips the detectors and changes which phrases are excluded from the
+    // filter categories. Old-shape values (no aiPhrases array) compare as
+    // empty sets.
+    const intentChange = changes.aiFilterIntent;
+    const aiPhrasesOf = (v: unknown): string[] => {
+      const phrases = (v as AiFilterIntentState | undefined)?.aiPhrases;
+      return Array.isArray(phrases) ? phrases : [];
+    };
+    const intentSetChanged = !!intentChange
+      && phraseSetKey(aiPhrasesOf(intentChange.oldValue))
+        !== phraseSetKey(aiPhrasesOf(intentChange.newValue));
+
+    if (changes.aiTextDetectionThreshold
+        || changes.aiTextReplyDetectionThreshold
+        || changes.aiImageDetectionThreshold
+        || intentSetChanged) {
       await handleSettingsChange(changes);
     }
 

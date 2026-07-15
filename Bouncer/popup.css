@@ -828,7 +828,10 @@ body.dim-mode .contact-icon {
   transition: transform 0.2s;
 }
 
-.api-provider.expanded .api-provider-arrow {
+/* Child-scoped for the same reason as the .api-provider-content rule: an
+   expanded Advanced Settings accordion must not flip the arrows of the
+   collapsed accordions nested inside it. */
+.api-provider.expanded > .api-provider-header .api-provider-arrow {
   transform: rotate(180deg)  translateY(-2px);
 }
 
@@ -861,7 +864,10 @@ body.dim-mode .contact-icon {
   display: none;
 }
 
-.api-provider.expanded .api-provider-content {
+/* Child combinator, not descendant: the Advanced Settings accordion nests
+   other .api-provider accordions inside its content, and expanding the
+   outer one must not force every inner content open. */
+.api-provider.expanded > .api-provider-content {
   display: block;
 }
 
@@ -1862,12 +1868,47 @@ body.dim-mode footer.pricing-disclaimer p {
   opacity: 0.7;
 }
 
-/* Local Models Toggle */
-.local-models-toggle,
-.experimental-toggle {
+/* Passive AI-detection indicator — status only, not a control. On/off is
+   driven by the inferred AI-removal intent (natural-language filter phrases);
+   applyAiDetectionUI toggles the `.on` class and the state text. */
+.ai-detection-indicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   margin-top: 12px;
   padding-top: 12px;
   border-top: 1px solid #eff3f4;
+  font-size: 13px;
+  font-weight: 600;
+  color: rgb(113, 118, 123);
+  user-select: none;
+}
+
+.ai-detection-indicator-icon {
+  flex-shrink: 0;
+  opacity: 0.6;
+}
+
+.ai-detection-indicator-state {
+  font-size: 11px;
+  line-height: 1;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(113, 118, 123, 0.15);
+  color: rgb(113, 118, 123);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.ai-detection-indicator.on {
+  color: #1d9bf0;
+}
+.ai-detection-indicator.on .ai-detection-indicator-icon {
+  opacity: 1;
+}
+.ai-detection-indicator.on .ai-detection-indicator-state {
+  background: rgba(29, 155, 240, 0.12);
+  color: #1d9bf0;
 }
 
 /* Inline toggle used inside the platform accordion header — sits next to
@@ -2337,9 +2378,14 @@ body.dark-mode footer.pricing-disclaimer p {
   color: rgb(113, 118, 123);
 }
 
-body.dark-mode .local-models-toggle,
-body.dark-mode .experimental-toggle {
+body.dark-mode .ai-detection-indicator {
   border-top-color: rgb(47, 51, 54);
+}
+body.dark-mode .ai-detection-indicator-state {
+  background: rgba(113, 118, 123, 0.25);
+}
+body.dark-mode .ai-detection-indicator.on .ai-detection-indicator-state {
+  background: rgba(29, 155, 240, 0.2);
 }
 
 body.dark-mode .checkbox-label {
@@ -2623,9 +2669,14 @@ body.dim-mode footer.pricing-disclaimer p {
   color: rgb(139, 152, 165);
 }
 
-body.dim-mode .local-models-toggle,
-body.dim-mode .experimental-toggle {
+body.dim-mode .ai-detection-indicator {
   border-top-color: rgb(56, 68, 77);
+}
+body.dim-mode .ai-detection-indicator-state {
+  background: rgba(113, 118, 123, 0.25);
+}
+body.dim-mode .ai-detection-indicator.on .ai-detection-indicator-state {
+  background: rgba(29, 155, 240, 0.2);
 }
 
 body.dim-mode .checkbox-label {
@@ -2647,4 +2698,105 @@ body.dim-mode .local-model-progress {
 body.dim-mode .local-model-no-image-warning {
   background: rgba(245, 158, 11, 0.15);
   color: #fbbf24;
+}
+
+/* ======================================
+   Model radio group (headline Imbue vs Local choice)
+   ====================================== */
+
+.model-radio-group {
+  border: 1px solid #eff3f4;
+  border-radius: 8px;
+}
+
+.model-radio {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  margin-bottom: 0;
+  cursor: pointer;
+  font-size: 13px;
+  user-select: none;
+}
+
+.model-radio + .model-radio {
+  border-top: 1px solid #eff3f4;
+}
+
+.model-radio input[type="radio"] {
+  width: 16px;
+  height: 16px;
+  min-width: 16px;
+  flex-shrink: 0;
+  margin-top: 1px;
+  cursor: pointer;
+  accent-color: #1d9bf0;
+}
+
+.model-radio.disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.model-radio.disabled input[type="radio"] {
+  cursor: default;
+}
+
+.model-radio-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.model-radio-label {
+  font-weight: 500;
+  color: #0f1419;
+}
+
+.model-radio-sub {
+  font-size: 12px;
+  color: #536471;
+  line-height: 1.35;
+}
+
+.model-radio-note {
+  margin-top: 2px;
+}
+
+.model-radio-advanced-note {
+  margin-top: 8px;
+}
+
+body.dark-mode .model-radio-group { border-color: rgb(47, 51, 54); }
+body.dark-mode .model-radio + .model-radio { border-top-color: rgb(47, 51, 54); }
+body.dark-mode .model-radio-label { color: rgb(231, 233, 234); }
+body.dark-mode .model-radio-sub { color: #71767b; }
+
+body.dim-mode .model-radio-group { border-color: rgb(56, 68, 77); }
+body.dim-mode .model-radio + .model-radio { border-top-color: rgb(56, 68, 77); }
+body.dim-mode .model-radio-label { color: rgb(247, 249, 249); }
+body.dim-mode .model-radio-sub { color: rgb(139, 152, 165); }
+
+/* ======================================
+   Advanced Settings accordion
+   ====================================== */
+
+/* The absolutely-positioned model dropdown menu lives inside this accordion
+   now — .api-provider's overflow:hidden would clip it. */
+.advanced-settings {
+  overflow: visible;
+}
+
+/* Compensate for losing overflow:hidden's corner clipping on the header. */
+.advanced-settings > .api-provider-header {
+  border-radius: 7px 7px 0 0;
+}
+
+.advanced-settings:not(.expanded) > .api-provider-header {
+  border-radius: 7px;
+}
+
+.advanced-settings > .api-provider-content {
+  padding: 16px 12px;
 }

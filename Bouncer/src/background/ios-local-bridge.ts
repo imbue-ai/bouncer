@@ -23,7 +23,10 @@
 // The native side applies Gemma's chat template internally via the LiteRT-LM
 // Conversation API — JS no longer wraps the prompt with turn markers.
 
-import { LOCAL_SYSTEM_PROMPT, buildTableYesnoUserMessage, parseTableYesnoResponse } from '../shared/prompts';
+import {
+  LOCAL_SYSTEM_PROMPT, buildTableYesnoUserMessage, parseTableYesnoResponse,
+  AI_INTENT_LOCAL_SYSTEM_PROMPT, buildAiIntentUserMessage,
+} from '../shared/prompts';
 import type { DetectorResult } from './detectors';
 import type { EvaluationPostData, LocalModelDef } from '../types';
 
@@ -94,7 +97,7 @@ export function isIosLocalAiTextDetectAvailable(): boolean {
  *
  * - `aiConfidence` is the **normalized expected bucket index** from the
  *   trained 4-class softmax, i.e. `(probs · [0,1,2,3]) / 3`, matching the
- *   EditLens scoring formula `(probs @ arange(n)) / (n-1)` used in the
+ *   detector scoring formula `(probs @ arange(n)) / (n-1)` used in the
  *   training pipeline (classify_tweets.py, inference.py, eval_v2_buckets.py).
  *   Ranges continuously in [0, 1]: 0 = all mass on class 0 ("clearly
  *   human"), 1 = all mass on class 3 ("clearly AI"), 0.5 = uniform over the
@@ -126,34 +129,113 @@ export async function iosLocalAiTextDetect(
     );
   }
   const callbackId = `iosLocalAiText-${++nextId}-${Date.now()}`;
-  const textPreview = text.replace(/\s+/g, ' ').trim().slice(0, 60);
 
-  console.log(`[AI] req text="${textPreview}"`);
-
-  let rawResponse: string;
-  try {
-    rawResponse = await new Promise<string>((resolve, reject) => {
-      pending.set(callbackId, { resolve, reject });
-      try {
-        const payload = { callbackId, text };
-        webkit.messageHandlers.feedfilterLocalAiTextDetect.postMessage(
-          JSON.stringify(payload),
-        );
-      } catch (err) {
-        pending.delete(callbackId);
-        reject(err instanceof Error ? err : new Error(String(err)));
-      }
-    });
-  } catch (err) {
-    console.error(`[AI] FAIL req="${textPreview}" — ${(err as Error).message ?? String(err)}`);
-    throw err;
-  }
+  const rawResponse = await new Promise<string>((resolve, reject) => {
+    pending.set(callbackId, { resolve, reject });
+    try {
+      const payload = { callbackId, text };
+      webkit.messageHandlers.feedfilterLocalAiTextDetect.postMessage(
+        JSON.stringify(payload),
+      );
+    } catch (err) {
+      pending.delete(callbackId);
+      reject(err instanceof Error ? err : new Error(String(err)));
+    }
+  });
 
   try {
     return JSON.parse(rawResponse) as IosLocalAiTextDetectResponse;
   } catch (err) {
     throw new Error(`Local AI-text-detect returned non-JSON payload: ${rawResponse}`, { cause: err });
   }
+}
+
+/**
+ * Freeform text generation over the native bridge — same wire protocol as
+ * classify, but with no regex constraint and a caller-chosen token budget
+ * (the native side defaults to the tight 24-token classify cap otherwise).
+ * Used for phrase suggestions ("Bounce a Tweet"); text only, no images.
+ */
+export async function iosLocalGenerate(
+  systemMessage: string,
+  userMessage: string,
+  opts?: { maxOutputTokens?: number; modelName?: string },
+): Promise<string> {
+  if (!isIosLocalAvailable()) {
+    throw new Error('iOS local-classify bridge unavailable (not running in WKWebView host?)');
+  }
+  const callbackId = `iosLocalGen-${++nextId}-${Date.now()}`;
+  return await new Promise<string>((resolve, reject) => {
+    pending.set(callbackId, { resolve, reject });
+    try {
+      const payload: Record<string, unknown> = { callbackId, systemMessage, userMessage };
+      if (opts?.maxOutputTokens) payload.maxOutputTokens = opts.maxOutputTokens;
+      if (opts?.modelName) payload.modelName = opts.modelName;
+      webkit.messageHandlers.feedfilterLocalClassify.postMessage(JSON.stringify(payload));
+    } catch (err) {
+      pending.delete(callbackId);
+      reject(err instanceof Error ? err : new Error(String(err)));
+    }
+  });
+}
+
+// LlGuidance FSM-constrained decoding regex: forces N pipe-delimited yes/no
+// cells with optional leading/trailing pipes and tight ` ?` (zero or one
+// space) padding. We deliberately avoid `\s*` here because that includes
+// newlines and tabs — Gemma can otherwise spend its maxOutputTokens budget
+// on whitespace tokens and never reach the Nth verdict.
+//
+// For N=3: `^\|? ?(yes|no)( ?\| ?(yes|no)){2}\|? ?$`
+function yesnoRowRegex(n: number): string {
+  const cell = '(yes|no)';
+  return n === 1
+    ? `^\\|? ?${cell} ?\\|? ?$`
+    : `^\\|? ?${cell}( ?\\| ?${cell}){${n - 1}}\\|? ?$`;
+}
+
+/**
+ * On-device AI-intent judgment: which of the user's filter phrases ask for
+ * AI-generated content to be removed? The local equivalent of the Imbue
+ * backend's detectAiIntent probe — called once per phrase-set change from
+ * refreshAiFilterIntent (debounced), never per post.
+ *
+ * Returns the phrases judged as AI-removal requests, or null when the
+ * verdict row couldn't be parsed — null means "unknown", so the caller
+ * leaves judgedSetKey stale and the next trigger retries.
+ */
+export async function iosLocalJudgeAiIntent(
+  phrases: string[],
+  modelConfig: LocalModelDef | null,
+): Promise<string[] | null> {
+  if (!isIosLocalAvailable()) {
+    throw new Error('iOS local-classify bridge unavailable (not running in WKWebView host?)');
+  }
+  const systemMessage = AI_INTENT_LOCAL_SYSTEM_PROMPT;
+  const userMessage = buildAiIntentUserMessage(phrases);
+  const regexConstraint = yesnoRowRegex(phrases.length);
+  // The native default is the tight 24-token classify cap; a large phrase
+  // union (~3 tokens per verdict) can exceed it, so size the budget to the
+  // row.
+  const maxOutputTokens = Math.max(24, 6 + 4 * phrases.length);
+
+  const callbackId = `iosLocalAiIntent-${++nextId}-${Date.now()}`;
+
+  const rawResponse = await new Promise<string>((resolve, reject) => {
+    pending.set(callbackId, { resolve, reject });
+    try {
+      const payload: Record<string, unknown> = {
+        callbackId, systemMessage, userMessage, regexConstraint, maxOutputTokens,
+      };
+      if (modelConfig?.name) payload.modelName = modelConfig.name;
+      webkit.messageHandlers.feedfilterLocalClassify.postMessage(JSON.stringify(payload));
+    } catch (err) {
+      pending.delete(callbackId);
+      reject(err instanceof Error ? err : new Error(String(err)));
+    }
+  });
+
+  const { matches, malformed } = parseTableYesnoResponse(rawResponse, phrases);
+  return malformed ? null : matches;
 }
 
 export async function iosLocalClassify(
@@ -183,42 +265,23 @@ export async function iosLocalClassify(
   // per post.
   const systemMessage = LOCAL_SYSTEM_PROMPT;
   const userMessage = buildTableYesnoUserMessage(postData.text, bannedCategories, hasImages);
-  // LlGuidance FSM-constrained decoding regex: forces N pipe-delimited yes/no
-  // cells with optional leading/trailing pipes and tight ` ?` (zero or one
-  // space) padding. We deliberately avoid `\s*` here because that includes
-  // newlines and tabs — Gemma can otherwise spend its maxOutputTokens budget
-  // on whitespace tokens and never reach the Nth verdict.
-  //
-  // For N=3: `^\|? ?(yes|no)( ?\| ?(yes|no)){2}\|? ?$`
-  const n = bannedCategories.length;
-  const cell = '(yes|no)';
-  const regexConstraint = n === 1
-    ? `^\\|? ?${cell} ?\\|? ?$`
-    : `^\\|? ?${cell}( ?\\| ?${cell}){${n - 1}}\\|? ?$`;
+  const regexConstraint = yesnoRowRegex(bannedCategories.length);
 
   const callbackId = `iosLocal-${++nextId}-${Date.now()}`;
   const start = Date.now();
-  const postPreview = postData.text.replace(/\s+/g, ' ').trim().slice(0, 60);
 
-  console.log(`[Filter] req cats=${bannedCategories.length} imgs=${imageUrls.length} text="${postPreview}" regex="${regexConstraint}"`);
-
-  let rawResponse: string;
-  try {
-    rawResponse = await new Promise<string>((resolve, reject) => {
-      pending.set(callbackId, { resolve, reject });
-      try {
-        const payload: Record<string, unknown> = { callbackId, systemMessage, userMessage, regexConstraint };
-        if (hasImages) payload.imageUrls = imageUrls;
-        webkit.messageHandlers.feedfilterLocalClassify.postMessage(JSON.stringify(payload));
-      } catch (err) {
-        pending.delete(callbackId);
-        reject(err instanceof Error ? err : new Error(String(err)));
-      }
-    });
-  } catch (err) {
-    console.error(`[Filter] FAIL req="${postPreview}" — ${(err as Error).message ?? String(err)}`);
-    throw err;
-  }
+  const rawResponse = await new Promise<string>((resolve, reject) => {
+    pending.set(callbackId, { resolve, reject });
+    try {
+      const payload: Record<string, unknown> = { callbackId, systemMessage, userMessage, regexConstraint };
+      if (modelConfig?.name) payload.modelName = modelConfig.name;
+      if (hasImages) payload.imageUrls = imageUrls;
+      webkit.messageHandlers.feedfilterLocalClassify.postMessage(JSON.stringify(payload));
+    } catch (err) {
+      pending.delete(callbackId);
+      reject(err instanceof Error ? err : new Error(String(err)));
+    }
+  });
 
   const inferenceTime = (Date.now() - start) / 1000;
   const { shouldHide, reasoning, matches } = parseTableYesnoResponse(rawResponse, bannedCategories);

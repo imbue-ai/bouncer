@@ -277,11 +277,18 @@ const BouncerTwitterAdapter = class TwitterAdapter implements PlatformAdapter {
     const conversationTimeline = document.querySelector('div[aria-label="Timeline: Conversation"]');
     if (conversationTimeline) {
       const firstArticle = conversationTimeline.querySelector(this.selectors.post);
-      if (firstArticle === article) {
-        return true;
-      }
+      return firstArticle === article;
     }
-    return false;
+    // Mobile web layout (the iOS app's WKWebView): no aria-labelled
+    // conversation container, so identify the main post by status id
+    // instead. Replies' timestamp links carry their own ids; the main
+    // post's timestamp on the detail view isn't a link at all, so an
+    // article with no self status link is also the main post.
+    const pageStatusId = window.location.pathname.match(/\/status\/(\d+)/)?.[1];
+    if (!pageStatusId) return false;
+    const postUrl = this.getPostUrl(article);
+    if (!postUrl) return true;
+    return postUrl.match(/\/status\/(\d+)/)?.[1] === pageStatusId;
   }
 
   getPostUrl(article: HTMLElement) {

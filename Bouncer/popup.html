@@ -30,37 +30,49 @@
   <!-- Main settings (shown when authenticated) -->
   <div class="container" id="mainContainer">
     <header>
-      <h1>Bouncer</h1>
+      <h1>Bouncer Settings</h1>
       <button id="modalCloseBtn" class="modal-close-btn">&times;</button>
     </header>
 
-    <section>
-      <label>Choose a model</label>
-      <div class="model-dropdown" id="modelDropdown">
-        <div class="model-dropdown-selected" id="modelDropdownSelected">
-          <span class="model-dropdown-text">Imbue (Default)</span>
-          <span class="model-dropdown-arrow">&#9662;</span>
-        </div>
-        <div class="model-dropdown-menu" id="modelDropdownMenu">
-          <!-- Populated by JS -->
-        </div>
+    <!-- Model choice: the two headline options. The full model dropdown
+         (BYOK providers, custom models) lives under Advanced Settings;
+         popup/index.ts keeps these radios and the dropdown in sync via the
+         shared `selectedModel` storage key. -->
+    <section id="modelChoiceSection">
+      <label>Filtering Mode</label>
+      <div class="model-radio-group" role="radiogroup" aria-label="Filtering mode">
+        <label class="model-radio" id="modelRadioImbueRow">
+          <input type="radio" name="modelChoice" id="modelRadioImbue" value="imbue">
+          <span class="model-radio-text">
+            <span class="model-radio-label">Cloud <span class="free-badge">recommended</span></span>
+            <span class="model-radio-sub">Fast and free.</span>
+          </span>
+        </label>
+        <label class="model-radio" id="modelRadioLocalRow">
+          <input type="radio" name="modelChoice" id="modelRadioLocal" value="local">
+          <span class="model-radio-text">
+            <span class="model-radio-label">On-Device</span>
+            <span class="model-radio-sub">Nothing leaves your computer.</span>
+            <span class="model-radio-note hint" id="modelRadioLocalNote" style="display: none;"></span>
+          </span>
+        </label>
       </div>
+      <p class="hint model-radio-advanced-note" id="modelRadioAdvancedNote" style="display: none;"></p>
     </section>
 
-    <!-- Local Model Section (only shown when a local model is selected) -->
+    <!-- On-device model section (only shown when an on-device model is selected) -->
     <section id="localModelSection" class="local-model-section" style="display: none;">
       <div class="local-model-header">
-        <span class="local-model-title">Local Model</span>
+        <span class="local-model-title">On-Device Model</span>
         <span id="localModelStatusBadge" class="api-status-badge">Checking...</span>
       </div>
-      <p class="hint local-model-resource-hint">Local models use your device's memory and GPU for inference. Performance depends on your hardware.</p>
-      <p id="localModelNoImageWarning" class="hint local-model-no-image-warning" style="display: none;">This model does not support images, so filtering will be less precise for posts with images or videos.</p>
+      <p id="localModelNoImageWarning" class="hint local-model-no-image-warning" style="display: none;">Can't see images — photo and video posts are filtered less accurately.</p>
       <div id="localModelContent">
         <div id="localModelUnsupported" style="display: none;">
-          <p class="hint">WebGPU is not supported in your browser. Local inference requires Chrome 113+ with WebGPU enabled.</p>
+          <p class="hint">This browser can't run the on-device model. Use Chrome 113 or newer.</p>
         </div>
         <div id="localModelNotDownloaded" style="display: none;">
-          <p class="hint" id="localModelDownloadHint">Select a local model from the dropdown above to use local inference.</p>
+          <p class="hint" id="localModelDownloadHint">Choose an on-device model in Advanced Settings.</p>
           <button id="downloadLocalModel" class="local-model-download-btn">
             <span class="download-icon">&#8595;</span>
             Download Model
@@ -76,11 +88,49 @@
           </div>
         </div>
         <div id="localModelReady" style="display: none;">
-          <p class="hint" id="localModelReadyHint">Model ready for local inference.</p>
+          <p class="hint" id="localModelReadyHint">Model ready.</p>
         </div>
         <div id="localModelError" style="display: none;">
           <p class="hint local-model-error-text" id="localModelErrorText">An error occurred.</p>
           <button id="retryLocalModel" class="local-model-retry-btn">Retry</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Filter replies: headline toggle. Same storage key the content
+         script and pipeline already read; the id matches the handler in
+         popup/index.ts (previously rendered inside the Twitter row). -->
+    <section class="filter-replies-section">
+      <label class="toggle-switch">
+        <input type="checkbox" id="enableFilterReplies" checked>
+        <span class="toggle-switch-slider" aria-hidden="true"></span>
+        <span class="toggle-switch-text">
+          <span class="toggle-switch-label">Also filter replies in threads</span>
+        </span>
+      </label>
+    </section>
+
+    <!-- Everything below is power-user surface: full model list, per-platform
+         toggles, BYOK providers, AI-slop detection. Collapsed by default. -->
+    <section>
+      <div class="api-provider advanced-settings" id="advancedSettings">
+        <div class="api-provider-header" id="advancedSettingsHeader">
+          <span class="api-provider-name">Advanced Settings</span>
+          <div class="api-provider-header-right">
+            <span class="api-provider-arrow">&#9662;</span>
+          </div>
+        </div>
+        <div class="api-provider-content advanced-settings-content" id="advancedSettingsContent">
+
+    <section>
+      <label>Choose a model</label>
+      <div class="model-dropdown" id="modelDropdown">
+        <div class="model-dropdown-selected" id="modelDropdownSelected">
+          <span class="model-dropdown-text">Imbue (Default)</span>
+          <span class="model-dropdown-arrow">&#9662;</span>
+        </div>
+        <div class="model-dropdown-menu" id="modelDropdownMenu">
+          <!-- Populated by JS -->
         </div>
       </div>
     </section>
@@ -194,72 +244,65 @@
         </div>
       </div>
 
-      <!-- Local models toggle (hidden by default, shown only if WebGPU is supported) -->
-      <div class="local-models-toggle" style="display: none;">
-        <label class="checkbox-label">
-          <input type="checkbox" id="enableLocalModels">
-          <span>Enable local models (Experimental)</span>
-        </label>
-      </div>
-
-      <!-- AI text filtering experimental toggle -->
-      <div class="experimental-toggle">
-        <label class="checkbox-label">
-          <input type="checkbox" id="enableAiTextExperimental">
-          <span>Enable AI Slop Filtering (Experimental)</span>
-        </label>
-      </div>
     </section>
 
-    <section class="ai-text-filter-section">
-      <div id="aiTextFilterExperimentalContent" style="display: none;">
-      <label class="toggle-switch">
-        <input type="checkbox" id="enableAiTextFilter">
-        <span class="toggle-switch-slider" aria-hidden="true"></span>
-        <span class="toggle-switch-text">
-          <span class="toggle-switch-label">Filter AI-generated text</span>
-          <span class="toggle-switch-sub">Hide posts whose text appears to be written by AI.</span>
-        </span>
-      </label>
+    <section class="ai-text-filter-section" id="aiDetectionSection">
+      <!-- Passive status indicator: AI detection (text + images, one signal)
+           is driven entirely by natural-language filter phrases. Not a control. -->
+      <div class="ai-detection-indicator" id="aiDetectionIndicator" role="status">
+        <svg class="ai-detection-indicator-icon" viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
+          <path d="M12 2.5l1.9 5.4a4.5 4.5 0 0 0 2.7 2.7l5.4 1.9-5.4 1.9a4.5 4.5 0 0 0-2.7 2.7L12 22.5l-1.9-5.4a4.5 4.5 0 0 0-2.7-2.7L2 12.5l5.4-1.9a4.5 4.5 0 0 0 2.7-2.7L12 2.5z"/>
+        </svg>
+        <span class="ai-detection-indicator-label">AI detection</span>
+        <span class="ai-detection-indicator-state" id="aiDetectionIndicatorState">Off</span>
+      </div>
+      <p class="hint">Turns on automatically when your filter phrases ask for AI-generated content to be removed (e.g. &ldquo;AI slop&rdquo;), and off when they don&rsquo;t. Covers both AI-generated text and images.</p>
       <div class="ai-text-threshold-block" id="aiTextThresholdBlock">
         <div class="ai-text-threshold-header">
           <span>Confidence threshold</span>
-          <span class="ai-text-threshold-value" id="aiTextThresholdValue">70%</span>
+          <span class="ai-text-threshold-value" id="aiTextThresholdValue">90%</span>
         </div>
-        <input type="range" id="aiTextThreshold" min="0" max="1" step="0.01" value="0.7">
+        <input type="range" id="aiTextThreshold" min="0" max="1" step="0.01" value="0.9">
         <div class="ai-text-threshold-scale">
           <span>0%</span>
           <span>100%</span>
         </div>
         <p class="hint ai-text-threshold-hint">Posts at or above this confidence are hidden. Lower values catch more, higher values catch only obvious cases.</p>
       </div>
+      <div class="ai-text-threshold-block" id="aiTextReplyThresholdBlock">
+        <div class="ai-text-threshold-header">
+          <span>Comment confidence threshold</span>
+          <span class="ai-text-threshold-value" id="aiTextReplyThresholdValue">30%</span>
+        </div>
+        <input type="range" id="aiTextReplyThreshold" min="0" max="1" step="0.01" value="0.3">
+        <div class="ai-text-threshold-scale">
+          <span>0%</span>
+          <span>100%</span>
+        </div>
+        <p class="hint ai-text-threshold-hint">Applied to replies and comments instead of the threshold above.</p>
+      </div>
 
-      <label class="toggle-switch">
-        <input type="checkbox" id="enableAiImageFilter">
-        <span class="toggle-switch-slider" aria-hidden="true"></span>
-        <span class="toggle-switch-text">
-          <span class="toggle-switch-label">Filter AI-generated images</span>
-          <span class="toggle-switch-sub">Hide posts whose images appear to be AI-generated.</span>
-        </span>
-      </label>
       <div class="ai-text-threshold-block" id="aiImageThresholdBlock">
         <div class="ai-text-threshold-header">
-          <span>Confidence threshold</span>
-          <span class="ai-text-threshold-value" id="aiImageThresholdValue">70%</span>
+          <span>Image confidence threshold</span>
+          <span class="ai-text-threshold-value" id="aiImageThresholdValue">90%</span>
         </div>
-        <input type="range" id="aiImageThreshold" min="0" max="1" step="0.01" value="0.7">
+        <input type="range" id="aiImageThreshold" min="0" max="1" step="0.01" value="0.9">
         <div class="ai-text-threshold-scale">
           <span>0%</span>
           <span>100%</span>
         </div>
         <p class="hint ai-text-threshold-hint">Posts whose most-suspect image is at or above this confidence are hidden.</p>
       </div>
-      </div>
     </section>
 
     <footer class="pricing-disclaimer">
       <p class="hint">* Free models may have rate limits or daily quotas.<br>Non-Imbue models are charged by their providers.</p>
     </footer>
+
+        </div>
+      </div>
+    </section>
 
     <footer class="contact-footer">
       <p class="hint contact-footer-text">

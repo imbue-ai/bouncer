@@ -35,6 +35,47 @@ Output exactly one row of pipe-delimited verdicts, one per category, in the orde
 Format example for 3 categories: | no | yes | no
 `;
 
+// Single-category variant for the desktop local model. With one category the
+// table format is counterproductive: the model anchors on the system prompt's
+// multi-cell format example and pads the row with vestigial verdicts
+// (`| yes | no` for one category). A plain yes/no question removes the table
+// framing entirely. `parseTableYesnoResponse` already accepts a bare
+// `yes`/`no` (with optional punctuation/filler) for single-category packs.
+// The iOS bridge intentionally stays on LOCAL_SYSTEM_PROMPT for all N: its
+// LlGuidance regex constraint makes wrong-arity rows impossible, and its
+// prefix cache is keyed on that one system string.
+export const LOCAL_SYSTEM_PROMPT_SINGLE = `You will see a social media post and one candidate category. Decide whether the post matches the category.
+
+Answer with a single word: yes or no. Do not output anything else — no pipes, no tables, no second verdict, no explanation.
+`;
+
+// System prompt for the local-model AI-intent judgment: given the user's
+// filter phrases, which ones ask for AI-generated content to be removed?
+// This is the local equivalent of the Imbue backend's detectAiIntent probe
+// (see background/ai-intent.ts) — one debounced call per phrase-set change,
+// never on the per-post hot path. Deliberately the same pipe-delimited
+// verdict-row format as LOCAL_SYSTEM_PROMPT so parseTableYesnoResponse and
+// the iOS LlGuidance regex constraint apply unchanged.
+export const AI_INTENT_LOCAL_SYSTEM_PROMPT = `You will see a list of filter phrases a user wrote to describe posts they want removed from their social media feed. For each phrase, decide whether it asks for AI-generated content to be removed. Phrases like "AI slop", "AI-generated images", or "posts written by AI" do; phrases that merely mention AI as a topic, like "AI news" or "AI companies", do not.
+
+Output exactly one row of pipe-delimited verdicts, one per phrase, in the order they were given. Each verdict is \`yes\` or \`no\`. Output nothing else.
+
+Format example for 3 phrases: | no | yes | no
+`;
+
+// User-message builder for the AI-intent judgment. Mirrors
+// buildTableYesnoUserMessage's shape (list in order, explicit verdict count
+// at the end) for the same small-model anchoring reasons.
+export function buildAiIntentUserMessage(phrases: string[]): string {
+  const n = phrases.length;
+  return `Filter phrases (in order): ${phrases.join(', ')}\n\nOutput the verdict row (exactly ${n} verdict${n === 1 ? '' : 's'}, one per phrase):`;
+}
+
+export function buildSingleYesnoUserMessage(postText: string, category: string, hasImages: boolean): string {
+  const mediaDesc = hasImages ? ' (includes images)' : '';
+  return `Post${mediaDesc}: ${postText}\n\nCategory: ${category}\n\nDoes the post match the category? Answer with one word, yes or no:`;
+}
+
 // User-message builder for local models (both desktop LiteRT-LM-via-WebGPU and
 // iOS LiteRT-LM-via-Metal). Categories live in the user message so the system
 // prompt above stays a single immutable string. The iOS side prefix-caches a
@@ -45,7 +86,12 @@ Format example for 3 categories: | no | yes | no
 export function buildTableYesnoUserMessage(postText: string, categories: string[], hasImages: boolean): string {
   const mediaDesc = hasImages ? ' (includes images)' : '';
   const categoryList = categories.join(', ');
-  return `Post${mediaDesc}: ${postText}\n\nCategories (in order): ${categoryList}\n\nOutput the verdict row:`;
+  // State the expected verdict count explicitly, right at the end of the
+  // prompt: small models anchor on the system prompt's 3-cell format example
+  // and otherwise pad rows with vestigial verdicts (worst with a single
+  // category, where `| yes | no` was the common failure).
+  const n = categories.length;
+  return `Post${mediaDesc}: ${postText}\n\nCategories (in order): ${categoryList}\n\nOutput the verdict row (exactly ${n} verdict${n === 1 ? '' : 's'}, one per category):`;
 }
 
 // Gemma export quirks: leaked turn-template markers leak into the generated
@@ -85,12 +131,15 @@ function stripGemmaMarkers(raw: string): string {
 //   markdown-table headers like `| Category | Verdict |\n|---|` — fails to
 //     parse and surfaces a malformed-row reasoning so callers fall back to
 //     "show post" (no false-positive hides on parse failures).
+// `malformed` distinguishes "the model said no to everything" from "the
+// output could not be parsed at all" — callers that can retry (e.g. batched
+// phrase-suggestion validation falling back to per-phrase calls) key off it.
 export function parseTableYesnoResponse(
   rawResponse: string | null,
   categories: string[],
-): { shouldHide: boolean; reasoning: string; matches: string[] } {
+): { shouldHide: boolean; reasoning: string; matches: string[]; malformed: boolean } {
   if (!rawResponse) {
-    return { shouldHide: false, reasoning: 'Empty model response — model returned no output', matches: [] };
+    return { shouldHide: false, reasoning: 'Empty model response — model returned no output', matches: [], malformed: true };
   }
   const cleaned = stripGemmaMarkers(rawResponse);
   const lines = cleaned.split('\n').map(l => l.trim()).filter(Boolean);
@@ -130,6 +179,15 @@ export function parseTableYesnoResponse(
           cells = cells.slice(overflow);
         }
       }
+      // Vestigial trailing verdicts: the model often anchors on the system
+      // prompt's 3-cell format example and pads the row with extra verdicts
+      // (e.g. `| yes | no` for one category). The leading cells line up
+      // with the categories in order — keep the first N, drop the rest.
+      // Only applies when every cell is a clean yes/no verdict; a row with
+      // a non-verdict cell still fails safe below.
+      if (cells.length > categories.length && cells.every(isVerdict)) {
+        cells = cells.slice(0, categories.length).map(c => verdictFrom(c)!);
+      }
       parts = cells;
     } else if (categories.length === 1) {
       // Single-category packs: model often emits a bare `yes`/`no` with
@@ -140,7 +198,7 @@ export function parseTableYesnoResponse(
   }
 
   if (!parts) {
-    return { shouldHide: false, reasoning: `Malformed verdict row (no verdict lines found): ${rawResponse}`, matches: [] };
+    return { shouldHide: false, reasoning: `Malformed verdict row (no verdict lines found): ${rawResponse}`, matches: [], malformed: true };
   }
 
   if (parts.length !== categories.length) {
@@ -148,6 +206,7 @@ export function parseTableYesnoResponse(
       shouldHide: false,
       reasoning: `Malformed verdict row (expected ${categories.length} verdicts, got ${parts.length}): ${rawResponse}`,
       matches: [],
+      malformed: true,
     };
   }
   const matches: string[] = [];
@@ -158,6 +217,7 @@ export function parseTableYesnoResponse(
         shouldHide: false,
         reasoning: `Malformed verdict row (verdict ${i} = ${JSON.stringify(parts[i])}): ${rawResponse}`,
         matches: [],
+        malformed: true,
       };
     }
     if (v === 'yes') matches.push(categories[i]);
@@ -166,7 +226,7 @@ export function parseTableYesnoResponse(
   const reasoning = shouldHide
     ? `${rawResponse} (Matched: ${matches.join(', ')})`
     : rawResponse;
-  return { shouldHide, reasoning, matches };
+  return { shouldHide, reasoning, matches, malformed: false };
 }
 
 // Build messages array for API models (used by direct API backends)

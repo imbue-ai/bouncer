@@ -140,6 +140,12 @@ export interface LocalModelDef extends ModelDef {
   backend?: 'litertlm';
   extraBody?: Record<string, unknown>;
   inferenceParams?: Record<string, unknown>;
+  // iOS on-device entries only — carried over from the native registry
+  // (LocalInferenceService.models) via the injected __iosLocalModels global;
+  // see shared/models.ts.
+  sizeDisplay?: string;
+  isSupportedOnThisDevice?: boolean;
+  requiredRAMDisplay?: string;
   litertlmConfig?: {
     // Absolute URL to the `.litertlm` model asset.
     modelUrl: string;
@@ -181,9 +187,10 @@ interface SettingsBase {
   selectedModel: string;
   customModels: ModelDef[];
   predefinedModelKwargs: Record<string, Record<string, unknown>>;
-  aiTextFilterEnabled: boolean;
   aiTextDetectionThreshold: number;
-  aiImageFilterEnabled: boolean;
+  // Threshold applied instead of aiTextDetectionThreshold when the post
+  // being evaluated is a reply/comment (permalink-view posts).
+  aiTextReplyDetectionThreshold: number;
   aiImageDetectionThreshold: number;
   // When false, replies on permalink (/status/<id>) pages are not
   // submitted for evaluation. The main timeline is unaffected either way.
@@ -204,6 +211,39 @@ interface SettingsBase {
 
 export interface Settings extends SettingsBase {
   descriptions: string[];
+  /** `descriptions` minus the phrases that only engage AI detection
+   *  (AiFilterIntentState.aiPhrases). The exclusion applies only on the
+   *  Imbue model path — on local/BYOK models (no AI detector) this equals
+   *  `descriptions`. Use this for filtering; `descriptions` remains the
+   *  display/edit surface. */
+  effectiveDescriptions: string[];
+  /** Derived at settings-read time: the inferred "user wants AI content
+   *  removed" state FOR THE SITE these settings were loaded for — true only
+   *  when one of that site's own phrases was judged an AI-removal request
+   *  (aiIntentActiveForSite). The sole gate for the AI text/image detectors —
+   *  there is no manual toggle. Always false when getSettings was called
+   *  without a siteId. */
+  aiFilterIntentActive: boolean;
+}
+
+/** Persisted judgment of which of the user's filter phrases request removal
+ *  of AI-generated content — from the backend's detectAiIntent route, or a
+ *  local model's equivalent judgment. Written only by
+ *  src/background/ai-intent.ts; read wherever the AI-detection state is
+ *  computed (pipeline, popup, content UI, iOS bridge). */
+export interface AiFilterIntentState {
+  /** Verbatim filter phrases judged as AI-removal requests, across ALL
+   *  platforms (the judge sees the union so each phrase is judged once).
+   *  AI detection engages per platform: only where the platform's own list
+   *  contains one of these (aiIntentActiveForSite). On the Imbue model path
+   *  these are also excluded from the tweet-filter categories (see
+   *  Settings.effectiveDescriptions). */
+  aiPhrases: string[];
+  /** phraseSetKey of the phrase-set union the last successful intent
+   *  judgment covered — lets refreshAiFilterIntent skip re-judging a set
+   *  that was already judged (each set is judged once, authoritatively). */
+  judgedSetKey: string | null;
+  updatedAt: number;
 }
 
 export interface LocalModelStatus {
@@ -283,6 +323,9 @@ export interface PendingEvaluation {
   tabId: number | undefined;
   postUrl: string | null;
   siteId: SiteId;
+  /** True when the post is a reply/comment (permalink-view post). Selects
+   *  the reply-specific AI-text-detection threshold. */
+  isReply: boolean;
 }
 
 // ==================== Chat Messages ====================
@@ -296,7 +339,7 @@ export interface ChatMessage {
 
 export type ContentToBackgroundMessage =
   | { type: 'pageLoad' }
-  | { type: 'evaluatePost'; evaluationId: string; post: string; rawText: string; imageUrls: string[]; postUrl: string | null; siteId: SiteId }
+  | { type: 'evaluatePost'; evaluationId: string; post: string; rawText: string; imageUrls: string[]; postUrl: string | null; siteId: SiteId; isReply?: boolean }
   | { type: 'suggestAnnoyingReasons'; post: string; imageUrls: string[]; siteId?: SiteId }
   | { type: 'clearCache' }
   | { type: 'clearSinglePost'; post: string; imageUrls: string[]; postUrl?: string | null; siteId?: SiteId }
@@ -389,14 +432,26 @@ export type DescriptionKey = `descriptions_${SiteId}`;
 /** Typed schema for chrome.storage.local keys. */
 export type StorageSchema = SettingsBase & {
   authErrorApis: Record<string, boolean>;
-  localModelsEnabled: boolean;
-  aiTextFilterExperimental: boolean;
+  // Inferred "user wants AI content removed" state, judged from the phrase
+  // list (backend detectAiIntent route / local model) and re-checked only
+  // when the list changes. The sole on/off control for AI detection — there
+  // is no manual toggle.
+  aiFilterIntent: AiFilterIntentState;
   localModelStatuses: Record<string, LocalModelStatus>;
+  // Model key ("local:...") the user picked from the headline radios while
+  // its weights weren't downloaded yet. The previous model keeps filtering;
+  // the background flips selectedModel to this and clears it once the
+  // download lands (see the localModelStatuses storage listener).
+  pendingLocalModelSelection: string;
   evaluationCache: Record<string, EvaluationResult>;
   stats: { filtered: number; evaluated: number; totalCost: number };
   // Lifetime count of posts filtered while signed in anonymously. Drives the
   // guest trial gate (see GUEST_FILTER_LIMIT). Persists across sessions.
   anonFilterCount: number;
+  // First-run "REMOVE AI" badge on the AI-detection sparkle. Set (permanently)
+  // the first time AI detection turns on; from then on the indicator renders
+  // as the plain sparkle icon.
+  aiIndicatorBadgeDismissed: boolean;
   googleAuthToken: string;
   openrouterCodeVerifier: string;
   lastSeenVersion: string;
@@ -425,6 +480,20 @@ export interface ImbueFilterResponse extends ImbueResponseBase {
   shouldHide: boolean;
   reasoning: string | null;
   category?: string | null;
+  rawResponse: string;
+}
+
+/** Response from the detectAiIntent action: a one-off judgment of the user's
+ *  phrase LIST (no post involved) — requested when the list changes, never
+ *  per tweet (the route is rate-limited to 60 requests/min per user). */
+export interface ImbueDetectAiIntentResponse extends ImbueResponseBase {
+  /** The verbatim subset of the request's `phrases` that indicate an intent
+   *  to remove AI-generated content ("AI slop", "midjourney art", ...).
+   *  `[]` = definitively none do. null = the backend couldn't parse the
+   *  model's verdict; absent = old gateway. Both mean unknown and must never
+   *  be treated as "no AI phrases". */
+  aiFilterPhrases?: string[] | null;
+  reasoning?: string | null;
   rawResponse: string;
 }
 

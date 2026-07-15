@@ -54,7 +54,9 @@ async function fetchAndCacheModel(
   const cache = await caches.open(LITERTLM_CACHE_KEY);
   const cached = await cache.match(url);
   if (cached) {
-    onProgress({ progress: 1, text: 'cached' });
+    // Cache hit: no download, so no progress events. The in-feed loading UI
+    // keys off download progress ('downloading' state) and deliberately
+    // stays hidden for the few seconds of cache-to-GPU streaming.
     return cached;
   }
 
@@ -146,7 +148,9 @@ export class LitertlmRuntime {
     const cfg = modelDef.litertlmConfig;
     if (!cfg) throw new Error(`Model ${modelDef.name} is missing litertlmConfig`);
 
-    onProgress({ progress: 0, text: '' });
+    // Progress events are emitted only by the real network download inside
+    // fetchAndCacheModel. Wasm loading, cache hits, and the cache-to-GPU
+    // stream report nothing — callers see state 'initializing' until ready.
     await ensureWasmLoaded();
     if (abortSignal.aborted) throw new Error('aborted');
 
@@ -169,7 +173,6 @@ export class LitertlmRuntime {
       throw new Error('aborted');
     }
     this.modelDef = modelDef;
-    onProgress({ progress: 1, text: '' });
   }
 
   async unload(): Promise<void> {
@@ -217,36 +220,33 @@ export class LitertlmRuntime {
     return { prefaceMessages, userText };
   }
 
-  generate(messages: ChatMessage[], _maxTokens: number, params: Record<string, unknown>): Promise<string> {
+  generate(messages: ChatMessage[], maxTokens: number, _params: Record<string, unknown>): Promise<string> {
     if (!this.engine) throw new Error('Engine not loaded');
     return this.enqueue(async () => {
       if (!this.engine) throw new Error('Engine not loaded');
 
       const { prefaceMessages, userText } = this.splitMessages(messages);
-      const cfg = this.modelDef?.litertlmConfig;
-      const defaultParams = this.modelDef?.inferenceParams ?? {};
-      const temperature = typeof params.temperature === 'number'
-        ? params.temperature
-        : typeof defaultParams.temperature === 'number'
-          ? defaultParams.temperature
-          : 0.0;
 
-      // GREEDY when temperature is 0 (deterministic classification);
-      // otherwise TOP_K with the configured k. Bouncer's table_yesno
-      // classifier wants deterministic verdicts so temperature=0 is the
-      // common path. Greedy means top-1, so k MUST be 1 — the GPU backend
-      // defaults max_top_k to 1 and rejects larger values otherwise.
-      const isGreedy = temperature === 0;
-      const samplerType = isGreedy ? SamplerType.GREEDY : SamplerType.TOP_K;
-      const k = isGreedy ? 1 : (cfg?.topK ?? 40);
-
+      // Always GREEDY (top-1); a requested temperature in _params is
+      // deliberately ignored. The GPU backend's max_top_k defaults to 1
+      // and Engine.create can only raise it by supplying a complete
+      // GpuArtisanConfig (whose defaults live in the wasm binary), so a
+      // TOP_K session with k > 1 is rejected at session startup inside
+      // sendMessage ("Top-K value 40 must be <= 1") — and the failed
+      // attempt poisons the engine's context handler (every later session
+      // RET_CHECKs with "processed context is already set"), so a
+      // try-sampled-then-retry-greedy fallback is not viable either.
+      // Until the engine is created with a raised max_top_k, sampled
+      // callers (phrase suggestions request temperature 0.7) get clamped
+      // to deterministic greedy output instead of an error.
       const conversationConfig: ConversationConfig = {
         preface: { messages: prefaceMessages },
         sessionConfig: {
+          ...(maxTokens > 0 ? { maxOutputTokens: maxTokens } : {}),
           samplerParams: {
-            type: samplerType,
-            k,
-            temperature,
+            type: SamplerType.GREEDY,
+            k: 1,
+            temperature: 0,
             seed: 0,
           },
         },

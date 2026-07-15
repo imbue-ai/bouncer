@@ -13,7 +13,12 @@ struct OnboardingView: View {
 
     @State private var currentPage = 0
     @State private var videoPlayer = PreloadedVideoPlayer(videoName: "filterphrases")
-    private let pageCount = 4
+    @State private var inferenceMode: InferenceMode = .cloud
+    // True once the user commits to Local and the model transfer starts;
+    // onboarding then blocks on the download and auto-finishes when it lands.
+    @State private var isDownloadingModel = false
+    @ObservedObject private var localService = LocalInferenceService.shared
+    private let pageCount = 5
 
     var body: some View {
         VStack(spacing: 0) {
@@ -31,7 +36,7 @@ struct OnboardingView: View {
 
                 OnboardingPage(
                     title: "View Filtered",
-                    subtitle: "See all your bounced posts in one place and restore any you want back.",
+                    subtitle: "See all your removed posts in one place and restore any you want back.",
                     imageName: "onboarding-view-filtered",
                     pageIndex: 2
                 )
@@ -44,6 +49,13 @@ struct OnboardingView: View {
                     pageIndex: 3
                 )
                 .tag(3)
+
+                InferenceModePage(
+                    mode: $inferenceMode,
+                    isDownloading: $isDownloadingModel,
+                    localService: localService
+                )
+                .tag(4)
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
             .animation(.easeInOut(duration: 0.3), value: currentPage)
@@ -61,29 +73,102 @@ struct OnboardingView: View {
                 }
 
                 Button {
-                    if currentPage < pageCount - 1 {
-                        currentPage += 1
-                    } else {
-                        videoPlayer.stop()
-                        UserDefaults.standard.set(true, forKey: "hasCompletedOnboarding")
-                        withAnimation(.easeOut(duration: 0.35)) {
-                            isOnboarded = true
-                        }
-                    }
+                    handlePrimaryTap()
                 } label: {
-                    Text(currentPage < pageCount - 1 ? "Next" : "Get Started")
+                    Text(primaryButtonLabel)
                         .font(.system(size: 18, weight: .semibold))
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 16)
-                        .background(Color.accentColor)
+                        .background(Color.accentColor.opacity(isPrimaryButtonDisabled ? 0.5 : 1))
                         .foregroundColor(.white)
                         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 }
+                .disabled(isPrimaryButtonDisabled)
                 .padding(.horizontal, 24)
             }
             .padding(.bottom, 50)
         }
         .background(Color(UIColor.systemBackground))
+        // Local path: the Get Started tap only starts the model download;
+        // onboarding completes on its own once the file lands.
+        .onChange(of: localService.modelStatus) { _, newStatus in
+            guard isDownloadingModel else { return }
+            if newStatus == .downloaded || newStatus == .ready {
+                completeOnboarding()
+            }
+        }
+    }
+
+    private var isLastPage: Bool { currentPage == pageCount - 1 }
+
+    private var primaryButtonLabel: String {
+        guard isLastPage else { return "Next" }
+        guard isDownloadingModel else { return "Get Started" }
+        switch localService.modelStatus {
+        case .downloading: return "Downloading…"
+        case .paused: return "Resume"
+        case .downloaded, .loading, .ready: return "Get Started"
+        case .notDownloaded, .error: return "Retry"
+        }
+    }
+
+    private var isPrimaryButtonDisabled: Bool {
+        if isLastPage, isDownloadingModel,
+           case .downloading = localService.modelStatus { return true }
+        return false
+    }
+
+    private func handlePrimaryTap() {
+        guard isLastPage else {
+            currentPage += 1
+            return
+        }
+
+        if isDownloadingModel {
+            switch localService.modelStatus {
+            case .downloaded, .loading, .ready:
+                completeOnboarding()
+            default:
+                // Paused or failed — resume/restart the transfer.
+                localService.startDownload(LocalInferenceService.models[0])
+            }
+            return
+        }
+
+        switch inferenceMode {
+        case .cloud:
+            writeSelectedModel(imbueModelKey)
+            completeOnboarding()
+        case .onDevice:
+            // Unreachable via UI (unsupported devices never see the On-Device
+            // option), but keep the RAM invariant local to the write.
+            guard LocalInferenceService.models[0].isSupportedOnThisDevice else { return }
+            writeSelectedModel(LocalInferenceService.models[0].selectedModelKey)
+            switch localService.downloadStatus(for: LocalInferenceService.models[0]) {
+            case .downloaded, .loading, .ready:
+                // Already on disk (e.g. onboarding re-run) — nothing to fetch.
+                completeOnboarding()
+            default:
+                isDownloadingModel = true
+                localService.startDownload(LocalInferenceService.models[0])
+            }
+        }
+    }
+
+    private func completeOnboarding() {
+        videoPlayer.stop()
+        UserDefaults.standard.set(true, forKey: "hasCompletedOnboarding")
+        withAnimation(.easeOut(duration: 0.35)) {
+            isOnboarded = true
+        }
+    }
+
+    // Native side of the chrome.storage.local backing store (the
+    // feedfilterStorage bridge in FilteredWebView) — no WebView is mounted
+    // during onboarding, so write UserDefaults directly. Values are the
+    // JSON strings the ChromePolyfill would send, hence the added quotes.
+    private func writeSelectedModel(_ modelKey: String) {
+        UserDefaults.standard.set("\"\(modelKey)\"", forKey: "ffstore_ff_local_selectedModel")
     }
 }
 
@@ -290,6 +375,168 @@ private struct VideoOnboardingPage: View {
             }
             .frame(maxWidth: .infinity)
         }
+    }
+}
+
+// MARK: - Inference Mode Page (Cloud vs On-Device)
+
+private enum InferenceMode {
+    case cloud, onDevice
+}
+
+private struct InferenceModePage: View {
+    @Binding var mode: InferenceMode
+    @Binding var isDownloading: Bool
+    @ObservedObject var localService: LocalInferenceService
+
+    var body: some View {
+        VStack(spacing: 8) {
+            VStack(spacing: 12) {
+                Text("Choose Filtering Mode")
+                    .font(.system(size: 28, weight: .bold))
+                    .multilineTextAlignment(.center)
+
+                Text("You can change this anytime in settings.")
+                    .font(.system(size: 17))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 32)
+            }
+            .padding(.top, 60)
+
+            // iOS has no radio-button control; the system idiom for a
+            // single choice is an inline Picker in an inset-grouped list
+            // (checkmark rows, as in Settings).
+            List {
+                Section {
+                    Picker("AI mode", selection: $mode) {
+                        option(
+                            title: "Cloud",
+                            description: "Fast, free filtering in the cloud.",
+                        )
+                        .tag(InferenceMode.cloud)
+
+                        // Inline-Picker rows can't be individually disabled,
+                        // so on low-RAM devices the On-Device option is omitted
+                        // and the footer below explains why.
+                        if LocalInferenceService.models[0].isSupportedOnThisDevice {
+                            option(
+                                title: "On-Device",
+                                description: "No posts ever leave your phone.",
+                                // Badge shows the bare size — the estimate's "~" reads as clutter here.
+                                badge: "\(LocalInferenceService.models[0].approxSize.replacingOccurrences(of: "~", with: "")) download",
+                                badgeIcon: "arrow.down.circle"
+                            )
+                            .tag(InferenceMode.onDevice)
+                        }
+                    }
+                    .pickerStyle(.inline)
+                    .labelsHidden()
+                    .disabled(isDownloading)
+                } footer: {
+                    if !LocalInferenceService.models[0].isSupportedOnThisDevice {
+                        Text("On-device filtering isn't available on this iPhone — it requires \(LocalInferenceService.models[0].requiredRAMDisplay)+ RAM. You can use Cloud mode instead.")
+                    }
+                }
+
+                if isDownloading {
+                    Section {
+                        // Still the system linear ProgressView — iOS has no
+                        // thickness API, so scale the stock bar up and glide
+                        // between the downloader's 0.5s progress ticks.
+                        ProgressView(value: downloadProgress)
+                            .scaleEffect(x: 1, y: 2.75, anchor: .center)
+                            .padding(.vertical, 8)
+                            .animation(.easeInOut(duration: 0.45), value: downloadProgress)
+
+                        Text(statusText)
+                            .font(.footnote)
+                            .foregroundStyle(isError ? Color.red : Color.secondary)
+
+                        Button("Cancel download", role: .destructive) {
+                            localService.cancelDownload()
+                            isDownloading = false
+                        }
+                    }
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .scrollBounceBehavior(.basedOnSize)
+            .animation(.easeInOut(duration: 0.2), value: isDownloading)
+        }
+    }
+
+    private func option(
+        title: String,
+        description: String,
+        badge: String? = nil,
+        badgeIcon: String? = nil,
+        badgeTint: Color? = nil
+    ) -> some View {
+        // System Dynamic Type styles, so the rows scale with the user's
+        // text-size setting like any Settings row would.
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                Text(title)
+                    .font(.title3.weight(.semibold))
+                if let badge {
+                    // Tinted capsule (system color on its own low-opacity
+                    // fill) is the App Store-style tag idiom; untinted falls
+                    // back to the neutral gray pill.
+                    badgeLabel(badge, systemImage: badgeIcon)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(badgeTint ?? Color.secondary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(
+                            badgeTint?.opacity(0.15) ?? Color(UIColor.tertiarySystemFill),
+                            in: Capsule()
+                        )
+                }
+            }
+            Text(description)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 6)
+    }
+
+    private func badgeLabel(_ badge: String, systemImage: String?) -> Text {
+        guard let systemImage else { return Text(badge) }
+        // Inline symbol interpolation, not Label — inside a List, Label
+        // reserves the list's icon-alignment column, which reads as a gap
+        // between the symbol and the text.
+        return Text("\(Image(systemName: systemImage)) \(badge)")
+    }
+
+    private var downloadProgress: Double {
+        switch localService.modelStatus {
+        case .downloading(let progress), .paused(let progress): return progress
+        case .downloaded, .loading, .ready: return 1
+        case .notDownloaded, .error: return 0
+        }
+    }
+
+    private var statusText: String {
+        switch localService.modelStatus {
+        case .downloading(let progress):
+            let pct = Int((progress * 100).rounded())
+            return "Downloading \(pct)% — \(localService.downloadedBytesDisplay) / \(localService.totalBytesDisplay)"
+        case .paused(let progress):
+            let pct = Int((progress * 100).rounded())
+            return "Paused at \(pct)%"
+        case .downloaded, .loading, .ready:
+            return "Download complete"
+        case .error(let message):
+            return message
+        case .notDownloaded:
+            return "Starting download…"
+        }
+    }
+
+    private var isError: Bool {
+        if case .error = localService.modelStatus { return true }
+        return false
     }
 }
 

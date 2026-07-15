@@ -6,7 +6,11 @@ import { PREDEFINED_MODELS } from '../shared/models';
 import { isGPUDeviceLostError, isNetworkError, formatLocalInferenceResult } from '../shared/utils';
 import {
   LOCAL_SYSTEM_PROMPT,
+  LOCAL_SYSTEM_PROMPT_SINGLE,
+  AI_INTENT_LOCAL_SYSTEM_PROMPT,
   buildTableYesnoUserMessage,
+  buildSingleYesnoUserMessage,
+  buildAiIntentUserMessage,
   parseTableYesnoResponse,
 } from '../shared/prompts';
 export { parseTableYesnoResponse } from '../shared/prompts';
@@ -111,7 +115,6 @@ export class LocalEngine {
 
   async initialize(modelId: string): Promise<LocalBackend | null> {
     if (!modelId) {
-      console.error('[LocalEngine] No model ID provided');
       return null;
     }
 
@@ -130,7 +133,6 @@ export class LocalEngine {
 
     const modelDef = PREDEFINED_MODELS.local.find(m => m.name === modelId) || null;
     if (!modelDef) {
-      console.error('[LocalEngine] Unknown model:', modelId);
       await this.updateStatus(modelId, { state: 'error', error: `Unknown model: ${modelId}` });
       return null;
     }
@@ -148,9 +150,7 @@ export class LocalEngine {
         if (this.engine) {
           try {
             await this.engine.unload();
-          } catch (e) {
-            console.error('[LocalEngine] Error unloading engine:', e);
-          }
+          } catch { /* ignore: error unloading engine */ }
         }
         this.engine = null;
         this.loadedModel = null;
@@ -172,13 +172,27 @@ export class LocalEngine {
       try {
         await this.updateStatus(modelId, { state: 'initializing', progress: 0, text: retryCount > 0 ? `Retrying (${retryCount}/${DOWNLOAD_MAX_RETRIES})...` : 'Starting...' });
 
+        // Throttle byte-progress status writes. The download reports once per
+        // network chunk — hundreds of events/sec on a fast connection — and
+        // each write is a read-modify-write of localModelStatuses plus a
+        // storage.onChanged broadcast to every open UI. The racing RMW cycles
+        // and the event flood reach a busy page's main thread in bursts,
+        // which is what made the in-feed bar advance in visible jumps. ~4
+        // writes/sec is plenty: both progress bars animate width with a
+        // 0.3s CSS transition that glides across the gap between updates.
+        // Events with progress 1 or a text label are always written so
+        // completion and retry messages are never dropped.
+        let lastProgressWrite = 0;
         await backend.initialize(modelDef, (progress) => {
           if (abortSignal.aborted) return;
+          const now = Date.now();
+          if (progress.progress < 1 && !progress.text && now - lastProgressWrite < 250) return;
+          lastProgressWrite = now;
           this.updateStatus(modelId, {
             state: 'downloading',
             progress: progress.progress,
             text: progress.text,
-          }).catch(err => console.error('[LocalEngine] Failed to update download status:', err));
+          }).catch(() => {});
         }, abortSignal);
 
         if (abortSignal.aborted) {
@@ -199,11 +213,15 @@ export class LocalEngine {
 
         return this.engine;
       } catch (error) {
-        console.error('[LocalEngine] Initialization failed:', error);
-
         const errorMsg = (error as Error).message;
 
-        if (errorMsg === 'aborted') {
+        // A user cancel aborts the signal, and the in-flight init then dies
+        // with whatever teardown error the abort produced — a fetch
+        // AbortError, a closed message port, a wrapped network-looking
+        // message. Check the signal, not the message: classifying that
+        // fallout as a network failure would clobber the not_downloaded
+        // status cancelDownload just wrote with "Retrying download...".
+        if (abortSignal.aborted || errorMsg === 'aborted') {
           this._completeInit(null);
           return null;
         }
@@ -244,8 +262,23 @@ export class LocalEngine {
     if (!this.isInitializingModel(modelId)) {
       return false;
     }
+    // Capture before abort: _completeInit nulls _initPromise as the init
+    // loop exits.
+    const inFlight = this._initPromise;
     if (this._initAbortController) {
       this._initAbortController.abort();
+    }
+
+    // Let the in-flight init observe the abort and stop emitting status
+    // writes before we write the terminal state — otherwise a late
+    // progress/retry write lands after ours and the UI sticks on a
+    // downloading state. Time-bounded so a wedged offscreen call can't
+    // make the Cancel button hang.
+    if (inFlight) {
+      await Promise.race([
+        inFlight,
+        new Promise(resolve => setTimeout(resolve, 3000)),
+      ]);
     }
 
     await this.reset();
@@ -272,9 +305,7 @@ export class LocalEngine {
     if (this.engine) {
       try {
         await this.engine.unload();
-      } catch (e) {
-        console.error('[LocalEngine] Error unloading engine:', e);
-      }
+      } catch { /* ignore: error unloading engine */ }
     }
     this.engine = null;
     this.loadedModel = null;
@@ -321,7 +352,6 @@ export class LocalEngine {
         }
 
         if (isGPUDeviceLostError((error as Error).message)) {
-          console.error('[LocalEngine] GPU device lost during inference, resetting engine...');
           const modelId = this.loadedModel;
           await this.reset();
           await this.updateStatus(modelId!, {
@@ -339,9 +369,7 @@ export class LocalEngine {
     if (this._preempted) return;
     this._preempted = true;
     if (this.engine) {
-      this._interruptSettledPromise = this.engine.interrupt().catch(e =>
-        console.error('[Preempt] Failed to interrupt generation:', e)
-      );
+      this._interruptSettledPromise = this.engine.interrupt().catch(() => {});
     }
   }
 
@@ -452,12 +480,8 @@ export class LocalEngine {
       const cached = await this.checkCached(modelId);
       if (!cached) return;
 
-      this.initialize(modelId).catch(err => {
-        console.error('[LocalEngine] Auto-init failed:', err);
-      });
-    } catch (e) {
-      console.error('[LocalEngine] Error in autoInitSelected:', e);
-    }
+      this.initialize(modelId).catch(() => {});
+    } catch { /* ignore: error in autoInitSelected */ }
   }
 
   // ---- Private: initialization tracking ----
@@ -539,9 +563,7 @@ export class LocalEngine {
     const modelId = this.loadedModel;
     try {
       await this.engine.unload();
-    } catch (e) {
-      console.error('[LocalEngine] Error during idle unload:', e);
-    }
+    } catch { /* ignore: error during idle unload */ }
     this.engine = null;
     this.loadedModel = null;
     this._modelConfig = null;
@@ -560,12 +582,9 @@ export class LocalEngine {
       const onTimeout = async (): Promise<void> => {
         if (completed) return;
         completed = true;
-        console.warn(`[LocalEngine] Inference timeout after ${timeoutMs}ms, interrupting...`);
         try {
           await this.engine!.interrupt();
-        } catch (e) {
-          console.error('[LocalEngine] Failed to interrupt generation:', e);
-        }
+        } catch { /* ignore: failed to interrupt generation */ }
         reject(new Error('Inference timeout - model took too long to respond'));
       };
       const timeoutId = setTimeout(() => { void onTimeout(); }, timeoutMs);
@@ -593,9 +612,34 @@ export const localEngine = new LocalEngine();
 
 // ==================== Post inference orchestration ====================
 
-// Rolling window of the most recent per-tweet inference times in seconds,
-// logged after every local response so the user can eyeball steady-state perf.
-const recentInferenceTimes: number[] = [];
+/**
+ * In-browser AI-intent judgment: which of the user's filter phrases ask for
+ * AI-generated content to be removed? The desktop-local equivalent of the
+ * Imbue backend's detectAiIntent probe — called once per phrase-set change
+ * from refreshAiFilterIntent (debounced), never per post. Priority 1 so the
+ * one-off judgment jumps ahead of queued feed posts.
+ *
+ * The web LiteRT-LM backend has no constrained decoding, so the verdict row
+ * can drift; parseTableYesnoResponse tolerates the known shapes. Returns
+ * null when the row still couldn't be parsed — "unknown", so the caller
+ * leaves judgedSetKey stale and the next trigger retries.
+ */
+export async function callLocalAiIntentJudgment(
+  phrases: string[],
+  modelId: string,
+): Promise<string[] | null> {
+  await localEngine.ensureLoaded(modelId);
+  const messages: ChatMessage[] = [
+    { role: 'system', content: AI_INTENT_LOCAL_SYSTEM_PROMPT },
+    { role: 'user', content: buildAiIntentUserMessage(phrases) },
+  ];
+  // Same output-budget shape as callLocalInference: ~3 tokens per verdict,
+  // floored high enough that markdown-table drift doesn't truncate mid-row.
+  const maxGenerationTokens = Math.max(64, 6 + 4 * phrases.length);
+  const rawResponse = await localEngine.generate(messages, maxGenerationTokens, { priority: 1 });
+  const { matches, malformed } = parseTableYesnoResponse(rawResponse, phrases);
+  return malformed ? null : matches;
+}
 
 // Orchestrates local inference for a single post. Uses the pipe-delimited
 // verdict row from the bouncer-evals-and-results `table_yesno` combo: one
@@ -612,15 +656,26 @@ export async function callLocalInference(
 
   const contextWindowSize = modelConfig?.litertlmConfig?.maxTokens ?? 1024;
   // Output is the verdict row (~3 tokens × N categories). Pad generously so
-  // a long topic name or extra category never truncates.
-  const maxGenerationTokens = Math.max(20, 6 + 4 * bannedCategories.length);
+  // a long topic name or extra category never truncates. The floor also
+  // leaves headroom for Gemma's markdown-table drift (header + separator
+  // rows before the verdicts), which parseTableYesnoResponse tolerates but
+  // which a tight maxOutputTokens cap would truncate mid-row — this value
+  // is enforced as the session's maxOutputTokens, not just used for input
+  // budgeting.
+  const maxGenerationTokens = Math.max(64, 6 + 4 * bannedCategories.length);
   const supportsImages = modelConfig?.supportsImages === true;
   let useImages = !!(supportsImages && postData.imageUrls && postData.imageUrls.length > 0);
 
   // The user content is a string for text-only models and a multipart array
   // (text + image_url entries) when the backend supports vision.
+  // Single-category calls (phrase-suggestion validation, single-phrase filter
+  // lists) use a plain yes/no question instead of the verdict-row table — see
+  // LOCAL_SYSTEM_PROMPT_SINGLE for why.
+  const isSingleCategory = bannedCategories.length === 1;
   const buildUserContent = (postText: string, includeImages: boolean): ChatMessage['content'] => {
-    const userText = buildTableYesnoUserMessage(postText, bannedCategories, includeImages);
+    const userText = isSingleCategory
+      ? buildSingleYesnoUserMessage(postText, bannedCategories[0], includeImages)
+      : buildTableYesnoUserMessage(postText, bannedCategories, includeImages);
     if (!includeImages) return userText;
     return [
       { type: 'text', text: userText },
@@ -628,7 +683,7 @@ export async function callLocalInference(
     ];
   };
   const buildMessages = (postText: string, includeImages: boolean): ChatMessage[] => [
-    { role: 'system', content: LOCAL_SYSTEM_PROMPT },
+    { role: 'system', content: isSingleCategory ? LOCAL_SYSTEM_PROMPT_SINGLE : LOCAL_SYSTEM_PROMPT },
     { role: 'user', content: buildUserContent(postText, includeImages) },
   ];
 
@@ -652,7 +707,6 @@ export async function callLocalInference(
 
   // If images leave no room for text, drop them and recompute.
   if (useImages && postTextBudget < 1) {
-    console.log('[LocalEngine] Images consume too much context, falling back to text-only');
     useImages = false;
     const textOnlyOverhead = await localEngine.countTokens(overheadText(false));
     postTextBudget = contextWindowSize - textOnlyOverhead - maxGenerationTokens;
@@ -677,7 +731,6 @@ export async function callLocalInference(
   } catch (imgError) {
     if ((imgError as Error).message === 'Inference preempted') throw imgError;
     if (useImages) {
-      console.warn('[LocalEngine] Image processing failed, retrying with text only:', (imgError as Error).message);
       rawResponse = await localEngine.generate(buildMessages(postText, false), maxGenerationTokens, { priority, onStart });
     } else {
       throw imgError;
@@ -685,14 +738,6 @@ export async function callLocalInference(
   }
 
   const inferenceTime = ((Date.now() - inferenceStart!) / 1000).toFixed(2);
-
-  recentInferenceTimes.push(parseFloat(inferenceTime));
-  if (recentInferenceTimes.length > 5) recentInferenceTimes.shift();
-  console.log(`[LocalEngine] Last ${recentInferenceTimes.length} tweet inference times (s): ${recentInferenceTimes.map(t => t.toFixed(2)).join(', ')}`);
-
-  if (!rawResponse) {
-    console.warn('[LocalEngine] Empty response from model');
-  }
 
   const { shouldHide: parsedShouldHide, reasoning: parsedReasoning, matches } = parseTableYesnoResponse(rawResponse, bannedCategories);
   const formatted = formatLocalInferenceResult(parsedReasoning, parsedShouldHide);

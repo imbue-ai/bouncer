@@ -106,6 +106,50 @@ describe('ImbueWebSocket', () => {
       expect(result.jobId).toBe('job-1');
     });
 
+    it('passes aiFilterPhrases through on detectAiIntent jobComplete results (list / empty / null)', async () => {
+      for (const phrases of [['AI slop', 'midjourney art'], [], null]) {
+        const jobId = `job-${phrases === null ? 'null' : phrases.length}`;
+        const sendPromise = imbueWebSocket.send({ action: 'detectAiIntent', phrases: ['AI slop', 'midjourney art', 'politics'] });
+        await new Promise(r => setTimeout(r, 10));
+        const ws = MockWebSocket.lastInstance!;
+        const requestId = ws.sentMessages.at(-1)!.requestId;
+        ws.onmessage!({ data: JSON.stringify({ requestId, jobId, status: 'submitted', message: 'Processing request' }) });
+        ws.onmessage!({ data: JSON.stringify({
+          type: 'jobComplete', jobId, processingTime: 1,
+          reasoning: null, aiFilterPhrases: phrases, rawResponse: '',
+        }) });
+        const result = await sendPromise as { aiFilterPhrases?: string[] | null };
+        expect(result.aiFilterPhrases).toEqual(phrases);
+      }
+    });
+
+    it('resolves results that omit aiFilterPhrases entirely (filter responses / old gateways)', async () => {
+      const sendPromise = imbueWebSocket.send({ action: 'tweetFilter' });
+      await new Promise(r => setTimeout(r, 10));
+      const ws = MockWebSocket.lastInstance!;
+      const requestId = ws.sentMessages.at(-1)!.requestId;
+      ws.onmessage!({ data: JSON.stringify({ requestId, jobId: 'job-old' }) });
+      ws.onmessage!({ data: JSON.stringify({ jobId: 'job-old', shouldHide: true, rawResponse: 'x' }) });
+      const result = await sendPromise as { shouldHide?: boolean; aiFilterPhrases?: string[] | null };
+      expect(result.shouldHide).toBe(true);
+      expect(result.aiFilterPhrases).toBeUndefined();
+    });
+
+    it('drops a wrongly-typed aiFilterPhrases but still resolves the result', async () => {
+      for (const bad of ['yes', true, [1, 2], ['ok', 3]]) {
+        const jobId = `job-bad-${JSON.stringify(bad)}`;
+        const sendPromise = imbueWebSocket.send({ action: 'detectAiIntent', phrases: ['ok'] });
+        await new Promise(r => setTimeout(r, 10));
+        const ws = MockWebSocket.lastInstance!;
+        const requestId = ws.sentMessages.at(-1)!.requestId;
+        ws.onmessage!({ data: JSON.stringify({ requestId, jobId }) });
+        ws.onmessage!({ data: JSON.stringify({ jobId, aiFilterPhrases: bad, rawResponse: 'x' }) });
+        const result = await sendPromise as { aiFilterPhrases?: string[] | null; rawResponse?: string };
+        expect(result.rawResponse).toBe('x');
+        expect(result.aiFilterPhrases).toBeUndefined();
+      }
+    });
+
     it('correlates ack by requestId when backend echoes it', async () => {
       const send1 = imbueWebSocket.send({ action: 'first' });
       const send2 = imbueWebSocket.send({ action: 'second' });

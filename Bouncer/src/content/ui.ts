@@ -2,14 +2,14 @@
 
 import { toBlob } from 'html-to-image';
 import { asyncHandler } from '../shared/async';
-import { cleanReasoning, escapeHtml, formatPostForEvaluation, parseHTML, GUEST_FILTER_LIMIT } from '../shared/utils';
+import { cleanReasoning, escapeHtml, formatPostForEvaluation, parseHTML, GUEST_FILTER_LIMIT, AI_DETECTION_SEED_PHRASE } from '../shared/utils';
 import { init as initPopup } from '../popup/index';
 import {
   encodeFilterPackCode, decodeFilterPackCode, buildFilterPackShareUrl,
   FILTER_PACK_SHARE_URL_REGEX,
 } from '../shared/share-encoding';
 import type { BackgroundToContentMessage, ContentUIDeps, FilteredPost, PostContent, LocalModelStatus } from '../types';
-import { getStorage, setStorage, getDescriptions, setDescriptions } from '../shared/storage';
+import { getStorage, setStorage, getDescriptions, setDescriptions, aiIntentActiveForSite } from '../shared/storage';
 import { getReleaseNote } from './release-notes';
 import { runIOSImportAnimation } from './ios';
 
@@ -126,7 +126,13 @@ async function refreshGuestLimitState() {
     guestLimitReached = false;
     return;
   }
-  const { anonFilterCount } = await getStorage(['anonFilterCount']);
+  const { anonFilterCount, selectedModel } = await getStorage(['anonFilterCount', 'selectedModel']);
+  // Local models run on-device and don't touch the Imbue backend, so they're
+  // exempt from the trial (the pipeline also skips counting them).
+  if ((selectedModel || '').startsWith('local:')) {
+    guestLimitReached = false;
+    return;
+  }
   guestLimitReached = (anonFilterCount || 0) >= GUEST_FILTER_LIMIT;
 }
 
@@ -290,8 +296,8 @@ function getSignInHTML() {
       <span class="filter-phrases-box-name">Bouncer</span>
       <div class="filter-signin-prompt">
         ${signinButtonHTML(isSafari ? 'Continue with Apple' : 'Continue with Google')}
-        <button class="skip-signin-btn">Try it without signing in<span class="skip-signin-arrow" aria-hidden="true">→</span></button>
-        <p class="ff-signin-explanation">Signing in helps us prevent abuse. We do not collect or store any identifying data.</p>
+        <button class="skip-signin-btn">Skip sign-in<span class="skip-signin-arrow" aria-hidden="true">→</span></button>
+        <p class="ff-signin-explanation">Signing in helps prevent abuse. We don't collect any identifying data. On-device mode doesn't require sign-in.</p>
       </div>
     </div>
   `;
@@ -314,6 +320,24 @@ function getGuestLimitHTML() {
 // The appropriate gate screen for the current state.
 function getGateHTML() {
   return guestLimitReached ? getGuestLimitHTML() : getSignInHTML();
+}
+
+// Notice advertising the local model, shown at the bottom of the filter box
+// while the user is on the anonymous no-login trial (same population that
+// refreshGuestLimitState gates). Hidden again in setupFilterBoxEventHandlers
+// if a local model is already selected — local filtering isn't limited.
+function guestTrialNoticeHTML() {
+  if (process.env.HAS_IMBUE_BACKEND !== 'true' || !isAnonymous || guestLimitReached || _deps.IS_IOS) {
+    return '';
+  }
+  // TODO Millan: figure out if we really want this banner, or if it's unnecessary clutter
+  return '';
+  // return `
+  //   <div class="ff-guest-trial-notice">
+  //     <p class="ff-guest-trial-text">No-login trial: ${GUEST_FILTER_LIMIT} filtered posts.</p>
+  //     <button class="ff-local-model-cta" type="button">Go unlimited</button>
+  //   </div>
+  // `;
 }
 
 // ==================== Guest-limit popup ====================
@@ -343,7 +367,7 @@ function showSignInPopup(variant: 'signin' | 'guestLimit') {
     ? GUEST_LIMIT_MESSAGE
     : 'Sign in to use Bouncer.';
   const skipButtonHTML = variant === 'signin'
-    ? `<button class="skip-signin-btn">Try it without signing in<span class="skip-signin-arrow" aria-hidden="true">→</span></button>`
+    ? `<button class="skip-signin-btn">Skip sign-in<span class="skip-signin-arrow" aria-hidden="true">→</span></button>`
     : '';
 
   const theme = _deps.adapter.getThemeMode();
@@ -430,7 +454,7 @@ async function maybeRenderUpdateBanner(container: HTMLElement): Promise<void> {
 
 // ==================== Placeholder animation ====================
 
-const PLACEHOLDER_PHRASES = ['politics', 'negativity', 'pessimism', 'political outrage', 'ragebait', 'humblebragging', 'virtue signaling', 'idolizing elites', 'Elon Musk'];
+const PLACEHOLDER_PHRASES = ['AI slop', 'politics', 'negativity', 'pessimism', 'political outrage', 'posts written by AI', 'ragebait', 'humblebragging', 'virtue signaling', 'idolizing elites', 'Elon Musk'];
 const PLACEHOLDER_DURATION = 10; // seconds for full cycle
 
 // Build placeholder HTML and inject dynamic keyframes once
@@ -438,25 +462,20 @@ const placeholderItemsHTML = [...PLACEHOLDER_PHRASES, PLACEHOLDER_PHRASES[0]]
   .map(p => `<span>${p}</span>`).join('');
 const placeholderHTML = `<span class="filter-input-wrapper"><input type="text" class="filter-phrases-input"><span class="filter-placeholder-cycle" aria-hidden="true"><span class="filter-placeholder-track">${placeholderItemsHTML}</span></span></span>`;
 
-// Toggle row injected into every authenticated filter box. Visibility is gated
-// by the same auth check that gates the rest of the box.
-const aiTextToggleHTML = `
-  <label class="filter-ai-text-toggle">
-    <input type="checkbox" class="filter-ai-text-toggle-input">
-    <span class="filter-ai-text-toggle-slider" aria-hidden="true"></span>
-    <span class="filter-ai-text-toggle-label">Filter AI-generated text</span>
-  </label>
-`;
-
-// Sibling of the AI-text toggle. Same DOM shape so it picks up the existing
-// `.filter-ai-text-toggle-*` styling; only the input class differs so we can
-// wire change handlers separately.
-const aiImageToggleHTML = `
-  <label class="filter-ai-text-toggle filter-ai-image-toggle">
-    <input type="checkbox" class="filter-ai-text-toggle-input filter-ai-image-toggle-input">
-    <span class="filter-ai-text-toggle-slider" aria-hidden="true"></span>
-    <span class="filter-ai-text-toggle-label">Filter AI-generated images</span>
-  </label>
+// AI-detection indicator, top-right of every authenticated filter box. It
+// reports the state AND toggles it — but only through the natural-language
+// mechanism itself: clicking while on deletes the phrases that enabled AI
+// detection; clicking while off adds the seed phrase (see
+// AI_DETECTION_SEED_PHRASE in shared/utils.ts). There is still no override
+// switch — the phrase list stays the single source of truth
+// (see background/ai-intent.ts).
+const aiIndicatorHTML = `
+  <button type="button" class="filter-ai-indicator" aria-label="Remove AI-generated content">
+    <span class="filter-ai-indicator-label" aria-hidden="true">REMOVE AI SLOP?</span>
+    <svg class="filter-ai-indicator-icon" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+      <path fill="currentColor" d="M12 5.5l1.3 3.6a3.5 3.5 0 0 0 2.1 2.1l3.6 1.3-3.6 1.3a3.5 3.5 0 0 0-2.1 2.1L12 19.5l-1.3-3.6a3.5 3.5 0 0 0-2.1-2.1L5 12.5l3.6-1.3a3.5 3.5 0 0 0 2.1-2.1L12 5.5z"/>
+    </svg>
+  </button>
 `;
 
 function injectPlaceholderKeyframes() {
@@ -541,6 +560,7 @@ function buildFilterContainerHTML(showSignOut = false): string {
       <div class="bouncer-update-banner-slot"></div>
       <div class="filter-phrases-title-row">
         <span class="filter-phrases-box-name">Bouncer</span>
+        ${aiIndicatorHTML}
       </div>
       <div class="filter-phrases-header">
         <span class="filter-phrases-label">Filter out</span>
@@ -550,14 +570,13 @@ function buildFilterContainerHTML(showSignOut = false): string {
           ${placeholderHTML}
         </span>
       </div>
+      ${guestTrialNoticeHTML()}
       <div class="filter-model-loading" style="display: none;">
         <div class="model-loading-text">Loading model...</div>
         <div class="model-loading-progress">
           <div class="model-loading-progress-fill"></div>
         </div>
       </div>
-      ${aiTextToggleHTML}
-      ${aiImageToggleHTML}
       <div class="filter-phrases-actions">
         <div class="filter-phrases-actions-left">
           <button class="filtered-toggle-btn">
@@ -762,6 +781,68 @@ export function injectFilterPhrasesInput() {
   updateSidebarFilterVisibility();
 }
 
+// Sync every AI-detection indicator on the page to the inferred AI-removal
+// intent FOR THIS PLATFORM — the sparkle is on only when one of this
+// platform's own phrases engages detection, so "AI slop" on X doesn't light
+// LinkedIn's indicator. Called on filter-box setup and from the
+// storage-change listener in content/index.ts whenever aiFilterIntent OR
+// this platform's phrase list is written — any such write also clears the
+// transient `pending` set by a click.
+export async function refreshAiIndicatorUI(): Promise<void> {
+  if (!_deps) return;
+  const [data, sitePhrases] = await Promise.all([
+    getStorage(['aiFilterIntent', 'aiIndicatorBadgeDismissed']),
+    getDescriptions(_deps.descriptionsKey),
+  ]);
+  const on = aiIntentActiveForSite(data, sitePhrases);
+  // First-run onboarding: the indicator wears a "REMOVE AI" pill badge until
+  // the first time detection turns on, then reverts to the plain sparkle
+  // forever (the dismissal is persisted, so toggling back off won't revive it).
+  if (on && !data.aiIndicatorBadgeDismissed) {
+    void setStorage({ aiIndicatorBadgeDismissed: true });
+  }
+  const showBadge = !on && !data.aiIndicatorBadgeDismissed;
+  document.querySelectorAll<HTMLElement>('.filter-ai-indicator').forEach(row => {
+    row.classList.toggle('on', on);
+    row.classList.toggle('with-badge', showBadge);
+    row.classList.remove('pending');
+    row.title = on
+      ? 'Removing AI-generated content — your filter phrases ask for it. Click to stop (removes those phrases).'
+      : `Click to remove AI-generated content from your feed (adds the filter phrase "${AI_DETECTION_SEED_PHRASE}").`;
+  });
+}
+
+// Toggle AI detection through the phrase mechanism — the indicator's click
+// action. Per-platform, like the indicator itself. On → off: delete every
+// phrase that enables AI detection from THIS platform's list (the intent
+// state prunes instantly if the phrase exists nowhere else; other platforms
+// keep their own state). Off → on: add the seed phrase to this platform's
+// list; the backend judges it and the first response engages detection.
+// `pending` bridges the round trip and is cleared by refreshAiIndicatorUI on
+// the resulting state/phrase-list write. Exported for the iOS native sheet's
+// sparkle indicator, which drives the same mechanism through the
+// __ff_toggleAiDetection bridge (see content/ios.ts).
+export async function toggleAiDetectionViaPhrases(): Promise<void> {
+  document.querySelectorAll<HTMLElement>('.filter-ai-indicator')
+    .forEach(el => el.classList.add('pending'));
+
+  const [data, sitePhrases] = await Promise.all([
+    getStorage(['aiFilterIntent']),
+    getDescriptions(_deps.descriptionsKey),
+  ]);
+  const aiPhrases = data.aiFilterIntent?.aiPhrases;
+  if (Array.isArray(aiPhrases) && aiPhrases.length > 0) {
+    const aiKeys = new Set(aiPhrases.map(p => p.trim().toLowerCase()));
+    const next = sitePhrases.filter(d => !aiKeys.has(d.trim().toLowerCase()));
+    if (next.length !== sitePhrases.length) {
+      await setDescriptions(_deps.descriptionsKey, next);
+      syncFilterPhrases();
+      return;
+    }
+  }
+  await addFilterPhrase(AI_DETECTION_SEED_PHRASE);
+}
+
 // Common event handler setup for filter boxes (sidebar and bottom)
 function setupFilterBoxEventHandlers(container: HTMLElement) {
   // Idempotency guard: a re-entrant inject (e.g. handleDOMMutation firing
@@ -775,42 +856,12 @@ function setupFilterBoxEventHandlers(container: HTMLElement) {
   const placeholderCycle = container.querySelector('.filter-placeholder-cycle');
   const toggleBtn = container.querySelector('.filtered-toggle-btn:not(.filter-pack-toggle-btn)')!;
   const settingsBtn = container.querySelector('.filter-settings-btn')!;
-  const aiTextToggle = container.querySelector<HTMLInputElement>('.filter-ai-text-toggle-input:not(.filter-ai-image-toggle-input)');
-  const aiImageToggle = container.querySelector<HTMLInputElement>('.filter-ai-image-toggle-input');
 
-  // AI-text-detection toggle. Cache invalidation + post re-evaluation are
-  // handled by the storage-change listener in background/index.ts.
-  if (aiTextToggle) {
-    const aiTextToggleRow = aiTextToggle.closest<HTMLElement>('.filter-ai-text-toggle');
-    getStorage(['aiTextFilterEnabled', 'aiTextFilterExperimental']).then(data => {
-      aiTextToggle.checked = data.aiTextFilterEnabled === true;
-      if (aiTextToggleRow) {
-        aiTextToggleRow.style.display = data.aiTextFilterExperimental === true ? '' : 'none';
-      }
-    }).catch(err => console.error('[UI] Failed to load aiTextFilterEnabled:', err));
-
-    aiTextToggle.addEventListener('change', () => {
-      chrome.storage.local.set({ aiTextFilterEnabled: aiTextToggle.checked })
-        .catch(err => console.error('[UI] Failed to save aiTextFilterEnabled:', err));
-    });
-  }
-
-  // AI-image-detection toggle. Same lifecycle as the text toggle and gated by
-  // the same `aiTextFilterExperimental` flag.
-  if (aiImageToggle) {
-    const aiImageToggleRow = aiImageToggle.closest<HTMLElement>('.filter-ai-image-toggle');
-    getStorage(['aiImageFilterEnabled', 'aiTextFilterExperimental']).then(data => {
-      aiImageToggle.checked = data.aiImageFilterEnabled === true;
-      if (aiImageToggleRow) {
-        aiImageToggleRow.style.display = data.aiTextFilterExperimental === true ? '' : 'none';
-      }
-    }).catch(err => console.error('[UI] Failed to load aiImageFilterEnabled:', err));
-
-    aiImageToggle.addEventListener('change', () => {
-      chrome.storage.local.set({ aiImageFilterEnabled: aiImageToggle.checked })
-        .catch(err => console.error('[UI] Failed to save aiImageFilterEnabled:', err));
-    });
-  }
+  // Seed the AI-detection indicator (kept fresh afterwards by the
+  // storage-change listener in content/index.ts) and wire its click-toggle.
+  refreshAiIndicatorUI().catch(err => console.error('[UI] Failed to load AI indicator state:', err));
+  container.querySelector<HTMLElement>('.filter-ai-indicator')
+    ?.addEventListener('click', asyncHandler(() => toggleAiDetectionViaPhrases()));
 
   // Show/hide animated placeholder based on input state and existing phrases
   function updatePlaceholderVisibility() {
@@ -823,6 +874,18 @@ function setupFilterBoxEventHandlers(container: HTMLElement) {
 
   // Settings button click
   settingsBtn.addEventListener('click', () => showSettingsModal());
+
+  // Guest-trial notice: the CTA deep-links to the local model section of the
+  // settings modal. If a local model is already driving filtering, the trial
+  // pitch no longer applies — drop the notice.
+  const trialNotice = container.querySelector<HTMLElement>('.ff-guest-trial-notice');
+  if (trialNotice) {
+    trialNotice.querySelector('.ff-local-model-cta')
+      ?.addEventListener('click', () => showSettingsModal('local'));
+    getStorage(['selectedModel']).then(({ selectedModel }) => {
+      if ((selectedModel || '').startsWith('local:')) trialNotice.remove();
+    }).catch(err => console.error('[UI] Failed to check selectedModel for trial notice:', err));
+  }
 
   // Toggle filtered view on button click
   toggleBtn.addEventListener('click', () => {
@@ -1259,9 +1322,9 @@ async function runShareFilterPackForIOS(): Promise<void> {
   wrapper.style.fontFamily = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
   wrapper.replaceChildren(parseHTML(buildFilterContainerHTML(false)));
 
-  // Strip elements that don't belong in a shared screenshot — the AI-text /
-  // AI-image toggles are personal settings, not part of the filter pack identity.
-  wrapper.querySelectorAll('.filter-ai-text-toggle').forEach(el => el.remove());
+  // Strip elements that don't belong in a shared screenshot — the AI-detection
+  // indicator is personal state, not part of the filter pack identity.
+  wrapper.querySelectorAll('.filter-ai-indicator').forEach(el => el.remove());
 
   const list = wrapper.querySelector<HTMLElement>('.filter-phrases-list');
   if (list) renderPhrasesInContainer(list, phrases);
@@ -1560,15 +1623,21 @@ function buildImportButton(phrases: string[]): HTMLElement {
 // Three Bouncer layout variants live in the DOM at all times — sidebar (wide),
 // bottom (medium), mobile (narrow) — and media queries display:none all but
 // one. Returns the variant that's currently rendered so the import-flight
-// animation lands on a real, on-screen box. offsetParent is null when the
-// element or any ancestor is display:none, which is the rule the media-query
-// gating relies on.
+// animation lands on a real, on-screen box. checkVisibility() rather than
+// offsetParent: offsetParent is also null for position:fixed elements, which
+// misread the bottom pill (position: fixed) as hidden and silently skipped
+// the animation at medium window widths.
 function pickVisibleBouncerLayout(): HTMLElement | null {
   const layouts = document.querySelectorAll<HTMLElement>(
     '.filter-phrases-sidebar, .filter-phrases-bottom, .filter-phrases-mobile, .filter-phrases-banner',
   );
   for (const layout of layouts) {
-    if (layout.offsetParent !== null) return layout;
+    // Older Safari (<17.4) lacks checkVisibility — fall back to the
+    // offsetParent test there (its known fixed-position blind spot included).
+    const visible = typeof layout.checkVisibility === 'function'
+      ? layout.checkVisibility()
+      : layout.offsetParent !== null;
+    if (visible) return layout;
   }
   return null;
 }
@@ -1799,7 +1868,11 @@ export async function removeFilterPhrase(phrase: string) {
 
 // ==================== Settings Modal ====================
 
-export function showSettingsModal() {
+// `section: 'local'` deep-links to the local model setup: the popup sees the
+// #local hash and preselects the Local radio so its download section is
+// immediately visible (extension mode only — the iOS in-app path has no
+// guest trial and never passes a section).
+export function showSettingsModal(section?: 'local') {
   // Remove existing modal if any
   if (settingsModal && settingsModal.isConnected) {
     settingsModal.remove();
@@ -1864,7 +1937,7 @@ export function showSettingsModal() {
     // Extension mode: load popup.html in iframe
     iframe = document.createElement('iframe');
     iframe.className = 'settings-modal-iframe';
-    iframe.src = chrome.runtime.getURL('popup.html');
+    iframe.src = chrome.runtime.getURL('popup.html') + (section === 'local' ? '#local' : '');
 
     // Send current theme to iframe once it loads
     iframe.addEventListener('load', () => {
@@ -2028,7 +2101,18 @@ export function updateModelLoadingProgress(statuses: Record<string, LocalModelSt
 
   if (!status) return;
 
-  const isLoading = status.state === 'downloading' || status.state === 'initializing' || status.state === 'cached';
+  // The in-feed indicator is only for the multi-GB first download — the one
+  // slow operation with real progress to report. Everything else stays
+  // silent by design:
+  //   - 'cached' is the dormant "downloaded but not loaded" state the engine
+  //     rests in after its idle unload; nothing is in flight.
+  //   - 'initializing' covers cache reloads (a few seconds of streaming the
+  //     model from Cache Storage into the GPU, no incremental progress) —
+  //     the per-post processing indicator already conveys activity there.
+  // The runtime only emits download-progress events from the real network
+  // path (see fetchAndCacheModel), so 'downloading' means a genuine download.
+  // The popup shows its own badge for the other states.
+  const isLoading = status.state === 'downloading';
 
   containers.forEach(container => {
     if (container && container.isConnected) {
@@ -2040,16 +2124,8 @@ export function updateModelLoadingProgress(statuses: Record<string, LocalModelSt
         const textEl = loadingEl.querySelector('.model-loading-text')!;
         const fillEl = loadingEl.querySelector<HTMLElement>('.model-loading-progress-fill')!;
 
-        if (status.state === 'cached') {
-          textEl.textContent = 'Loading model...';
-          fillEl.style.width = '0%';
-        } else if (status.text) {
-          textEl.textContent = status.text;
-          fillEl.style.width = `${(status.progress || 0) * 100}%`;
-        } else {
-          textEl.textContent = status.state === 'initializing' ? 'Initializing...' : 'Downloading...';
-          fillEl.style.width = `${(status.progress || 0) * 100}%`;
-        }
+        textEl.textContent = status.text || 'Downloading on-device model...';
+        fillEl.style.width = `${(status.progress || 0) * 100}%`;
       } else {
         loadingEl.style.display = 'none';
       }
@@ -2059,42 +2135,49 @@ export function updateModelLoadingProgress(statuses: Record<string, LocalModelSt
 }
 
 export function initModelLoadingListener() {
+  // Cache the selected model so download-progress events render synchronously
+  // from changes.newValue. During a model download, localModelStatuses writes
+  // fire many times per second; the previous getStorage() round-trip per
+  // event queued behind that write flood, so the in-feed bar only caught up
+  // in visible clumps. (The popup renders straight from the event payload,
+  // which is why it was smooth while the in-feed bar was chunky.)
+  let selectedModel = '';
+
   // Get initial state
   getStorage(['localModelStatuses', 'selectedModel']).then((data) => {
+    selectedModel = (data.selectedModel as string) || '';
     if (data.localModelStatuses) {
-      updateModelLoadingProgress(
-        data.localModelStatuses,
-        data.selectedModel || ''
-      );
+      updateModelLoadingProgress(data.localModelStatuses, selectedModel);
     }
   }).catch(err => console.error('[UI] Failed to load model statuses:', err));
 
   // Listen for changes
   chrome.storage.onChanged.addListener((changes: Record<string, chrome.storage.StorageChange>, areaName: string) => {
-    if (areaName === 'local' && changes.localModelStatuses) {
-      getStorage(['selectedModel']).then((data) => {
-        const newStatuses = (changes.localModelStatuses.newValue || {}) as Record<string, LocalModelStatus>;
-        const oldStatuses = (changes.localModelStatuses.oldValue || {}) as Record<string, LocalModelStatus>;
-        const selectedModel = data.selectedModel || '';
+    if (areaName !== 'local') return;
 
-        updateModelLoadingProgress(newStatuses, selectedModel);
-
-        // Check if selected local model just became ready - trigger re-evaluation
-        if (selectedModel?.startsWith('local:')) {
-          const modelId = selectedModel.split(':')[1];
-          const oldState = oldStatuses[modelId]?.state;
-          const newState = newStatuses[modelId]?.state;
-
-          if (newState === 'ready' && oldState && oldState !== 'ready') {
-            _deps.processExistingPosts();
-          }
-        }
-      }).catch(err => console.error('[UI] Failed to get selected model:', err));
-    }
-    if (areaName === 'local' && changes.selectedModel) {
+    if (changes.selectedModel) {
+      selectedModel = (changes.selectedModel.newValue as string) || '';
       getStorage(['localModelStatuses']).then((data) => {
-        updateModelLoadingProgress(data.localModelStatuses || {}, changes.selectedModel.newValue as string);
+        updateModelLoadingProgress(data.localModelStatuses || {}, selectedModel);
       }).catch(err => console.error('[UI] Failed to get model statuses:', err));
+    }
+
+    if (changes.localModelStatuses) {
+      const newStatuses = (changes.localModelStatuses.newValue || {}) as Record<string, LocalModelStatus>;
+      const oldStatuses = (changes.localModelStatuses.oldValue || {}) as Record<string, LocalModelStatus>;
+
+      updateModelLoadingProgress(newStatuses, selectedModel);
+
+      // Check if selected local model just became ready - trigger re-evaluation
+      if (selectedModel?.startsWith('local:')) {
+        const modelId = selectedModel.split(':')[1];
+        const oldState = oldStatuses[modelId]?.state;
+        const newState = newStatuses[modelId]?.state;
+
+        if (newState === 'ready' && oldState && oldState !== 'ready') {
+          _deps.processExistingPosts();
+        }
+      }
     }
   });
 }
@@ -2770,7 +2853,6 @@ export function markPostPending(article: HTMLElement) {
   bar.classList.remove('verified', 'api-error');
   bar.classList.add('pending');
   article.setAttribute('data-ff-pending', '');
-  article.classList.remove('ff-error');
   _deps.pendingPosts.add(article);
   article.dataset.pendingStartTime = Date.now().toString();
 
@@ -2798,7 +2880,6 @@ export function markPostVerified(article: HTMLElement) {
   bar.classList.remove('pending', 'api-error');
   bar.classList.add('verified');
   article.removeAttribute('data-ff-pending');
-  article.classList.remove('ff-error');
   _deps.pendingPosts.delete(article);
   delete article.dataset.pendingStartTime;
   clearPendingDimTimer(article);

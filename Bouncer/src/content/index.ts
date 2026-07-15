@@ -1,8 +1,8 @@
 // Bouncer - Content Script
 // Entry point: post processing, observers, init, storage/message listeners
 
-import type { PlatformAdapter, PostContent, PipelineResponse, BackgroundToContentMessage, DescriptionKey } from '../types';
-import { getStorage, removeStorage, getDescriptions, setDescriptions } from '../shared/storage';
+import type { PlatformAdapter, PostContent, PipelineResponse, BackgroundToContentMessage, DescriptionKey, AiFilterIntentState } from '../types';
+import { getStorage, removeStorage, getDescriptions, setDescriptions, phraseSetKey } from '../shared/storage';
 import { enabledStorageKey } from '../shared/platforms';
 import { FILTER_PACK_CODE_PREFIX } from '../shared/share-encoding';
 
@@ -19,7 +19,7 @@ import {
   updateTheme,
   injectFilterPhrasesInput, injectBottomFilterBox, injectMobileFilterBox,
   injectBannerFilterBox,
-  syncFilterPhrases, addFilterPhrase, removeFilterPhrase,
+  syncFilterPhrases, addFilterPhrase, removeFilterPhrase, clearFilteredPosts,
   showSettingsModal, renderFilteredPostsView,
   initModelLoadingListener,
   markPostPending, markPostVerified, getVerificationBar,
@@ -32,6 +32,7 @@ import {
   initDetectorStates,
   updateDetectorState,
   isGuestLimitReached,
+  refreshAiIndicatorUI,
 } from './ui';
 
 import { formatPostForEvaluation } from '../shared/utils';
@@ -272,7 +273,11 @@ import { formatPostForEvaluation } from '../shared/utils';
           rawText: content.text,
           imageUrls: content.imageUrls || [],
           postUrl: content.postUrl || null,
-          siteId: adapter.siteId
+          siteId: adapter.siteId,
+          // On a permalink page everything below the main post is a
+          // reply/comment — the pipeline applies the reply-specific
+          // AI-text threshold to these.
+          isReply: adapter.isPermalinkView()
         });
       const response = await evaluatePromise as PipelineResponse;
       releaseEvaluation(evaluationId);
@@ -319,7 +324,6 @@ import { formatPostForEvaluation } from '../shared/utils';
         // entirely — a red stripe on a tweet is always wrong.
         if (response.error === 'rate_limit') verificationBar.classList.add('pending');
         article.removeAttribute('data-ff-pending');
-        article.classList.add('ff-error');
         return;
       }
 
@@ -410,7 +414,20 @@ import { formatPostForEvaluation } from '../shared/utils';
     // "Filter replies/comments" toggle: on a permalink page everything
     // below the main post is a reply. The main-timeline filter is
     // unaffected because adapter.isPermalinkView() is false there.
-    if (!filterReplies && adapter.isPermalinkView()) return;
+    if (!filterReplies && adapter.isPermalinkView()) {
+      // Replies hidden while the toggle was on can resurface via the SPA's
+      // cached conversation DOM, still carrying our display:none. The
+      // flip-time sweep in the storage listener only fixes the page the
+      // user was viewing at that moment — restore stragglers here as they
+      // reappear.
+      const cell = adapter.getPostContainer(article);
+      if (cell.dataset.filteredByExtension) {
+        cell.style.display = '';
+        delete cell.dataset.filteredByExtension;
+        processedPosts.delete(article);
+      }
+      return;
+    }
 
     if (processedPosts.has(article)) return;
     if (article.dataset.filteredByExtension) return;
@@ -691,31 +708,48 @@ import { formatPostForEvaluation } from '../shared/utils';
       }
       if (changes[descriptionsKey]) {
         syncFilterPhrases();
+        // The AI-detection state is per-platform (this platform's phrases ∩
+        // the judged aiPhrases — see aiIntentActiveForSite), so editing this
+        // platform's list can flip the sparkle even when the global
+        // aiFilterIntent state doesn't change (e.g. removing "AI slop" here
+        // while it still exists on another platform). Re-sync it on every
+        // list write; this also clears the toggle's transient `pending`.
+        refreshAiIndicatorUI().catch(err => console.error('[Bouncer] refreshAiIndicatorUI failed:', err));
         const oldDescs = (changes[descriptionsKey].oldValue as string[] | undefined) || [];
         const newDescs = (changes[descriptionsKey].newValue as string[] | undefined) || [];
         // Only re-evaluate when a phrase was added, not removed
         if (newDescs.length > oldDescs.length) {
           reEvaluateAllPosts();
+        } else if (newDescs.length < oldDescs.length) {
+          // Phrase removed via an out-of-band editor (iOS native sheet,
+          // desktop popup) — mirror removeFilterPhrase's in-feed behavior
+          // so the filtered-posts count resets.
+          clearFilteredPosts();
         }
       }
-      if (changes.aiTextFilterEnabled) {
-        // Sync each filter box's checkbox to the new value, then re-evaluate
-        // all posts since the cache has been invalidated by the background.
-        const checked = changes.aiTextFilterEnabled.newValue === true;
-        document.querySelectorAll<HTMLInputElement>('.filter-ai-text-toggle-input:not(.filter-ai-image-toggle-input)')
-          .forEach(el => { if (el.checked !== checked) el.checked = checked; });
-        reEvaluateAllPosts();
-      }
-      if (changes.aiImageFilterEnabled) {
-        const checked = changes.aiImageFilterEnabled.newValue === true;
-        document.querySelectorAll<HTMLInputElement>('.filter-ai-image-toggle-input')
-          .forEach(el => { if (el.checked !== checked) el.checked = checked; });
-        reEvaluateAllPosts();
-      }
-      if (changes.aiTextFilterExperimental) {
-        const expEnabled = changes.aiTextFilterExperimental.newValue === true;
-        document.querySelectorAll<HTMLElement>('.filter-ai-text-toggle')
-          .forEach(el => { el.style.display = expEnabled ? '' : 'none'; });
+      if (changes.aiFilterIntent) {
+        // Any write re-syncs the passive AI-detection indicator.
+        refreshAiIndicatorUI().catch(err => console.error('[Bouncer] refreshAiIndicatorUI failed:', err));
+        // The native iOS sheet's sparkle indicator is the desktop
+        // indicator's counterpart: re-push the state so it confirms (and
+        // clears its pending dim) on the same writes.
+        if (IS_IOS) updateIOSFilteredCount(true);
+        // Re-evaluate only when the AI-phrase set itself changed — that's
+        // what flips the detectors and changes which phrases are excluded
+        // from the filter categories. judgedSetKey-only bookkeeping writes
+        // must not re-evaluate (that once caused an endless loop). Loop
+        // safety: the intent judgment (detectAiIntent probe / local model)
+        // is the single writer, persists only on real set changes, and
+        // never re-judges an already-judged set — steady state produces no
+        // writes at all.
+        const aiPhrasesOf = (v: unknown): string[] => {
+          const phrases = (v as AiFilterIntentState | undefined)?.aiPhrases;
+          return Array.isArray(phrases) ? phrases : [];
+        };
+        if (phraseSetKey(aiPhrasesOf(changes.aiFilterIntent.oldValue))
+            !== phraseSetKey(aiPhrasesOf(changes.aiFilterIntent.newValue))) {
+          reEvaluateAllPosts();
+        }
       }
       if (changes.filterReplies) {
         filterReplies = changes.filterReplies.newValue !== false;

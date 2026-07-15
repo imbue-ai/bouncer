@@ -3,7 +3,7 @@
 import { convertSystemToUserMessages } from '../shared/utils';
 import { API_BASE_URLS } from '../shared/models';
 import { imbueWebSocket } from './ws-manager';
-import type { ChatMessage, APIConfig, DirectAPIResponse, ImbueFilterResponse, ImbueSuggestResponse, ImbueAiTextResponse, ImbueAiImageResponse, EvaluationPostData } from '../types';
+import type { ChatMessage, APIConfig, DirectAPIResponse, ImbueFilterResponse, ImbueSuggestResponse, ImbueAiTextResponse, ImbueAiImageResponse, ImbueDetectAiIntentResponse, EvaluationPostData } from '../types';
 
 // Call an OpenAI-compatible API directly from the extension via fetch
 // Used for OpenAI, OpenRouter, and Gemini models
@@ -225,6 +225,43 @@ export async function callImbueAPI(
   } catch (err) {
     const wallMs = Date.now() - startedAt;
     console.warn(`[Filter] ✗ error after ${wallMs}ms:`, err);
+    throw err;
+  }
+}
+
+// Ask the Imbue backend which of the user's filter phrases indicate an
+// intent to remove AI-generated content, via the dedicated detectAiIntent
+// route on the same WebSocket gateway. Sent when the phrase LIST changes,
+// never per post — the route is rate-limited to 60 requests/min per user.
+// Server-side constraints: `phrases` must be a non-empty list of strings
+// totalling ≤ 1000 chars (callers enforce this; violations come back as a
+// 400 route response).
+//
+// The 30s timeout doubles as the "no answer" signal: on some backend errors
+// the route returns its normal-looking ack but never sends a jobComplete
+// (SILENT_ERRORS), so a missing result is expected. Callers treat the
+// timeout — like a jobFailed or a null aiFilterPhrases — as an unknown
+// verdict, never as an error to surface.
+export async function callImbueDetectAiIntent(
+  phrases: string[],
+): Promise<ImbueDetectAiIntentResponse> {
+  const message: Record<string, unknown> = {
+    action: 'detectAiIntent',
+    phrases,
+    version: chrome.runtime.getManifest().version,
+  };
+
+  console.log('[AiIntentDetect] → request:', message);
+  const startedAt = Date.now();
+
+  try {
+    const response = await imbueWebSocket.send(message, { timeout: 30000 }) as unknown as ImbueDetectAiIntentResponse;
+    const wallMs = Date.now() - startedAt;
+    console.log(`[AiIntentDetect] ← response (wallMs=${wallMs}):`, response);
+    return response;
+  } catch (err) {
+    const wallMs = Date.now() - startedAt;
+    console.warn(`[AiIntentDetect] ✗ error after ${wallMs}ms:`, err);
     throw err;
   }
 }

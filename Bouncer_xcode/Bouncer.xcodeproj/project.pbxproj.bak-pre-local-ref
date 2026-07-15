@@ -13,7 +13,6 @@
 		4E3B363A2F857BE400A929AD /* iosicon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 4E3B36392F857BE300A929AD /* iosicon.icon */; };
 		4EC0EC652FEB068700F3FCDE /* GoogleService-Info-Dev.plist in Resources */ = {isa = PBXBuildFile; fileRef = 4EC0EC642FEB068700F3FCDE /* GoogleService-Info-Dev.plist */; };
 		4EC0EC812FEB06DD00F3FCDE /* GoogleService-Info.plist in Resources */ = {isa = PBXBuildFile; fileRef = 4EC0EC802FEB06DD00F3FCDE /* GoogleService-Info.plist */; };
-		4EC0EDD330059DE400F3FCDE /* new_ios_icon_composed.icon in Resources */ = {isa = PBXBuildFile; fileRef = 4EC0EDD230059DE400F3FCDE /* new_ios_icon_composed.icon */; };
 		971D84C92FB271A2006BC538 /* FirebaseCrashlytics in Frameworks */ = {isa = PBXBuildFile; productRef = 971D84C82FB271A2006BC538 /* FirebaseCrashlytics */; };
 		974832542F91595300493A71 /* Bouncer (macOS) Extension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 974832532F91595300493A71 /* Bouncer (macOS) Extension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		97BD3B812F3EB56C00F8BF65 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97BD3B802F3EB56C00F8BF65 /* AppDelegate.swift */; };
@@ -46,7 +45,7 @@
 		AA00004000000000000000AA /* filterphrases.mp4 in Resources */ = {isa = PBXBuildFile; fileRef = AA00004100000000000000AA /* filterphrases.mp4 */; };
 		AA00005000000000000000AA /* PlatformPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00005100000000000000AA /* PlatformPickerView.swift */; };
 		AA00006000000000000000AA /* Platforms.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00006100000000000000AA /* Platforms.swift */; };
-		DA00E3HEADRES0000000DA016 /* detector_head_e2b_v2.bin in Resources */ = {isa = PBXBuildFile; fileRef = DA00E3HEADBIN0000000DA015 /* detector_head_e2b_v2.bin */; };
+		DA00HEADRES000000000DA008 /* linear_v3_head.bin in Resources */ = {isa = PBXBuildFile; fileRef = DA00HEADBIN000000000DA007 /* linear_v3_head.bin */; };
 		DA00LISBUILD0000000DA004 /* LocalInferenceService.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA00LISFILE00000000DA003 /* LocalInferenceService.swift */; };
 		DA00LITERTLM000000DA002 /* LiteRTLM in Frameworks */ = {isa = PBXBuildFile; productRef = DA00LITERTLM000000DA001 /* LiteRTLM */; };
 		DA00MDBUILD000000000DA006 /* ModelDownloader.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA00MDFILE0000000000DA005 /* ModelDownloader.swift */; };
@@ -61,9 +60,6 @@
 		SF00000800000000000000SF /* dist in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BCF2F3EB56D00F8BF65 /* dist */; };
 		SF00000900000000000000SF /* icons in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BD92F3EB56D00F8BF65 /* icons */; };
 		SF00001000000000000000SF /* adapters in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BD62F3EB56D00F8BF65 /* adapters */; };
-		SP00000100000000000000SP /* SplashIcon.png in Resources */ = {isa = PBXBuildFile; fileRef = SP00000400000000000000SP /* SplashIcon.png */; };
-		SP00000200000000000000SP /* SplashIcon@2x.png in Resources */ = {isa = PBXBuildFile; fileRef = SP00000500000000000000SP /* SplashIcon@2x.png */; };
-		SP00000300000000000000SP /* SplashIcon@3x.png in Resources */ = {isa = PBXBuildFile; fileRef = SP00000600000000000000SP /* SplashIcon@3x.png */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -96,7 +92,6 @@
 		4E3B36392F857BE300A929AD /* iosicon.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = iosicon.icon; sourceTree = "<group>"; };
 		4EC0EC642FEB068700F3FCDE /* GoogleService-Info-Dev.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "GoogleService-Info-Dev.plist"; sourceTree = "<group>"; };
 		4EC0EC802FEB06DD00F3FCDE /* GoogleService-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "GoogleService-Info.plist"; sourceTree = "<group>"; };
-		4EC0EDD230059DE400F3FCDE /* new_ios_icon_composed.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = new_ios_icon_composed.icon; sourceTree = "<group>"; };
 		9748323A2F91595100493A71 /* Bouncer.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Bouncer.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		974832532F91595300493A71 /* Bouncer (macOS) Extension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = "Bouncer (macOS) Extension.appex"; sourceTree = BUILT_PRODUCTS_DIR; };
 		97BD3B762F3EB56C00F8BF65 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -132,13 +127,10 @@
 		AA00004100000000000000AA /* filterphrases.mp4 */ = {isa = PBXFileReference; lastKnownFileType = file; path = filterphrases.mp4; sourceTree = "<group>"; };
 		AA00005100000000000000AA /* PlatformPickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlatformPickerView.swift; sourceTree = "<group>"; };
 		AA00006100000000000000AA /* Platforms.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Platforms.swift; sourceTree = "<group>"; };
-		DA00E3HEADBIN0000000DA015 /* detector_head_e2b_v2.bin */ = {isa = PBXFileReference; lastKnownFileType = archive.macbinary; path = detector_head_e2b_v2.bin; sourceTree = "<group>"; };
+		DA00HEADBIN000000000DA007 /* linear_v3_head.bin */ = {isa = PBXFileReference; lastKnownFileType = archive.macbinary; path = linear_v3_head.bin; sourceTree = "<group>"; };
 		DA00LISFILE00000000DA003 /* LocalInferenceService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalInferenceService.swift; sourceTree = "<group>"; };
 		DA00MDFILE0000000000DA005 /* ModelDownloader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelDownloader.swift; sourceTree = "<group>"; };
 		EE00000100000000000000EE /* manifest.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = manifest.json; sourceTree = "<group>"; };
-		SP00000400000000000000SP /* SplashIcon.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = SplashIcon.png; sourceTree = "<group>"; };
-		SP00000500000000000000SP /* SplashIcon@2x.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "SplashIcon@2x.png"; sourceTree = "<group>"; };
-		SP00000600000000000000SP /* SplashIcon@3x.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "SplashIcon@3x.png"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -226,21 +218,17 @@
 				AA00006100000000000000AA /* Platforms.swift */,
 				DA00LISFILE00000000DA003 /* LocalInferenceService.swift */,
 				DA00MDFILE0000000000DA005 /* ModelDownloader.swift */,
-				DA00E3HEADBIN0000000DA015 /* detector_head_e2b_v2.bin */,
+				DA00HEADBIN000000000DA007 /* linear_v3_head.bin */,
 				AA00004100000000000000AA /* filterphrases.mp4 */,
 				AA00000400000000000000AA /* ChromePolyfill.js */,
 				AA00000600000000000000AA /* Bouncer.entitlements */,
 				97BD3B762F3EB56C00F8BF65 /* Assets.xcassets */,
-				SP00000400000000000000SP /* SplashIcon.png */,
-				SP00000500000000000000SP /* SplashIcon@2x.png */,
-				SP00000600000000000000SP /* SplashIcon@3x.png */,
 				4E3B36392F857BE300A929AD /* iosicon.icon */,
 				97BD3B842F3EB56C00F8BF65 /* LaunchScreen.storyboard */,
 				97BD3B872F3EB56C00F8BF65 /* Main.storyboard */,
 				97BD3B8A2F3EB56C00F8BF65 /* Info.plist */,
 				4EC0EC642FEB068700F3FCDE /* GoogleService-Info-Dev.plist */,
 				4EC0EC802FEB06DD00F3FCDE /* GoogleService-Info.plist */,
-				4EC0EDD230059DE400F3FCDE /* new_ios_icon_composed.icon */,
 			);
 			path = "iOS (App)";
 			sourceTree = "<group>";
@@ -418,9 +406,6 @@
 			files = (
 				97BD3B862F3EB56C00F8BF65 /* LaunchScreen.storyboard in Resources */,
 				97BD3BB52F3EB56C00F8BF65 /* Assets.xcassets in Resources */,
-				SP00000100000000000000SP /* SplashIcon.png in Resources */,
-				SP00000200000000000000SP /* SplashIcon@2x.png in Resources */,
-				SP00000300000000000000SP /* SplashIcon@3x.png in Resources */,
 				97BD3B892F3EB56C00F8BF65 /* Main.storyboard in Resources */,
 				AA00001400000000000000AA /* ChromePolyfill.js in Resources */,
 				97BD3BE02F3EB56D00F8BF65 /* browser-polyfill.js in Resources */,
@@ -444,8 +429,7 @@
 				97BD3BF22F3EB56D00F8BF65 /* content.js in Resources */,
 				97BD3BF32F3EB56D00F8BF65 /* dompurify.js in Resources */,
 				AA00004000000000000000AA /* filterphrases.mp4 in Resources */,
-				DA00E3HEADRES0000000DA016 /* detector_head_e2b_v2.bin in Resources */,
-				4EC0EDD330059DE400F3FCDE /* new_ios_icon_composed.icon in Resources */,
+				DA00HEADRES000000000DA008 /* linear_v3_head.bin in Resources */,
 				4EC0EC652FEB068700F3FCDE /* GoogleService-Info-Dev.plist in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -880,7 +864,7 @@
 		97BD3BC02F3EB56C00F8BF65 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = new_ios_icon_composed;
+				ASSETCATALOG_COMPILER_APPICON_NAME = iosicon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
 				BOUNCER_ENV = DEV;
@@ -904,7 +888,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.0.0;
+				MARKETING_VERSION = 1.2.2;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",
@@ -930,7 +914,7 @@
 		97BD3BC12F3EB56C00F8BF65 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = new_ios_icon_composed;
+				ASSETCATALOG_COMPILER_APPICON_NAME = iosicon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
 				BOUNCER_ENV = PROD;
@@ -954,7 +938,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.0.0;
+				MARKETING_VERSION = 1.2.2;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",
@@ -1032,8 +1016,8 @@
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/millanatimbue/LiteRT-LM.git";
 			requirement = {
-				branch = release/ios;
-				kind = branch;
+				kind = revision;
+				revision = 4e05601aa0e197016b54f2f4246feba9513b1169;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */

@@ -53,7 +53,7 @@ struct FilteredWebView: UIViewRepresentable {
     //     {"logits": [f,f,f,f], "aiConfidence": f}
     // where aiConfidence is the normalized expected bucket index:
     //     aiConfidence = (softmax(logits) · [0, 1, 2, 3]) / 3
-    // matching the EditLens training-pipeline scoring formula
+    // matching the detector training-pipeline scoring formula
     //     (probs @ arange(n_buckets)) / (n_buckets - 1).
     // Ranges in [0, 1]: 0 = clearly human, 1 = clearly AI. On error the
     // payload is a string error message.
@@ -154,10 +154,15 @@ struct FilteredWebView: UIViewRepresentable {
                 print("[FeedFilter] Injected lockup-extractor.js (page world)")
             } else { print("[FeedFilter] lockup-extractor.js NOT bundled") }
 
-            // 1. ChromePolyfill.js — document start
+            // 1. ChromePolyfill.js — document start. Prepends two globals the
+            // JS bundles read at load: the extension version, and the on-device
+            // model catalog (single source of truth: LocalInferenceService.models;
+            // shared/models.ts turns it into PREDEFINED_MODELS.iosLocal).
             if let source = loadBundledScript(named: "ChromePolyfill", ext: "js") {
                 let version = extensionManifestVersion() ?? "0.0.0"
-                let patched = "var __ffExtensionVersion = '\(version)';\n" + source
+                let patched = "var __ffExtensionVersion = '\(version)';\n"
+                    + "var __iosLocalModels = \(LocalInferenceService.modelCatalogJSON());\n"
+                    + source
                 let script = WKUserScript(source: patched, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: world)
                 controller.addUserScript(script)
                 print("[FeedFilter] Injected ChromePolyfill.js (version \(version))")
@@ -382,6 +387,8 @@ struct FilteredWebView: UIViewRepresentable {
                 }
                 let imageUrls = (json["imageUrls"] as? [String]) ?? []
                 let regexConstraint = json["regexConstraint"] as? String
+                let modelName = json["modelName"] as? String
+                let maxOutputTokens = json["maxOutputTokens"] as? Int
                 let webView = message.webView
                 let tweetStart = Date()
                 Task { @MainActor in
@@ -390,7 +397,9 @@ struct FilteredWebView: UIViewRepresentable {
                             systemMessage: systemMessage,
                             userMessage: userMessage,
                             imageUrls: imageUrls,
-                            regexConstraint: regexConstraint
+                            regexConstraint: regexConstraint,
+                            modelName: modelName,
+                            maxOutputTokens: maxOutputTokens
                         )
                         let elapsed = Date().timeIntervalSince(tweetStart)
                         print(String(
@@ -425,11 +434,17 @@ struct FilteredWebView: UIViewRepresentable {
                 let webView = message.webView
                 Task { @MainActor in
                     do {
-                        let logits = try await LocalInferenceService.shared.classifyText(text)
-                        let confidence = LocalInferenceService.aiConfidence(fromLogits: logits)
+                        // On-device detection: scoped LoRA + `activations`
+                        // + bundled head on the selected model's dedicated
+                        // detection engine. Requires a detection-capable model
+                        // (detector) selected with its files downloaded; otherwise
+                        // this throws and the JS aiText detector surfaces the
+                        // error (JS routes here for ANY iosLocal model, so a
+                        // non-detection variant fails loudly, not silently).
+                        let result = try await LocalInferenceService.shared.detectAIText(text)
                         let responseJson: [String: Any] = [
-                            "logits": logits.map { Double($0) },
-                            "aiConfidence": Double(confidence),
+                            "logits": result.logits.map { Double($0) },
+                            "aiConfidence": Double(result.score),
                         ]
                         let payloadData = try JSONSerialization.data(withJSONObject: responseJson)
                         let payload = String(data: payloadData, encoding: .utf8) ?? "{}"
@@ -438,7 +453,7 @@ struct FilteredWebView: UIViewRepresentable {
                     } catch {
                         let nsError = error as NSError
                         let payload = "\(type(of: error))[\(nsError.domain)#\(nsError.code)]: \(error.localizedDescription) | textLen=\(text.count)"
-                        print("[FeedFilter] classifyText error → JS: \(payload)")
+                        print("[FeedFilter] detectAIText error → JS: \(payload)")
                         await FilteredWebView.resolveLocalAiTextDetect(
                             webView: webView, callbackId: callbackId, ok: false, payload: payload)
                     }
@@ -495,6 +510,16 @@ struct FilteredWebView: UIViewRepresentable {
 
                     if let count = json["filteredCount"] as? Int, let platform = senderPlatform {
                         vm.filteredCounts[platform] = count
+                    }
+
+                    // AI-detection state is global (aiFilterIntent spans all
+                    // platforms), so apply it regardless of which webview
+                    // sent the push — before the selected-platform gate.
+                    if let aiOn = json["aiDetectionOn"] as? Bool {
+                        vm.applyAiDetectionState(
+                            aiOn,
+                            confirmed: json["aiDetectionConfirmed"] as? Bool == true
+                        )
                     }
 
                     guard senderPlatform == nil || senderPlatform == vm.selectedPlatform else { return }

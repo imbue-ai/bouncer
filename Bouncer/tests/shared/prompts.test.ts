@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest';
 import {
   buildAPIMessages,
   buildTableYesnoUserMessage,
+  buildSingleYesnoUserMessage,
+  buildAiIntentUserMessage,
   parseTableYesnoResponse,
 } from '../../src/shared/prompts.js';
 
@@ -66,7 +68,12 @@ describe('buildTableYesnoUserMessage', () => {
 
   it('asks the model for a verdict row', () => {
     const msg = buildTableYesnoUserMessage('hi', ['a'], false);
-    expect(msg).toContain('Output the verdict row:');
+    expect(msg).toContain('Output the verdict row');
+  });
+
+  it('states the exact expected verdict count', () => {
+    expect(buildTableYesnoUserMessage('hi', ['a'], false)).toContain('exactly 1 verdict,');
+    expect(buildTableYesnoUserMessage('hi', ['a', 'b', 'c'], false)).toContain('exactly 3 verdicts,');
   });
 
   it('mentions images when hasImages is true', () => {
@@ -77,6 +84,45 @@ describe('buildTableYesnoUserMessage', () => {
   it('does not mention images when hasImages is false', () => {
     const msg = buildTableYesnoUserMessage('Look at this', ['a'], false);
     expect(msg).not.toContain('images');
+  });
+});
+
+describe('buildAiIntentUserMessage', () => {
+  it('lists phrases in order, comma-separated', () => {
+    const msg = buildAiIntentUserMessage(['AI slop', 'politics']);
+    expect(msg).toContain('Filter phrases (in order): AI slop, politics');
+  });
+
+  it('states the exact expected verdict count', () => {
+    expect(buildAiIntentUserMessage(['a'])).toContain('exactly 1 verdict,');
+    expect(buildAiIntentUserMessage(['a', 'b', 'c'])).toContain('exactly 3 verdicts,');
+  });
+
+  it('parses round-trip with parseTableYesnoResponse against the same phrase list', () => {
+    const phrases = ['AI slop', 'politics', 'crypto'];
+    const { matches, malformed } = parseTableYesnoResponse('| yes | no | yes |', phrases);
+    expect(malformed).toBe(false);
+    expect(matches).toEqual(['AI slop', 'crypto']);
+  });
+});
+
+describe('buildSingleYesnoUserMessage', () => {
+  it('includes the post text and the single category', () => {
+    const msg = buildSingleYesnoUserMessage('The Lakers won!', 'sports', false);
+    expect(msg).toContain('Post: The Lakers won!');
+    expect(msg).toContain('Category: sports');
+  });
+
+  it('asks a plain yes/no question with no table framing', () => {
+    const msg = buildSingleYesnoUserMessage('hi', 'crypto', false);
+    expect(msg).toContain('Answer with one word, yes or no:');
+    expect(msg).not.toContain('|');
+    expect(msg).not.toContain('verdict row');
+  });
+
+  it('mentions images when hasImages is true', () => {
+    const msg = buildSingleYesnoUserMessage('Look at this', 'a', true);
+    expect(msg).toContain('includes images');
   });
 });
 
@@ -159,6 +205,44 @@ describe('parseTableYesnoResponse — Gemma 4 IT + iOS edge cases', () => {
 
   it('still fails on a non-yes/no first token for a single category', () => {
     const r = parseTableYesnoResponse('maybe', ['only']);
+    expect(r.shouldHide).toBe(false);
+    expect(r.matches).toEqual([]);
+  });
+});
+
+describe('parseTableYesnoResponse — vestigial trailing verdicts', () => {
+  it('keeps only the first verdict when the model pads a one-category row', () => {
+    const r = parseTableYesnoResponse('| yes | no', ['crypto']);
+    expect(r.shouldHide).toBe(true);
+    expect(r.matches).toEqual(['crypto']);
+  });
+
+  it('uses the first verdict even when it is no', () => {
+    const r = parseTableYesnoResponse('| no | yes | yes |', ['crypto']);
+    expect(r.shouldHide).toBe(false);
+    expect(r.matches).toEqual([]);
+  });
+
+  it('normalizes trailing punctuation on the kept verdict', () => {
+    const r = parseTableYesnoResponse('| Yes. | no |', ['crypto']);
+    expect(r.shouldHide).toBe(true);
+    expect(r.matches).toEqual(['crypto']);
+  });
+
+  it('does not truncate when a padded cell is not a verdict', () => {
+    const r = parseTableYesnoResponse('| yes | maybe |', ['crypto']);
+    expect(r.shouldHide).toBe(false);
+    expect(r.matches).toEqual([]);
+  });
+
+  it('keeps the first N verdicts when a multi-category row is padded', () => {
+    const r = parseTableYesnoResponse('| yes | no | yes |', ['a', 'b']);
+    expect(r.shouldHide).toBe(true);
+    expect(r.matches).toEqual(['a']);
+  });
+
+  it('does not truncate a padded multi-category row containing a non-verdict cell', () => {
+    const r = parseTableYesnoResponse('| yes | maybe | yes |', ['a', 'b']);
     expect(r.shouldHide).toBe(false);
     expect(r.matches).toEqual([]);
   });

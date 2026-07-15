@@ -7,6 +7,12 @@ import type { ChatMessage, PostContent, SiteId } from '../types';
 // sessions via the `anonFilterCount` storage key. Tune here.
 export const GUEST_FILTER_LIMIT = 300;
 
+// The phrase the sparkle indicator plants to turn AI detection on. Its
+// meaning is ours by construction, so background/ai-intent.ts engages
+// detection immediately when it appears — without (and regardless of) the
+// LLM intent judgment.
+export const AI_DETECTION_SEED_PHRASE = 'AI slop';
+
 // Format a post's content into the string sent to the AI for evaluation.
 // This is also the basis for cache keys and feedback payloads.
 export function formatPostForEvaluation(post: PostContent): string {
@@ -42,6 +48,14 @@ export function parseAPIResponse(content: string): ParsedResult {
 
   console.warn('[ParseAPI] Could not parse response. Raw content was:', content);
   return { shouldHide: false, reasoning: 'Could not parse response', category: null };
+}
+
+// True when the text contains at least one emoji. Extended_Pictographic
+// covers the emoji blocks proper; Regional_Indicator catches flag pairs
+// (🇺🇸) and U+20E3 catches keycap sequences (1️\u20E3), neither of which is
+// Extended_Pictographic on its own.
+export function hasEmoji(text: string): boolean {
+  return /\p{Extended_Pictographic}|\p{Regional_Indicator}|\u20E3/u.test(text);
 }
 
 // Generate a cache key that includes both text and image URLs

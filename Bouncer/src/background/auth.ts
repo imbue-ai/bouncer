@@ -85,8 +85,7 @@ export async function getAuthToken(): Promise<string | null> {
   try {
     const token = await currentUser.getIdToken(/* forceRefresh */ false);
     return token;
-  } catch (err) {
-    console.error('[Auth] Failed to get ID token:', (err as Error).message);
+  } catch {
     return null;
   }
 }
@@ -104,10 +103,7 @@ export async function signOut(): Promise<void> {
   try {
     await firebaseSignOut(auth);
     currentUser = null;
-    console.log('[Auth] Signed out');
-  } catch (err) {
-    console.error('[Auth] Sign out failed:', (err as Error).message);
-  }
+  } catch { /* ignore: sign out failed */ }
 }
 
 // Launch sign-in flow. Chrome uses Google OAuth, Safari uses hosted page.
@@ -126,10 +122,8 @@ export async function signInAnon(): Promise<string | null> {
   try {
     const userCredential = await signInAnonymously(auth);
     const token = await userCredential.user.getIdToken();
-    console.log('[Auth] Anonymous sign-in succeeded');
     return token;
-  } catch (err) {
-    console.error('[Auth] Anonymous sign-in failed:', (err as Error).message);
+  } catch {
     return null;
   }
 }
@@ -152,14 +146,12 @@ async function launchHostedAuthFlow(): Promise<string | null> {
     });
     const signinUrl = `https://${SIGNIN_DOMAIN}/signin#${params.toString()}`;
 
-    console.log('[Auth] Opening sign-in tab:', signinUrl);
     await chrome.tabs.create({ url: signinUrl, active: true });
     // The bridge content script on SIGNIN_DOMAIN will send the credential
     // back via chrome.runtime.sendMessage({ type: 'appleSignIn' }).
     // The background message handler in index.ts will call handleAppleSignIn().
     return null;
-  } catch (err) {
-    console.error('[Auth] Failed to open sign-in tab:', (err as Error).message);
+  } catch {
     return null;
   }
 }
@@ -172,39 +164,31 @@ export async function handleAppleSignIn(idToken: string, rawNonce: string, fireb
     // we can't use it to sign into this background instance of Firebase Auth.
     // We need the OAuth credential to call signInWithCredential.
     if (idToken && providerId === 'apple.com') {
-      console.log('[Auth] Exchanging Apple credential with Firebase...');
       const provider = new OAuthProvider('apple.com');
       const credential = provider.credential({ idToken, rawNonce: rawNonce || undefined });
       const userCredential = await signInWithCredential(auth, credential);
       const token = await userCredential.user.getIdToken();
-      console.log('[Auth] Apple sign-in succeeded');
       return token;
     }
 
     if (idToken && providerId === 'google.com') {
-      console.log('[Auth] Exchanging Google credential with Firebase...');
       const credential = GoogleAuthProvider.credential(idToken);
       const userCredential = await signInWithCredential(auth, credential);
       const token = await userCredential.user.getIdToken();
-      console.log('[Auth] Google sign-in succeeded');
       return token;
     }
 
     // Fallback: try as Apple credential
     if (idToken) {
-      console.log('[Auth] Exchanging credential with Firebase (provider unknown)...');
       const provider = new OAuthProvider('apple.com');
       const credential = provider.credential({ idToken, rawNonce: rawNonce || undefined });
       const userCredential = await signInWithCredential(auth, credential);
       const token = await userCredential.user.getIdToken();
-      console.log('[Auth] Sign-in succeeded');
       return token;
     }
 
-    console.error('[Auth] No usable credential received');
     return null;
-  } catch (err) {
-    console.error('[Auth] Sign-in credential exchange failed:', (err as Error).message);
+  } catch {
     return null;
   }
 }
@@ -226,7 +210,6 @@ async function launchGoogleAuthFlow(): Promise<string | null> {
     });
 
     if (!responseUrl) {
-      console.error('[Auth] No response URL from launchWebAuthFlow');
       return null;
     }
     const hash = new URL(responseUrl).hash.substring(1);
@@ -234,7 +217,6 @@ async function launchGoogleAuthFlow(): Promise<string | null> {
     const accessToken = hashParams.get('access_token');
 
     if (!accessToken) {
-      console.error('[Auth] No access token in redirect URL');
       return null;
     }
 
@@ -242,8 +224,7 @@ async function launchGoogleAuthFlow(): Promise<string | null> {
     const userCredential = await signInWithCredential(auth, credential);
     const idToken = await userCredential.user.getIdToken();
     return idToken;
-  } catch (err) {
-    console.error('[Auth] Google sign-in failed:', (err as Error).message);
+  } catch {
     return null;
   }
 }

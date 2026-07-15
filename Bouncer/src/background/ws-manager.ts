@@ -49,6 +49,10 @@ interface WSResultMessage {
   shouldHide?: boolean;
   reasoning?: string | null;
   category?: string | null;
+  // AI-intent responses (detectAiIntent) — verbatim subset of the request's
+  // phrases that indicate AI-removal intent. [] = none; null = backend parse
+  // failure. null/absent means unknown.
+  aiFilterPhrases?: string[] | null;
   // Suggest responses (suggestAnnoying)
   suggestions?: string[];
   // AI-text-detection responses (detectAiText) — confidence in [0, 1]
@@ -82,6 +86,15 @@ function validateWSMessage(raw: unknown): (WSAckMessage & WSResultMessage) | nul
   if (msg.confidence !== undefined && typeof msg.confidence !== 'number') return null;
   if (msg.scores !== undefined && !Array.isArray(msg.scores)) return null;
   if (msg.queueDepth !== undefined && typeof msg.queueDepth !== 'number') return null;
+
+  // aiFilterPhrases must be null or an array of strings. Unlike the fields
+  // above, an unexpected type here downgrades to "unknown" (field dropped)
+  // instead of rejecting the whole result — the filter verdict is still
+  // usable without it.
+  if (msg.aiFilterPhrases !== undefined && msg.aiFilterPhrases !== null
+      && !(Array.isArray(msg.aiFilterPhrases) && msg.aiFilterPhrases.every(p => typeof p === 'string'))) {
+    delete msg.aiFilterPhrases;
+  }
 
   return msg as unknown as WSAckMessage & WSResultMessage;
 }
@@ -223,7 +236,7 @@ class ImbueWebSocket {
             }
           }
         }
-        reject(new Error('Request timed out after 60 seconds.'));
+        reject(new Error(`Request timed out after ${Math.round(timeout / 1000)} seconds.`));
       }, timeout);
 
       this.unackedRequests.set(requestId, {
