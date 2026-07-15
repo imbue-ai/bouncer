@@ -1,6 +1,7 @@
 import esbuild from 'esbuild';
 import fs from 'fs';
 import path from 'path';
+import { execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { generateManifest } from './generate-manifests.mjs';
 
@@ -9,6 +10,11 @@ const isWatch = process.argv.includes('--watch');
 const env = process.argv.includes('--dev') ? 'dev' : 'prod';
 const targetArg = process.argv.find((a) => a.startsWith('--target='));
 const target = targetArg ? targetArg.split('=')[1] : 'chrome';
+const apigwArg = process.argv.find((a) => a.startsWith('--apigw='));
+// A bare positional arg is shorthand for --apigw=<tag>:
+//   npm run build:dev mytag  →  node build.js --dev mytag
+const positionalTag = process.argv.slice(2).find((a) => !a.startsWith('-'));
+const apigwTag = apigwArg ? apigwArg.split('=')[1] : (positionalTag || process.env.APIGW_TAG || '');
 
 const ENV_KEYS = [
   'BOUNCER_ENV', 'FIREBASE_API_KEY', 'FIREBASE_AUTH_DOMAIN',
@@ -69,7 +75,42 @@ function loadEnvFile(envName) {
   return result;
 }
 
+// Optionally pull the backend WS URL from Vault instead of the .env file.
+// Usage: `npm run build:dev -- --apigw=MYTAG` (or APIGW_TAG=MYTAG).
+// Reads bouncer/generated/APIGW_DOMAIN_<TAG>, which stores a bare domain
+// (e.g. abc123xyz.execute-api.us-west-2.amazonaws.com).
+function fetchVaultWsUrl(tag) {
+  if (!/^[A-Za-z0-9_-]+$/.test(tag)) {
+    console.error(`Invalid apigw tag: ${tag}`);
+    process.exit(1);
+  }
+  const vaultPath = `bouncer/generated/APIGW_DOMAIN_${tag.toUpperCase()}`;
+  let domain;
+  try {
+    domain = execFileSync(
+      'vault',
+      ['kv', 'get', '-mount=secrets', '-field=value', vaultPath],
+      { encoding: 'utf8' }
+    ).trim();
+  } catch (err) {
+    console.error(`Failed to read ${vaultPath} from Vault (is the vault CLI installed and logged in?)`);
+    console.error(err.stderr?.toString() || err.message);
+    process.exit(1);
+  }
+  if (!domain) {
+    console.error(`Vault returned an empty value for ${vaultPath}`);
+    process.exit(1);
+  }
+  // Bare execute-api domains need the API Gateway stage path appended.
+  // Full ws(s):// URLs are used as-is (assumed to already include a stage).
+  return /^wss?:\/\//.test(domain) ? domain : `wss://${domain}/production`;
+}
+
 const config = loadEnvFile(env);
+if (apigwTag) {
+  config.IMBUE_WS_URL = fetchVaultWsUrl(apigwTag);
+  console.log(`Using Imbue WS URL from Vault (${apigwTag}): ${config.IMBUE_WS_URL}`);
+}
 const hasImbue = IMBUE_KEYS.every((k) => config[k] && config[k].length > 0);
 
 // Build esbuild define map — replaces process.env.X with literal strings
