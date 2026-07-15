@@ -77,9 +77,8 @@ export async function setDescriptions(descriptionsKey: DescriptionKey, descripti
 
 // Default confidence threshold for the AI-text-detection worker. The worker
 // returns a score in [0, 1]; posts at or above the active threshold are
-// classified as AI-generated. High by default so only confident detections
-// hide a post; the reply/comment threshold below is deliberately lower.
-export const DEFAULT_AI_TEXT_DETECTION_THRESHOLD = 0.9;
+// classified as AI-generated.
+export const DEFAULT_AI_TEXT_DETECTION_THRESHOLD = 0.5;
 
 // Threshold applied to AI-text detection when a Twitter reply/comment
 // contains at least one emoji (Twitter replies only — see emojiRuleApplies
