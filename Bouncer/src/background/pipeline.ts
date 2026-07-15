@@ -260,9 +260,9 @@ function buildLiveDetectors(args: {
         return {
           shouldHide: isAi,
           reasoning: isAi
-            ? `AI-generated text detected (${detail})`
-            : `Text not detected as AI-generated (${detail})`,
-          category: isAi ? 'AI-generated' : null,
+            ? `Text looks like AI (${detail})`
+            : `Text doesn't look like AI (${detail})`,
+          category: isAi ? 'Looks like AI text' : null,
           rawResponse: null,
         };
       })(),
@@ -280,9 +280,9 @@ function buildLiveDetectors(args: {
         return {
           shouldHide: isAi,
           reasoning: isAi
-            ? `AI-generated image detected${detail}`
-            : `Images not detected as AI-generated${detail}`,
-          category: isAi ? 'AI-generated image' : null,
+            ? `Image looks like AI${detail}`
+            : `Images don't look like AI${detail}`,
+          category: isAi ? 'Looks like AI image' : null,
           rawResponse: null,
         };
       })(),
@@ -455,8 +455,12 @@ export function replayDetectorStates(tabId: number, evaluationId: string, evalRe
   // Legacy entry without per-detector state. Show three tabs and attribute the
   // cached reasoning to whichever detector likely produced it (by category).
   // Legacy cache entries predate aiImage so the winner can only be aiText or filter.
-  const isAi = evalResult.category === 'AI-generated' || evalResult.category === 'AI-generated image';
-  const winnerName = evalResult.category === 'AI-generated image'
+  // Old cache entries carry the former "AI-generated" labels; match both.
+  const aiTextCategories = ['AI-generated', 'Looks like AI text'];
+  const aiImageCategories = ['AI-generated image', 'Looks like AI image'];
+  const isAi = aiTextCategories.includes(evalResult.category ?? '')
+    || aiImageCategories.includes(evalResult.category ?? '');
+  const winnerName = aiImageCategories.includes(evalResult.category ?? '')
     ? 'aiImage'
     : (isAi ? 'aiText' : 'filter');
   const detectorNames = ['filter', 'aiText', 'aiImage'];
