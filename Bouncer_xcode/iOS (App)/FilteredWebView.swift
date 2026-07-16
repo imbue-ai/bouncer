@@ -233,6 +233,31 @@ struct FilteredWebView: UIViewRepresentable {
                 """, injectionTime: .atDocumentEnd, forMainFrameOnly: true)
             controller.addUserScript(bypassScript)
             print("[FeedFilter] Injected app-install bypass")
+
+            // 9. Apple-login removal — on the x.com login/onboarding page,
+            // remove the "Continue with Apple" button. The button renders
+            // asynchronously (and the flow navigates client-side), so watch
+            // the DOM and re-check the pathname on every mutation.
+            let appleLoginRemovalScript = WKUserScript(source: """
+                (function() {
+                    var host = location.hostname;
+                    if (host !== 'x.com' && !host.endsWith('.x.com')) return;
+                    function removeAppleButton() {
+                        if (!location.pathname.startsWith('/i/jf/onboarding/web')) return;
+                        document.querySelectorAll('p.jf-element').forEach(function(p) {
+                            if (p.textContent.trim() === 'Continue with Apple') {
+                                var button = p.closest('button');
+                                if (button) button.remove();
+                            }
+                        });
+                    }
+                    var observer = new MutationObserver(removeAppleButton);
+                    observer.observe(document.documentElement, { childList: true, subtree: true });
+                    removeAppleButton();
+                })();
+                """, injectionTime: .atDocumentEnd, forMainFrameOnly: true)
+            controller.addUserScript(appleLoginRemovalScript)
+            print("[FeedFilter] Injected Apple-login removal")
         }
 
         // MARK: - Popup Bridge
