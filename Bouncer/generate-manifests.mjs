@@ -45,13 +45,31 @@ function readPlatformConfig() {
 // platform here is automatic: drop an entry in platforms.config.json and
 // host_permissions, content_scripts, and web_accessible_resources all gain
 // the corresponding rows.
+//
+// Platforms flagged `optional: true` are deliberately kept OUT of
+// host_permissions and content_scripts: a published update that adds new
+// required host permissions (or static content scripts, whose match
+// patterns count as host permissions) gets the extension disabled for
+// every existing user until they re-approve. Optional platforms instead
+// land in optional_host_permissions — silent on update — and their content
+// scripts are registered at runtime via chrome.scripting once the user
+// grants access (see src/background/optional-platforms.ts). Their js/css
+// lists must stay in lockstep with contentScriptFiles() in
+// src/shared/platforms.ts, which the runtime registration reads.
+// web_accessible_resources `matches` are not permissions and trigger no
+// warning, so optional platforms may appear there statically.
 function platformsToManifestSlice() {
   const platforms = readPlatformConfig();
+  const required = platforms.filter(p => !p.optional);
+  const optional = platforms.filter(p => p.optional);
   const sharedContentJs = ['browser-polyfill.js', 'dompurify.js'];
   const sharedContentCss = ['content.css'];
   return {
-    host_permissions: platforms.map(p => p.manifestHost),
-    content_scripts: platforms.map(p => ({
+    host_permissions: required.map(p => p.manifestHost),
+    ...(optional.length > 0
+      ? { optional_host_permissions: optional.map(p => p.manifestHost) }
+      : {}),
+    content_scripts: required.map(p => ({
       matches: [p.manifestHost],
       js: [...sharedContentJs, p.adapterScript, 'dist/content.js'],
       css: [...sharedContentCss, p.cssPath],

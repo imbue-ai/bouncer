@@ -35,6 +35,13 @@ export interface PlatformBuildConfig {
   /** Additional web-accessible files this platform's adapter loads via
    *  chrome.runtime.getURL (page-world helper scripts, etc.). */
   readonly extraWebAccessible: readonly string[];
+  /** Optional platforms ship behind `optional_host_permissions`: no host
+   *  permission or content script at install time, so adding one to an
+   *  already-published extension does NOT disable it for existing users.
+   *  The user grants access via the platform toggle in settings, after
+   *  which the background dynamically registers the content script
+   *  (see background/optional-platforms.ts). */
+  readonly optional?: boolean;
 }
 
 /** Runtime-only fields — RegExp can't live in JSON; everything else is
@@ -91,6 +98,23 @@ export function platformById(id: string): PlatformDef | undefined {
 /** Find a platform whose host pattern matches the given hostname. */
 export function platformFromHost(host: string): PlatformDef | undefined {
   return PLATFORMS.find(p => p.hostPattern.test(host));
+}
+
+/** Platforms gated behind optional_host_permissions (user opt-in). */
+export function optionalPlatforms(): PlatformDef[] {
+  return PLATFORMS.filter(p => p.optional === true);
+}
+
+/** The js/css file lists for a platform's content script. Must stay in
+ *  lockstep with `platformsToManifestSlice` in generate-manifests.mjs,
+ *  which builds the same lists for statically-declared (required)
+ *  platforms — dynamic registration of optional platforms goes through
+ *  this function instead. */
+export function contentScriptFiles(p: PlatformDef): { js: string[]; css: string[] } {
+  return {
+    js: ['browser-polyfill.js', 'dompurify.js', p.adapterScript, 'dist/content.js'],
+    css: ['content.css', p.cssPath],
+  };
 }
 
 // ---------------------------------------------------------------------------

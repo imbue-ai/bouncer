@@ -17,6 +17,12 @@ import {
 import { sendFeedback } from './providers';
 import { imbueWebSocket, type ForceLoginMessage } from './ws-manager';
 import { launchAuthFlow, signInAnon, isAnonymousUser, refreshAuthToken, getAuthToken, handleAppleSignIn, signOut, setOnIdentityChanged, IS_SAFARI } from './auth';
+import { initOptionalPlatforms } from './optional-platforms';
+
+// Register/unregister content scripts for user-granted optional platforms.
+// Runs at every service worker startup because dynamic registrations don't
+// survive extension updates.
+initOptionalPlatforms();
 
 // ==================== Tab tracking ====================
 

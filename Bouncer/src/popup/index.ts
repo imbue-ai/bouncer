@@ -5,12 +5,30 @@ import { PREDEFINED_MODELS, DEFAULT_MODEL } from '../shared/models';
 import { escapeHtml, parseHTML } from '../shared/utils';
 import { getStorage, setStorage, removeStorage, clampThreshold, clampImageThreshold } from '../shared/storage';
 import { asyncHandler } from '../shared/async';
+import type { PlatformDef } from '../shared/platforms';
 import { PLATFORMS, enabledStorageKey } from '../shared/platforms';
 
 // DOM id helpers — keep these in one place so the render path, hydration,
 // and change-handlers all agree on the naming convention.
 const platformRowId    = (id: SiteId) => `platformProvider${id.charAt(0).toUpperCase()}${id.slice(1)}`;
 const platformToggleId = (id: SiteId) => `enable${id.charAt(0).toUpperCase()}${id.slice(1)}`;
+
+// Optional platforms (LinkedIn, …) sit behind optional_host_permissions:
+// their toggle starts off and flipping it on triggers the browser's
+// permission prompt. In-app (polyfilled) contexts have no
+// chrome.permissions API, so the rows are hidden there entirely.
+const canRequestPermissions =
+  typeof chrome !== 'undefined' && !!chrome.permissions?.request;
+
+async function platformPermissionGranted(p: PlatformDef): Promise<boolean> {
+  if (!p.optional) return true;
+  if (!canRequestPermissions) return false;
+  try {
+    return await chrome.permissions.contains({ origins: [p.manifestHost] });
+  } catch {
+    return false;
+  }
+}
 
 // Platform-specific accordion sub-content (Twitter's "Filter replies",
 // YouTube's "Show placeholder", etc.). Add an entry here when a platform
@@ -40,13 +58,18 @@ function renderPlatformRows(): void {
   if (!container) return;
   const html = PLATFORMS.map(p => {
     const hasSub = platformSubContentHTML(p.id).length > 0;
+    // Optional platforms render unchecked (and disabled-looking) until
+    // hydration confirms the host permission is actually granted; hide the
+    // row outright where the permissions API isn't available.
+    if (p.optional && !canRequestPermissions) return '';
+    const startChecked = !p.optional;
     return `
-      <div class="api-provider platform-provider" id="${platformRowId(p.id)}">
+      <div class="api-provider platform-provider${startChecked ? '' : ' disabled'}" id="${platformRowId(p.id)}">
         <div class="api-provider-header" data-platform="${p.id}">
           <span class="api-provider-name">${escapeHtml(p.displayName)}</span>
           <div class="api-provider-header-right">
             <label class="ts-inline" title="Enable Bouncer on ${escapeHtml(p.displayName)}">
-              <input type="checkbox" id="${platformToggleId(p.id)}" checked>
+              <input type="checkbox" id="${platformToggleId(p.id)}"${startChecked ? ' checked' : ''}>
               <span class="ts-inline-slider" aria-hidden="true"></span>
             </label>
             ${hasSub ? '<span class="api-provider-arrow">&#9662;</span>' : ''}
@@ -294,16 +317,27 @@ function setupStorageListener() {
       const el = document.getElementById('enableFilterReplies') as HTMLInputElement | null;
       if (el && el.checked !== checked) el.checked = checked;
     }
-    // Per-platform master-toggle storage-change handlers — iterated.
+    // Per-platform master-toggle storage-change handlers — iterated. For
+    // optional platforms the checkbox only turns on if the host permission
+    // is actually granted (a storage write alone can't enable them).
     if (areaName === 'local') {
       for (const p of PLATFORMS) {
         const key = enabledStorageKey(p.id);
         const change = changes[key];
         if (!change) continue;
+        const apply = (checked: boolean) => {
+          const el = document.getElementById(platformToggleId(p.id)) as HTMLInputElement | null;
+          if (el && el.checked !== checked) el.checked = checked;
+          document.getElementById(platformRowId(p.id))?.classList.toggle('disabled', !checked);
+        };
         const checked = change.newValue !== false;
-        const el = document.getElementById(platformToggleId(p.id)) as HTMLInputElement | null;
-        if (el && el.checked !== checked) el.checked = checked;
-        document.getElementById(platformRowId(p.id))?.classList.toggle('disabled', !checked);
+        if (checked && p.optional) {
+          platformPermissionGranted(p)
+            .then(granted => apply(granted))
+            .catch(err => console.error(`[Popup] Permission check for ${p.id} failed:`, err));
+        } else {
+          apply(checked);
+        }
       }
     }
     if (areaName === 'local' && changes.youtubeShowPlaceholder) {
@@ -384,9 +418,12 @@ async function loadSettings() {
   // row reads as "Bouncer is/isn't doing anything on this platform".
   // Per-platform master-toggle initial hydration — iterated from the
   // registry. Defaults to "checked" (treat missing as true) for backwards
-  // compatibility with installs predating this toggle.
+  // compatibility with installs predating this toggle. Optional platforms
+  // are additionally gated on their host permission being granted, so a
+  // revoke via browser settings reads back as "off" here.
   for (const p of PLATFORMS) {
-    const enabled = data[enabledStorageKey(p.id)] !== false;
+    const enabled = data[enabledStorageKey(p.id)] !== false
+      && await platformPermissionGranted(p);
     const el = document.getElementById(platformToggleId(p.id)) as HTMLInputElement | null;
     if (el) el.checked = enabled;
     document.getElementById(platformRowId(p.id))?.classList.toggle('disabled', !enabled);
@@ -774,10 +811,32 @@ function setupEventListeners() {
   // handler-per-platform. Dim the body in-line so the user sees the
   // platform's sub-settings become inert without waiting for storage to
   // round-trip. Persisting drives the content script's gate.
+  //
+  // Optional platforms first go through the browser's permission prompt.
+  // permissions.request() must run inside the user gesture, so it is the
+  // first await in the handler. On grant, the background's
+  // permissions.onAdded listener registers the content script; here we only
+  // persist the enabled flag. Denying (or dismissing) the prompt snaps the
+  // toggle back off. Turning the toggle off keeps the permission — the
+  // content script gate goes inert via storage, and re-enabling later is
+  // prompt-free.
   for (const p of PLATFORMS) {
     document.getElementById(platformToggleId(p.id))?.addEventListener('change', (e) => {
       (async () => {
-        const checked = (e.target as HTMLInputElement).checked;
+        const input = e.target as HTMLInputElement;
+        const checked = input.checked;
+        if (checked && p.optional) {
+          let granted = false;
+          try {
+            granted = await chrome.permissions.request({ origins: [p.manifestHost] });
+          } catch (err) {
+            console.error(`[Popup] Permission request for ${p.id} failed:`, err);
+          }
+          if (!granted) {
+            input.checked = false;
+            return;
+          }
+        }
         document.getElementById(platformRowId(p.id))?.classList.toggle('disabled', !checked);
         await setStorage({ [enabledStorageKey(p.id)]: checked });
       })().catch(err => console.error(`[Popup] ${platformToggleId(p.id)} change failed:`, err));
