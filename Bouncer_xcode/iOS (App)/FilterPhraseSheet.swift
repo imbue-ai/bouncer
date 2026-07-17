@@ -137,8 +137,8 @@ class FilterSheetViewModel: ObservableObject {
     // Initial values mirror the JS-side defaults (clampThreshold /
     // clampReplyThreshold / clampImageThreshold in shared/storage.ts);
     // real values load from storage via the __ff_ bridges.
-    @Published var aiTextDetectionThreshold: Double = 0.5
-    @Published var aiTextReplyDetectionThreshold: Double = 0.3
+    @Published var aiTextDetectionThreshold: Double = 0.6
+    @Published var aiTextReplyDetectionThreshold: Double = 0.5
     @Published var aiImageDetectionThreshold: Double = 0.9
     // Mirrors chrome.storage.local["selectedModel"]. Settings views need
     // this on the main settings page to gate AI-text-detection UI: the

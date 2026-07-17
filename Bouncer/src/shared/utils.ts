@@ -50,14 +50,6 @@ export function parseAPIResponse(content: string): ParsedResult {
   return { shouldHide: false, reasoning: 'Could not parse response', category: null };
 }
 
-// True when the text contains at least one emoji. Extended_Pictographic
-// covers the emoji blocks proper; Regional_Indicator catches flag pairs
-// (🇺🇸) and U+20E3 catches keycap sequences (1️\u20E3), neither of which is
-// Extended_Pictographic on its own.
-export function hasEmoji(text: string): boolean {
-  return /\p{Extended_Pictographic}|\p{Regional_Indicator}|\u20E3/u.test(text);
-}
-
 // Generate a cache key that includes both text and image URLs
 // Normalizes whitespace to ensure consistent keys despite DOM re-rendering differences
 export function generateCacheKey(post: string, imageUrls: string[] | null | undefined): string {

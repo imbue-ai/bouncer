@@ -2,7 +2,7 @@
 
 import {
   parseAPIResponse, checkRateLimitError, checkApiError, checkAuthenticationError,
-  RATE_LIMIT_TYPE_CONFIG, API_ERROR_TYPE_CONFIG, GUEST_FILTER_LIMIT, hasEmoji,
+  RATE_LIMIT_TYPE_CONFIG, API_ERROR_TYPE_CONFIG, GUEST_FILTER_LIMIT,
 } from '../shared/utils';
 import { isAnonymousUser } from './auth';
 import { PREDEFINED_MODELS, API_DISPLAY_NAMES, DEFAULT_MODEL } from '../shared/models';
@@ -11,7 +11,7 @@ import { callDirectAPI, callAnthropicAPI, callImbueAPI, callImbueAiTextDetection
 import { runDetectors, type Detector, type DetectorResult } from './detectors';
 import { callLocalInference, localEngine } from './local-model';
 import { iosLocalClassify, iosLocalGenerate, iosLocalAiTextDetect } from './ios-local-bridge';
-import { getStorage, setStorage, removeStorage, getDescriptions, clampThreshold, clampImageThreshold, clampReplyThreshold, aiIntentActiveForSite, DEFAULT_AI_TEXT_DETECTION_THRESHOLD, DEFAULT_AI_IMAGE_DETECTION_THRESHOLD, EMOJI_AI_TEXT_DETECTION_THRESHOLD } from '../shared/storage';
+import { getStorage, setStorage, removeStorage, getDescriptions, clampThreshold, clampImageThreshold, clampReplyThreshold, aiIntentActiveForSite, DEFAULT_AI_TEXT_DETECTION_THRESHOLD, DEFAULT_AI_IMAGE_DETECTION_THRESHOLD } from '../shared/storage';
 import { canJudgeAiIntent } from './ai-intent';
 import { PLATFORMS, enabledStorageKey } from '../shared/platforms';
 export { DEFAULT_AI_TEXT_DETECTION_THRESHOLD, DEFAULT_AI_IMAGE_DETECTION_THRESHOLD };
@@ -44,8 +44,10 @@ export const QUEUE_BACKLOG_THRESHOLD = 5;
 
 
 // Posts shorter than this aren't sent to the AI-text detector. Short text
-// produces unreliable scores and burns quota.
-const AI_TEXT_DETECTION_MIN_WORDS = 10;
+// produces unreliable scores and burns quota. Main posts need more words than
+// replies/comments, which are naturally short.
+const AI_TEXT_DETECTION_MIN_WORDS_MAIN = 20;
+const AI_TEXT_DETECTION_MIN_WORDS_REPLY = 10;
 
 // Word count using ICU word-boundary segmentation (Unicode UAX #29). Counts
 // word-like segments — handles contractions ("don't" → 1), hyphenated forms
@@ -77,15 +79,17 @@ function computeAiSkipReason(
   aiToggleOn: boolean,
   rawText: string,
   useIosLocalAiText: boolean,
+  isReply: boolean,
 ): string | null {
   // Cloud AI text detection is Imbue-only (callImbueAiTextDetection), so
   // open-source builds without the Imbue backend skip it — except on the
   // iosLocal path, where the detector runs entirely on-device.
   if (!useIosLocalAiText && process.env.HAS_IMBUE_BACKEND !== 'true') return 'AI detection requires Imbue backend';
   if (!aiToggleOn) return 'AI detection disabled';
+  const minWords = isReply ? AI_TEXT_DETECTION_MIN_WORDS_REPLY : AI_TEXT_DETECTION_MIN_WORDS_MAIN;
   const wc = countWords(rawText);
-  if (wc < AI_TEXT_DETECTION_MIN_WORDS) {
-    return `Post too short (${wc} words; need ${AI_TEXT_DETECTION_MIN_WORDS})`;
+  if (wc < minWords) {
+    return `Post too short (${wc} words; need ${minWords})`;
   }
   return null;
 }
@@ -219,11 +223,6 @@ function buildLiveDetectors(args: {
   aiThreshold: number;
   aiImageThreshold: number;
   useIosLocalAiText: boolean;
-  // Whether the strict emoji threshold applies to this post. True only for
-  // Twitter replies/comments: emoji are an AI-slop tell in reply spam, while
-  // in main posts — and on other platforms (LinkedIn) — they're ordinary
-  // human style, so the rule would mostly hit false positives.
-  emojiRuleApplies: boolean;
 }): Detector[] {
   const detectors: Detector[] = [];
   if (args.filterEnabled) {
@@ -244,14 +243,7 @@ function buildLiveDetectors(args: {
           );
           confidence = aiResp.confidence;
         }
-        // Emoji-bearing posts get the strict threshold: hide unless the
-        // detector is >95% confident the text is human-written. min() so an
-        // even stricter user threshold still applies.
-        const emojiStrict = args.emojiRuleApplies && hasEmoji(args.rawText);
-        const threshold = emojiStrict
-          ? Math.min(args.aiThreshold, EMOJI_AI_TEXT_DETECTION_THRESHOLD)
-          : args.aiThreshold;
-        const isAi = confidence >= threshold;
+        const isAi = confidence >= args.aiThreshold;
         const source = args.useIosLocalAiText ? 'on-device' : 'cloud';
         // The model's probability is debug info — dev builds only.
         const detail = IS_DEV_BUILD
@@ -1007,7 +999,7 @@ async function processBatch(): Promise<void> {
     // Per-post detector orchestration. Three logical phases: plan tabs and
     // dispatch their initial state to the content script; build the live
     // detector list; race them and capture snapshots for cache persistence.
-    const aiSkipReason = computeAiSkipReason(aiToggleOn, item.rawText, apiConfig.apiName === 'iosLocal');
+    const aiSkipReason = computeAiSkipReason(aiToggleOn, item.rawText, apiConfig.apiName === 'iosLocal', item.isReply);
     const aiEnabled = !aiSkipReason;
 
     const aiImageSkipReason = computeAiImageSkipReason(aiImageToggleOn, imageUrls);
@@ -1030,8 +1022,6 @@ async function processBatch(): Promise<void> {
       // trained on E4B last-token logits — E2B shares the vocab dim so it
       // would run but produce garbage confidences. Route only E4B locally.
       useIosLocalAiText: apiConfig.apiName === 'iosLocal',
-      // Twitter replies only: see the emojiRuleApplies doc on buildLiveDetectors.
-      emojiRuleApplies: item.siteId === 'twitter' && item.isReply,
     });
 
     if (detectors.length === 0) {
