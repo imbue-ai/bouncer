@@ -2,7 +2,7 @@
 
 import {
   parseAPIResponse, checkRateLimitError, checkApiError, checkAuthenticationError,
-  RATE_LIMIT_TYPE_CONFIG, API_ERROR_TYPE_CONFIG, GUEST_FILTER_LIMIT, hasEmoji,
+  RATE_LIMIT_TYPE_CONFIG, API_ERROR_TYPE_CONFIG, GUEST_FILTER_LIMIT,
 } from '../shared/utils';
 import { isAnonymousUser } from './auth';
 import { PREDEFINED_MODELS, API_DISPLAY_NAMES, DEFAULT_MODEL } from '../shared/models';
@@ -11,7 +11,7 @@ import { callDirectAPI, callAnthropicAPI, callImbueAPI, callImbueAiTextDetection
 import { runDetectors, type Detector, type DetectorResult } from './detectors';
 import { callLocalInference, localEngine } from './local-model';
 import { iosLocalClassify, iosLocalGenerate, iosLocalAiTextDetect } from './ios-local-bridge';
-import { getStorage, setStorage, removeStorage, getDescriptions, clampThreshold, clampImageThreshold, clampReplyThreshold, aiIntentActiveForSite, DEFAULT_AI_TEXT_DETECTION_THRESHOLD, DEFAULT_AI_IMAGE_DETECTION_THRESHOLD, EMOJI_AI_TEXT_DETECTION_THRESHOLD } from '../shared/storage';
+import { getStorage, setStorage, removeStorage, getDescriptions, clampThreshold, clampImageThreshold, clampReplyThreshold, aiIntentActiveForSite, DEFAULT_AI_TEXT_DETECTION_THRESHOLD, DEFAULT_AI_IMAGE_DETECTION_THRESHOLD } from '../shared/storage';
 import { canJudgeAiIntent } from './ai-intent';
 import { PLATFORMS, enabledStorageKey } from '../shared/platforms';
 export { DEFAULT_AI_TEXT_DETECTION_THRESHOLD, DEFAULT_AI_IMAGE_DETECTION_THRESHOLD };
@@ -219,11 +219,6 @@ function buildLiveDetectors(args: {
   aiThreshold: number;
   aiImageThreshold: number;
   useIosLocalAiText: boolean;
-  // Whether the strict emoji threshold applies to this post. True only for
-  // Twitter replies/comments: emoji are an AI-slop tell in reply spam, while
-  // in main posts — and on other platforms (LinkedIn) — they're ordinary
-  // human style, so the rule would mostly hit false positives.
-  emojiRuleApplies: boolean;
 }): Detector[] {
   const detectors: Detector[] = [];
   if (args.filterEnabled) {
@@ -244,14 +239,7 @@ function buildLiveDetectors(args: {
           );
           confidence = aiResp.confidence;
         }
-        // Emoji-bearing posts get the strict threshold: hide unless the
-        // detector is >95% confident the text is human-written. min() so an
-        // even stricter user threshold still applies.
-        const emojiStrict = args.emojiRuleApplies && hasEmoji(args.rawText);
-        const threshold = emojiStrict
-          ? Math.min(args.aiThreshold, EMOJI_AI_TEXT_DETECTION_THRESHOLD)
-          : args.aiThreshold;
-        const isAi = confidence >= threshold;
+        const isAi = confidence >= args.aiThreshold;
         const source = args.useIosLocalAiText ? 'on-device' : 'cloud';
         // The model's probability is debug info — dev builds only.
         const detail = IS_DEV_BUILD
@@ -1030,8 +1018,6 @@ async function processBatch(): Promise<void> {
       // trained on E4B last-token logits — E2B shares the vocab dim so it
       // would run but produce garbage confidences. Route only E4B locally.
       useIosLocalAiText: apiConfig.apiName === 'iosLocal',
-      // Twitter replies only: see the emojiRuleApplies doc on buildLiveDetectors.
-      emojiRuleApplies: item.siteId === 'twitter' && item.isReply,
     });
 
     if (detectors.length === 0) {
