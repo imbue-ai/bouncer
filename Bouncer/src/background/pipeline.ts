@@ -44,8 +44,10 @@ export const QUEUE_BACKLOG_THRESHOLD = 5;
 
 
 // Posts shorter than this aren't sent to the AI-text detector. Short text
-// produces unreliable scores and burns quota.
-const AI_TEXT_DETECTION_MIN_WORDS = 10;
+// produces unreliable scores and burns quota. Main posts need more words than
+// replies/comments, which are naturally short.
+const AI_TEXT_DETECTION_MIN_WORDS_MAIN = 20;
+const AI_TEXT_DETECTION_MIN_WORDS_REPLY = 10;
 
 // Word count using ICU word-boundary segmentation (Unicode UAX #29). Counts
 // word-like segments — handles contractions ("don't" → 1), hyphenated forms
@@ -77,15 +79,17 @@ function computeAiSkipReason(
   aiToggleOn: boolean,
   rawText: string,
   useIosLocalAiText: boolean,
+  isReply: boolean,
 ): string | null {
   // Cloud AI text detection is Imbue-only (callImbueAiTextDetection), so
   // open-source builds without the Imbue backend skip it — except on the
   // iosLocal path, where the detector runs entirely on-device.
   if (!useIosLocalAiText && process.env.HAS_IMBUE_BACKEND !== 'true') return 'AI detection requires Imbue backend';
   if (!aiToggleOn) return 'AI detection disabled';
+  const minWords = isReply ? AI_TEXT_DETECTION_MIN_WORDS_REPLY : AI_TEXT_DETECTION_MIN_WORDS_MAIN;
   const wc = countWords(rawText);
-  if (wc < AI_TEXT_DETECTION_MIN_WORDS) {
-    return `Post too short (${wc} words; need ${AI_TEXT_DETECTION_MIN_WORDS})`;
+  if (wc < minWords) {
+    return `Post too short (${wc} words; need ${minWords})`;
   }
   return null;
 }
@@ -995,7 +999,7 @@ async function processBatch(): Promise<void> {
     // Per-post detector orchestration. Three logical phases: plan tabs and
     // dispatch their initial state to the content script; build the live
     // detector list; race them and capture snapshots for cache persistence.
-    const aiSkipReason = computeAiSkipReason(aiToggleOn, item.rawText, apiConfig.apiName === 'iosLocal');
+    const aiSkipReason = computeAiSkipReason(aiToggleOn, item.rawText, apiConfig.apiName === 'iosLocal', item.isReply);
     const aiEnabled = !aiSkipReason;
 
     const aiImageSkipReason = computeAiImageSkipReason(aiImageToggleOn, imageUrls);

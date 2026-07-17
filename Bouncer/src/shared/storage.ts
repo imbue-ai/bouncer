@@ -78,7 +78,7 @@ export async function setDescriptions(descriptionsKey: DescriptionKey, descripti
 // Default confidence threshold for the AI-text-detection worker. The worker
 // returns a score in [0, 1]; posts at or above the active threshold are
 // classified as AI-generated.
-export const DEFAULT_AI_TEXT_DETECTION_THRESHOLD = 0.5;
+export const DEFAULT_AI_TEXT_DETECTION_THRESHOLD = 0.6;
 
 // Default confidence threshold for the AI-image-detection worker. The worker
 // returns a per-image score in [0, 1]; posts whose max score is at or above
@@ -102,7 +102,7 @@ export function clampImageThreshold(v: unknown): number {
 // Default confidence threshold for AI-text detection on replies/comments.
 // Deliberately lower than the main-post default: comments are short, so the
 // detector's confidence rarely climbs as high as it does on full posts.
-export const DEFAULT_AI_TEXT_REPLY_DETECTION_THRESHOLD = 0.3;
+export const DEFAULT_AI_TEXT_REPLY_DETECTION_THRESHOLD = 0.5;
 
 /** Same as clampThreshold but with the reply/comment default. */
 export function clampReplyThreshold(v: unknown): number {
