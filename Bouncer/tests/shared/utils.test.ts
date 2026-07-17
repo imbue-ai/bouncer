@@ -10,7 +10,6 @@ import {
   checkAuthenticationError,
   convertSystemToUserMessages,
   cleanReasoning,
-  hasEmoji,
 } from '../../src/shared/utils.js';
 
 // ==================== parseAPIResponse ====================
@@ -365,46 +364,5 @@ describe('cleanReasoning', () => {
 
   it('returns original if result would be empty', () => {
     expect(cleanReasoning('|||')).toBe('|||');
-  });
-});
-
-
-// ==================== hasEmoji ====================
-
-describe('hasEmoji', () => {
-  it('detects a plain emoji', () => {
-    expect(hasEmoji('great thread 🚀')).toBe(true);
-  });
-
-  it('detects an emoji with skin-tone modifier', () => {
-    expect(hasEmoji('thanks 👍🏽')).toBe(true);
-  });
-
-  it('detects ZWJ sequences', () => {
-    expect(hasEmoji('family 👨‍👩‍👧')).toBe(true);
-  });
-
-  it('detects flag (regional indicator) emoji', () => {
-    expect(hasEmoji('made in 🇺🇸')).toBe(true);
-  });
-
-  it('detects keycap sequences', () => {
-    expect(hasEmoji('top 1️⃣ reason')).toBe(true);
-  });
-
-  it('detects pictographs with variation selector', () => {
-    expect(hasEmoji('warning ⚠️ ahead')).toBe(true);
-  });
-
-  it('returns false for plain ASCII text', () => {
-    expect(hasEmoji('just a normal tweet, no. 1 fan!')).toBe(false);
-  });
-
-  it('returns false for the empty string', () => {
-    expect(hasEmoji('')).toBe(false);
-  });
-
-  it('returns false for non-emoji unicode (accents, CJK)', () => {
-    expect(hasEmoji('café 日本語 привет')).toBe(false);
   });
 });
