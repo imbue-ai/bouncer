@@ -14,6 +14,7 @@ import { iosLocalClassify, iosLocalGenerate, iosLocalAiTextDetect } from './ios-
 import { getStorage, setStorage, removeStorage, getDescriptions, clampThreshold, clampImageThreshold, clampReplyThreshold, aiIntentActiveForSite, DEFAULT_AI_TEXT_DETECTION_THRESHOLD, DEFAULT_AI_IMAGE_DETECTION_THRESHOLD } from '../shared/storage';
 import { canJudgeAiIntent } from './ai-intent';
 import { PLATFORMS, enabledStorageKey } from '../shared/platforms';
+import { recordFilterStat } from '../shared/stats-utils';
 export { DEFAULT_AI_TEXT_DETECTION_THRESHOLD, DEFAULT_AI_IMAGE_DETECTION_THRESHOLD };
 import type {
   EvaluationResult, PipelineResponse, PipelineError, PendingEvaluation,
@@ -1063,6 +1064,8 @@ async function processBatch(): Promise<void> {
     stats.evaluated++;
     if (evalResult.shouldHide) {
       stats.filtered++;
+      // Record the per-category / per-day breakdown that powers the stats panel.
+      recordFilterStat(stats, evalResult.category, evalResult.timestamp ?? Date.now());
     }
     await setStorage({ stats });
 

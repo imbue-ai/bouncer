@@ -344,6 +344,8 @@ export type ContentToBackgroundMessage =
   | { type: 'clearCache' }
   | { type: 'clearSinglePost'; post: string; imageUrls: string[]; postUrl?: string | null; siteId?: SiteId }
   | { type: 'getStats' }
+  | { type: 'recordUsage'; totalTimeMs: number; byCategory: Record<string, UsageCategoryStat> }
+  | { type: 'getUsageSummary' }
   | { type: 'getReasoning'; post: string; imageUrls: string[]; postUrl?: string | null; siteId?: SiteId }
   | { type: 'getErrorStatus' }
   | { type: 'getAllLocalModelStatuses' }
@@ -417,6 +419,104 @@ export interface IOSDeps {
   getFilteredPosts: () => FilteredPost[];
 }
 
+// ==================== Filter + usage stats ====================
+
+/**
+ * Aggregated blocked-post stats. `filtered` / `evaluated` / `totalCost` are
+ * lifetime totals (always present). `byCategory` (lifetime per matched topic)
+ * and `daily` (date → topic → count, pruned to 30 days) are optional so
+ * pre-existing stored objects keep validating.
+ */
+export interface FilterStats {
+  filtered: number;
+  evaluated: number;
+  totalCost: number;
+  byCategory?: Record<string, number>;
+  daily?: Record<string, Record<string, number>>;
+}
+
+/** One category row of a blocked-stats window. */
+export interface StatsCategoryCount {
+  category: string;
+  count: number;
+}
+
+/** Blocked totals over a single time window. */
+export interface StatsWindow {
+  total: number;
+  byCategory: StatsCategoryCount[];
+}
+
+/** Today / week / all-time blocked breakdown. */
+export interface StatsBreakdown {
+  evaluated: number;
+  today: StatsWindow;
+  week: StatsWindow;
+  allTime: StatsWindow;
+}
+
+/** Viewing time + posts-seen for one content category. */
+export interface UsageCategoryStat {
+  timeMs: number;
+  seen: number;
+}
+
+/** One day's usage bucket (local `YYYY-MM-DD`). */
+export interface UsageDay {
+  totalTimeMs: number;
+  byCategory: Record<string, UsageCategoryStat>;
+}
+
+/**
+ * Persisted feed-usage stats: on-feed time and, per content category, how much
+ * of that time went to (and how many posts were seen of) NOT-filtered posts.
+ * `daily` is pruned to 30 days; lifetime totals live at the top level.
+ */
+export interface UsageStats {
+  totalTimeMs: number;
+  byCategory: Record<string, UsageCategoryStat>;
+  daily: Record<string, UsageDay>;
+}
+
+/** Incremental usage flushed from the content script to the background. */
+export interface UsageDelta {
+  totalTimeMs: number;
+  byCategory: Record<string, UsageCategoryStat>;
+}
+
+/** A not-filtered category row: content type with dwell + posts seen. */
+export interface NotFilteredRow {
+  category: string;
+  timeMs: number;
+  seen: number;
+}
+
+/** A filtered category row: topic with blocked count. */
+export interface FilteredRow {
+  category: string;
+  blocked: number;
+}
+
+/** Aggregated usage over a single time window (drives the two pies). */
+export interface UsageWindow {
+  totalTimeMs: number;
+  totalSeen: number;
+  totalBlocked: number;
+  /** Estimated time saved by hiding blocked posts. */
+  timeSavedMs: number;
+  /** Not-filtered posts by content type (time-weighted pie). */
+  notFiltered: NotFilteredRow[];
+  /** Filtered posts by topic (count-weighted pie). */
+  filtered: FilteredRow[];
+}
+
+/** Full summary returned to the popup by `getUsageSummary`. */
+export interface UsageSummary {
+  today: UsageWindow;
+  week: UsageWindow;
+  allTime: UsageWindow;
+}
+
 // ==================== Chrome Storage Schema ====================
 
 /** Per-site description keys, derived from SiteId. */
@@ -444,7 +544,13 @@ export type StorageSchema = SettingsBase & {
   // download lands (see the localModelStatuses storage listener).
   pendingLocalModelSelection: string;
   evaluationCache: Record<string, EvaluationResult>;
-  stats: { filtered: number; evaluated: number; totalCost: number };
+  stats: FilterStats;
+  // Feed-usage stats (on-feed time + per-content-category dwell/seen of
+  // not-filtered posts). Written by the background from `recordUsage` flushes.
+  usage: UsageStats;
+  // Opt-in switch for the feed usage summary. Undefined = on by default; when
+  // false the content script stops dwell tracking and the popup hides the panel.
+  usageSummaryEnabled: boolean;
   // Lifetime count of posts filtered while signed in anonymously. Drives the
   // guest trial gate (see GUEST_FILTER_LIMIT). Persists across sessions.
   anonFilterCount: number;

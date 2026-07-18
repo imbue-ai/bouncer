@@ -110,6 +110,66 @@
       </label>
     </section>
 
+    <!-- Feed usage summary (opt-in): time on feed, a time-saved estimate, and
+         two pies — not-filtered posts by content type, filtered posts by topic.
+         Populated by popup/index.ts via the `getUsageSummary` message. -->
+    <section class="usage-summary-section">
+      <label class="toggle-switch">
+        <input type="checkbox" id="enableUsageSummary" checked>
+        <span class="toggle-switch-slider" aria-hidden="true"></span>
+        <span class="toggle-switch-text">
+          <span class="toggle-switch-label">Feed usage summary</span>
+          <span class="toggle-switch-sub">Track your time on feed and see what you scroll past.</span>
+        </span>
+      </label>
+
+      <div class="stats-section" id="statsSection" style="display: none;">
+        <div class="stats-timesaved">
+          <span class="stats-timesaved-value" id="statsTimeSavedValue">0s</span>
+          <span class="stats-timesaved-label">time saved by Bouncer</span>
+        </div>
+
+        <div class="stats-window-toggle" id="statsWindowToggle" role="tablist">
+          <button type="button" class="stats-window-btn active" data-window="today">Today</button>
+          <button type="button" class="stats-window-btn" data-window="week">7 days</button>
+          <button type="button" class="stats-window-btn" data-window="allTime">All time</button>
+        </div>
+
+        <div class="stats-metrics">
+          <div class="stats-metric">
+            <span class="stats-metric-value" id="statsTimeValue">0s</span>
+            <span class="stats-metric-label">time on feed</span>
+          </div>
+          <div class="stats-metric">
+            <span class="stats-metric-value" id="statsSeenValue">0</span>
+            <span class="stats-metric-label">posts scrolled</span>
+          </div>
+          <div class="stats-metric">
+            <span class="stats-metric-value" id="statsBlockedValue">0</span>
+            <span class="stats-metric-label">posts blocked</span>
+          </div>
+        </div>
+
+        <div class="stats-pie-block" id="statsNotFilteredBlock">
+          <div class="stats-subtitle">Not filtered &mdash; time by category</div>
+          <div class="stats-pie-row">
+            <div class="stats-pie" id="statsPieNotFiltered"></div>
+            <div class="stats-legend" id="statsLegendNotFiltered"></div>
+          </div>
+        </div>
+
+        <div class="stats-pie-block" id="statsFilteredBlock" style="display: none;">
+          <div class="stats-subtitle">Filtered &mdash; by topic</div>
+          <div class="stats-pie-row">
+            <div class="stats-pie" id="statsPieFiltered"></div>
+            <div class="stats-legend" id="statsLegendFiltered"></div>
+          </div>
+        </div>
+
+        <p class="hint stats-empty" id="statsEmpty" style="display: none;">No feed activity in this window yet.</p>
+      </div>
+    </section>
+
     <!-- Everything below is power-user surface: full model list, per-platform
          toggles, BYOK providers, AI-slop detection. Collapsed by default. -->
     <section>

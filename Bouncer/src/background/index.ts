@@ -2,6 +2,7 @@
 
 import { PREDEFINED_MODELS } from '../shared/models';
 import { cacheKeyFor, GUEST_FILTER_LIMIT } from '../shared/utils';
+import { recordUsage, computeUsageSummary, emptyUsage } from '../shared/usage-utils';
 import { getStorage, setStorage, removeStorage, phraseSetKey } from '../shared/storage';
 import type { AiFilterIntentState, ContentToBackgroundMessage, LocalModelStatus } from '../types';
 import { refreshAiFilterIntent, pruneAiFilterPhrases, canJudgeAiIntent } from './ai-intent';
@@ -339,6 +340,19 @@ async function handleMessage(
     case 'getStats': {
       const data = await getStorage(['stats']);
       return data.stats || { filtered: 0, evaluated: 0, totalCost: 0 };
+    }
+
+    case 'recordUsage': {
+      const data = await getStorage(['usage']);
+      const usage = data.usage || emptyUsage();
+      recordUsage(usage, { totalTimeMs: message.totalTimeMs, byCategory: message.byCategory }, Date.now());
+      await setStorage({ usage });
+      return { success: true };
+    }
+
+    case 'getUsageSummary': {
+      const data = await getStorage(['usage', 'stats']);
+      return computeUsageSummary(data.usage, data.stats, Date.now());
     }
 
     case 'getReasoning': {
