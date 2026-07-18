@@ -1,6 +1,6 @@
 // Bouncer - Popup Script
 
-import type { ModelDef, LocalModelStatus, StorageSchema, SiteId, UsageSummary, NotFilteredRow, FilteredRow } from '../types';
+import type { ModelDef, LocalModelStatus, StorageSchema, SiteId, UsageSummary } from '../types';
 import { PREDEFINED_MODELS, DEFAULT_MODEL } from '../shared/models';
 import { escapeHtml, parseHTML } from '../shared/utils';
 import { formatDuration } from '../shared/usage-utils';
@@ -267,7 +267,6 @@ export async function init() {
   setupLocalModelListeners();
 
   setupStorageListener();
-  setupStatsPanel();
   await loadUsageSummary();
 
   // Deep link from the in-feed trial notice ("Download local model"): select
@@ -285,166 +284,51 @@ export async function init() {
   }
 }
 
-// ==================== Feed usage summary ====================
-
-type StatsWindowKey = 'today' | 'week' | 'allTime';
-
-// Distinct, theme-neutral hues for pie slices / legend swatches. The last entry
-// is reused for the "Other" overflow slice.
-const STATS_PALETTE = [
-  '#1d9bf0', '#f4212e', '#00ba7c', '#ffd400', '#7856ff',
-  '#ff7a00', '#f91880', '#536471',
-];
-const PIE_MAX_SLICES = 6;
+// ==================== Feed usage summary (teaser) ====================
+//
+// The popup shows only a slim teaser (today's time saved + time on feed) plus a
+// button that opens the full dashboard (both pies, all windows) in its own tab
+// via stats.html. Full-view rendering lives in src/stats/.
 
 let usageSummary: UsageSummary | null = null;
-let activeStatsWindow: StatsWindowKey = 'today';
-
-// Wire the today / 7-days / all-time toggle once. Clicking re-renders from the
-// already-fetched summary — no extra round-trip.
-function setupStatsPanel() {
-  const toggle = document.getElementById('statsWindowToggle');
-  if (!toggle) return;
-  for (const btn of toggle.querySelectorAll<HTMLButtonElement>('.stats-window-btn')) {
-    btn.addEventListener('click', () => {
-      const win = btn.dataset.window as StatsWindowKey | undefined;
-      if (!win || win === activeStatsWindow) return;
-      activeStatsWindow = win;
-      for (const b of toggle.querySelectorAll('.stats-window-btn')) {
-        b.classList.toggle('active', b === btn);
-      }
-      renderSummaryWindow();
-    });
-  }
-}
 
 async function loadUsageSummary() {
-  const section = document.getElementById('statsSection');
+  const body = document.getElementById('usageSummaryBody');
   try {
-    // Respect the opt-in toggle: when off, keep the panel hidden entirely.
     const { usageSummaryEnabled } = await getStorage(['usageSummaryEnabled']);
-    if (usageSummaryEnabled === false) {
-      if (section) section.style.display = 'none';
-      return;
-    }
+    const enabled = usageSummaryEnabled !== false;
+    if (body) body.style.display = enabled ? '' : 'none';
+    if (!enabled) return;
+
     const summary: UsageSummary | undefined = await chrome.runtime.sendMessage({ type: 'getUsageSummary' });
     if (!summary) return;
     usageSummary = summary;
-    renderSummaryWindow();
+    renderTeaser();
   } catch (err) {
     console.error('[Popup] loadUsageSummary failed:', err);
   }
 }
 
-interface PieSlice { label: string; value: number; color: string }
+// Teaser: today's time saved + time on feed. Hidden until there's real lifetime
+// activity so a brand-new user doesn't see a "0s" card.
+function renderTeaser() {
+  const section = document.getElementById('statsSection');
+  const savedEl = document.getElementById('statsTeaserSaved');
+  const timeEl = document.getElementById('statsTeaserTime');
+  if (!section || !savedEl || !timeEl || !usageSummary) return;
 
-// Collapse rows into at most PIE_MAX_SLICES value-weighted slices, folding the
-// tail into one "Other" slice. `value` picks time or count per pie.
-function pieSlices<T extends { category: string }>(rows: T[], value: (r: T) => number): PieSlice[] {
-  const positive = rows.map((r) => ({ label: r.category, value: value(r) })).filter((s) => s.value > 0);
-  if (positive.length <= PIE_MAX_SLICES) {
-    return positive.map((s, i) => ({ ...s, color: STATS_PALETTE[i % STATS_PALETTE.length] }));
-  }
-  const head = positive.slice(0, PIE_MAX_SLICES - 1);
-  const tail = positive.slice(PIE_MAX_SLICES - 1);
-  const slices = head.map((s, i) => ({ ...s, color: STATS_PALETTE[i % STATS_PALETTE.length] }));
-  slices.push({ label: `Other (${tail.length})`, value: tail.reduce((a, s) => a + s.value, 0), color: STATS_PALETTE[STATS_PALETTE.length - 1] });
-  return slices;
-}
-
-// Build an SVG donut from value-weighted slices via createElementNS so no HTML
-// sanitizer can strip path geometry.
-function buildPieSvg(slices: PieSlice[]): SVGSVGElement {
-  const SIZE = 120, R = 54, C = 60, STROKE = 16;
-  const ns = 'http://www.w3.org/2000/svg';
-  const svg = document.createElementNS(ns, 'svg');
-  svg.setAttribute('viewBox', `0 0 ${SIZE} ${SIZE}`);
-  svg.setAttribute('width', String(SIZE));
-  svg.setAttribute('height', String(SIZE));
-  svg.classList.add('stats-pie-svg');
-
-  const total = slices.reduce((acc, s) => acc + s.value, 0);
-  if (total <= 0) return svg;
-
-  const circ = 2 * Math.PI * R;
-  let offset = 0;
-  for (const slice of slices) {
-    const frac = slice.value / total;
-    const seg = document.createElementNS(ns, 'circle');
-    seg.setAttribute('cx', String(C));
-    seg.setAttribute('cy', String(C));
-    seg.setAttribute('r', String(R));
-    seg.setAttribute('fill', 'none');
-    seg.setAttribute('stroke', slice.color);
-    seg.setAttribute('stroke-width', String(STROKE));
-    seg.setAttribute('stroke-dasharray', `${frac * circ} ${circ}`);
-    seg.setAttribute('stroke-dashoffset', String(-offset));
-    seg.setAttribute('transform', `rotate(-90 ${C} ${C})`);
-    svg.appendChild(seg);
-    offset += frac * circ;
-  }
-  return svg;
-}
-
-// Render a pie + legend into the given containers. `format` renders each row's
-// value for the legend (duration for time pies, count for the blocked pie).
-function renderPie(pieEl: HTMLElement, legendEl: HTMLElement, slices: PieSlice[], format: (v: number) => string): void {
-  pieEl.replaceChildren(buildPieSvg(slices));
-  const total = slices.reduce((acc, s) => acc + s.value, 0) || 1;
-  const html = slices
-    .map((s) => {
-      const pct = Math.round((s.value / total) * 100);
-      return `
-        <div class="stats-legend-row">
-          <span class="stats-legend-swatch" style="background:${escapeHtml(s.color)}"></span>
-          <span class="stats-legend-name">${escapeHtml(s.label)}</span>
-          <span class="stats-legend-value">${escapeHtml(format(s.value))} · ${pct}%</span>
-        </div>`;
-    })
-    .join('');
-  legendEl.replaceChildren(parseHTML(html));
-}
-
-function renderSummaryWindow() {
-  const ids = ['statsSection', 'statsTimeSavedValue', 'statsTimeValue', 'statsSeenValue', 'statsBlockedValue',
-    'statsNotFilteredBlock', 'statsPieNotFiltered', 'statsLegendNotFiltered',
-    'statsFilteredBlock', 'statsPieFiltered', 'statsLegendFiltered', 'statsEmpty'] as const;
-  const el = Object.fromEntries(ids.map((id) => [id, document.getElementById(id)])) as Record<(typeof ids)[number], HTMLElement | null>;
-  if (Object.values(el).some((e) => !e) || !usageSummary) return;
-
-  // Only surface the panel once there's real lifetime activity.
   const hasAnyData = usageSummary.allTime.totalTimeMs > 0 ||
     usageSummary.allTime.totalSeen > 0 || usageSummary.allTime.totalBlocked > 0;
-  el.statsSection!.style.display = hasAnyData ? '' : 'none';
+  section.style.display = hasAnyData ? '' : 'none';
   if (!hasAnyData) return;
 
-  const win = usageSummary[activeStatsWindow];
+  savedEl.textContent = formatDuration(usageSummary.today.timeSavedMs);
+  timeEl.textContent = formatDuration(usageSummary.today.totalTimeMs);
+}
 
-  el.statsTimeSavedValue!.textContent = formatDuration(win.timeSavedMs);
-  el.statsTimeValue!.textContent = formatDuration(win.totalTimeMs);
-  el.statsSeenValue!.textContent = win.totalSeen.toLocaleString();
-  el.statsBlockedValue!.textContent = win.totalBlocked.toLocaleString();
-
-  const hasWindowData = win.totalTimeMs > 0 || win.totalSeen > 0 || win.totalBlocked > 0;
-  el.statsEmpty!.style.display = hasWindowData ? 'none' : '';
-
-  // Pie 1 — not-filtered posts by content type, weighted by dwell time.
-  const nfSlices = pieSlices<NotFilteredRow>(win.notFiltered, (r) => r.timeMs);
-  if (nfSlices.length > 0) {
-    el.statsNotFilteredBlock!.style.display = '';
-    renderPie(el.statsPieNotFiltered!, el.statsLegendNotFiltered!, nfSlices, formatDuration);
-  } else {
-    el.statsNotFilteredBlock!.style.display = 'none';
-  }
-
-  // Pie 2 — filtered posts by topic, weighted by blocked count.
-  const fSlices = pieSlices<FilteredRow>(win.filtered, (r) => r.blocked);
-  if (fSlices.length > 0) {
-    el.statsFilteredBlock!.style.display = '';
-    renderPie(el.statsPieFiltered!, el.statsLegendFiltered!, fSlices, (v) => v.toLocaleString());
-  } else {
-    el.statsFilteredBlock!.style.display = 'none';
-  }
+// Open the full stats dashboard in its own tab.
+function openFullStats() {
+  void chrome.tabs.create({ url: chrome.runtime.getURL('stats.html') });
 }
 
 function setupStorageListener() {
@@ -536,6 +420,7 @@ async function loadSettings() {
   const data = await getStorage([
     'enabled',
     'usageSummaryEnabled',
+    'showRecapOnExit',
     'selectedModel',
     'customModels',
     'openrouterApiKey',
@@ -579,6 +464,10 @@ async function loadSettings() {
   // Feed usage summary opt-in (default on for installs predating the toggle).
   const usageSummaryEl = document.getElementById('enableUsageSummary') as HTMLInputElement | null;
   if (usageSummaryEl) usageSummaryEl.checked = data.usageSummaryEnabled !== false;
+
+  // Session recap opt-in (default off).
+  const recapEl = document.getElementById('enableRecapOnExit') as HTMLInputElement | null;
+  if (recapEl) recapEl.checked = data.showRecapOnExit === true;
 
   // Platform master toggles. Default to true for backwards compatibility.
   // The expanded/disabled visual state mirrors the toggle's value so the
@@ -971,6 +860,14 @@ function setupEventListeners() {
     await setStorage({ usageSummaryEnabled: checked });
     await loadUsageSummary();
   })().catch(err => console.error('[Popup] enableUsageSummary change failed:', err)); });
+
+  // "See full stats" opens the dashboard page in its own tab.
+  document.getElementById('seeFullStatsBtn')?.addEventListener('click', () => openFullStats());
+
+  // Session-recap opt-in.
+  document.getElementById('enableRecapOnExit')?.addEventListener('change', (e) => { (async () => {
+    await setStorage({ showRecapOnExit: (e.target as HTMLInputElement).checked });
+  })().catch(err => console.error('[Popup] enableRecapOnExit change failed:', err)); });
 
   // Platform master toggles. Iterate the registry instead of one
   // handler-per-platform. Dim the body in-line so the user sees the

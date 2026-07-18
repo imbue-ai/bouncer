@@ -551,6 +551,13 @@ export type StorageSchema = SettingsBase & {
   // Opt-in switch for the feed usage summary. Undefined = on by default; when
   // false the content script stops dwell tracking and the popup hides the panel.
   usageSummaryEnabled: boolean;
+  // Opt-in: open the full stats page as a "session recap" when the user closes
+  // their last feed tab, and (as a fallback) on their next visit if the close-
+  // time open couldn't happen. Default off.
+  showRecapOnExit: boolean;
+  // Set true by the background when a session ends with `showRecapOnExit` on;
+  // cleared when the recap page loads. Drives the next-visit fallback.
+  recapArmed: boolean;
   // Lifetime count of posts filtered while signed in anonymously. Drives the
   // guest trial gate (see GUEST_FILTER_LIMIT). Persists across sessions.
   anonFilterCount: number;

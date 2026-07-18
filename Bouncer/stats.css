@@ -1,0 +1,72 @@
+/* Page frame for the full stats dashboard (stats.html). Component styles
+   (pies, metrics, legend) live in stats-components.css, shared with the popup.
+   The page centers a readable column and themes off body.dark-mode/dim-mode,
+   which stats/index.ts sets from prefers-color-scheme. */
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  background: #ffffff;
+  color: #0f1419;
+  min-height: 100vh;
+}
+
+.stats-page {
+  max-width: 440px;
+  margin: 0 auto;
+  padding: 28px 20px 40px;
+}
+
+.stats-page-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.stats-page-logo { flex: 0 0 auto; border-radius: 8px; }
+
+.stats-page-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.stats-page-sub {
+  margin: 2px 0 0;
+  font-size: 13px;
+  color: #536471;
+}
+
+.stats-page-footer {
+  margin-top: 28px;
+  padding-top: 14px;
+  border-top: 1px solid #eff3f4;
+  font-size: 11px;
+  color: #8899a6;
+  text-align: center;
+}
+
+/* Dark mode */
+body.dark-mode {
+  background: #15181c;
+  color: rgb(231, 233, 234);
+}
+body.dark-mode .stats-page-sub { color: rgb(113, 118, 123); }
+body.dark-mode .stats-page-footer {
+  border-top-color: rgb(47, 51, 54);
+  color: rgb(113, 118, 123);
+}
+
+/* Dim mode */
+body.dim-mode {
+  background: #15202b;
+  color: rgb(247, 249, 249);
+}
+body.dim-mode .stats-page-sub { color: rgb(139, 152, 165); }
+body.dim-mode .stats-page-footer {
+  border-top-color: rgb(56, 68, 77);
+  color: rgb(139, 152, 165);
+}

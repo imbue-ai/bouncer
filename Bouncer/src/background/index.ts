@@ -56,6 +56,9 @@ chrome.windows.onFocusChanged.addListener((windowId) => {
 
 // Clean up tab tracking when tabs are closed
 chrome.tabs.onRemoved.addListener((tabId) => {
+  // Capture before delete: only a real feed tab closing should trigger the
+  // session recap (so closing the recap tab itself doesn't re-trigger it).
+  const wasFeedTab = activeContentTabs.has(tabId);
   activeContentTabs.delete(tabId);
   clearTabQueue(tabId);
   if (activeTabId === tabId) {
@@ -77,7 +80,42 @@ chrome.tabs.onRemoved.addListener((tabId) => {
       console.error('[LocalModel] Error unloading engine on last tab close:', err);
     });
   }
+
+  // Session recap: the user just closed their last feed tab.
+  if (wasFeedTab && activeContentTabs.size === 0) {
+    void maybeOpenRecapOnClose();
+  }
 });
+
+// ==================== Session recap (opt-in) ====================
+
+// Open the full stats page as a "session recap" in its own tab. `?context=recap`
+// tells the page to reframe as a recap and clear the armed flag.
+function openRecapTab(): void {
+  void chrome.tabs.create({ url: chrome.runtime.getURL('stats.html') + '?context=recap' })
+    .catch(err => console.warn('[Recap] could not open recap tab:', err));
+}
+
+// Called when the last feed tab closes. Arms the next-visit fallback (in case
+// the tab can't open because the browser is quitting) and opens the recap.
+async function maybeOpenRecapOnClose(): Promise<void> {
+  const { showRecapOnExit, usage } = await getStorage(['showRecapOnExit', 'usage']);
+  if (!showRecapOnExit) return;
+  // Nothing worth recapping yet.
+  if (!usage || usage.totalTimeMs <= 0) return;
+  await setStorage({ recapArmed: true });
+  openRecapTab();
+}
+
+// Called on each feed page load. If a recap was armed but never shown (e.g. the
+// on-close open was blocked by browser shutdown), show it now.
+async function maybeOpenRecapOnVisit(): Promise<void> {
+  const { showRecapOnExit, recapArmed } = await getStorage(['showRecapOnExit', 'recapArmed']);
+  if (!showRecapOnExit || !recapArmed) return;
+  // Clear first so a slow recap page load can't double-trigger.
+  await setStorage({ recapArmed: false });
+  openRecapTab();
+}
 
 // ==================== Backend-forced sign-in ====================
 
@@ -685,6 +723,9 @@ chrome.runtime.onMessage.addListener((message: ContentToBackgroundMessage, sende
     // Track this tab as having an active content script
     activeContentTabs.add(tabId);
     handlePageLoad(tabId);
+
+    // Next-visit fallback for the session recap (see maybeOpenRecapOnVisit).
+    void maybeOpenRecapOnVisit();
 
     // Detect active tab (handles service worker restart where onActivated doesn't re-fire)
     chrome.tabs.query({ active: true, lastFocusedWindow: true }).then(([tab]) => {
