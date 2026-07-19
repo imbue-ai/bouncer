@@ -102,16 +102,22 @@ function sumWindow(
     const key = dateKey(now - i * ONE_DAY_MS);
     const bucket = daily[key];
     let catSum = 0;
+    let maxCat = 0;
     if (bucket) {
       for (const [cat, n] of Object.entries(bucket)) {
         counts[cat] = (counts[cat] ?? 0) + n;
         catSum += n;
+        if (n > maxCat) maxCat = n;
       }
     }
-    // Post count for the day. Days recorded before dailyTotal existed fall back
-    // to the category-instance sum (slightly inflated when a post matched
-    // several filters) — the discrepancy ages out with the retention window.
-    total += dailyTotal[key] ?? catSum;
+    // Posts hidden this day. dailyTotal is the exact per-post count for data
+    // recorded with it; clamp up to the largest single-category count — a valid
+    // lower bound, since a post matches any one filter at most once — to heal
+    // undercounted values a partial/older build may have written. A day with no
+    // dailyTotal entry at all falls back to the category-instance sum (slightly
+    // high when posts matched several filters); it ages out with retention.
+    const dt = dailyTotal[key];
+    total += dt != null ? Math.max(dt, maxCat) : catSum;
   }
   return { total, byCategory: toSortedRows(counts) };
 }

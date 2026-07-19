@@ -119,6 +119,31 @@ describe('computeStatsBreakdown', () => {
     expect(b.allTime.total).toBe(4);
   });
 
+  it('heals an undercounted dailyTotal up to the max category count', () => {
+    // Reproduces the dev-testing corruption: an older build wrote
+    // dailyTotal[today]=1 while daily[today] correctly holds 5 category
+    // instances across 4 posts. The largest single category (crypto=4) is a
+    // valid lower bound on posts, so today must read at least 4, not 1.
+    const s = fresh();
+    s.filtered = 4;
+    s.daily = { [dateKey(T0)]: { crypto: 4, politics: 1 } };
+    s.byCategory = { crypto: 4, politics: 1 };
+    s.dailyTotal = { [dateKey(T0)]: 1 }; // corrupt undercount
+
+    const b = computeStatsBreakdown(s, T0);
+    expect(b.today.total).toBe(4); // healed from 1 up to max(crypto)=4
+    expect(b.allTime.total).toBe(4);
+  });
+
+  it('does not inflate a correct dailyTotal (clamp is a no-op)', () => {
+    // A post matching two filters: dailyTotal=1 is correct, max category=1.
+    const s = fresh();
+    s.filtered = 1;
+    recordFilterStat(s, 'crypto, politics', T0);
+    const b = computeStatsBreakdown(s, T0);
+    expect(b.today.total).toBe(1); // not bumped to catSum (2)
+  });
+
   it('prunes dailyTotal alongside daily', () => {
     const s = fresh();
     recordFilterStat(s, 'crypto', T0 - (DAILY_RETENTION_DAYS + 5) * DAY);
