@@ -35,16 +35,29 @@ export function splitCategories(category: string | null | undefined): string[] {
   return parts.length > 0 ? parts : [UNCATEGORIZED];
 }
 
-function ensureMaps(stats: FilterStats): Required<Pick<FilterStats, 'byCategory' | 'daily'>> & FilterStats {
+function ensureMaps(stats: FilterStats): Required<Pick<FilterStats, 'byCategory' | 'daily' | 'dailyTotal'>> & FilterStats {
   if (!stats.byCategory) stats.byCategory = {};
   if (!stats.daily) stats.daily = {};
-  return stats as Required<Pick<FilterStats, 'byCategory' | 'daily'>> & FilterStats;
+  if (!stats.dailyTotal) {
+    // One-time migration for stats stored before dailyTotal existed: seed each
+    // day from its category-instance sum (the best available estimate; slightly
+    // high when a post matched several filters). Without this, a day mixing
+    // pre-migration and post-migration hides would report only the latter —
+    // dropping the morning's hides from "today" after an extension update.
+    stats.dailyTotal = {};
+    for (const [day, bucket] of Object.entries(stats.daily)) {
+      stats.dailyTotal[day] = Object.values(bucket).reduce((a, n) => a + n, 0);
+    }
+  }
+  return stats as Required<Pick<FilterStats, 'byCategory' | 'daily' | 'dailyTotal'>> & FilterStats;
 }
 
-function pruneDaily(daily: Record<string, Record<string, number>>, now: number): void {
+/** Drop date-keyed entries older than the retention window (keys are
+ *  lexicographically ordered dates, so a string compare suffices). */
+function pruneByDate(map: Record<string, unknown>, now: number): void {
   const cutoff = dateKey(now - DAILY_RETENTION_DAYS * ONE_DAY_MS);
-  for (const key of Object.keys(daily)) {
-    if (key < cutoff) delete daily[key];
+  for (const key of Object.keys(map)) {
+    if (key < cutoff) delete map[key];
   }
 }
 
@@ -58,12 +71,16 @@ export function recordFilterStat(stats: FilterStats, category: string | null | u
   const today = dateKey(now);
   const todayBucket = s.daily[today] ?? (s.daily[today] = {});
 
+  // One post = one hide, regardless of how many filter phrases it matched.
+  s.dailyTotal[today] = (s.dailyTotal[today] ?? 0) + 1;
+
   for (const cat of splitCategories(category)) {
     s.byCategory[cat] = (s.byCategory[cat] ?? 0) + 1;
     todayBucket[cat] = (todayBucket[cat] ?? 0) + 1;
   }
 
-  pruneDaily(s.daily, now);
+  pruneByDate(s.daily, now);
+  pruneByDate(s.dailyTotal, now);
   return s;
 }
 
@@ -73,29 +90,54 @@ function toSortedRows(counts: Record<string, number>): StatsCategoryCount[] {
     .sort((a, b) => b.count - a.count || a.category.localeCompare(b.category));
 }
 
-function sumWindow(daily: Record<string, Record<string, number>>, now: number, days: number): StatsWindow {
+function sumWindow(
+  daily: Record<string, Record<string, number>>,
+  dailyTotal: Record<string, number>,
+  now: number,
+  days: number,
+): StatsWindow {
   const counts: Record<string, number> = {};
+  let total = 0;
   for (let i = 0; i < days; i++) {
-    const bucket = daily[dateKey(now - i * ONE_DAY_MS)];
-    if (!bucket) continue;
-    for (const [cat, n] of Object.entries(bucket)) {
-      counts[cat] = (counts[cat] ?? 0) + n;
+    const key = dateKey(now - i * ONE_DAY_MS);
+    const bucket = daily[key];
+    let catSum = 0;
+    if (bucket) {
+      for (const [cat, n] of Object.entries(bucket)) {
+        counts[cat] = (counts[cat] ?? 0) + n;
+        catSum += n;
+      }
     }
+    // Post count for the day. Days recorded before dailyTotal existed fall back
+    // to the category-instance sum (slightly inflated when a post matched
+    // several filters) — the discrepancy ages out with the retention window.
+    total += dailyTotal[key] ?? catSum;
   }
-  const rows = toSortedRows(counts);
-  return { total: rows.reduce((acc, r) => acc + r.count, 0), byCategory: rows };
+  return { total, byCategory: toSortedRows(counts) };
 }
 
-/** Derive the today / last-7-days / all-time blocked breakdown. */
+/** Derive the today / last-7-days / all-time blocked breakdown. All windows
+ *  count hidden POSTS (not per-category matches), so `allTime.total` is always
+ *  >= the shorter windows. */
 export function computeStatsBreakdown(stats: FilterStats | undefined, now: number): StatsBreakdown {
   const daily = stats?.daily ?? {};
+  const dailyTotal = stats?.dailyTotal ?? {};
   const allTimeRows = toSortedRows(stats?.byCategory ?? {});
+  const today = sumWindow(daily, dailyTotal, now, 1);
+  const week = sumWindow(daily, dailyTotal, now, WEEK_WINDOW_DAYS);
+  // Lifetime post count. Guard against legacy data where the daily buckets
+  // (pre-dailyTotal, category-instance based) sum higher than `filtered`: a
+  // window can never contain more posts than all time.
+  const allTimeTotal = Math.max(
+    stats?.filtered ?? allTimeRows.reduce((acc, r) => acc + r.count, 0),
+    week.total,
+  );
   return {
     evaluated: stats?.evaluated ?? 0,
-    today: sumWindow(daily, now, 1),
-    week: sumWindow(daily, now, WEEK_WINDOW_DAYS),
+    today,
+    week,
     allTime: {
-      total: stats?.filtered ?? allTimeRows.reduce((acc, r) => acc + r.count, 0),
+      total: allTimeTotal,
       byCategory: allTimeRows,
     },
   };

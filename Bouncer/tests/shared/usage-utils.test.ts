@@ -71,6 +71,24 @@ describe('computeUsageSummary', () => {
     expect(today.timeSavedMs).toBe(3000);
   });
 
+  it('week window includes prior days that today excludes', () => {
+    const usage: UsageStats = emptyUsage();
+    recordUsage(usage, { totalTimeMs: 5000, byCategory: { Tech: { timeMs: 5000, seen: 5 } } }, T0 - 2 * DAY);
+    recordUsage(usage, { totalTimeMs: 2000, byCategory: { Tech: { timeMs: 2000, seen: 2 } } }, T0);
+
+    const stats: FilterStats = { filtered: 3, evaluated: 10, totalCost: 0 };
+    recordFilterStat(stats, 'crypto', T0 - 2 * DAY);
+    recordFilterStat(stats, 'crypto', T0 - 2 * DAY);
+    recordFilterStat(stats, 'crypto', T0);
+
+    const s = computeUsageSummary(usage, stats, T0);
+    expect(s.today.totalTimeMs).toBe(2000);
+    expect(s.week.totalTimeMs).toBe(7000);
+    expect(s.today.totalBlocked).toBe(1);
+    expect(s.week.totalBlocked).toBe(3);
+    expect(s.week.timeSavedMs).toBeGreaterThan(s.today.timeSavedMs);
+  });
+
   it('uses lifetime totals for the all-time window', () => {
     const usage: UsageStats = emptyUsage();
     recordUsage(usage, { totalTimeMs: 1000, byCategory: { Tech: { timeMs: 1000, seen: 1 } } }, T0 - 100 * DAY);

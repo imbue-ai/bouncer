@@ -433,6 +433,13 @@ export interface FilterStats {
   totalCost: number;
   byCategory?: Record<string, number>;
   daily?: Record<string, Record<string, number>>;
+  // Per-day count of hidden POSTS (one per hide, not per matched category).
+  // `daily`/`byCategory` count category-instances — a single post can match
+  // several filters ("crypto, engagement bait") — so summing them double-counts
+  // posts. Window totals use this to stay per-post and consistent with the
+  // lifetime `filtered` counter. Pruned to 30 days like `daily`. Optional so
+  // pre-existing stored objects keep validating.
+  dailyTotal?: Record<string, number>;
 }
 
 /** One category row of a blocked-stats window. */

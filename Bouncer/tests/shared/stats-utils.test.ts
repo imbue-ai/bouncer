@@ -68,4 +68,61 @@ describe('computeStatsBreakdown', () => {
     expect(b.today).toEqual({ total: 0, byCategory: [] });
     expect(b.allTime).toEqual({ total: 0, byCategory: [] });
   });
+
+  it('counts posts (not category matches) in window totals', () => {
+    // One post matching two filters must count once toward totals — otherwise
+    // today/week outgrow all-time (which counts posts via `filtered`).
+    const s = fresh();
+    s.filtered = 2;
+    recordFilterStat(s, 'crypto, engagement bait', T0);
+    recordFilterStat(s, 'crypto', T0 - 2 * DAY);
+
+    const b = computeStatsBreakdown(s, T0);
+    expect(b.today.total).toBe(1);
+    expect(b.week.total).toBe(2);
+    expect(b.allTime.total).toBe(2);
+    // The pie still shows every matched category.
+    expect(b.today.byCategory).toEqual([
+      { category: 'crypto', count: 1 },
+      { category: 'engagement bait', count: 1 },
+    ]);
+  });
+
+  it('never reports a window total above all-time (legacy data guard)', () => {
+    // Data recorded before dailyTotal existed: daily buckets are category-
+    // instance counts, which can sum higher than the per-post `filtered`.
+    const s = fresh();
+    s.filtered = 1;
+    s.daily = { [dateKey(T0)]: { crypto: 1, politics: 1 } };
+    s.byCategory = { crypto: 1, politics: 1 };
+
+    const b = computeStatsBreakdown(s, T0);
+    expect(b.today.total).toBe(2); // fallback: category sum for legacy days
+    expect(b.allTime.total).toBeGreaterThanOrEqual(b.week.total);
+    expect(b.allTime.total).toBeGreaterThanOrEqual(b.today.total);
+  });
+
+  it('seeds dailyTotal from legacy daily buckets on first record after migration', () => {
+    // Stats stored by a pre-dailyTotal build: hides exist in `daily` only.
+    // The first hide on the new build must not orphan them — "today" would
+    // otherwise report only post-update hides.
+    const s = fresh();
+    s.filtered = 3;
+    s.byCategory = { crypto: 2, politics: 1 };
+    s.daily = { [dateKey(T0)]: { crypto: 2, politics: 1 } };
+
+    recordFilterStat(s, 'news', T0); // first post-migration hide, same day
+    s.filtered = 4;
+
+    const b = computeStatsBreakdown(s, T0);
+    expect(b.today.total).toBe(4); // 3 seeded + 1 new, not just 1
+    expect(b.allTime.total).toBe(4);
+  });
+
+  it('prunes dailyTotal alongside daily', () => {
+    const s = fresh();
+    recordFilterStat(s, 'crypto', T0 - (DAILY_RETENTION_DAYS + 5) * DAY);
+    recordFilterStat(s, 'crypto', T0);
+    expect(Object.keys(s.dailyTotal ?? {})).toEqual([dateKey(T0)]);
+  });
 });
