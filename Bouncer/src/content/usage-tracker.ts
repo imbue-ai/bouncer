@@ -148,7 +148,13 @@ export function createUsageTracker(send: (delta: UsageDelta) => void): UsageTrac
       if (existing.category !== cat) {
         bank(existing, now());
         existing.category = cat;
-        if (isActive() && existing.visible) existing.visibleSince = now();
+        // A category change usually means the platform's virtualized timeline
+        // reused this element for a different post — let it count as seen again.
+        counted.delete(el);
+        if (isActive() && existing.visible) {
+          countSeen(el, existing);
+          existing.visibleSince = now();
+        }
       }
       return;
     }
@@ -160,6 +166,7 @@ export function createUsageTracker(send: (delta: UsageDelta) => void): UsageTrac
     const rec = records.get(el);
     if (!rec) return;
     bank(rec, now());
+    counted.delete(el);
     io.unobserve(el);
     records.delete(el);
   }

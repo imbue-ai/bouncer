@@ -84,6 +84,12 @@ export function generateManifest(target = 'chrome') {
   // template doesn't have to repeat them for every platform.
   const platformSlice = platformsToManifestSlice();
   const merged = deepMerge(deepMerge(base, platformSlice), override);
+  // "_comment*" keys document the templates but are not valid manifest keys —
+  // Chrome logs "Unrecognized manifest key" for each one it sees. Keep them in
+  // the sources, drop them from the generated output.
+  for (const key of Object.keys(merged)) {
+    if (key.startsWith('_comment')) delete merged[key];
+  }
   const outPath = path.join(ROOT, 'manifest.json');
   fs.writeFileSync(outPath, JSON.stringify(merged, null, 2) + '\n');
   console.log(`Generated manifest.json for target=${target}`);

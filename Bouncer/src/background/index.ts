@@ -3,7 +3,7 @@
 import { PREDEFINED_MODELS } from '../shared/models';
 import { cacheKeyFor, GUEST_FILTER_LIMIT } from '../shared/utils';
 import { recordUsage, computeUsageSummary, emptyUsage } from '../shared/usage-utils';
-import { getStorage, setStorage, removeStorage, phraseSetKey } from '../shared/storage';
+import { getStorage, setStorage, removeStorage, phraseSetKey, withStorageLock } from '../shared/storage';
 import type { AiFilterIntentState, ContentToBackgroundMessage, LocalModelStatus } from '../types';
 import { refreshAiFilterIntent, pruneAiFilterPhrases, canJudgeAiIntent } from './ai-intent';
 import { localEngine } from './local-model';
@@ -97,19 +97,19 @@ const RECAP_SESSION_GAP_MS = 30 * 60 * 1000;
 // Open the full stats page as a "session recap". `?context=recap` tells the page
 // to reframe as a recap and clear the armed flag. When the user closed their last
 // window there may be no window left to host a tab (on macOS, Chrome keeps
-// running with zero windows), so `tabs.create` would silently no-op — open a
-// fresh window in that case instead.
+// running with zero windows), so `tabs.create` would fail — fall back to opening
+// a fresh window. Try/fallback rather than pre-checking windows.getAll: during a
+// window close the dying window can still be listed, making the pre-check lie.
 async function openRecapTab(): Promise<void> {
   const url = chrome.runtime.getURL('stats.html') + '?context=recap';
   try {
-    const normalWindows = await chrome.windows.getAll({ windowTypes: ['normal'] });
-    if (normalWindows.length === 0) {
+    await chrome.tabs.create({ url });
+  } catch {
+    try {
       await chrome.windows.create({ url });
-    } else {
-      await chrome.tabs.create({ url });
+    } catch (err) {
+      console.warn('[Recap] could not open recap tab or window:', err);
     }
-  } catch (err) {
-    console.warn('[Recap] could not open recap tab:', err);
   }
 }
 
@@ -403,21 +403,26 @@ async function handleMessage(
     }
 
     case 'recordUsage': {
-      const data = await getStorage(['usage', 'showRecapOnExit']);
-      const usage = data.usage || emptyUsage();
-      const now = Date.now();
-      recordUsage(usage, { totalTimeMs: message.totalTimeMs, byCategory: message.byCategory }, now);
-      // Arm the next-visit recap fallback from here — this runs while the tab is
-      // open and the service worker is reliably alive, so the recap still
-      // surfaces even when the whole browser/window is closed (where the
-      // on-close tab open can't run and its storage write may never land).
-      // `lastUsageAt` lets the fallback distinguish a real new session from a
-      // mid-session reload so it doesn't pop the recap while still browsing.
-      if (data.showRecapOnExit && usage.totalTimeMs > 0) {
-        await setStorage({ usage, recapArmed: true, lastUsageAt: now });
-      } else {
-        await setStorage({ usage });
-      }
+      // Serialized: concurrent flushes from two feed tabs would otherwise both
+      // read the same stored usage and the second write would drop the first's
+      // delta.
+      await withStorageLock('usage', async () => {
+        const data = await getStorage(['usage', 'showRecapOnExit']);
+        const usage = data.usage || emptyUsage();
+        const now = Date.now();
+        recordUsage(usage, { totalTimeMs: message.totalTimeMs, byCategory: message.byCategory }, now);
+        // Arm the next-visit recap fallback from here — this runs while the tab
+        // is open and the service worker is reliably alive, so the recap still
+        // surfaces even when the whole browser/window is closed (where the
+        // on-close tab open can't run and its storage write may never land).
+        // `lastUsageAt` lets the fallback distinguish a real new session from a
+        // mid-session reload so it doesn't pop the recap while still browsing.
+        if (data.showRecapOnExit && usage.totalTimeMs > 0) {
+          await setStorage({ usage, recapArmed: true, lastUsageAt: now });
+        } else {
+          await setStorage({ usage });
+        }
+      });
       return { success: true };
     }
 
