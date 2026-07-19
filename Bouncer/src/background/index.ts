@@ -89,32 +89,54 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 
 // ==================== Session recap (opt-in) ====================
 
-// Open the full stats page as a "session recap" in its own tab. `?context=recap`
-// tells the page to reframe as a recap and clear the armed flag.
-function openRecapTab(): void {
-  void chrome.tabs.create({ url: chrome.runtime.getURL('stats.html') + '?context=recap' })
-    .catch(err => console.warn('[Recap] could not open recap tab:', err));
+// A gap this long since the last recorded feed activity marks the previous
+// session as ended, so a page load counts as a genuine new visit (worth showing
+// last session's recap) rather than a mid-session reload / second feed tab.
+const RECAP_SESSION_GAP_MS = 30 * 60 * 1000;
+
+// Open the full stats page as a "session recap". `?context=recap` tells the page
+// to reframe as a recap and clear the armed flag. When the user closed their last
+// window there may be no window left to host a tab (on macOS, Chrome keeps
+// running with zero windows), so `tabs.create` would silently no-op — open a
+// fresh window in that case instead.
+async function openRecapTab(): Promise<void> {
+  const url = chrome.runtime.getURL('stats.html') + '?context=recap';
+  try {
+    const normalWindows = await chrome.windows.getAll({ windowTypes: ['normal'] });
+    if (normalWindows.length === 0) {
+      await chrome.windows.create({ url });
+    } else {
+      await chrome.tabs.create({ url });
+    }
+  } catch (err) {
+    console.warn('[Recap] could not open recap tab:', err);
+  }
 }
 
-// Called when the last feed tab closes. Arms the next-visit fallback (in case
-// the tab can't open because the browser is quitting) and opens the recap.
+// Called when the last feed tab closes. The next-visit fallback is already armed
+// from `recordUsage` while the tab was open (covering a genuine Cmd-Q quit, where
+// nothing can run after the worker is killed); here we open the recap right away.
+// This still fires when the user closed their whole window — on macOS the worker
+// keeps running, and openRecapTab spawns a new window since none remain.
 async function maybeOpenRecapOnClose(): Promise<void> {
   const { showRecapOnExit, usage } = await getStorage(['showRecapOnExit', 'usage']);
   if (!showRecapOnExit) return;
   // Nothing worth recapping yet.
   if (!usage || usage.totalTimeMs <= 0) return;
-  await setStorage({ recapArmed: true });
-  openRecapTab();
+  await openRecapTab();
 }
 
-// Called on each feed page load. If a recap was armed but never shown (e.g. the
-// on-close open was blocked by browser shutdown), show it now.
+// Called on each feed page load. If a recap was armed (in `recordUsage`) but
+// never shown — e.g. the on-close open was blocked by browser shutdown — show
+// it now, but only once the previous session has actually ended, so a
+// mid-session reload or a second feed tab doesn't pop the recap.
 async function maybeOpenRecapOnVisit(): Promise<void> {
-  const { showRecapOnExit, recapArmed } = await getStorage(['showRecapOnExit', 'recapArmed']);
+  const { showRecapOnExit, recapArmed, lastUsageAt } = await getStorage(['showRecapOnExit', 'recapArmed', 'lastUsageAt']);
   if (!showRecapOnExit || !recapArmed) return;
+  if (lastUsageAt && Date.now() - lastUsageAt < RECAP_SESSION_GAP_MS) return;
   // Clear first so a slow recap page load can't double-trigger.
   await setStorage({ recapArmed: false });
-  openRecapTab();
+  await openRecapTab();
 }
 
 // ==================== Backend-forced sign-in ====================
@@ -381,10 +403,21 @@ async function handleMessage(
     }
 
     case 'recordUsage': {
-      const data = await getStorage(['usage']);
+      const data = await getStorage(['usage', 'showRecapOnExit']);
       const usage = data.usage || emptyUsage();
-      recordUsage(usage, { totalTimeMs: message.totalTimeMs, byCategory: message.byCategory }, Date.now());
-      await setStorage({ usage });
+      const now = Date.now();
+      recordUsage(usage, { totalTimeMs: message.totalTimeMs, byCategory: message.byCategory }, now);
+      // Arm the next-visit recap fallback from here — this runs while the tab is
+      // open and the service worker is reliably alive, so the recap still
+      // surfaces even when the whole browser/window is closed (where the
+      // on-close tab open can't run and its storage write may never land).
+      // `lastUsageAt` lets the fallback distinguish a real new session from a
+      // mid-session reload so it doesn't pop the recap while still browsing.
+      if (data.showRecapOnExit && usage.totalTimeMs > 0) {
+        await setStorage({ usage, recapArmed: true, lastUsageAt: now });
+      } else {
+        await setStorage({ usage });
+      }
       return { success: true };
     }
 

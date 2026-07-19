@@ -558,6 +558,10 @@ export type StorageSchema = SettingsBase & {
   // Set true by the background when a session ends with `showRecapOnExit` on;
   // cleared when the recap page loads. Drives the next-visit fallback.
   recapArmed: boolean;
+  // Timestamp (ms) of the most recent recorded feed activity, stamped by the
+  // background while `showRecapOnExit` is on. Lets the next-visit fallback tell
+  // a genuine new session from a mid-session reload (see maybeOpenRecapOnVisit).
+  lastUsageAt: number;
   // Lifetime count of posts filtered while signed in anonymously. Drives the
   // guest trial gate (see GUEST_FILTER_LIMIT). Persists across sessions.
   anonFilterCount: number;
