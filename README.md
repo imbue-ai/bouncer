@@ -18,7 +18,7 @@
 
 - **Natural language filters** — describe what you don't want to see in your own words
 - **Multiple AI backends** — run models locally on your GPU, or use cloud APIs (OpenAI, Google Gemini, Anthropic, OpenRouter)
-- **On-device inference** — local models via WebLLM run entirely in your browser with zero data sent externally
+- **On-device inference** — local models run entirely in your browser with zero data sent externally
 - **Image-aware filtering** — multimodal models can classify posts based on images, not just text
 - **Reasoning transparency** — see exactly why each post was filtered
 - **Theme-aware UI** — adapts to light, dim, and dark modes automatically
