@@ -78,7 +78,7 @@ export async function setDescriptions(descriptionsKey: DescriptionKey, descripti
 // Default confidence threshold for the AI-text-detection worker. The worker
 // returns a score in [0, 1]; posts at or above the active threshold are
 // classified as AI-generated.
-export const DEFAULT_AI_TEXT_DETECTION_THRESHOLD = 0.6;
+export const DEFAULT_AI_TEXT_DETECTION_THRESHOLD = 0.9;
 
 // Default confidence threshold for the AI-image-detection worker. The worker
 // returns a per-image score in [0, 1]; posts whose max score is at or above
