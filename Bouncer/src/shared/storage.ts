@@ -102,7 +102,7 @@ export function clampImageThreshold(v: unknown): number {
 // Default confidence threshold for AI-text detection on replies/comments.
 // Deliberately lower than the main-post default: comments are short, so the
 // detector's confidence rarely climbs as high as it does on full posts.
-export const DEFAULT_AI_TEXT_REPLY_DETECTION_THRESHOLD = 0.5;
+export const DEFAULT_AI_TEXT_REPLY_DETECTION_THRESHOLD = 0.9;
 
 /** Same as clampThreshold but with the reply/comment default. */
 export function clampReplyThreshold(v: unknown): number {
