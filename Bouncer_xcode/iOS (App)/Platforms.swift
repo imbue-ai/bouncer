@@ -2,11 +2,20 @@
 //  Platforms.swift
 //  iOS (App)
 //
-//  Single source of truth for the platforms Bouncer supports on iOS. The
-//  picker, the WebView's script/CSS injection, the URL-to-platform sync, and
-//  the per-platform feed-URL switch all read from this list instead of
-//  hardcoding the ids. Adding a new platform is one entry here (plus the
-//  adapter implementation in Bouncer/adapters/<id>/).
+//  The list of platforms Bouncer supports on iOS is NOT defined here — it is
+//  decoded from the shared, single source of truth
+//  `Bouncer/src/shared/platforms.config.json`, which ships in the app bundle
+//  (the `shared` folder reference). The picker, the WebView's script/CSS
+//  injection, the URL-to-platform sync, and the per-platform feed-URL switch
+//  all read `Platforms.all`, which is exactly the config entries whose
+//  `targets` include this app's target ("safari").
+//
+//  Consequence: a platform is present in the iOS UI if and only if it appears
+//  in platforms.config.json for the safari target. Removing it there (or
+//  dropping "safari" from its targets) removes it from every part of the app
+//  — no picker row, no adapter injection, no host-guard entry. Adding one is a
+//  single edit in the JSON (plus the adapter implementation under
+//  Bouncer/adapters/<id>/). There is no second list to keep in sync.
 //
 
 import Foundation
@@ -58,51 +67,71 @@ struct PlatformDef {
 }
 
 enum Platforms {
-    /// Order matters for the PlatformPickerView: rows render top-to-bottom in
-    /// this order.
-    static let all: [PlatformDef] = [
-        PlatformDef(
-            id: "twitter",
-            displayName: "X (Twitter)",
-            feedURL: "https://x.com/home",
-            loginURL: "https://x.com/i/flow/login",
-            adapterScriptName: "TwitterAdapter",
-            cssFile: "twitter",
-            cssSubdir: "adapters/twitter",
-            hostRoots: [
-                "x.com", "twitter.com", "t.co", "twimg.com",
-                "pbs.twimg.com", "abs.twimg.com", "video.twimg.com",
-            ]
-        ),
-// Millan todo: add back YT to ios
-//         PlatformDef(
-//             id: "youtube",
-//             displayName: "YouTube",
-//             feedURL: "https://www.youtube.com/",
-//             loginURL: nil,
-//             adapterScriptName: "YouTubeAdapter",
-//             cssFile: "youtube",
-//             cssSubdir: "adapters/youtube",
-//             hostRoots: [
-//                 "youtube.com", "m.youtube.com", "youtu.be",
-//                 "ytimg.com", "ggpht.com", "googlevideo.com",
-//                 "accounts.youtube.com",
-//             ]
-//         ),
-        PlatformDef(
-            id: "linkedin",
-            displayName: "LinkedIn",
-            feedURL: "https://www.linkedin.com/feed/",
-            loginURL: nil,
-            adapterScriptName: "LinkedInAdapter",
-            cssFile: "linkedin",
-            cssSubdir: "adapters/linkedin",
-            hostRoots: [
-                "linkedin.com", "licdn.com",
-                "static.licdn.com", "media.licdn.com",
-            ]
-        ),
-    ]
+    /// This app's build target, matching build.js `--target=` and the
+    /// `targets` values in platforms.config.json. Both the iOS and macOS
+    /// apps build with `--target=safari`.
+    private static let currentTarget = "safari"
+
+    /// Raw JSON shape of one entry in platforms.config.json. Only the fields
+    /// the iOS app needs are decoded; extras (manifestHost,
+    /// extraWebAccessible, …) are ignored.
+    private struct ConfigEntry: Decodable {
+        let id: String
+        let displayName: String
+        let targets: [String]
+        let adapterScript: String
+        let cssPath: String
+        let feedUrl: String
+        let loginUrl: String?
+        let hostRoots: [String]
+    }
+
+    /// Platforms shipped on this build, in config order (which drives the
+    /// PlatformPickerView row order). Decoded once from the bundled config.
+    static let all: [PlatformDef] = loadFromConfig()
+
+    private static func loadFromConfig() -> [PlatformDef] {
+        guard let url = Bundle.main.url(
+            forResource: "platforms.config", withExtension: "json", subdirectory: "shared"
+        ) else {
+            assertionFailure("platforms.config.json missing from app bundle (shared/)")
+            return []
+        }
+        do {
+            let data = try Data(contentsOf: url)
+            let entries = try JSONDecoder().decode([ConfigEntry].self, from: data)
+            return entries
+                .filter { $0.targets.contains(currentTarget) }
+                .map(makePlatformDef)
+        } catch {
+            assertionFailure("Failed to decode platforms.config.json: \(error)")
+            return []
+        }
+    }
+
+    /// Map a JSON entry to the runtime PlatformDef, deriving the bundled
+    /// resource names from the shared asset paths so the config stays the
+    /// single source (adapterScript "dist/TwitterAdapter.js" -> script name
+    /// "TwitterAdapter"; cssPath "adapters/twitter/twitter.css" -> subdir
+    /// "adapters/twitter", file "twitter").
+    private static func makePlatformDef(_ e: ConfigEntry) -> PlatformDef {
+        let adapterScriptName = (e.adapterScript as NSString)
+            .lastPathComponent
+        let scriptName = (adapterScriptName as NSString).deletingPathExtension
+        let cssSubdir = (e.cssPath as NSString).deletingLastPathComponent
+        let cssFile = ((e.cssPath as NSString).lastPathComponent as NSString)
+            .deletingPathExtension
+        return PlatformDef(
+            id: e.id,
+            displayName: e.displayName,
+            feedURL: e.feedUrl,
+            loginURL: e.loginUrl,
+            adapterScriptName: scriptName,
+            cssFile: cssFile,
+            cssSubdir: cssSubdir,
+            hostRoots: e.hostRoots
+        )
+    }
 
     /// Lookup by canonical id (e.g., "twitter"). Returns nil for unknown ids.
     static func byId(_ id: String) -> PlatformDef? {

@@ -7,8 +7,8 @@ import type {
 // NOTE: adapters are built with esbuild bundle:false (standalone IIFE per
 // manifest content_scripts entry), so we CANNOT import shared/platforms
 // here — esbuild would leave `require(...)` calls that fail in the browser.
-// Keep the hostname check inline. Must match the `youtube` entry in
-// src/shared/platforms.ts (PLATFORM_RUNTIME.youtube.hostPattern).
+// Keep the hostname check inline. Must match the `youtube` entry's
+// hostRoots in src/shared/platforms.config.json (when YouTube ships).
 
 // Adapter is built unbundled (`bundle: false` in build.js) and runs as a
 // standalone content script, so we can't import shared helpers — they would
@@ -965,7 +965,7 @@ const BouncerYouTubeAdapter = class YouTubeAdapter implements PlatformAdapter {
 };
 
 // Self-guard by hostname — covers both www.youtube.com and m.youtube.com.
-// Regex mirrors src/shared/platforms.ts PLATFORM_RUNTIME.youtube.hostPattern.
+// Regex mirrors the `youtube` hostRoots in src/shared/platforms.config.json.
 if (/(^|\.)(m\.)?youtube\.com$/i.test(location.hostname)) {
   window.BouncerAdapter = BouncerYouTubeAdapter;
 }

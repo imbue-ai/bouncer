@@ -44,9 +44,10 @@ function readPlatformConfig() {
 // Synthesize per-platform manifest entries from the registry. Adding a new
 // platform here is automatic: drop an entry in platforms.config.json and
 // host_permissions, content_scripts, and web_accessible_resources all gain
-// the corresponding rows.
-function platformsToManifestSlice() {
-  const platforms = readPlatformConfig();
+// the corresponding rows — but only on the build targets listed in that
+// entry's `targets` array.
+function platformsToManifestSlice(target) {
+  const platforms = readPlatformConfig().filter(p => p.targets.includes(target));
   const sharedContentJs = ['browser-polyfill.js', 'dompurify.js'];
   const sharedContentCss = ['content.css'];
   return {
@@ -81,8 +82,9 @@ export function generateManifest(target = 'chrome') {
   const base = readJSON('manifest.base.json');
   const override = readJSON(`manifest.${target}.json`);
   // Per-platform manifest fields come from the shared registry, so the JSON
-  // template doesn't have to repeat them for every platform.
-  const platformSlice = platformsToManifestSlice();
+  // template doesn't have to repeat them for every platform. Filtered to the
+  // platforms whose `targets` include this build target.
+  const platformSlice = platformsToManifestSlice(target);
   const merged = deepMerge(deepMerge(base, platformSlice), override);
   const outPath = path.join(ROOT, 'manifest.json');
   fs.writeFileSync(outPath, JSON.stringify(merged, null, 2) + '\n');

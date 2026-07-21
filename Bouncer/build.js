@@ -117,6 +117,10 @@ const hasImbue = IMBUE_KEYS.every((k) => config[k] && config[k].length > 0);
 const define = {
   'process.env.NODE_ENV': '"production"',
   'process.env.HAS_IMBUE_BACKEND': JSON.stringify(String(hasImbue)),
+  // Baked into the bundles so src/shared/platforms.ts can filter PLATFORMS
+  // to the platforms that ship on this build target (keeps the popup, the
+  // pipeline, and storage keys in lockstep with the generated manifest).
+  'process.env.BOUNCER_TARGET': JSON.stringify(target),
 };
 for (const [key, value] of Object.entries(config)) {
   define[`process.env.${key}`] = JSON.stringify(value);
