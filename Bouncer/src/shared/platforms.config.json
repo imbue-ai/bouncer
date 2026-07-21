@@ -7,6 +7,14 @@
     "extraWebAccessible": ["adapters/twitter/fiber-extractor.js"]
   },
   {
+    "id": "youtube",
+    "manifestHost": "https://*.youtube.com/*",
+    "adapterScript": "dist/YouTubeAdapter.js",
+    "cssPath": "adapters/youtube/youtube.css",
+    "extraWebAccessible": ["adapters/youtube/lockup-extractor.js"],
+    "optional": true
+  },
+  {
     "id": "linkedin",
     "manifestHost": "https://www.linkedin.com/*",
     "adapterScript": "dist/LinkedInAdapter.js",

@@ -65,9 +65,50 @@ export async function syncOptionalPlatformScripts(): Promise<void> {
   }
 }
 
+/** Surface an in-context permission request for optional platforms the user
+ *  hasn't granted yet, on the given tab.
+ *
+ *  chrome.permissions.addHostAccessRequest (Chrome 133+) puts a request chip
+ *  on the extension's toolbar icon; clicking it runs the normal grant flow.
+ *  We fire it as tabs navigate so an existing user who visits LinkedIn/YouTube
+ *  is gently prompted right where they are — instead of the settings toggle
+ *  being the only discovery path. Because these hosts live in
+ *  optional_host_permissions (not host_permissions), shipping this in an
+ *  update never disables the extension or forces re-approval.
+ *
+ *  We deliberately do NOT inspect the tab's URL: Bouncer has neither the
+ *  "tabs" permission nor host permission for these sites, so changeInfo.url /
+ *  tab.url are stripped to undefined for exactly the tabs we care about.
+ *  (Adding "tabs" to read them would itself trigger the disable-on-update
+ *  warning we're avoiding.) Instead we hand Chrome the pattern and let it
+ *  match: the chip is only shown when the tab's URL matches, and the request
+ *  is reset on cross-origin navigation — so re-issuing per navigation is both
+ *  correct and idempotent. Granted platforms are skipped (their content
+ *  script is already registered). The promise rejects when the request can't
+ *  be surfaced (already pending/granted, unmatched tab); ignored. */
+async function requestOptionalAccessForTab(tabId: number): Promise<void> {
+  if (!chrome.permissions?.addHostAccessRequest) return; // Chrome <133
+  for (const p of optionalPlatforms()) {
+    if (await isGranted(p)) continue;
+    await chrome.permissions.addHostAccessRequest({ tabId, pattern: p.manifestHost })
+      .catch(() => { /* not shown for this tab right now; ignore */ });
+  }
+}
+
 /** Wire up permission listeners and run an initial reconcile. Called once
  *  from the background entry point at service worker startup. */
 export function initOptionalPlatforms(): void {
+  // Prompt for access as tabs navigate. We fire once per navigation (on the
+  // 'loading' status change) rather than on every onUpdated event; Chrome
+  // only surfaces the chip when the tab's URL matches an optional platform's
+  // pattern, so this is a no-op on unrelated sites.
+  if (chrome.tabs?.onUpdated && typeof chrome.permissions?.addHostAccessRequest === 'function') {
+    chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+      if (changeInfo.status !== 'loading') return;
+      requestOptionalAccessForTab(tabId).catch(() => { /* best-effort */ });
+    });
+  }
+
   // onAdded fires when the settings toggle's permissions.request() is
   // granted; onRemoved covers revocation via chrome://extensions. Both wake
   // the service worker, so the toggle needs no explicit message round-trip.
