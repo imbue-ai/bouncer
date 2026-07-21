@@ -1,39 +1,18 @@
 [
   {
     "id": "twitter",
-    "displayName": "X (Twitter)",
     "targets": ["chrome", "firefox", "safari"],
     "manifestHost": "https://x.com/*",
     "adapterScript": "dist/TwitterAdapter.js",
     "cssPath": "adapters/twitter/twitter.css",
-    "extraWebAccessible": ["adapters/twitter/fiber-extractor.js"],
-    "feedUrl": "https://x.com/home",
-    "loginUrl": "https://x.com/i/flow/login",
-    "hostRoots": [
-      "x.com",
-      "twitter.com",
-      "t.co",
-      "twimg.com",
-      "pbs.twimg.com",
-      "abs.twimg.com",
-      "video.twimg.com"
-    ]
+    "extraWebAccessible": ["adapters/twitter/fiber-extractor.js"]
   },
   {
     "id": "linkedin",
-    "displayName": "LinkedIn",
     "targets": ["safari"],
     "manifestHost": "https://*.linkedin.com/*",
     "adapterScript": "dist/LinkedInAdapter.js",
     "cssPath": "adapters/linkedin/linkedin.css",
-    "extraWebAccessible": [],
-    "feedUrl": "https://www.linkedin.com/feed/",
-    "loginUrl": null,
-    "hostRoots": [
-      "linkedin.com",
-      "licdn.com",
-      "static.licdn.com",
-      "media.licdn.com"
-    ]
+    "extraWebAccessible": []
   }
 ]
