@@ -5,7 +5,7 @@ import { PREDEFINED_MODELS, DEFAULT_MODEL } from '../shared/models';
 import { escapeHtml, parseHTML } from '../shared/utils';
 import { getStorage, setStorage, removeStorage, clampThreshold, clampImageThreshold, clampReplyThreshold, aiIntentAutoActive } from '../shared/storage';
 import { asyncHandler } from '../shared/async';
-import { PLATFORMS, enabledStorageKey } from '../shared/platforms';
+import { PLATFORMS, PLATFORMS_FOR_TARGET, enabledStorageKey } from '../shared/platforms';
 
 // DOM id helpers — keep these in one place so the render path, hydration,
 // and change-handlers all agree on the naming convention.
@@ -34,7 +34,7 @@ function platformSubContentHTML(id: SiteId): string {
 function renderPlatformRows(): void {
   const container = document.getElementById('platformsContainer');
   if (!container) return;
-  const html = PLATFORMS.map(p => {
+  const html = PLATFORMS_FOR_TARGET.map(p => {
     const hasSub = platformSubContentHTML(p.id).length > 0;
     return `
       <div class="api-provider platform-provider" id="${platformRowId(p.id)}">

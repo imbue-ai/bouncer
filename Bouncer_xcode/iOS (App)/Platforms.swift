@@ -2,11 +2,13 @@
 //  Platforms.swift
 //  iOS (App)
 //
-//  Single source of truth for the platforms Bouncer supports on iOS. The
-//  picker, the WebView's script/CSS injection, the URL-to-platform sync, and
-//  the per-platform feed-URL switch all read from this list instead of
-//  hardcoding the ids. Adding a new platform is one entry here (plus the
-//  adapter implementation in Bouncer/adapters/<id>/).
+//  Per-platform iOS data (feed URL, adapter/CSS names, host roots) lives in
+//  `defined` below. WHICH of those platforms actually appear is gated by the
+//  shared Bouncer/src/shared/platforms.config.json (its `targets` must include
+//  "safari") — the single source of truth for platform enablement, shared with
+//  the extension build. The picker, WebView script/CSS injection,
+//  URL-to-platform sync, and feed-URL switch all read `Platforms.all`, which is
+//  `defined` intersected with what the config enables.
 //
 
 import Foundation
@@ -58,9 +60,9 @@ struct PlatformDef {
 }
 
 enum Platforms {
-    /// Order matters for the PlatformPickerView: rows render top-to-bottom in
-    /// this order.
-    static let all: [PlatformDef] = [
+    /// Per-platform iOS data, in PlatformPickerView row order (top to bottom).
+    /// WHICH of these actually appear is gated by `enabledIds` — see `all`.
+    private static let defined: [PlatformDef] = [
         PlatformDef(
             id: "twitter",
             displayName: "X (Twitter)",
@@ -103,6 +105,37 @@ enum Platforms {
             ]
         ),
     ]
+
+    /// Platforms actually shown on iOS: the entries `defined` above that are
+    /// also enabled for the "safari" target in the shared
+    /// platforms.config.json — the single source of truth for which platforms
+    /// ship where. A platform missing from the config (or without "safari" in
+    /// its targets) is dropped from the picker, WebView injection, and host
+    /// guard, so the native UI can never offer a platform the JS pipeline
+    /// doesn't know about.
+    static let all: [PlatformDef] = defined.filter { enabledIds.contains($0.id) }
+
+    /// Canonical ids enabled for this app's target ("safari"), read from the
+    /// bundled platforms.config.json.
+    private static let enabledIds: Set<String> = loadEnabledIds()
+
+    private static func loadEnabledIds() -> Set<String> {
+        guard let url = Bundle.main.url(
+                forResource: "platforms.config", withExtension: "json", subdirectory: "shared"),
+              let data = try? Data(contentsOf: url),
+              let entries = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+            assertionFailure("platforms.config.json missing or invalid in app bundle")
+            return []
+        }
+        var ids = Set<String>()
+        for entry in entries {
+            guard let id = entry["id"] as? String,
+                  let targets = entry["targets"] as? [String],
+                  targets.contains("safari") else { continue }
+            ids.insert(id)
+        }
+        return ids
+    }
 
     /// Lookup by canonical id (e.g., "twitter"). Returns nil for unknown ids.
     static func byId(_ id: String) -> PlatformDef? {

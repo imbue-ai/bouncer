@@ -1,9 +1,18 @@
 [
   {
     "id": "twitter",
+    "targets": ["chrome", "firefox", "safari"],
     "manifestHost": "https://x.com/*",
     "adapterScript": "dist/TwitterAdapter.js",
     "cssPath": "adapters/twitter/twitter.css",
     "extraWebAccessible": ["adapters/twitter/fiber-extractor.js"]
+  },
+  {
+    "id": "linkedin",
+    "targets": ["safari"],
+    "manifestHost": "https://*.linkedin.com/*",
+    "adapterScript": "dist/LinkedInAdapter.js",
+    "cssPath": "adapters/linkedin/linkedin.css",
+    "extraWebAccessible": []
   }
 ]

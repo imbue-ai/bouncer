@@ -25,6 +25,11 @@ export type SiteId = typeof PLATFORM_IDS[number];
  *  needing a TS toolchain. */
 export interface PlatformBuildConfig {
   readonly id: SiteId;
+  /** Build targets this platform ships on (matches build.js `--target=`;
+   *  `safari` = the iOS + macOS apps). The single source of truth for which
+   *  platforms appear where — read here, by generate-manifests.mjs, and by
+   *  the iOS app (Platforms.swift). */
+  readonly targets: readonly string[];
   /** Pattern used in host_permissions, content_scripts, and
    *  web_accessible_resources matches. */
   readonly manifestHost: string;
@@ -72,12 +77,30 @@ const PLATFORM_RUNTIME: Record<SiteId, PlatformRuntimeOnly> = {
 
 export type PlatformDef = PlatformBuildConfig & PlatformRuntimeOnly;
 
-/** Joined registry: build-config (from JSON) + runtime fields. */
+/** Current build target. build.js replaces `process.env.BOUNCER_TARGET` with
+ *  a literal at bundle time; outside a build (e.g. vitest) it falls back to
+ *  `chrome`. */
+export const CURRENT_TARGET = process.env.BOUNCER_TARGET || 'chrome';
+
+/** Joined registry: build-config (from JSON) + runtime fields — EVERY
+ *  configured platform, regardless of build target. The content pipeline,
+ *  storage keys, and lookups must not be gated by the JS bundle's target:
+ *  inside the iOS app the same bundle runs for X and LinkedIn, and injection
+ *  is decided by the manifest (extension) or Platforms.swift (iOS), not by
+ *  this list. Target-gating this array is what let the iOS picker offer a
+ *  platform the pipeline then ignored — keep it target-independent. */
 export const PLATFORMS: readonly PlatformDef[] =
   (platformsConfig as readonly PlatformBuildConfig[]).map(cfg => ({
     ...cfg,
     ...PLATFORM_RUNTIME[cfg.id],
   }));
+
+/** Platforms that ship on the current build target. Use ONLY for
+ *  build-specific UI (e.g. the extension popup's per-platform rows) so the
+ *  Chrome build doesn't surface an app-only platform. Never use this to gate
+ *  the pipeline — see the note on PLATFORMS. */
+export const PLATFORMS_FOR_TARGET: readonly PlatformDef[] =
+  PLATFORMS.filter(p => p.targets.includes(CURRENT_TARGET));
 
 // ---------------------------------------------------------------------------
 // Lookup helpers
