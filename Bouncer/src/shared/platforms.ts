@@ -80,15 +80,27 @@ export type PlatformDef = PlatformBuildConfig & PlatformRuntimeOnly;
 /** Current build target. build.js replaces `process.env.BOUNCER_TARGET` with
  *  a literal at bundle time; outside a build (e.g. vitest) it falls back to
  *  `chrome`. */
-const CURRENT_TARGET = process.env.BOUNCER_TARGET || 'chrome';
+export const CURRENT_TARGET = process.env.BOUNCER_TARGET || 'chrome';
 
-/** Joined registry: build-config (from JSON) + runtime fields, filtered to
- *  the platforms that ship on this build target. A platform not shipping here
- *  is invisible to every consumer (popup, pipeline, storage keys, lookups). */
+/** Joined registry: build-config (from JSON) + runtime fields — EVERY
+ *  configured platform, regardless of build target. The content pipeline,
+ *  storage keys, and lookups must not be gated by the JS bundle's target:
+ *  inside the iOS app the same bundle runs for X and LinkedIn, and injection
+ *  is decided by the manifest (extension) or Platforms.swift (iOS), not by
+ *  this list. Target-gating this array is what let the iOS picker offer a
+ *  platform the pipeline then ignored — keep it target-independent. */
 export const PLATFORMS: readonly PlatformDef[] =
-  (platformsConfig as readonly PlatformBuildConfig[])
-    .filter(cfg => cfg.targets.includes(CURRENT_TARGET))
-    .map(cfg => ({ ...cfg, ...PLATFORM_RUNTIME[cfg.id] }));
+  (platformsConfig as readonly PlatformBuildConfig[]).map(cfg => ({
+    ...cfg,
+    ...PLATFORM_RUNTIME[cfg.id],
+  }));
+
+/** Platforms that ship on the current build target. Use ONLY for
+ *  build-specific UI (e.g. the extension popup's per-platform rows) so the
+ *  Chrome build doesn't surface an app-only platform. Never use this to gate
+ *  the pipeline — see the note on PLATFORMS. */
+export const PLATFORMS_FOR_TARGET: readonly PlatformDef[] =
+  PLATFORMS.filter(p => p.targets.includes(CURRENT_TARGET));
 
 // ---------------------------------------------------------------------------
 // Lookup helpers
