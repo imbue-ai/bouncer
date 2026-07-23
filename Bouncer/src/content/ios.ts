@@ -40,6 +40,7 @@ interface FFWindow {
   __ff_clearModelCache?: () => Promise<void>;
 }
 interface WebkitMessageHandlers {
+  feedfilterShowSheet?: { postMessage: (msg: string) => void };
   feedfilterPhrasesUpdated?: { postMessage: (msg: string) => void };
 }
 interface WebkitBridge {
@@ -50,13 +51,14 @@ declare const webkit: WebkitBridge;
 // Dependencies (set by initIOS from index.ts)
 let _deps: IOSDeps;
 
-// iOS Safari detection (for Safari Web Extension on iOS)
+// "iOS" here means "running inside a native shell that provides the Bouncer
+// sheet" — true for both iOS WKWebView and the Android WebView app (whose
+// startup shim aliases window.AndroidBridge to webkit.messageHandlers). The
+// flag name is kept for git churn; new call sites should read it as
+// "native-host mode."
 export function isIOSSafari() {
-  const ua = navigator.userAgent;
-  // Exclude iPad — it uses desktop Twitter and should get the desktop UI
-  const isIPhone = /iPhone|iPod/.test(ua);
-  const isSafari = /Safari/.test(ua) && !/Chrome|CriOS|FxiOS/.test(ua);
-  return isIPhone && isSafari;
+  return typeof webkit !== 'undefined'
+    && typeof webkit?.messageHandlers?.feedfilterShowSheet?.postMessage === 'function';
 }
 
 export const IS_IOS = isIOSSafari();

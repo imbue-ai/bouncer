@@ -177,11 +177,19 @@ import { formatPostForEvaluation } from '../shared/utils';
 
   // Re-evaluate a single post
   async function reEvaluateSinglePost(article: HTMLElement) {
-    // Use store data for cache clearing (same source as evaluatePost)
+    // Mirror evaluatePost's extraction strategy so the cache key we clear
+    // matches the one that was written. In in-app mode (Android/iOS WKWebView)
+    // evaluatePost falls back to DOM when the Redux store isn't reachable;
+    // if we don't mirror that fallback here, the cache delete misses (store
+    // text ≠ DOM text → different cache keys) or the function returns
+    // silently and the Re-evaluate button does nothing.
     let content: PostContent | undefined;
     try {
       content = await adapter.extractPostContentFromStore(article) ?? undefined;
     } catch { /* store not ready */ }
+    if (!content && isInApp) {
+      content = extractPostContent(article);
+    }
     if (!content) return;
 
     const hasContent = content.text.trim() || (content.imageUrls && content.imageUrls.length > 0);

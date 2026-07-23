@@ -1,0 +1,83 @@
+{
+  "manifest_version": 3,
+  "name": "Bouncer Bridge",
+  "version": "1.1.3",
+  "description": "Bouncer content scripts and native bridge for the Android GeckoView host.",
+  "browser_specific_settings": {
+    "gecko": { "id": "bouncer@imbue.com" }
+  },
+  "permissions": [
+    "nativeMessaging",
+    "geckoViewAddons"
+  ],
+  "host_permissions": [
+    "https://x.com/*",
+    "https://twitter.com/*"
+  ],
+  "background": {
+    "scripts": ["background.js"]
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://x.com/*", "https://twitter.com/*"],
+      "exclude_matches": [
+        "https://x.com/i/flow/*",
+        "https://twitter.com/i/flow/*",
+        "https://x.com/login*",
+        "https://twitter.com/login*",
+        "https://x.com/signup*",
+        "https://twitter.com/signup*",
+        "https://x.com/account/*",
+        "https://twitter.com/account/*"
+      ],
+      "world": "ISOLATED",
+      "run_at": "document_start",
+      "js": ["bridge_iso.js"]
+    },
+    {
+      "matches": ["https://x.com/*", "https://twitter.com/*"],
+      "exclude_matches": [
+        "https://x.com/i/flow/*",
+        "https://twitter.com/i/flow/*",
+        "https://x.com/login*",
+        "https://twitter.com/login*",
+        "https://x.com/signup*",
+        "https://twitter.com/signup*",
+        "https://x.com/account/*",
+        "https://twitter.com/account/*"
+      ],
+      "world": "MAIN",
+      "run_at": "document_start",
+      "js": [
+        "bridge_page.js",
+        "ChromePolyfill.js",
+        "adapters/twitter/fiber-extractor.js",
+        "dist/background-app.js"
+      ]
+    },
+    {
+      "matches": ["https://x.com/*", "https://twitter.com/*"],
+      "exclude_matches": [
+        "https://x.com/i/flow/*",
+        "https://twitter.com/i/flow/*",
+        "https://x.com/login*",
+        "https://twitter.com/login*",
+        "https://x.com/signup*",
+        "https://twitter.com/signup*",
+        "https://x.com/account/*",
+        "https://twitter.com/account/*"
+      ],
+      "world": "MAIN",
+      "run_at": "document_end",
+      "js": [
+        "dompurify.js",
+        "dist/TwitterAdapter.js",
+        "dist/content.js"
+      ],
+      "css": [
+        "content.css",
+        "adapters/twitter/twitter.css"
+      ]
+    }
+  ]
+}

@@ -345,6 +345,13 @@
   };
 
   window.__ff_getAppCheckToken = function() {
+    // Android: native appends the App Check token to the WS URL in
+    // WebSocketBridge.open, so JS never asks for it. The polyfill still
+    // exposes this function because ws-manager.ts sniffs its presence to
+    // decide between the iOS-style and Chrome-style auth paths.
+    if (window.__ff_platform === 'android') {
+      return Promise.resolve('');
+    }
     return new Promise(function(resolve) {
       if (typeof webkit === 'undefined' || !webkit.messageHandlers || !webkit.messageHandlers.feedfilterGetAppCheckToken) {
         resolve('');
@@ -353,7 +360,7 @@
       const id = String(++_appCheckCallbackId);
       _appCheckCallbacks[id] = resolve;
       webkit.messageHandlers.feedfilterGetAppCheckToken.postMessage(id);
-      // Safety timeout — don't block forever if native never responds
+      // Safety timeout — don't block forever if native never responds.
       setTimeout(function() {
         if (_appCheckCallbacks[id]) {
           delete _appCheckCallbacks[id];
