@@ -631,37 +631,6 @@ input[type="password"]:focus {
   color: #f4212e;
 }
 
-/* Stats */
-.stats-section {
-  display: flex;
-  gap: 12px;
-  padding: 12px;
-  background: #f7f9f9;
-  border-radius: 12px;
-}
-
-.stat {
-  flex: 1;
-  text-align: center;
-  min-width: 0;
-}
-
-.stat-value {
-  display: block;
-  font-size: 18px;
-  font-weight: 700;
-  color: #1d9bf0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.stat-label {
-  font-size: 10px;
-  color: #536471;
-  text-transform: uppercase;
-}
-
 /* Footer */
 /*footer {*/
 /*  padding-top: 12px;*/

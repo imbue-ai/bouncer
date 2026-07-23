@@ -1,8 +1,9 @@
 // Bouncer - Popup Script
 
-import type { ModelDef, LocalModelStatus, StorageSchema, SiteId } from '../types';
+import type { ModelDef, LocalModelStatus, StorageSchema, SiteId, UsageSummary } from '../types';
 import { PREDEFINED_MODELS, DEFAULT_MODEL } from '../shared/models';
 import { escapeHtml, parseHTML } from '../shared/utils';
+import { formatDuration } from '../shared/usage-utils';
 import { getStorage, setStorage, removeStorage, clampThreshold, clampImageThreshold, clampReplyThreshold, aiIntentAutoActive } from '../shared/storage';
 import { asyncHandler } from '../shared/async';
 import { PLATFORMS, PLATFORMS_FOR_TARGET, enabledStorageKey } from '../shared/platforms';
@@ -266,6 +267,7 @@ export async function init() {
   setupLocalModelListeners();
 
   setupStorageListener();
+  await loadUsageSummary();
 
   // Deep link from the in-feed trial notice ("Download local model"): select
   // the Local radio so its download section is immediately visible. click()
@@ -282,10 +284,62 @@ export async function init() {
   }
 }
 
+// ==================== Feed usage summary (teaser) ====================
+//
+// The popup shows only a slim teaser (today's time saved + time on feed) plus a
+// button that opens the full dashboard (both pies, all windows) in its own tab
+// via stats.html. Full-view rendering lives in src/stats/.
+
+let usageSummary: UsageSummary | null = null;
+
+async function loadUsageSummary() {
+  const body = document.getElementById('usageSummaryBody');
+  try {
+    const { usageSummaryEnabled } = await getStorage(['usageSummaryEnabled']);
+    const enabled = usageSummaryEnabled !== false;
+    if (body) body.style.display = enabled ? '' : 'none';
+    if (!enabled) return;
+
+    const summary: UsageSummary | undefined = await chrome.runtime.sendMessage({ type: 'getUsageSummary' });
+    if (!summary) return;
+    usageSummary = summary;
+    renderTeaser();
+  } catch (err) {
+    console.error('[Popup] loadUsageSummary failed:', err);
+  }
+}
+
+// Teaser: today's time saved + time on feed. Hidden until there's real lifetime
+// activity so a brand-new user doesn't see a "0s" card.
+function renderTeaser() {
+  const section = document.getElementById('statsSection');
+  const savedEl = document.getElementById('statsTeaserSaved');
+  const timeEl = document.getElementById('statsTeaserTime');
+  if (!section || !savedEl || !timeEl || !usageSummary) return;
+
+  const hasAnyData = usageSummary.allTime.totalTimeMs > 0 ||
+    usageSummary.allTime.totalSeen > 0 || usageSummary.allTime.totalBlocked > 0;
+  section.style.display = hasAnyData ? '' : 'none';
+  if (!hasAnyData) return;
+
+  savedEl.textContent = formatDuration(usageSummary.today.timeSavedMs);
+  timeEl.textContent = formatDuration(usageSummary.today.totalTimeMs);
+}
+
+// Open the full stats dashboard in its own tab.
+function openFullStats() {
+  void chrome.tabs.create({ url: chrome.runtime.getURL('stats.html') });
+}
+
 function setupStorageListener() {
   chrome.storage.onChanged.addListener((changes, areaName) => {
     if (areaName === 'local' && changes.authErrorApis) {
       loadSettings().catch(err => console.error('[Popup] loadSettings failed:', err));
+    }
+    // Live-refresh the summary as the background records feed time (usage) or
+    // new hides (stats), or the opt-in toggle flips, while the popup is open.
+    if (areaName === 'local' && (changes.usage || changes.stats || changes.usageSummaryEnabled)) {
+      loadUsageSummary().catch(err => console.error('[Popup] loadUsageSummary failed:', err));
     }
     if (areaName === 'local' && changes.localModelStatuses) {
       localModelStatuses = (changes.localModelStatuses.newValue as Record<string, LocalModelStatus>) || {};
@@ -365,6 +419,8 @@ function setupStorageListener() {
 async function loadSettings() {
   const data = await getStorage([
     'enabled',
+    'usageSummaryEnabled',
+    'showRecapOnExit',
     'selectedModel',
     'customModels',
     'openrouterApiKey',
@@ -404,6 +460,14 @@ async function loadSettings() {
   // key and skips reply evaluation on permalink pages when this is off.
   const filterRepliesEl = document.getElementById('enableFilterReplies') as HTMLInputElement | null;
   if (filterRepliesEl) filterRepliesEl.checked = data.filterReplies !== false;
+
+  // Feed usage summary opt-in (default on for installs predating the toggle).
+  const usageSummaryEl = document.getElementById('enableUsageSummary') as HTMLInputElement | null;
+  if (usageSummaryEl) usageSummaryEl.checked = data.usageSummaryEnabled !== false;
+
+  // Session recap opt-in (default off).
+  const recapEl = document.getElementById('enableRecapOnExit') as HTMLInputElement | null;
+  if (recapEl) recapEl.checked = data.showRecapOnExit === true;
 
   // Platform master toggles. Default to true for backwards compatibility.
   // The expanded/disabled visual state mirrors the toggle's value so the
@@ -788,6 +852,22 @@ function setupEventListeners() {
     const checked = (e.target as HTMLInputElement).checked;
     await setStorage({ filterReplies: checked });
   })().catch(err => console.error('[Popup] enableFilterReplies change failed:', err)); });
+
+  // Feed usage summary opt-in. Persisting drives the content script's dwell
+  // tracker (via its storage listener); refresh the panel so it shows/hides.
+  document.getElementById('enableUsageSummary')?.addEventListener('change', (e) => { (async () => {
+    const checked = (e.target as HTMLInputElement).checked;
+    await setStorage({ usageSummaryEnabled: checked });
+    await loadUsageSummary();
+  })().catch(err => console.error('[Popup] enableUsageSummary change failed:', err)); });
+
+  // "See full stats" opens the dashboard page in its own tab.
+  document.getElementById('seeFullStatsBtn')?.addEventListener('click', () => openFullStats());
+
+  // Session-recap opt-in.
+  document.getElementById('enableRecapOnExit')?.addEventListener('change', (e) => { (async () => {
+    await setStorage({ showRecapOnExit: (e.target as HTMLInputElement).checked });
+  })().catch(err => console.error('[Popup] enableRecapOnExit change failed:', err)); });
 
   // Platform master toggles. Iterate the registry instead of one
   // handler-per-platform. Dim the body in-line so the user sees the

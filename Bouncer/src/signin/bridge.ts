@@ -3,8 +3,17 @@
 // credential to the extension's background script, and posts an ack back
 // to the page so it can tell whether delivery actually happened.
 
-function ack(success: boolean, error?: string): void {
-  window.postMessage({ type: 'bouncer-bridge-ack', success, error }, '*');
+// Origins the hosted sign-in page is served from — matches the content_scripts
+// `matches` in manifest.safari.json. A credential-bearing message is only
+// honored (and the ack only sent) if event.origin is one of these, so the
+// bridge can't be driven from any other origin it might end up loaded on.
+const ALLOWED_ORIGINS = new Set([
+  'https://bouncer.imbue.com',
+  'https://bouncer-dev.imbue.com',
+]);
+
+function ack(targetOrigin: string, success: boolean, error?: string): void {
+  window.postMessage({ type: 'bouncer-bridge-ack', success, error }, targetOrigin);
 }
 
 interface SigninResultMessage {
@@ -16,6 +25,7 @@ interface SigninResultMessage {
 
 window.addEventListener('message', (event) => {
   if (event.source !== window) return;
+  if (!ALLOWED_ORIGINS.has(event.origin)) return;
   const data = event.data as SigninResultMessage | undefined;
   if (!data || data.type !== 'bouncer-signin-result') return;
 
@@ -31,10 +41,10 @@ window.addEventListener('message', (event) => {
   }).then((response: unknown) => {
     console.log('[Bouncer SignIn Bridge] Background response:', response);
     const success = !!(response as { success?: boolean })?.success;
-    ack(success, success ? undefined : 'Extension failed to process credential');
+    ack(event.origin, success, success ? undefined : 'Extension failed to process credential');
   }).catch((err: unknown) => {
     console.error('[Bouncer SignIn Bridge] Error:', err);
-    ack(false, err instanceof Error ? err.message : String(err));
+    ack(event.origin, false, err instanceof Error ? err.message : String(err));
   });
 });
 

@@ -36,6 +36,8 @@ import {
 } from './ui';
 
 import { formatPostForEvaluation } from '../shared/utils';
+import { createUsageTracker, type UsageTracker } from './usage-tracker';
+import { classifyContent } from '../shared/content-classifier';
 
 (function() {
   'use strict';
@@ -97,6 +99,28 @@ import { formatPostForEvaluation } from '../shared/utils';
   // until the user explicitly opts out.
   let filterReplies = true;
   let currentlyProcessingPostUrl: string | null = null;
+
+  // ==================== Usage summary (opt-in) ====================
+
+  // Current filter topics, kept live so the content classifier can use them as
+  // extra category buckets when tagging not-filtered posts.
+  let currentFilterPhrases: string[] = [];
+
+  // Per-post dwell tracker. Created only while the usage summary is enabled so
+  // opting out stops all tracking (including on-feed time). null = disabled.
+  let usageTracker: UsageTracker | null = null;
+
+  function setUsageTracking(on: boolean): void {
+    if (on && !usageTracker) {
+      usageTracker = createUsageTracker((delta) => {
+        chrome.runtime.sendMessage({ type: 'recordUsage', totalTimeMs: delta.totalTimeMs, byCategory: delta.byCategory })
+          .catch(() => { /* background asleep / navigating away — resumes next flush */ });
+      });
+    } else if (!on && usageTracker) {
+      usageTracker.destroy();
+      usageTracker = null;
+    }
+  }
 
   // ==================== Wire up modules ====================
 
@@ -349,6 +373,17 @@ import { formatPostForEvaluation } from '../shared/utils';
         reasoning: response.reasoning || 'No reasoning available',
         rawResponse: response.rawResponse || null
       });
+
+      // Usage summary: track dwell for NOT-filtered posts, bucketed by a
+      // heuristic content type (filtered posts are hidden — their breakdown
+      // comes from blocked counts instead). No-op when the feature is off.
+      if (usageTracker) {
+        if (effectiveShouldHide) {
+          usageTracker.untrack(article);
+        } else {
+          usageTracker.track(article, classifyContent(content.text, currentFilterPhrases));
+        }
+      }
 
       if (effectiveShouldHide) {
         if (content.postUrl) {
@@ -648,6 +683,13 @@ import { formatPostForEvaluation } from '../shared/utils';
     await checkLocalModelActive();
     await checkAuthStatus();
 
+    // Usage summary: enabled by default (undefined = on); load the current
+    // filter topics so allowed posts can be content-classified, then start the
+    // dwell tracker unless the user opted out.
+    const usageData = await getStorage(['usageSummaryEnabled']);
+    currentFilterPhrases = await getDescriptions(descriptionsKey);
+    setUsageTracking(usageData.usageSummaryEnabled !== false);
+
     if (enabled) {
       observePosts();
       processExistingPosts();
@@ -714,7 +756,12 @@ import { formatPostForEvaluation } from '../shared/utils';
         const newModel = (changes.selectedModel.newValue as string) || 'imbue';
         isLocalModelActive = newModel.startsWith('local:') || false;
       }
+      if (changes.usageSummaryEnabled) {
+        setUsageTracking(changes.usageSummaryEnabled.newValue !== false);
+      }
       if (changes[descriptionsKey]) {
+        // Keep the content classifier's extra category buckets in sync.
+        currentFilterPhrases = (changes[descriptionsKey].newValue as string[] | undefined) || [];
         syncFilterPhrases();
         // The AI-detection state is per-platform (this platform's phrases ∩
         // the judged aiPhrases — see aiIntentActiveForSite), so editing this

@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Bouncer Settings</title>
   <link rel="stylesheet" href="popup.css">
+  <link rel="stylesheet" href="stats-components.css">
 </head>
 <body>
   <!-- Sign-in screen (shown when not authenticated) -->
@@ -108,6 +109,45 @@
           <span class="toggle-switch-label">Also filter replies in threads</span>
         </span>
       </label>
+    </section>
+
+    <!-- Feed usage summary (opt-in). The in-popup view is a slim teaser (time
+         saved + time on feed, today); the full breakdown with both pies opens
+         in its own tab via stats.html. -->
+    <section class="usage-summary-section">
+      <label class="toggle-switch">
+        <input type="checkbox" id="enableUsageSummary" checked>
+        <span class="toggle-switch-slider" aria-hidden="true"></span>
+        <span class="toggle-switch-text">
+          <span class="toggle-switch-label">Feed usage summary</span>
+          <span class="toggle-switch-sub">Track your time on feed and see what you scroll past.</span>
+        </span>
+      </label>
+
+      <div id="usageSummaryBody" style="display: none;">
+        <div class="stats-section" id="statsSection" style="display: none;">
+          <div class="stats-teaser-row">
+            <div class="stats-metric">
+              <span class="stats-metric-value" id="statsTeaserSaved">0s</span>
+              <span class="stats-metric-label">time saved today</span>
+            </div>
+            <div class="stats-metric">
+              <span class="stats-metric-value" id="statsTeaserTime">0s</span>
+              <span class="stats-metric-label">time on feed today</span>
+            </div>
+          </div>
+          <button type="button" class="see-full-stats-btn" id="seeFullStatsBtn">See full stats &rarr;</button>
+        </div>
+
+        <label class="toggle-switch">
+          <input type="checkbox" id="enableRecapOnExit">
+          <span class="toggle-switch-slider" aria-hidden="true"></span>
+          <span class="toggle-switch-text">
+            <span class="toggle-switch-label">Show recap when I close X</span>
+            <span class="toggle-switch-sub">Opens your session stats in a new tab (and on your next visit if missed).</span>
+          </span>
+        </label>
+      </div>
     </section>
 
     <!-- Everything below is power-user surface: full model list, per-platform

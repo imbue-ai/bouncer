@@ -224,7 +224,8 @@ async function build() {
   const otherCtx = await esbuild.context({
     entryPoints: [
       path.join(__dirname, 'popup.js'),
-      path.join(__dirname, 'content.js')
+      path.join(__dirname, 'content.js'),
+      path.join(__dirname, 'stats.js')
     ],
     bundle: true,
     outdir: path.join(__dirname, 'dist'),

@@ -11,9 +11,10 @@ import { callDirectAPI, callAnthropicAPI, callImbueAPI, callImbueAiTextDetection
 import { runDetectors, type Detector, type DetectorResult } from './detectors';
 import { callLocalInference, localEngine } from './local-model';
 import { iosLocalClassify, iosLocalGenerate, iosLocalAiTextDetect } from './ios-local-bridge';
-import { getStorage, setStorage, removeStorage, getDescriptions, clampThreshold, clampImageThreshold, clampReplyThreshold, aiIntentActiveForSite, DEFAULT_AI_TEXT_DETECTION_THRESHOLD, DEFAULT_AI_IMAGE_DETECTION_THRESHOLD } from '../shared/storage';
+import { getStorage, setStorage, removeStorage, getDescriptions, clampThreshold, clampImageThreshold, clampReplyThreshold, aiIntentActiveForSite, withStorageLock, DEFAULT_AI_TEXT_DETECTION_THRESHOLD, DEFAULT_AI_IMAGE_DETECTION_THRESHOLD } from '../shared/storage';
 import { canJudgeAiIntent } from './ai-intent';
 import { PLATFORMS, enabledStorageKey } from '../shared/platforms';
+import { recordFilterStat } from '../shared/stats-utils';
 export { DEFAULT_AI_TEXT_DETECTION_THRESHOLD, DEFAULT_AI_IMAGE_DETECTION_THRESHOLD };
 import type {
   EvaluationResult, PipelineResponse, PipelineError, PendingEvaluation,
@@ -1057,14 +1058,20 @@ async function processBatch(): Promise<void> {
       if (firstKey !== undefined) evaluationCache.delete(firstKey);
     }
 
-    // Update stats
-    const statsData = await getStorage(['stats', 'anonFilterCount']);
-    const stats = statsData.stats || { filtered: 0, evaluated: 0, totalCost: 0 };
-    stats.evaluated++;
-    if (evalResult.shouldHide) {
-      stats.filtered++;
-    }
-    await setStorage({ stats });
+    // Update stats. Serialized so concurrent batch completions (and anything
+    // else read-modify-writing `stats`) can't clobber each other's counts.
+    const statsData = await withStorageLock('stats', async () => {
+      const data = await getStorage(['stats', 'anonFilterCount']);
+      const stats = data.stats || { filtered: 0, evaluated: 0, totalCost: 0 };
+      stats.evaluated++;
+      if (evalResult.shouldHide) {
+        stats.filtered++;
+        // Record the per-category / per-day breakdown that powers the stats panel.
+        recordFilterStat(stats, evalResult.category, evalResult.timestamp ?? Date.now());
+      }
+      await setStorage({ stats });
+      return data;
+    });
 
     // Guest trial: count posts filtered while signed in anonymously, lifetime
     // across all sessions. iOS is permanently anonymous by design (App Check)

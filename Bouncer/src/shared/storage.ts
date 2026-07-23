@@ -26,6 +26,22 @@ export async function removeStorage<K extends keyof StorageSchema>(
   await chrome.storage.local.remove(keys);
 }
 
+// Per-key promise chains serializing read-modify-write cycles on counter-style
+// storage keys (usage, stats). Without this, two concurrent handlers — e.g. two
+// feed tabs flushing usage at once, or a usage flush racing a batch's stats
+// update — interleave at their awaits and one write clobbers the other's delta.
+// Scoped per service-worker instance, which is all Chrome runs at a time.
+const storageLocks = new Map<string, Promise<unknown>>();
+
+/** Run `fn` exclusively with respect to other withStorageLock(key) calls. */
+export function withStorageLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  const prev = storageLocks.get(key) ?? Promise.resolve();
+  // Chain regardless of the previous holder's outcome; propagate only our own.
+  const run = prev.then(fn, fn);
+  storageLocks.set(key, run.catch(() => undefined));
+  return run;
+}
+
 function siteIdFromDescKey(key: DescriptionKey): SiteId {
   return key.slice('descriptions_'.length) as SiteId;
 }
