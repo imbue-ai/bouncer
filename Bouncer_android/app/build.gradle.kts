@@ -137,7 +137,35 @@ abstract class CopyExtensionAssetsTask : org.gradle.api.DefaultTask() {
     }
 }
 
+// Rebuild the extension JS before packaging it, so the APK can never ship a
+// stale Bouncer/dist (gradle only ever copied dist/, it never rebuilt it).
+// Runs through a login shell because Android Studio's Gradle daemon doesn't
+// inherit the interactive PATH, so plain "npm" wouldn't resolve under nvm or
+// Homebrew installs.
+val buildExtensionJs = tasks.register<Exec>("buildExtensionJs") {
+    val bouncer = rootDir.parentFile.resolve("Bouncer")
+    workingDir = bouncer
+    if (System.getProperty("os.name").startsWith("Windows")) {
+        commandLine("cmd", "/c", "npm run build")
+    } else {
+        commandLine("/bin/zsh", "-lc", "([ -d node_modules ] || npm install) && npm run build")
+    }
+    inputs.dir(bouncer.resolve("src"))
+    inputs.dir(bouncer.resolve("adapters"))
+    inputs.files(
+        bouncer.resolve("build.js"),
+        bouncer.resolve("generate-manifests.mjs"),
+        bouncer.resolve("manifest.base.json"),
+        bouncer.resolve("package.json"),
+        bouncer.resolve("package-lock.json"),
+    )
+    // .env* select the backend and are baked into the bundles as defines.
+    inputs.files(fileTree(bouncer) { include(".env*") })
+    outputs.dir(bouncer.resolve("dist"))
+}
+
 val copyExtensionAssets = tasks.register<CopyExtensionAssetsTask>("copyExtensionAssets") {
+    dependsOn(buildExtensionJs)
     val bouncer = rootDir.parentFile.resolve("Bouncer")
     val iosShell = rootDir.parentFile.resolve("Bouncer_xcode/iOS (App)")
     bouncerDir.set(bouncer)
