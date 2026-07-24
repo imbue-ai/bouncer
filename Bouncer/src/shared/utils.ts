@@ -14,6 +14,29 @@ export const GUEST_FILTER_LIMIT = 1_000_000_000;
 // LLM intent judgment.
 export const AI_DETECTION_SEED_PHRASE = 'AI slop';
 
+// Whether a phrase-list grow warrants the "phrase added" re-evaluation sweep.
+// The seed phrase is not a filter category (getSettings excludes it by
+// construction), so planting it must not sweep: the aiFilterIntent write it
+// provokes triggers the sweep that engages the detectors. Two exceptions keep
+// the sweep:
+//   - a real filter phrase was added alongside (or instead of) the seed;
+//   - the seed is already in the judged aiPhrases (it lives on another
+//     platform's list), so no aiFilterIntent write is coming — this platform's
+//     detectors still flip on and the sweep here is what re-runs them.
+export function phraseAddNeedsReEvaluation(
+  oldDescs: string[],
+  newDescs: string[],
+  judgedAiPhrases: string[] | undefined,
+): boolean {
+  const norm = (p: string) => p.trim().toLowerCase();
+  const seedKey = norm(AI_DETECTION_SEED_PHRASE);
+  const oldKeys = new Set(oldDescs.map(norm));
+  const added = newDescs.filter(p => !oldKeys.has(norm(p)));
+  const onlySeedAdded = added.length > 0 && added.every(p => norm(p) === seedKey);
+  if (!onlySeedAdded) return true;
+  return Array.isArray(judgedAiPhrases) && judgedAiPhrases.some(p => norm(p) === seedKey);
+}
+
 // Format a post's content into the string sent to the AI for evaluation.
 // This is also the basis for cache keys and feedback payloads.
 export function formatPostForEvaluation(post: PostContent): string {

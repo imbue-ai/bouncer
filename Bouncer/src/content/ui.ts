@@ -2,7 +2,7 @@
 
 import { toBlob } from 'html-to-image';
 import { asyncHandler } from '../shared/async';
-import { cleanReasoning, escapeHtml, formatPostForEvaluation, parseHTML, GUEST_FILTER_LIMIT, AI_DETECTION_SEED_PHRASE } from '../shared/utils';
+import { cleanReasoning, escapeHtml, formatPostForEvaluation, parseHTML, GUEST_FILTER_LIMIT, AI_DETECTION_SEED_PHRASE, phraseAddNeedsReEvaluation } from '../shared/utils';
 import { init as initPopup } from '../popup/index';
 import {
   encodeFilterPackCode, decodeFilterPackCode, buildFilterPackShareUrl,
@@ -1782,13 +1782,19 @@ async function confirmAndImportPack(phrases: string[]): Promise<void> {
   const existing = await getDescriptions(_deps.descriptionsKey);
   const newPhrases = phrases.filter(p => !existing.includes(p));
   if (newPhrases.length === 0) return;
-  await setDescriptions(_deps.descriptionsKey, [...existing, ...newPhrases]);
+  const next = [...existing, ...newPhrases];
+  await setDescriptions(_deps.descriptionsKey, next);
   syncFilterPhrases();
   // Push the new phrase list to the native iOS filter sheet — without this the
   // native @Published phrases array stays at its pre-import snapshot until the
   // user opens & closes the sheet.
   if (_deps.IS_IOS) _deps.updateIOSFilteredCount();
-  _deps.reEvaluateAllPosts();
+  // Same seed-phrase exception as addFilterPhrase: a pack consisting solely
+  // of the seed phrase engages the detectors via aiFilterIntent, not a sweep.
+  const { aiFilterIntent } = await getStorage(['aiFilterIntent']);
+  if (phraseAddNeedsReEvaluation(existing, next, aiFilterIntent?.aiPhrases)) {
+    _deps.reEvaluateAllPosts();
+  }
 }
 
 function renderPhrasesInContainer(container: Element, descriptions: string[]) {
@@ -1842,12 +1848,18 @@ export async function addFilterPhrase(text: string) {
       return false;
     }
 
-    descriptions.push(text);
-    console.log('[Bouncer] Saving descriptions:', descriptions);
-    await setDescriptions(_deps.descriptionsKey, descriptions);
+    const next = [...descriptions, text];
+    console.log('[Bouncer] Saving descriptions:', next);
+    await setDescriptions(_deps.descriptionsKey, next);
     console.log('[Bouncer] addFilterPhrase complete');
     syncFilterPhrases();
-    _deps.reEvaluateAllPosts();
+    // Planting the seed phrase alone must not sweep — it is not a filter
+    // category, and the aiFilterIntent write it provokes triggers the sweep
+    // that engages the detectors (see the storage listener in content/index.ts).
+    const { aiFilterIntent } = await getStorage(['aiFilterIntent']);
+    if (phraseAddNeedsReEvaluation(descriptions, next, aiFilterIntent?.aiPhrases)) {
+      _deps.reEvaluateAllPosts();
+    }
     return true;
   } catch (err) {
     console.error('[Bouncer] addFilterPhrase error:', err);
