@@ -10,6 +10,8 @@ import {
   checkAuthenticationError,
   convertSystemToUserMessages,
   cleanReasoning,
+  phraseAddNeedsReEvaluation,
+  AI_DETECTION_SEED_PHRASE,
 } from '../../src/shared/utils.js';
 
 // ==================== parseAPIResponse ====================
@@ -364,5 +366,36 @@ describe('cleanReasoning', () => {
 
   it('returns original if result would be empty', () => {
     expect(cleanReasoning('|||')).toBe('|||');
+  });
+});
+
+describe('phraseAddNeedsReEvaluation', () => {
+  const SEED = AI_DETECTION_SEED_PHRASE;
+
+  it('skips the sweep when only the seed phrase was added (sparkle click)', () => {
+    expect(phraseAddNeedsReEvaluation([], [SEED], [])).toBe(false);
+    expect(phraseAddNeedsReEvaluation(['politics'], ['politics', SEED], undefined)).toBe(false);
+  });
+
+  it('is case- and whitespace-insensitive about the seed phrase', () => {
+    expect(phraseAddNeedsReEvaluation([], ['  ai SLOP '], [])).toBe(false);
+  });
+
+  it('sweeps when a real filter phrase was added', () => {
+    expect(phraseAddNeedsReEvaluation([], ['crypto'], [])).toBe(true);
+  });
+
+  it('sweeps when a real phrase was added alongside the seed', () => {
+    expect(phraseAddNeedsReEvaluation([], [SEED, 'crypto'], [])).toBe(true);
+  });
+
+  it('sweeps when the seed is already judged (exists on another platform)', () => {
+    // No aiFilterIntent write is coming, so this sweep is what re-runs the
+    // now-active detectors on visible posts.
+    expect(phraseAddNeedsReEvaluation(['politics'], ['politics', SEED], [SEED])).toBe(true);
+  });
+
+  it('sweeps when nothing new was actually added (defensive)', () => {
+    expect(phraseAddNeedsReEvaluation([SEED], [SEED, 'ai slop'], [])).toBe(true);
   });
 });

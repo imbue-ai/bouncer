@@ -3,6 +3,7 @@
 import {
   parseAPIResponse, checkRateLimitError, checkApiError, checkAuthenticationError,
   RATE_LIMIT_TYPE_CONFIG, API_ERROR_TYPE_CONFIG, GUEST_FILTER_LIMIT,
+  AI_DETECTION_SEED_PHRASE,
 } from '../shared/utils';
 import { isAnonymousUser } from './auth';
 import { PREDEFINED_MODELS, API_DISPLAY_NAMES, DEFAULT_MODEL } from '../shared/models';
@@ -519,13 +520,16 @@ export async function getSettings(siteId?: SiteId): Promise<Settings> {
   // from the filter categories there so they don't also hide human posts
   // *about* AI. On BYOK models the AI detector never engages, so the
   // phrases keep acting as ordinary filters. Old-shape state (no aiPhrases
-  // array) yields no exclusion.
+  // array) yields no exclusion. The seed phrase is excluded by construction,
+  // not by verdict — clicking the sparkle indicator plants it, and it must
+  // never act as a filter category, not even during the instant before
+  // refreshAiFilterIntent records it in aiPhrases.
   const selectedModel = data.selectedModel || DEFAULT_MODEL;
   const aiPhrases = Array.isArray(data.aiFilterIntent?.aiPhrases)
     ? data.aiFilterIntent.aiPhrases : [];
   let effectiveDescriptions = descriptions;
-  if (canJudgeAiIntent(selectedModel) && aiPhrases.length > 0) {
-    const aiKeys = new Set(aiPhrases.map(p => p.trim().toLowerCase()));
+  if (canJudgeAiIntent(selectedModel)) {
+    const aiKeys = new Set([...aiPhrases, AI_DETECTION_SEED_PHRASE].map(p => p.trim().toLowerCase()));
     effectiveDescriptions = descriptions.filter(d => !aiKeys.has(d.trim().toLowerCase()));
   }
 

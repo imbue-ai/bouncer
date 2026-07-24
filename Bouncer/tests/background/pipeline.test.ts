@@ -33,7 +33,8 @@ vi.mock('../../src/background/providers.js', () => ({
   callImbueAPI: vi.fn(),
 }));
 
-import { classifyError, enqueuePost, isKeyPending, clearTabQueue, setActiveTab, scheduleBatch } from '../../src/background/pipeline.js';
+import { classifyError, enqueuePost, isKeyPending, clearTabQueue, setActiveTab, scheduleBatch, getSettings } from '../../src/background/pipeline.js';
+import { AI_DETECTION_SEED_PHRASE } from '../../src/shared/utils.js';
 import { localEngine, callLocalInference } from '../../src/background/local-model.js';
 import type { PendingEvaluation } from '../../src/types.js';
 
@@ -284,5 +285,51 @@ describe('processBatch re-queue on inference queue cleared', () => {
     // New item should be untouched in the new queue
     expect(newResolve).not.toHaveBeenCalled();
     expect(isKeyPending(TAB_ID, 'new_key')).toBe(true);
+  });
+});
+
+// ==================== getSettings: seed-phrase exclusion ====================
+
+describe('getSettings effectiveDescriptions', () => {
+  // In-memory chrome.storage.local so getSettings reads real values.
+  let store: Record<string, unknown>;
+
+  beforeEach(() => {
+    store = {};
+    (chrome.storage.local.get as Mock).mockImplementation((keys: string[]) => {
+      const out: Record<string, unknown> = {};
+      for (const k of keys) if (k in store) out[k] = store[k];
+      return Promise.resolve(out);
+    });
+  });
+
+  it('excludes the seed phrase by construction, before any intent verdict lands', async () => {
+    // The race this guards against: the sparkle click writes the seed phrase
+    // into the platform's list, and aiFilterIntent hasn't been updated yet.
+    // The seed phrase must still never act as a filter category.
+    store.descriptions_twitter = [AI_DETECTION_SEED_PHRASE, 'politics'];
+    store.selectedModel = 'iosLocal:gemma-4-e2b-detector-v2';
+    // No aiFilterIntent in storage at all.
+
+    const settings = await getSettings('twitter');
+    expect(settings.descriptions).toEqual([AI_DETECTION_SEED_PHRASE, 'politics']);
+    expect(settings.effectiveDescriptions).toEqual(['politics']);
+  });
+
+  it('keeps the seed phrase as an ordinary filter on models that cannot judge intent', async () => {
+    store.descriptions_twitter = [AI_DETECTION_SEED_PHRASE, 'politics'];
+    store.selectedModel = 'openai:gpt-4o'; // BYOK — AI detectors never engage
+
+    const settings = await getSettings('twitter');
+    expect(settings.effectiveDescriptions).toEqual([AI_DETECTION_SEED_PHRASE, 'politics']);
+  });
+
+  it('still excludes judged aiPhrases beyond the seed phrase', async () => {
+    store.descriptions_twitter = ['posts written by AI', 'politics'];
+    store.selectedModel = 'iosLocal:gemma-4-e2b-detector-v2';
+    store.aiFilterIntent = { aiPhrases: ['posts written by AI'], judgedSetKey: 'k', updatedAt: 1 };
+
+    const settings = await getSettings('twitter');
+    expect(settings.effectiveDescriptions).toEqual(['politics']);
   });
 });
