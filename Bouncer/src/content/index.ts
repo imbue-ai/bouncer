@@ -35,7 +35,7 @@ import {
   refreshAiIndicatorUI,
 } from './ui';
 
-import { formatPostForEvaluation } from '../shared/utils';
+import { formatPostForEvaluation, phraseAddNeedsReEvaluation } from '../shared/utils';
 
 (function() {
   'use strict';
@@ -725,9 +725,18 @@ import { formatPostForEvaluation } from '../shared/utils';
         refreshAiIndicatorUI().catch(err => console.error('[Bouncer] refreshAiIndicatorUI failed:', err));
         const oldDescs = (changes[descriptionsKey].oldValue as string[] | undefined) || [];
         const newDescs = (changes[descriptionsKey].newValue as string[] | undefined) || [];
-        // Only re-evaluate when a phrase was added, not removed
+        // Only re-evaluate when a phrase was added, not removed. Planting the
+        // seed phrase alone must not sweep (phraseAddNeedsReEvaluation): it is
+        // not a filter category, and the aiFilterIntent write it provokes runs
+        // the sweep below that engages the detectors. Reading the intent state
+        // races that write; losing the race sweeps redundantly (the old
+        // behavior), never skips a needed sweep.
         if (newDescs.length > oldDescs.length) {
-          reEvaluateAllPosts();
+          getStorage(['aiFilterIntent']).then(data => {
+            if (phraseAddNeedsReEvaluation(oldDescs, newDescs, data.aiFilterIntent?.aiPhrases)) {
+              reEvaluateAllPosts();
+            }
+          }).catch(err => console.error('[Bouncer] phrase-add re-evaluation check failed:', err));
         } else if (newDescs.length < oldDescs.length) {
           // Phrase removed via an out-of-band editor (iOS native sheet,
           // desktop popup) — mirror removeFilterPhrase's in-feed behavior
