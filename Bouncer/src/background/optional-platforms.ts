@@ -14,14 +14,14 @@
 // scripts on one side, granted origins on the other — rather than trying to
 // track individual grant/revoke events.
 
-import type { PlatformDef, SiteId } from '../shared/platforms';
-import { optionalPlatforms, contentScriptFiles } from '../shared/platforms';
+import type { SiteId } from '../shared/platforms';
+import { optionalPlatforms, optionalHostPatterns, contentScriptFiles } from '../shared/platforms';
 
 const scriptId = (id: SiteId) => `bouncer-platform-${id}`;
 
-async function isGranted(p: PlatformDef): Promise<boolean> {
+async function isGranted(pattern: string): Promise<boolean> {
   try {
-    return await chrome.permissions.contains({ origins: [p.manifestHost] });
+    return await chrome.permissions.contains({ origins: [pattern] });
   } catch {
     return false;
   }
@@ -41,7 +41,7 @@ export async function syncOptionalPlatformScripts(): Promise<void> {
   const registeredIds = new Set(registered.map(s => s.id));
 
   for (const p of platforms) {
-    const granted = await isGranted(p);
+    const granted = await isGranted(p.manifestHost);
     const id = scriptId(p.id);
     try {
       if (granted && !registeredIds.has(id)) {
@@ -87,11 +87,21 @@ export async function syncOptionalPlatformScripts(): Promise<void> {
  *  script is already registered). The promise rejects when the request can't
  *  be surfaced (already pending/granted, unmatched tab); ignored. */
 async function requestOptionalAccessForTab(tabId: number): Promise<void> {
-  if (!chrome.permissions?.addHostAccessRequest) return; // Chrome <133
-  for (const p of optionalPlatforms()) {
-    if (await isGranted(p)) continue;
-    await chrome.permissions.addHostAccessRequest({ tabId, pattern: p.manifestHost })
-      .catch(() => { /* not shown for this tab right now; ignore */ });
+  if (!chrome.permissions?.addHostAccessRequest) {
+    console.log('[Background][hostreq] addHostAccessRequest unavailable (Chrome <133)');
+    return;
+  }
+  for (const pattern of optionalHostPatterns()) {
+    if (await isGranted(pattern)) {
+      console.log(`[Background][hostreq] ${pattern}: already granted, skipping`);
+      continue;
+    }
+    try {
+      await chrome.permissions.addHostAccessRequest({ tabId, pattern });
+      console.log(`[Background][hostreq] ${pattern}: request ACCEPTED by Chrome for tab ${tabId}`);
+    } catch (err) {
+      console.log(`[Background][hostreq] ${pattern}: request REJECTED for tab ${tabId}:`, err);
+    }
   }
 }
 
@@ -104,7 +114,8 @@ export function initOptionalPlatforms(): void {
   // pattern, so this is a no-op on unrelated sites.
   if (chrome.tabs?.onUpdated && typeof chrome.permissions?.addHostAccessRequest === 'function') {
     chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
-      if (changeInfo.status !== 'loading') return;
+      if (changeInfo.status !== 'loading' && changeInfo.status !== 'complete') return;
+      console.log(`[Background][hostreq] onUpdated tab ${tabId} status=${changeInfo.status}`);
       requestOptionalAccessForTab(tabId).catch(() => { /* best-effort */ });
     });
   }

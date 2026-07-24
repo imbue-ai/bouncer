@@ -41,6 +41,15 @@ function readPlatformConfig() {
   );
 }
 
+// Hosts requested in optional_host_permissions that have no platform (and so
+// no adapter or content script) behind them yet. Same file the TS bundle
+// imports as EXTRA_OPTIONAL_HOSTS.
+function readExtraOptionalHosts() {
+  return JSON.parse(
+    fs.readFileSync(path.join(ROOT, 'src/shared/extra-optional-hosts.json'), 'utf8')
+  );
+}
+
 // Synthesize per-platform manifest entries from the registry. Adding a new
 // platform here is automatic: drop an entry in platforms.config.json and
 // host_permissions, content_scripts, and web_accessible_resources all gain
@@ -62,12 +71,16 @@ function platformsToManifestSlice() {
   const platforms = readPlatformConfig();
   const required = platforms.filter(p => !p.optional);
   const optional = platforms.filter(p => p.optional);
+  const optionalHosts = [
+    ...optional.map(p => p.manifestHost),
+    ...readExtraOptionalHosts(),
+  ];
   const sharedContentJs = ['browser-polyfill.js', 'dompurify.js'];
   const sharedContentCss = ['content.css'];
   return {
     host_permissions: required.map(p => p.manifestHost),
-    ...(optional.length > 0
-      ? { optional_host_permissions: optional.map(p => p.manifestHost) }
+    ...(optionalHosts.length > 0
+      ? { optional_host_permissions: optionalHosts }
       : {}),
     content_scripts: required.map(p => ({
       matches: [p.manifestHost],

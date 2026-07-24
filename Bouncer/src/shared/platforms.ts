@@ -12,6 +12,7 @@
 // array via a registry-id lookup.
 
 import platformsConfig from './platforms.config.json';
+import extraOptionalHosts from './extra-optional-hosts.json';
 
 /** Literal-tuple of every supported platform id. SiteId is derived from
  *  this, so adding a new platform automatically extends the union — there
@@ -103,6 +104,19 @@ export function platformFromHost(host: string): PlatformDef | undefined {
 /** Platforms gated behind optional_host_permissions (user opt-in). */
 export function optionalPlatforms(): PlatformDef[] {
   return PLATFORMS.filter(p => p.optional === true);
+}
+
+/** Hosts that ship in optional_host_permissions without a platform behind
+ *  them yet: we ask for access (and surface the toolbar request chip) so the
+ *  grant is in place before the adapter lands, but there is no adapter, no
+ *  content script, and no popup row for them. Kept in
+ *  extra-optional-hosts.json so generate-manifests.mjs reads the same list. */
+export const EXTRA_OPTIONAL_HOSTS: readonly string[] = extraOptionalHosts;
+
+/** Every pattern that belongs in optional_host_permissions — optional
+ *  platforms plus the adapter-less extras above. */
+export function optionalHostPatterns(): string[] {
+  return [...optionalPlatforms().map(p => p.manifestHost), ...EXTRA_OPTIONAL_HOSTS];
 }
 
 /** The js/css file lists for a platform's content script. Must stay in
