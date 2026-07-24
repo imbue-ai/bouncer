@@ -5,7 +5,8 @@ import type { ChatMessage, PostContent, SiteId } from '../types';
 // Guest trial limit: how many posts an anonymous ("Skip for now") user may
 // filter before being prompted to sign in. Counted persistently across all
 // sessions via the `anonFilterCount` storage key. Tune here.
-export const GUEST_FILTER_LIMIT = 300;
+// Set effectively unlimited so anonymous users realistically never hit it.
+export const GUEST_FILTER_LIMIT = 1_000_000_000;
 
 // The phrase the sparkle indicator plants to turn AI detection on. Its
 // meaning is ours by construction, so background/ai-intent.ts engages
