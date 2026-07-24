@@ -178,15 +178,24 @@ class LocalInferenceService(
     ): String {
         val eng = ensureEngineLocked(model)
         val base = getOrBuildBaseLocked(eng, systemMessage, regexConstraint, maxOutputTokens)
-        val started = System.currentTimeMillis()
+        val t0 = System.currentTimeMillis()
         val clone = base.clone()
+        val t1 = System.currentTimeMillis()
         val response = try {
             clone.sendMessage(userMessage)
         } finally {
             runCatching { clone.close() }
         }
+        val t2 = System.currentTimeMillis()
         val text = response.toString()
-        Log.i(tag, "classify: ${System.currentTimeMillis() - started}ms output=${text.take(80)}")
+        // op=generate → freeform candidate-phrase generation ("bounce this tweet");
+        // op=verdict  → regex-constrained yes/no row (feed filter decision OR
+        //               candidate-phrase verification, both same shape).
+        val op = if (regexConstraint == null) "generate" else "verdict(cats=${verdictArity(regexConstraint)})"
+        Log.i(
+            tag,
+            "classify $op: ${t2 - t0}ms (clone=${t1 - t0}ms send=${t2 - t1}ms) output=${text.take(40)}",
+        )
         return text
     }
 
@@ -361,6 +370,10 @@ class LocalInferenceService(
      */
     private fun cleanTextForClassifier(text: String): String =
         text.lowercase().split(Regex("\\s+")).filter { it.isNotEmpty() }.joinToString(" ")
+
+    /** Rough category count from the yes/no-row regex, for timing logs. */
+    private fun verdictArity(regex: String): Int =
+        Regex("yes\\|no").findAll(regex).count().coerceAtLeast(1)
 
     // ------------------------------------------------------- model management
 
