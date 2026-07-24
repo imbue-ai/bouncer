@@ -18,6 +18,18 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.Bouncer"
         android:usesCleartextTraffic="false">
+        <!-- Vendor OpenCL libraries for the LiteRT-LM GPU backend. On targetSdk >= 31
+             undeclared vendor native libs are invisible to the process, so without
+             these the engine silently falls back off the GPU (or fails to init). -->
+        <uses-native-library
+            android:name="libOpenCL.so"
+            android:required="false" />
+        <uses-native-library
+            android:name="libOpenCL-pixel.so"
+            android:required="false" />
+        <uses-native-library
+            android:name="libGLES_mali.so"
+            android:required="false" />
         <activity
             android:name=".MainActivity"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode"

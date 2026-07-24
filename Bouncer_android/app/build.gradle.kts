@@ -1,3 +1,5 @@
+import java.net.URI
+import java.security.MessageDigest
 import java.util.Properties
 
 plugins {
@@ -134,6 +136,11 @@ abstract class CopyExtensionAssetsTask : org.gradle.api.DefaultTask() {
             overwrite = true,
         )
         iosShell.resolve("ChromePolyfill.js").copyTo(out.resolve("ChromePolyfill.js"), overwrite = true)
+        // The AI-text classifier head, shared with iOS (the iOS folder is the
+        // single source of truth, same as ChromePolyfill.js). Lands at the
+        // assets root, next to web_ext_gecko/.
+        iosShell.resolve("detector_head_e2b_v2.bin")
+            .copyTo(root.resolve("detector_head_e2b_v2.bin"), overwrite = true)
     }
 }
 
@@ -182,8 +189,49 @@ val copyExtensionAssets = tasks.register<CopyExtensionAssetsTask>("copyExtension
         bouncer.resolve("adapters/twitter/twitter.css"),
         bouncer.resolve("adapters/twitter/fiber-extractor.js"),
         iosShell.resolve("ChromePolyfill.js"),
+        iosShell.resolve("detector_head_e2b_v2.bin"),
     )
     outputDir.set(layout.buildDirectory.dir("generated/bouncerAssets"))
+}
+
+// The custom LiteRT-LM Android runtime (Kotlin API + arm64 JNI + GPU accelerator
+// libs), built from millanatimbue/LiteRT-LM branch release/android by
+// tools/package_android_aar.sh and published as a GitHub release asset.
+// Downloaded once into .litertlm/ (gitignored; survives `clean`) and verified
+// against a pinned SHA-256.
+val litertlmAarUrl =
+    "https://github.com/millanatimbue/LiteRT-LM/releases/download/android-v1/litertlm-android.aar"
+val litertlmAarSha256 = "aa835192de2b9487671816598c24d930ca2c17b2aa85d66675acb46a6e57fcb1"
+val litertlmAarFile = rootProject.layout.projectDirectory.file(".litertlm/litertlm-android.aar")
+
+val downloadLitertlmAar = tasks.register("downloadLitertlmAar") {
+    outputs.file(litertlmAarFile)
+    doLast {
+        val target = litertlmAarFile.asFile
+        fun sha256(f: File): String {
+            val md = MessageDigest.getInstance("SHA-256")
+            f.inputStream().use { ins ->
+                val buf = ByteArray(1 shl 20)
+                while (true) {
+                    val n = ins.read(buf)
+                    if (n < 0) break
+                    md.update(buf, 0, n)
+                }
+            }
+            return md.digest().joinToString("") { b -> "%02x".format(b) }
+        }
+        if (target.exists() && sha256(target) == litertlmAarSha256) return@doLast
+        target.parentFile.mkdirs()
+        logger.lifecycle("Downloading litertlm-android.aar from $litertlmAarUrl")
+        URI(litertlmAarUrl).toURL().openStream().use { input ->
+            target.outputStream().use { out -> input.copyTo(out) }
+        }
+        val actual = sha256(target)
+        check(actual == litertlmAarSha256) {
+            target.delete()
+            "litertlm-android.aar SHA-256 mismatch: expected $litertlmAarSha256, got $actual"
+        }
+    }
 }
 
 androidComponents {
@@ -196,6 +244,12 @@ androidComponents {
 }
 
 dependencies {
+    implementation(files(downloadLitertlmAar.map { it.outputs.files }))
+    // Runtime deps of the litertlm-android AAR (a plain file dependency carries
+    // no POM, so its dependencies are declared here).
+    implementation(libs.gson)
+    implementation(libs.kotlinx.coroutines.android)
+    implementation(libs.kotlin.reflect)
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.compose.material3)

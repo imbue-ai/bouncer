@@ -50,6 +50,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.imbue.bouncer.BouncerApplication
 import com.imbue.bouncer.state.BouncerViewModel
 import com.imbue.bouncer.web.BouncerGeckoView
+import com.imbue.bouncer.inference.LocalModels
 import kotlinx.coroutines.MainScope
 import org.mozilla.geckoview.GeckoView
 import kotlin.math.roundToInt
@@ -286,6 +287,13 @@ fun BouncerApp(viewModel: BouncerViewModel = viewModel()) {
                 skipHiddenState = false,
             )
         }
+        val context = LocalContext.current
+        val service = viewModel.localInference
+        val localModel = remember { LocalModels.models[0] }
+        val modelStatus by service.modelStatus.collectAsState()
+        val downloadDetail by service.downloadDetail.collectAsState()
+        val deviceSupported = remember(context) { localModel.isSupportedOn(context) }
+
         ModalBottomSheet(
             onDismissRequest = { viewModel.setSheetPresented(false) },
             sheetState = sheetState,
@@ -297,6 +305,31 @@ fun BouncerApp(viewModel: BouncerViewModel = viewModel()) {
                 filteredCount = state.filteredCount,
                 aiTextFilterEnabled = state.aiTextFilterEnabled,
                 aiTextDetectionThreshold = state.aiTextDetectionThreshold,
+                modelSection = ModelSectionState(
+                    selectedModel = state.selectedModel,
+                    onDeviceKey = localModel.selectedModelKey,
+                    displayName = localModel.displayName,
+                    approxSize = localModel.approxSize,
+                    requiredRamDisplay = localModel.requiredRamDisplay,
+                    isDeviceSupported = deviceSupported,
+                    status = modelStatus,
+                    downloadDetail = downloadDetail,
+                ),
+                modelActions = ModelSectionActions(
+                    onSelectCloud = { viewModel.selectModel("imbue") },
+                    onSelectOnDevice = { viewModel.selectModel(localModel.selectedModelKey) },
+                    onDownload = service::startDownload,
+                    onPause = service::pauseDownload,
+                    onResume = service::startDownload,
+                    onCancel = service::cancelDownload,
+                    onDelete = {
+                        // Deleting the active on-device model falls back to cloud.
+                        if (state.selectedModel == localModel.selectedModelKey) {
+                            viewModel.selectModel("imbue")
+                        }
+                        service.deleteModel()
+                    },
+                ),
                 onAdd = viewModel::addPhrase,
                 onRemove = viewModel::removePhrase,
                 onViewFiltered = viewModel::openFilteredModal,

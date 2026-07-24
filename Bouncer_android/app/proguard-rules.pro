@@ -19,3 +19,7 @@
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
+# LiteRT-LM: JNI-registered classes/methods and gson/kotlin-reflect-based JSON
+# serialization must not be renamed or stripped (precautionary; minify is
+# currently disabled).
+-keep class com.google.ai.edge.litertlm.** { *; }

@@ -6,6 +6,8 @@ import android.content.res.Configuration
 import android.net.Uri
 import android.util.Log
 import androidx.browser.customtabs.CustomTabsIntent
+import com.imbue.bouncer.BouncerApplication
+import com.imbue.bouncer.inference.LocalInferenceService
 import com.imbue.bouncer.state.BouncerViewModel
 import kotlinx.coroutines.CoroutineScope
 import org.mozilla.geckoview.AllowOrDeny
@@ -76,7 +78,12 @@ object BouncerGeckoView {
     // (from BouncerApplication.onCreate) so it doesn't land on the activity's
     // first composition and trigger ANR. GeckoRuntime.create is @UiThread, so
     // the caller must invoke this on the main thread.
-    fun warmUp(appCtx: Context, scope: CoroutineScope, appCheck: AppCheckBridge) {
+    fun warmUp(
+        appCtx: Context,
+        scope: CoroutineScope,
+        appCheck: AppCheckBridge,
+        localInference: LocalInferenceService,
+    ) {
         if (runtime != null) return
         synchronized(this) {
             if (runtime != null) return
@@ -98,7 +105,7 @@ object BouncerGeckoView {
                 )
                 .build()
             val r = GeckoRuntime.create(appCtx, settings)
-            val b = GeckoBridge(appCtx, scope, appCheck)
+            val b = GeckoBridge(appCtx, scope, appCheck, localInference)
             val result = r.webExtensionController.ensureBuiltIn(EXT_LOCATION, EXT_ID)
             result.accept(
                 { ext ->
@@ -133,7 +140,7 @@ object BouncerGeckoView {
     ): GeckoView {
         val appCtx = ctx.applicationContext
         // Defensive: should already be warm via Application.onCreate.
-        warmUp(appCtx, scope, appCheck)
+        warmUp(appCtx, scope, appCheck, (appCtx as BouncerApplication).localInference)
         val r = runtime!!
         bridge?.let { vm.attachBridge(it) }
         this.coverColor = coverColor

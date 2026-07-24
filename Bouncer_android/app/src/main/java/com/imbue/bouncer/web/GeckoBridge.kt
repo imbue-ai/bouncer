@@ -2,6 +2,7 @@ package com.imbue.bouncer.web
 
 import android.content.Context
 import android.util.Log
+import com.imbue.bouncer.inference.LocalInferenceService
 import com.imbue.bouncer.state.BouncerViewModel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -14,6 +15,7 @@ class GeckoBridge(
     appCtx: Context,
     private val scope: CoroutineScope,
     private val appCheck: AppCheckBridge,
+    localInference: LocalInferenceService,
 ) : WebExtension.MessageDelegate {
 
     private val tag = "FF/Bridge"
@@ -34,6 +36,12 @@ class GeckoBridge(
         appCheck = appCheck,
         scope = scope,
         postToPage = { payload -> postToPage(payload) },
+    )
+
+    private val local = LocalInferenceBridge(
+        service = localInference,
+        scope = scope,
+        callJs = { fn, args -> callJs(fn, *args) },
     )
 
     private val portDelegate = object : WebExtension.PortDelegate {
@@ -69,7 +77,11 @@ class GeckoBridge(
         val payload = JSONObject().apply {
             put("kind", "call")
             put("fn", fn)
-            put("args", argArray)
+            // Serialized as a JSON string rather than a nested array: GeckoBundle
+            // types arrays from their first element, so a mixed-type args array
+            // (e.g. [callbackId, ok:Boolean, b64]) throws in Port.postMessage.
+            // bridge_page.js parses argsJson back into real values.
+            put("argsJson", argArray.toString())
         }
         postToPage(payload)
     }
@@ -82,12 +94,15 @@ class GeckoBridge(
         if (obj.optString("kind") != "bridge") return
         val name = obj.optString("name")
         val arg = obj.optString("arg")
-        // ws.* messages are VM-independent — handle them even before a VM is attached.
+        // ws.* and local-inference messages are VM-independent — handle them even
+        // before a VM is attached.
         when (name) {
             "feedfilterLog" -> { Log.d("FF/JS", arg); return }
             "feedfilterWsOpen" -> { ws.open(arg); return }
             "feedfilterWsSend" -> { ws.send(arg); return }
             "feedfilterWsClose" -> { ws.close(arg); return }
+            "feedfilterLocalClassify" -> { local.handleClassify(arg); return }
+            "feedfilterLocalAiTextDetect" -> { local.handleAiTextDetect(arg); return }
         }
         val v = vm ?: run {
             Log.w(tag, "no VM attached; dropping $name")

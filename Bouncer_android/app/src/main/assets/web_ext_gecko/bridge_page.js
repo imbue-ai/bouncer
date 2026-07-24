@@ -26,11 +26,29 @@
     "feedfilterWsSend",
     "feedfilterWsClose",
     "feedfilterModalClosed",
-    "feedfilterAiSettings"
+    "feedfilterAiSettings",
+    "feedfilterLocalClassify",
+    "feedfilterLocalAiTextDetect"
   ];
 
-  window.__ffExtensionVersion = "1.1.3";
+  window.__ffExtensionVersion = "1.2.0";
   window.__ff_platform = "android";
+
+  // On-device model catalog, consumed by the shared JS (src/shared/models.ts)
+  // to populate PREDEFINED_MODELS.iosLocal. iOS injects this dynamically ahead
+  // of ChromePolyfill.js; on Android content scripts are static assets, so the
+  // catalog is a literal. Keep in sync with the Kotlin registry in
+  // com.imbue.bouncer.inference.LocalModels. isSupported is static here — RAM
+  // gating is enforced by the native settings UI and at classify time.
+  window.__iosLocalModels = [
+    {
+      name: "gemma-4-e2b-detector-v2",
+      display: "Gemma E2B",
+      size: "~2.2 GB",
+      isSupported: true,
+      requiredRAM: "6 GB"
+    }
+  ];
 
   function dispatchBridge(name, arg) {
     var s = (typeof arg === "string") ? arg : JSON.stringify(arg);
@@ -90,6 +108,15 @@
         'aiTextDetectionThreshold'
       );
     }
+    if (typeof window.__ff_getStorage === 'function') {
+      window.__ff_resolveAndPost(
+        window.__ff_getStorage(['selectedModel']).then(function (d) {
+          return (d && d.selectedModel) || '';
+        }),
+        'feedfilterAiSettings',
+        'selectedModel'
+      );
+    }
   };
 
   // Native → MAIN dispatcher. bridge_iso.js relays each port message here
@@ -115,7 +142,15 @@
         if (!p.fn || typeof p.fn !== "string") return;
         var fn = window[p.fn];
         if (typeof fn !== "function") return;
-        try { fn.apply(null, Array.isArray(p.args) ? p.args : []); }
+        // Args travel as a JSON string (argsJson): the Gecko port cannot carry
+        // mixed-type arrays (GeckoBundle types them from the first element).
+        var args = [];
+        if (Array.isArray(p.args)) {
+          args = p.args;
+        } else if (typeof p.argsJson === "string") {
+          try { args = JSON.parse(p.argsJson) || []; } catch (e) { args = []; }
+        }
+        try { fn.apply(null, args); }
         catch (err) { try { console.warn("[Bouncer/page] call " + p.fn + " threw", err); } catch (_) {} }
         return;
     }

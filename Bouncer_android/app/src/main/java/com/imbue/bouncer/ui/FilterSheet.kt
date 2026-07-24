@@ -58,6 +58,8 @@ fun FilterSheet(
     filteredCount: Int,
     aiTextFilterEnabled: Boolean,
     aiTextDetectionThreshold: Double,
+    modelSection: ModelSectionState,
+    modelActions: ModelSectionActions,
     onAdd: (String) -> Unit,
     onRemove: (String) -> Unit,
     onViewFiltered: () -> Unit,
@@ -122,6 +124,8 @@ fun FilterSheet(
                 BouncerSettings(
                     aiTextFilterEnabled = aiTextFilterEnabled,
                     aiTextDetectionThreshold = aiTextDetectionThreshold,
+                    modelSection = modelSection,
+                    modelActions = modelActions,
                     onAiTextFilterEnabledChange = onAiTextFilterEnabledChange,
                     onAiTextDetectionThresholdChange = onAiTextDetectionThresholdChange,
                 )

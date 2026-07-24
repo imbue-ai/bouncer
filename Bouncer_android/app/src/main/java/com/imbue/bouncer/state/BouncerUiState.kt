@@ -11,6 +11,9 @@ data class BouncerUiState(
     val isFilteredModalOpen: Boolean = false,
     val aiTextFilterEnabled: Boolean = false,
     val aiTextDetectionThreshold: Double = 0.7,
+    // The extension's selectedModel storage key: "imbue" (cloud, default when
+    // empty) or "iosLocal:<model-id>" (on-device).
+    val selectedModel: String = "",
     val hasCompletedOnboarding: Boolean = false,
     val hasLoggedIn: Boolean = false,
     val hasSeenBouncerTooltip: Boolean = false,

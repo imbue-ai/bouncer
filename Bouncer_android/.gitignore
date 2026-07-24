@@ -13,3 +13,6 @@
 .externalNativeBuild
 .cxx
 local.properties
+
+# Downloaded LiteRT-LM AAR (fetched by the downloadLitertlmAar Gradle task)
+/.litertlm

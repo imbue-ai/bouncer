@@ -6,6 +6,7 @@ import android.content.res.Configuration
 import android.os.Build
 import android.os.Process
 import android.util.Log
+import com.imbue.bouncer.inference.LocalInferenceService
 import com.imbue.bouncer.web.AppCheckBridge
 import com.imbue.bouncer.web.BouncerGeckoView
 import kotlinx.coroutines.CoroutineScope
@@ -14,6 +15,9 @@ import kotlinx.coroutines.SupervisorJob
 
 class BouncerApplication : Application() {
     lateinit var appCheck: AppCheckBridge
+        private set
+
+    lateinit var localInference: LocalInferenceService
         private set
 
     // Lives for the lifetime of the main process — used by the runtime warmup
@@ -31,10 +35,11 @@ class BouncerApplication : Application() {
             return
         }
         appCheck = AppCheckBridge(this).also { it.configure() }
+        localInference = LocalInferenceService(applicationContext, scope)
         // Pay the GeckoRuntime cost here (still main thread, but during process
         // startup where there's no input-dispatch deadline) instead of on the
         // first composition. The splash screen covers the wall-clock gap.
-        BouncerGeckoView.warmUp(applicationContext, scope, appCheck)
+        BouncerGeckoView.warmUp(applicationContext, scope, appCheck, localInference)
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {

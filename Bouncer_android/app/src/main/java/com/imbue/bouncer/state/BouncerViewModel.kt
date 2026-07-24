@@ -7,6 +7,8 @@ import android.net.Uri
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.imbue.bouncer.BouncerApplication
+import com.imbue.bouncer.inference.LocalModels
 import com.imbue.bouncer.web.GeckoBridge
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -35,6 +37,14 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
     // job clears the pending flag so we don't fire late if the load stalls.
     private var pendingShareFilterPack = false
     private var pendingShareTimeoutJob: Job? = null
+
+    // Model selection is stored in the extension's chrome.storage, which on
+    // Android is backed by x.com localStorage — writable only once a page has
+    // loaded the content scripts. Selections made before that (e.g. during
+    // onboarding) are held here and flushed from onPageStop.
+    private var pendingSelectedModelWrite: String? = null
+
+    val localInference get() = getApplication<BouncerApplication>().localInference
 
     // Scroll-driven nav bar visibility. lastScrollY is the page's last reported
     // Y. accumulatedDown/Up integrate single-direction motion so a slow scroll
@@ -140,6 +150,12 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
 
     fun onPageStop() {
         maybeLoadAiSettings()
+        pendingSelectedModelWrite?.let { key ->
+            if (isOnX(_state.value.currentUrl)) {
+                pendingSelectedModelWrite = null
+                writeSelectedModelToJs(key)
+            }
+        }
         if (pendingShareFilterPack && isOnX(_state.value.currentUrl)) {
             pendingShareFilterPack = false
             pendingShareTimeoutJob?.cancel()
@@ -261,6 +277,28 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
             host == "twitter.com" || host.endsWith(".twitter.com")
     }
 
+    /**
+     * Selects the filtering backend: "imbue" for cloud or "iosLocal:<id>" for
+     * on-device. Mirrors iOS FilterPhraseSheet.selectModel: persists to the
+     * extension's storage (so the shared JS pipeline dispatches accordingly) and
+     * clears any loaded desktop-style model cache.
+     */
+    fun selectModel(modelKey: String) {
+        if (modelKey.isEmpty() || modelKey == _state.value.selectedModel) return
+        LocalModels.forKey(modelKey)?.let { localInference.selectModel(it) }
+        _state.update { it.copy(selectedModel = modelKey) }
+        if (isOnX(_state.value.currentUrl)) {
+            writeSelectedModelToJs(modelKey)
+        } else {
+            pendingSelectedModelWrite = modelKey
+        }
+    }
+
+    private fun writeSelectedModelToJs(modelKey: String) {
+        callJs("__ff_setStorage", JSONObject(mapOf("selectedModel" to modelKey)))
+        callJs("__ff_clearModelCache")
+    }
+
     fun setAiTextFilterEnabled(enabled: Boolean) {
         _state.update { it.copy(aiTextFilterEnabled = enabled) }
         callJs("__ff_setAiTextFilterEnabled", enabled)
@@ -295,6 +333,13 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
             s.copy(
                 aiTextFilterEnabled = if (obj.has("aiTextFilterEnabled")) obj.optBoolean("aiTextFilterEnabled") else s.aiTextFilterEnabled,
                 aiTextDetectionThreshold = if (obj.has("aiTextDetectionThreshold")) obj.optDouble("aiTextDetectionThreshold", s.aiTextDetectionThreshold) else s.aiTextDetectionThreshold,
+                // Don't clobber a selection the user just made natively but which
+                // hasn't been written to JS storage yet.
+                selectedModel = if (obj.has("selectedModel") && pendingSelectedModelWrite == null) {
+                    obj.optString("selectedModel", s.selectedModel)
+                } else {
+                    s.selectedModel
+                },
             )
         }
     }
