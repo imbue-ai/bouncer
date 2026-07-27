@@ -223,6 +223,34 @@ describe('shouldProcessCurrentPage', () => {
     expect(adapter.shouldProcessCurrentPage()).toBe(false);
   });
 
+  it('returns true on /home with a localized For You tab selected (Korean)', () => {
+    setPath('/home');
+    addTabList([
+      { text: '추천', selected: true },
+      { text: '팔로잉', selected: false },
+    ]);
+    expect(adapter.shouldProcessCurrentPage()).toBe(true);
+  });
+
+  it('returns true on /home with a localized Following tab selected (Japanese)', () => {
+    setPath('/home');
+    addTabList([
+      { text: 'おすすめ', selected: false },
+      { text: 'フォロー中', selected: true },
+    ]);
+    expect(adapter.shouldProcessCurrentPage()).toBe(true);
+  });
+
+  it('returns false on /home with a localized pinned list tab selected', () => {
+    setPath('/home');
+    addTabList([
+      { text: '추천', selected: false },
+      { text: '팔로잉', selected: false },
+      { text: '내 리스트', selected: true },
+    ]);
+    expect(adapter.shouldProcessCurrentPage()).toBe(false);
+  });
+
   it('returns false on /home with no tablist', () => {
     setPath('/home');
     expect(adapter.shouldProcessCurrentPage()).toBe(false);

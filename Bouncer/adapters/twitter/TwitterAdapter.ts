@@ -253,13 +253,20 @@ const BouncerTwitterAdapter = class TwitterAdapter implements PlatformAdapter {
     const tabBar = document.querySelector('[role="tablist"]');
     if (!tabBar) return false;
 
+    // The "For you" and "Following" tabs are always the first two in the
+    // home tablist regardless of UI language (pinned lists/communities come
+    // after), so match by position rather than tab text — text matching
+    // breaks on non-English locales (e.g. Korean 추천/팔로잉). Keep the
+    // English text match as a fallback in case the tab order ever changes.
     const tabs = tabBar.querySelectorAll('[role="tab"]');
-    for (const tab of tabs) {
+    for (let i = 0; i < tabs.length; i++) {
+      const tab = tabs[i];
+      if (tab.getAttribute('aria-selected') !== 'true') {
+        continue;
+      }
       const tabText = tab.textContent?.toLowerCase() || '';
-      if (tabText.includes('for you') || tabText.includes('following')) {
-        if (tab.getAttribute('aria-selected') === 'true') {
-          return true;
-        }
+      if (i < 2 || tabText.includes('for you') || tabText.includes('following')) {
+        return true;
       }
     }
 
