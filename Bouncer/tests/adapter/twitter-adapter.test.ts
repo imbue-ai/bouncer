@@ -213,12 +213,21 @@ describe('shouldProcessCurrentPage', () => {
     expect(adapter.shouldProcessCurrentPage()).toBe(true);
   });
 
-  it('returns false on /home with no matching tab selected', () => {
+  it('returns true on /home with a custom feed tab selected', () => {
     setPath('/home');
     addTabList([
       { text: 'For you', selected: false },
       { text: 'Following', selected: false },
-      { text: 'Lists', selected: true },
+      { text: 'AI stuff', selected: true },
+    ]);
+    expect(adapter.shouldProcessCurrentPage()).toBe(true);
+  });
+
+  it('returns false on /home when no tab is selected', () => {
+    setPath('/home');
+    addTabList([
+      { text: 'For you', selected: false },
+      { text: 'Following', selected: false },
     ]);
     expect(adapter.shouldProcessCurrentPage()).toBe(false);
   });

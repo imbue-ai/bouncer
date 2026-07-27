@@ -253,13 +253,14 @@ const BouncerTwitterAdapter = class TwitterAdapter implements PlatformAdapter {
     const tabBar = document.querySelector('[role="tablist"]');
     if (!tabBar) return false;
 
+    // Every tab on the /home tablist renders a tweet timeline — "For you",
+    // "Following", and any pinned custom feeds (Lists/Communities). Accept
+    // whichever tab is selected rather than matching tab names, which would
+    // exclude custom feeds and break on non-English UI languages.
     const tabs = tabBar.querySelectorAll('[role="tab"]');
     for (const tab of tabs) {
-      const tabText = tab.textContent?.toLowerCase() || '';
-      if (tabText.includes('for you') || tabText.includes('following')) {
-        if (tab.getAttribute('aria-selected') === 'true') {
-          return true;
-        }
+      if (tab.getAttribute('aria-selected') === 'true') {
+        return true;
       }
     }
 
