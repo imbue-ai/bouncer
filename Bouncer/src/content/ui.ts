@@ -3293,7 +3293,14 @@ export function addContextMenuHandler(article: HTMLElement) {
   // finger touch here and trigger once the timer fires. We swallow the
   // following `click`, `contextmenu`, and `touchend` so the system callout
   // doesn't appear and Twitter doesn't navigate to the post.
-  if (_deps.IS_IOS) {
+  //
+  // Debug-only: dev bundles (Xcode Debug builds the extension with --dev)
+  // enable it via IS_DEV_BUILD. Android debug APKs embed the same prod
+  // bundle as release, so their debug source set sets __ff_debugBuild on
+  // the page instead (build_flag.js in the GeckoView bridge extension).
+  const isDebugNativeShell = IS_DEV_BUILD
+    || (window as Window & { __ff_debugBuild?: boolean }).__ff_debugBuild === true;
+  if (_deps.IS_IOS && isDebugNativeShell) {
     const LONG_PRESS_MS = 500;
     const MOVE_TOLERANCE_PX = 10;
     let pressTimer: number | null = null;
