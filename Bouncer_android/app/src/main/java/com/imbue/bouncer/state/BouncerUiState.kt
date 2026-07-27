@@ -9,8 +9,16 @@ data class BouncerUiState(
     val currentUrl: String = "",
     val isSheetPresented: Boolean = false,
     val isFilteredModalOpen: Boolean = false,
-    val aiTextFilterEnabled: Boolean = false,
-    val aiTextDetectionThreshold: Double = 0.7,
+    // AI detection (text + images, one signal) has no manual on/off switch —
+    // it is driven entirely by the user's natural-language filter phrases
+    // (see the extension's background/ai-intent.ts). `aiDetectionOn` mirrors
+    // that derived state; `aiDetectionPending` dims the sheet's sparkle
+    // indicator while the backend round trip that follows a tap is in
+    // flight — the counterpart of the desktop indicator's `.pending` class
+    // and the iOS sheet's `aiDetectionPending`.
+    val aiDetectionOn: Boolean = false,
+    val aiDetectionPending: Boolean = false,
+    val filterReplies: Boolean = true,
     val hasCompletedOnboarding: Boolean = false,
     val hasLoggedIn: Boolean = false,
     val hasSeenBouncerTooltip: Boolean = false,
