@@ -58,6 +58,15 @@ android {
     }
 
     buildTypes {
+        // TEMPORARY: minified debug for on-device R8 smoke testing. Revert before commit.
+        debug {
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+        }
         release {
             isMinifyEnabled = true
             isShrinkResources = true
