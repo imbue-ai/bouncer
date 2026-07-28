@@ -110,7 +110,9 @@ struct FilteredWebView: UIViewRepresentable {
             } else {
                 webView.customUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"
             }
-            webView.isInspectable = true
+            if #available(iOS 16.4, *) {
+                webView.isInspectable = true
+            }
 
             // First-launch fallback: if the platform has a dedicated login URL
             // and the user has never logged in, land on the login flow.
@@ -684,11 +686,6 @@ struct FilteredWebView: UIViewRepresentable {
             accumulatedDown = 0
             accumulatedUp = 0
             setNavBarHidden(false)
-            // A first-visit webview hasn't been told how much of it the bar
-            // obscures yet; re-applying on every switch is cheap and covers it.
-            DispatchQueue.main.async { [weak self] in
-                self?.sheetViewModel.applyObscuredInsets()
-            }
             contentOffsetObservation = webView.scrollView.observe(\.contentOffset, options: [.new]) { [weak self] sv, _ in
                 self?.handleScroll(sv)
             }
@@ -823,7 +820,9 @@ struct FilteredWebView: UIViewRepresentable {
             popup.customUserAgent = webView.customUserAgent
             popup.navigationDelegate = self
             popup.uiDelegate = self
-            popup.isInspectable = true
+            if #available(iOS 16.4, *) {
+                popup.isInspectable = true
+            }
             popupWebView = popup
 
             // Present in a native iOS sheet with a nav bar and Cancel button
