@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Bouncer Bridge",
-  "version": "1.1.12",
+  "version": "1.1.15",
   "description": "Bouncer content scripts and native bridge for the Android GeckoView host.",
   "browser_specific_settings": {
     "gecko": { "id": "bouncer@imbue.com" }
@@ -55,6 +55,7 @@
       "world": "MAIN",
       "run_at": "document_start",
       "js": [
+        "build_flag.js",
         "bridge_page.js",
         "ChromePolyfill.js",
         "adapters/twitter/fiber-extractor.js",

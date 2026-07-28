@@ -3293,7 +3293,14 @@ export function addContextMenuHandler(article: HTMLElement) {
   // finger touch here and trigger once the timer fires. We swallow the
   // following `click`, `contextmenu`, and `touchend` so the system callout
   // doesn't appear and Twitter doesn't navigate to the post.
-  if (_deps.IS_IOS) {
+  //
+  // Debug-only: dev bundles (Xcode Debug builds the extension with --dev)
+  // enable it via IS_DEV_BUILD. Android debug APKs embed the same prod
+  // bundle as release, so their debug source set sets __ff_debugBuild on
+  // the page instead (build_flag.js in the GeckoView bridge extension).
+  const isDebugNativeShell = IS_DEV_BUILD
+    || (window as Window & { __ff_debugBuild?: boolean }).__ff_debugBuild === true;
+  if (_deps.IS_IOS && isDebugNativeShell) {
     const LONG_PRESS_MS = 500;
     const MOVE_TOLERANCE_PX = 10;
     let pressTimer: number | null = null;
@@ -3405,6 +3412,17 @@ async function fetchReasoningIfNeeded(article: HTMLElement) {
 // ==================== Why Annoying Button ====================
 
 const DEBUG = false;
+
+// Bouncing a reply while the "filter replies" setting is off would be a
+// no-op — reply evaluation is skipped entirely on permalink pages — so
+// flip the setting on before the new phrase triggers re-evaluation.
+async function ensureFilterRepliesEnabled(article: HTMLElement) {
+  if (!_deps.adapter.isPermalinkView() || _deps.adapter.isMainPost(article)) return;
+  const { filterReplies } = await getStorage(['filterReplies']);
+  if (filterReplies === false) {
+    await setStorage({ filterReplies: true });
+  }
+}
 
 // Add inline "why annoying" button next to Share post button
 export function addWhyAnnoyingButton(article: HTMLElement) {
@@ -3644,7 +3662,9 @@ export function addWhyAnnoyingButton(article: HTMLElement) {
           ce.stopPropagation();
           // Remove tooltip before the filter triggers re-evaluation and captures the post
           tooltip.remove();
-          addFilterPhrase(r).catch(err => console.error('[UI] addFilterPhrase failed:', err));
+          ensureFilterRepliesEnabled(article)
+            .then(() => addFilterPhrase(r))
+            .catch(err => console.error('[UI] addFilterPhrase failed:', err));
         });
         tooltip.appendChild(chip);
       });
@@ -3666,7 +3686,9 @@ export function addWhyAnnoyingButton(article: HTMLElement) {
         const value = customInput.value.trim();
         if (!value) return;
         tooltip.remove();
-        addFilterPhrase(value).catch(err => console.error('[UI] addFilterPhrase failed:', err));
+        ensureFilterRepliesEnabled(article)
+          .then(() => addFilterPhrase(value))
+          .catch(err => console.error('[UI] addFilterPhrase failed:', err));
         // Forcibly remove this post regardless of AI evaluation
         const reasoning = `User blocked: ${value}`;
         storeFilteredPost(article, content, reasoning, '', value);

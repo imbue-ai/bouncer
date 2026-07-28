@@ -20,6 +20,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowCircleUp
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Cancel
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Tune
@@ -42,6 +43,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onSizeChanged
@@ -56,14 +58,15 @@ fun FilterSheet(
     sheetState: SheetState,
     phrases: List<String>,
     filteredCount: Int,
-    aiTextFilterEnabled: Boolean,
-    aiTextDetectionThreshold: Double,
+    aiDetectionOn: Boolean,
+    aiDetectionPending: Boolean,
+    filterReplies: Boolean,
     onAdd: (String) -> Unit,
     onRemove: (String) -> Unit,
     onViewFiltered: () -> Unit,
     onShareFilterPack: () -> Unit,
-    onAiTextFilterEnabledChange: (Boolean) -> Unit,
-    onAiTextDetectionThresholdChange: (Double) -> Unit,
+    onToggleAiDetection: () -> Unit,
+    onFilterRepliesChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var showSettings by remember { mutableStateOf(false) }
@@ -115,15 +118,16 @@ fun FilterSheet(
             SheetHeader(
                 title = if (showSettings) "Settings" else "Filter out",
                 shareEnabled = phrases.isNotEmpty(),
+                aiDetectionOn = aiDetectionOn,
+                aiDetectionPending = aiDetectionPending,
+                onToggleAiDetection = onToggleAiDetection,
                 onShare = onShareFilterPack,
                 onToggle = { showSettings = !showSettings },
             )
             if (showSettings) {
                 BouncerSettings(
-                    aiTextFilterEnabled = aiTextFilterEnabled,
-                    aiTextDetectionThreshold = aiTextDetectionThreshold,
-                    onAiTextFilterEnabledChange = onAiTextFilterEnabledChange,
-                    onAiTextDetectionThresholdChange = onAiTextDetectionThresholdChange,
+                    filterReplies = filterReplies,
+                    onFilterRepliesChange = onFilterRepliesChange,
                 )
             } else {
                 // Only let the list participate in scroll/nested-scroll when
@@ -188,6 +192,9 @@ fun FilterSheet(
 private fun SheetHeader(
     title: String,
     shareEnabled: Boolean,
+    aiDetectionOn: Boolean,
+    aiDetectionPending: Boolean,
+    onToggleAiDetection: () -> Unit,
     onShare: () -> Unit,
     onToggle: () -> Unit,
 ) {
@@ -202,6 +209,31 @@ private fun SheetHeader(
             style = MaterialTheme.typography.titleLarge,
             modifier = Modifier.weight(1f),
         )
+        // AI-detection indicator, the native counterpart of the sparkle at
+        // the top-right of the desktop filter box (.filter-ai-indicator in
+        // content.css) and the iOS sheet's toolbar sparkle. It reports the
+        // natural-language-derived state AND toggles it — but only through
+        // the phrase mechanism itself; there is no override switch (see the
+        // extension's background/ai-intent.ts).
+        IconButton(
+            onClick = onToggleAiDetection,
+            enabled = !aiDetectionPending,
+            modifier = Modifier.alpha(if (aiDetectionPending) 0.55f else 1f),
+        ) {
+            Icon(
+                Icons.Default.AutoAwesome,
+                contentDescription = if (aiDetectionOn) {
+                    "Removing AI-generated content — your filter phrases ask for it. Tap to stop (removes those phrases)."
+                } else {
+                    "Tap to remove AI-generated content from your feed (adds the filter phrase \"AI slop\")."
+                },
+                tint = if (aiDetectionOn) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+            )
+        }
         IconButton(onClick = onShare, enabled = shareEnabled) {
             Icon(Icons.Default.Share, contentDescription = "Share filters")
         }
