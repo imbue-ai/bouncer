@@ -76,18 +76,24 @@
 
   window.__ff_loadAiSettings = function () {
     if (typeof window.__ff_resolveAndPost !== 'function') return;
+    // AI detection is phrase-driven (no on/off switch); this reports the
+    // derived state that lights the native sparkle indicator.
     if (typeof window.__ff_getAiTextFilterEnabled === 'function') {
       window.__ff_resolveAndPost(
         window.__ff_getAiTextFilterEnabled(),
         'feedfilterAiSettings',
-        'aiTextFilterEnabled'
+        'aiDetectionOn'
       );
     }
-    if (typeof window.__ff_getAiTextDetectionThreshold === 'function') {
+    if (typeof window.__ff_getStorage === 'function') {
       window.__ff_resolveAndPost(
-        window.__ff_getAiTextDetectionThreshold(),
+        window.__ff_getStorage(['filterReplies']).then(function (d) {
+          // Missing means on — same default the pipeline and the iOS
+          // sheet apply (`data.filterReplies !== false`).
+          return !d || d.filterReplies !== false;
+        }),
         'feedfilterAiSettings',
-        'aiTextDetectionThreshold'
+        'filterReplies'
       );
     }
   };

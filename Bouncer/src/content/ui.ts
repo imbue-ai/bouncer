@@ -2,7 +2,7 @@
 
 import { toBlob } from 'html-to-image';
 import { asyncHandler } from '../shared/async';
-import { cleanReasoning, escapeHtml, formatPostForEvaluation, parseHTML, GUEST_FILTER_LIMIT, AI_DETECTION_SEED_PHRASE } from '../shared/utils';
+import { cleanReasoning, escapeHtml, formatPostForEvaluation, parseHTML, GUEST_FILTER_LIMIT, AI_DETECTION_SEED_PHRASE, phraseAddNeedsReEvaluation } from '../shared/utils';
 import { init as initPopup } from '../popup/index';
 import {
   encodeFilterPackCode, decodeFilterPackCode, buildFilterPackShareUrl,
@@ -1782,13 +1782,19 @@ async function confirmAndImportPack(phrases: string[]): Promise<void> {
   const existing = await getDescriptions(_deps.descriptionsKey);
   const newPhrases = phrases.filter(p => !existing.includes(p));
   if (newPhrases.length === 0) return;
-  await setDescriptions(_deps.descriptionsKey, [...existing, ...newPhrases]);
+  const next = [...existing, ...newPhrases];
+  await setDescriptions(_deps.descriptionsKey, next);
   syncFilterPhrases();
   // Push the new phrase list to the native iOS filter sheet — without this the
   // native @Published phrases array stays at its pre-import snapshot until the
   // user opens & closes the sheet.
   if (_deps.IS_IOS) _deps.updateIOSFilteredCount();
-  _deps.reEvaluateAllPosts();
+  // Same seed-phrase exception as addFilterPhrase: a pack consisting solely
+  // of the seed phrase engages the detectors via aiFilterIntent, not a sweep.
+  const { aiFilterIntent } = await getStorage(['aiFilterIntent']);
+  if (phraseAddNeedsReEvaluation(existing, next, aiFilterIntent?.aiPhrases)) {
+    _deps.reEvaluateAllPosts();
+  }
 }
 
 function renderPhrasesInContainer(container: Element, descriptions: string[]) {
@@ -1842,12 +1848,18 @@ export async function addFilterPhrase(text: string) {
       return false;
     }
 
-    descriptions.push(text);
-    console.log('[Bouncer] Saving descriptions:', descriptions);
-    await setDescriptions(_deps.descriptionsKey, descriptions);
+    const next = [...descriptions, text];
+    console.log('[Bouncer] Saving descriptions:', next);
+    await setDescriptions(_deps.descriptionsKey, next);
     console.log('[Bouncer] addFilterPhrase complete');
     syncFilterPhrases();
-    _deps.reEvaluateAllPosts();
+    // Planting the seed phrase alone must not sweep — it is not a filter
+    // category, and the aiFilterIntent write it provokes triggers the sweep
+    // that engages the detectors (see the storage listener in content/index.ts).
+    const { aiFilterIntent } = await getStorage(['aiFilterIntent']);
+    if (phraseAddNeedsReEvaluation(descriptions, next, aiFilterIntent?.aiPhrases)) {
+      _deps.reEvaluateAllPosts();
+    }
     return true;
   } catch (err) {
     console.error('[Bouncer] addFilterPhrase error:', err);
@@ -3281,7 +3293,14 @@ export function addContextMenuHandler(article: HTMLElement) {
   // finger touch here and trigger once the timer fires. We swallow the
   // following `click`, `contextmenu`, and `touchend` so the system callout
   // doesn't appear and Twitter doesn't navigate to the post.
-  if (_deps.IS_IOS) {
+  //
+  // Debug-only: dev bundles (Xcode Debug builds the extension with --dev)
+  // enable it via IS_DEV_BUILD. Android debug APKs embed the same prod
+  // bundle as release, so their debug source set sets __ff_debugBuild on
+  // the page instead (build_flag.js in the GeckoView bridge extension).
+  const isDebugNativeShell = IS_DEV_BUILD
+    || (window as Window & { __ff_debugBuild?: boolean }).__ff_debugBuild === true;
+  if (_deps.IS_IOS && isDebugNativeShell) {
     const LONG_PRESS_MS = 500;
     const MOVE_TOLERANCE_PX = 10;
     let pressTimer: number | null = null;
@@ -3393,6 +3412,17 @@ async function fetchReasoningIfNeeded(article: HTMLElement) {
 // ==================== Why Annoying Button ====================
 
 const DEBUG = false;
+
+// Bouncing a reply while the "filter replies" setting is off would be a
+// no-op — reply evaluation is skipped entirely on permalink pages — so
+// flip the setting on before the new phrase triggers re-evaluation.
+async function ensureFilterRepliesEnabled(article: HTMLElement) {
+  if (!_deps.adapter.isPermalinkView() || _deps.adapter.isMainPost(article)) return;
+  const { filterReplies } = await getStorage(['filterReplies']);
+  if (filterReplies === false) {
+    await setStorage({ filterReplies: true });
+  }
+}
 
 // Add inline "why annoying" button next to Share post button
 export function addWhyAnnoyingButton(article: HTMLElement) {
@@ -3632,7 +3662,9 @@ export function addWhyAnnoyingButton(article: HTMLElement) {
           ce.stopPropagation();
           // Remove tooltip before the filter triggers re-evaluation and captures the post
           tooltip.remove();
-          addFilterPhrase(r).catch(err => console.error('[UI] addFilterPhrase failed:', err));
+          ensureFilterRepliesEnabled(article)
+            .then(() => addFilterPhrase(r))
+            .catch(err => console.error('[UI] addFilterPhrase failed:', err));
         });
         tooltip.appendChild(chip);
       });
@@ -3654,7 +3686,9 @@ export function addWhyAnnoyingButton(article: HTMLElement) {
         const value = customInput.value.trim();
         if (!value) return;
         tooltip.remove();
-        addFilterPhrase(value).catch(err => console.error('[UI] addFilterPhrase failed:', err));
+        ensureFilterRepliesEnabled(article)
+          .then(() => addFilterPhrase(value))
+          .catch(err => console.error('[UI] addFilterPhrase failed:', err));
         // Forcibly remove this post regardless of AI evaluation
         const reasoning = `User blocked: ${value}`;
         storeFilteredPost(article, content, reasoning, '', value);
