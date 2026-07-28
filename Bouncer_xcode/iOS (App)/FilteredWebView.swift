@@ -110,9 +110,7 @@ struct FilteredWebView: UIViewRepresentable {
             } else {
                 webView.customUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"
             }
-            if #available(iOS 16.4, *) {
-                webView.isInspectable = true
-            }
+            webView.isInspectable = true
 
             // First-launch fallback: if the platform has a dedicated login URL
             // and the user has never logged in, land on the login flow.
@@ -639,11 +637,27 @@ struct FilteredWebView: UIViewRepresentable {
         private var canGoBackObservation: NSKeyValueObservation?
         private var canGoForwardObservation: NSKeyValueObservation?
         private var urlObservation: NSKeyValueObservation?
+        private var contentOffsetObservation: NSKeyValueObservation?
+
+        // Scroll-driven nav bar visibility. lastScrollY is the active
+        // webview's last reported Y; accumulatedDown/Up integrate
+        // single-direction motion so a slow scroll still trips the threshold
+        // instead of dying to per-event jitter. Mirrors the Android app's
+        // BouncerViewModel.onScroll (constants there are px, here pt).
+        private var lastScrollY: CGFloat = 0
+        private var accumulatedDown: CGFloat = 0
+        private var accumulatedUp: CGFloat = 0
+        private var navBarHiddenTarget = false
+
+        private static let topPin: CGFloat = 80        // within this of the top → always show
+        private static let hideThreshold: CGFloat = 24
+        private static let showThreshold: CGFloat = 16
 
         func activate(_ webView: WKWebView) {
             canGoBackObservation?.invalidate()
             canGoForwardObservation?.invalidate()
             urlObservation?.invalidate()
+            contentOffsetObservation?.invalidate()
 
             canGoBackObservation = webView.observe(\.canGoBack, options: [.initial, .new]) { [weak self] wv, _ in
                 DispatchQueue.main.async {
@@ -659,6 +673,77 @@ struct FilteredWebView: UIViewRepresentable {
                 DispatchQueue.main.async {
                     self?.sheetViewModel.currentURL = wv.url?.absoluteString ?? ""
                 }
+                // Any navigation (links, back/forward swipe) re-shows the bar.
+                self?.setNavBarHidden(false)
+            }
+
+            // Re-seed the direction tracker at the new webview's position —
+            // cached webviews sit at different offsets, and treating the jump
+            // between them as a scroll would flap the bar on platform switch.
+            lastScrollY = webView.scrollView.contentOffset.y + webView.scrollView.adjustedContentInset.top
+            accumulatedDown = 0
+            accumulatedUp = 0
+            setNavBarHidden(false)
+            // A first-visit webview hasn't been told how much of it the bar
+            // obscures yet; re-applying on every switch is cheap and covers it.
+            DispatchQueue.main.async { [weak self] in
+                self?.sheetViewModel.applyObscuredInsets()
+            }
+            contentOffsetObservation = webView.scrollView.observe(\.contentOffset, options: [.new]) { [weak self] sv, _ in
+                self?.handleScroll(sv)
+            }
+        }
+
+        // KVO fires on the main thread for both finger-down scrolling and
+        // deceleration, which is why this is KVO and not the scroll view's
+        // pan gesture (that goes silent during momentum).
+        private func handleScroll(_ scrollView: UIScrollView) {
+            let y = scrollView.contentOffset.y + scrollView.adjustedContentInset.top
+            let delta = y - lastScrollY
+
+            // Near the top (including top rubber-band): pin the bar visible.
+            if y < Self.topPin {
+                lastScrollY = y
+                accumulatedDown = 0
+                accumulatedUp = 0
+                setNavBarHidden(false)
+                return
+            }
+            lastScrollY = y
+
+            // Bottom rubber-band oscillates past the end of the content;
+            // reacting to it makes the bar flicker.
+            let maxY = scrollView.contentSize.height + scrollView.adjustedContentInset.bottom - scrollView.bounds.height
+            guard scrollView.contentOffset.y < maxY else { return }
+            // Only user-driven scrolls — skips page-load offset resets and JS
+            // scrollTo, which would hide the bar with no gesture behind it.
+            guard scrollView.isTracking || scrollView.isDragging || scrollView.isDecelerating else { return }
+            // A single-event jump this large is an anchor navigation or layout
+            // shift mid-touch, not scrolling.
+            guard abs(delta) < 100 else {
+                accumulatedDown = 0
+                accumulatedUp = 0
+                return
+            }
+
+            if delta > 0 {
+                accumulatedDown += delta
+                accumulatedUp = 0
+                if accumulatedDown > Self.hideThreshold { setNavBarHidden(true) }
+            } else if delta < 0 {
+                accumulatedUp -= delta
+                accumulatedDown = 0
+                if accumulatedUp > Self.showThreshold { setNavBarHidden(false) }
+            }
+        }
+
+        private func setNavBarHidden(_ hidden: Bool) {
+            // Compare-and-set outside the dispatch so a stream of scroll
+            // events costs one main-queue hop per state change, not per event.
+            guard navBarHiddenTarget != hidden else { return }
+            navBarHiddenTarget = hidden
+            DispatchQueue.main.async { [weak self] in
+                self?.sheetViewModel.isNavBarHidden = hidden
             }
         }
 
@@ -738,9 +823,7 @@ struct FilteredWebView: UIViewRepresentable {
             popup.customUserAgent = webView.customUserAgent
             popup.navigationDelegate = self
             popup.uiDelegate = self
-            if #available(iOS 16.4, *) {
-                popup.isInspectable = true
-            }
+            popup.isInspectable = true
             popupWebView = popup
 
             // Present in a native iOS sheet with a nav bar and Cancel button
@@ -757,11 +840,48 @@ struct FilteredWebView: UIViewRepresentable {
                 action: #selector(popupCancelTapped)
             )
 
-            guard let presentingVC = webView.findViewController() else { return popup }
-            presentingVC.present(nav, animated: true)
             popupViewController = nav
+            presentPopup(nav, from: webView, attempts: 10)
 
             return popup
+        }
+
+        // UIKit's present(_:animated:) is a silent no-op when the presenting
+        // view controller is already presenting something or a transition is
+        // in flight — which used to leave the Google/Apple sign-in flow
+        // loading in a webview that was never shown. Present from the top of
+        // the presentation stack, and retry briefly while a transition
+        // settles. WebKit only needs the webview returned synchronously; the
+        // sheet itself can appear a beat later.
+        private func presentPopup(_ nav: UIViewController, from webView: WKWebView, attempts: Int) {
+            // Superseded by another popup, or cancelled/dismissed meanwhile.
+            guard popupViewController === nav else { return }
+
+            let retry: () -> Void = { [weak self, weak webView] in
+                guard attempts > 1 else {
+                    // Give up: drop our reference so the never-shown popup
+                    // deallocates instead of lingering as an invisible window.
+                    self?.popupWebView = nil
+                    self?.popupViewController = nil
+                    return
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                    guard let self, let webView else { return }
+                    self.presentPopup(nav, from: webView, attempts: attempts - 1)
+                }
+            }
+
+            guard let base = webView.findViewController() ?? webView.window?.rootViewController else {
+                retry()
+                return
+            }
+            var top = base
+            while let presented = top.presentedViewController { top = presented }
+            guard !top.isBeingPresented, !top.isBeingDismissed else {
+                retry()
+                return
+            }
+            top.present(nav, animated: true)
         }
 
         @objc private func popupCancelTapped() {
