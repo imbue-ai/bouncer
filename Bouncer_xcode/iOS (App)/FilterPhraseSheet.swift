@@ -123,6 +123,67 @@ class FilterSheetViewModel: ObservableObject {
     @Published var currentURL: String = ""
     @Published var isEditingURL = false
     @Published var isFilteredModalOpen = false
+    // Scroll-driven nav bar visibility: WebCoordinator's contentOffset
+    // observation flips this; MainFeedView slides the bar and syncs the
+    // webviews' obscuredContentInsets off it.
+    @Published var isNavBarHidden = false
+    // Measured height of NavBarView's content (excluding the bottom safe
+    // area), reported by MainFeedView's onGeometryChange. Drives both the
+    // bar's slide distance and the webviews' obscured-inset bottom.
+    @Published var navBarHeight: CGFloat = 0
+
+    // Bottom safe-area (home-indicator) inset of the key window. Read from
+    // UIKit rather than SwiftUI geometry because SwiftUI's bottom inset
+    // includes the keyboard when it's up — the bar's slide distance and the
+    // webviews' obscured insets both want the static hardware inset.
+    var windowBottomInset: CGFloat {
+        UIApplication.shared.connectedScenes
+            .compactMap { ($0 as? UIWindowScene)?.keyWindow }
+            .first?.safeAreaInsets.bottom ?? 0
+    }
+
+    // How far the bar travels to clear the screen: its content height plus
+    // the home-indicator area its .background(.bar) bleeds into.
+    var navBarSlideDistance: CGFloat { navBarHeight + windowBottomInset }
+
+    // The iOS analog of the Android app's setDynamicToolbarMaxHeight +
+    // setVerticalClipping trick: the webviews' frames never change. Instead
+    // WebKit is told how much of the bottom edge the bar currently covers
+    // (obscuredContentInsets — the API Safari's own collapsing bars use) and
+    // it shifts the page's position:fixed / sticky elements and layout
+    // viewport to match, with no per-frame reflow.
+    private var appliedViewportInsetBottom: [ObjectIdentifier: CGFloat] = [:]
+
+    // Steady-state form, for when the bar isn't mid-animation (new webview
+    // activated, bar height re-measured).
+    func applyObscuredInsets() {
+        applyObscuredInsets(barOffset: isNavBarHidden ? navBarSlideDistance : 0)
+    }
+
+    // Per-frame form: `barOffset` is how far the bar has slid off-screen
+    // (0 = fully shown). NavBarSlideEffect feeds it the interpolated value on
+    // every frame of the slide so the page's own fixed bottom bars track our
+    // bar's top edge instead of jumping to the animation's end state.
+    func applyObscuredInsets(barOffset: CGFloat) {
+        let visibleBottom = navBarSlideDistance
+        let bottom = max(0, min(visibleBottom, visibleBottom - barOffset))
+        for id in cache.visitedPlatforms {
+            guard let wv = cache.webView(for: id) else { continue }
+            wv.obscuredContentInsets = UIEdgeInsets(top: 0, left: 0, bottom: bottom, right: 0)
+            // Keep CSS svh/lvh stable across toggles: small viewport = bar
+            // shown, large viewport = bar hidden. Only touch it when the
+            // reserved height actually changes, and only once the webview
+            // has real bounds (the API rejects insets larger than the view).
+            if appliedViewportInsetBottom[ObjectIdentifier(wv)] != visibleBottom,
+               wv.bounds.height > visibleBottom {
+                wv.setMinimumViewportInset(
+                    .zero,
+                    maximumViewportInset: UIEdgeInsets(top: 0, left: 0, bottom: visibleBottom, right: 0)
+                )
+                appliedViewportInsetBottom[ObjectIdentifier(wv)] = visibleBottom
+            }
+        }
+    }
     // AI detection (text + images, one signal) has no manual on/off switch —
     // it is driven entirely by the user's natural-language filter phrases
     // (see the extension's background/ai-intent.ts). `aiDetectionOn` mirrors
@@ -2015,7 +2076,13 @@ private struct MainFeedView: View {
     @ObservedObject var viewModel: FilterSheetViewModel
 
     var body: some View {
-        VStack(spacing: 0) {
+        // The webview mounts and the bar are siblings in a bottom-aligned
+        // ZStack (not a VStack): the webviews keep a constant frame while the
+        // bar slides over/off them. Resizing a WKWebView forces a full page
+        // relayout, so the bar's frequent hide/show must never change the
+        // webview's bounds — the page-side effect comes from
+        // applyObscuredInsets() instead (see FilterSheetViewModel).
+        ZStack(alignment: .bottom) {
             ZStack {
                 // Mount every WebView the cache has created — one per
                 // visited platform. `.opacity` + `.allowsHitTesting` show
@@ -2053,36 +2120,84 @@ private struct MainFeedView: View {
                 }
             }
             .animation(.easeInOut(duration: 0.2), value: viewModel.isEditingURL)
+            .ignoresSafeArea(.container, edges: .bottom)
 
             if !viewModel.isFilteredModalOpen {
                 NavBarView(viewModel: viewModel)
+                    .onGeometryChange(for: CGFloat.self) { proxy in
+                        proxy.size.height
+                    } action: { height in
+                        viewModel.navBarHeight = height
+                    }
+                    // Draw-time slide, the counterpart of the Android app's
+                    // graphicsLayer translationY. The bar stays mounted so the
+                    // Picker/tips don't remount on every toggle. The effect
+                    // also mirrors each frame's offset into the webviews'
+                    // obscured insets — don't add a competing onChange that
+                    // sets them to the end state, or the page's fixed
+                    // elements snap ahead of the bar.
+                    .modifier(NavBarSlideEffect(
+                        offset: viewModel.isNavBarHidden ? viewModel.navBarSlideDistance : 0,
+                        viewModel: viewModel
+                    ))
             }
+        }
+        // 220ms tween, matching the Android app's nav bar animation.
+        .animation(.easeInOut(duration: 0.22), value: viewModel.isNavBarHidden)
+        .onChange(of: viewModel.navBarHeight) {
+            viewModel.applyObscuredInsets()
         }
         .background(Color(.systemBackground))
         .sheet(isPresented: $viewModel.isPresented) {
             viewModel.setPanelOpen(false)
         } content: {
             FilterPhraseSheet(viewModel: viewModel)
-                .padding(.top, {
-                    if #available(iOS 26.0, *) { return CGFloat(0) }
-                    else { return CGFloat(16) }
-                }())
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
                 .presentationBackgroundInteraction(.enabled(upThrough: .medium))
                 .presentationBackground {
-                    if #available(iOS 26.0, *) {
-                        Color(.systemBackground).opacity(0.85)
-                    } else {
-                        Color(.systemBackground)
-                    }
+                    Color(.systemBackground).opacity(0.85)
                 }
         }
         .onChange(of: viewModel.isPresented) { _, newValue in
             if newValue {
                 viewModel.setPanelOpen(true)
+                // Dismissing the sheet should land on visible controls.
+                viewModel.isNavBarHidden = false
             }
         }
+    }
+}
+
+// MARK: - Nav Bar Slide Effect
+
+// Slides the bar by `offset` and, on every frame of the animation, mirrors
+// the interpolated offset into the webviews' obscuredContentInsets — the
+// SwiftUI counterpart of the Android app's
+// `snapshotFlow { translationYAnim.value } → setVerticalClipping` loop.
+// Conforming to Animatable means SwiftUI re-evaluates `body` with an
+// interpolated `animatableData` each frame of the 220ms tween, which is the
+// only way to observe an in-flight animation value; without it the insets
+// jump to the end state and the page's own bottom bar jerks instead of
+// tracking ours.
+private struct NavBarSlideEffect: ViewModifier, Animatable {
+    var offset: CGFloat
+    var viewModel: FilterSheetViewModel
+
+    var animatableData: CGFloat {
+        get { offset }
+        set { offset = newValue }
+    }
+
+    func body(content: Content) -> some View {
+        // Deferred a runloop turn: body runs during view rendering, and
+        // touching the webviews (UIKit) mid-render is asking for re-entrancy.
+        let frameOffset = offset
+        let vm = viewModel
+        DispatchQueue.main.async {
+            vm.applyObscuredInsets(barOffset: frameOffset)
+        }
+        return content.offset(y: offset)
     }
 }
 
@@ -2102,57 +2217,32 @@ struct NavBarView: View {
         VStack(spacing: 0) {
             Divider()
 
-            // Platform dropdown — native SwiftUI Picker with .menu style.
-            // Renders the selected platform in the accent color followed by
-            // the standard up/down chevron glyph, and shows a checkmark on the
-            // active row in the popup. Picking navigates the WebView.
-            Picker(
-                "Platform",
-                selection: Binding(
-                    get: { viewModel.selectedPlatform },
-                    set: { viewModel.selectPlatformAndNavigate($0) }
-                )
-            ) {
-                ForEach(Platforms.all, id: \.id) { platform in
-                    Text(platform.displayName).tag(platform.id)
+            // Single row: platform dropdown centered on the bar, Bouncer
+            // button pinned to the trailing edge (a ZStack rather than an
+            // HStack so the picker centers on the bar itself, not on the
+            // space left over next to the button). Back/forward stay
+            // available via the webview's edge swipes
+            // (allowsBackForwardNavigationGestures).
+            ZStack {
+                // Platform dropdown — native SwiftUI Picker with .menu style.
+                // Renders the selected platform in the accent color followed
+                // by the standard up/down chevron glyph, and shows a checkmark
+                // on the active row in the popup. Picking navigates the
+                // WebView.
+                Picker(
+                    "Platform",
+                    selection: Binding(
+                        get: { viewModel.selectedPlatform },
+                        set: { viewModel.selectPlatformAndNavigate($0) }
+                    )
+                ) {
+                    ForEach(Platforms.all, id: \.id) { platform in
+                        Text(platform.displayName).tag(platform.id)
+                    }
                 }
-            }
-            .pickerStyle(.menu)
-            .labelsHidden()
-            .frame(maxWidth: .infinity, alignment: .center)
-            .padding(.top, 8)
-            .padding(.bottom, 4)
-
-            // Toolbar row - matches Safari bottom toolbar layout
-            HStack(spacing: 0) {
-                // Back
-                Button { viewModel.goBack() } label: {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 20, weight: .regular))
-                        .frame(maxWidth: .infinity, minHeight: 44)
-                        .contentShape(Rectangle())
-                }
-                .disabled(!viewModel.canGoBack)
-                .tint(viewModel.canGoBack ? .accentColor : Color(.quaternaryLabel))
-
-                // Forward
-                Button { viewModel.goForward() } label: {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 20, weight: .regular))
-                        .frame(maxWidth: .infinity, minHeight: 44)
-                        .contentShape(Rectangle())
-                }
-                .disabled(!viewModel.canGoForward)
-                .tint(viewModel.canGoForward ? .accentColor : Color(.quaternaryLabel))
-
-                // Share (placeholder - matches Safari layout)
-                Button { viewModel.reload() } label: {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 20, weight: .regular))
-                        .frame(maxWidth: .infinity, minHeight: 44)
-                        .contentShape(Rectangle())
-                }
-                .foregroundStyle(.tint)
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .frame(minHeight: 44)
 
                 // Bouncer filter button
                 Button {
@@ -2178,13 +2268,14 @@ struct NavBarView: View {
                                 .offset(x: 8, y: -8)
                         }
                     }
-                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .frame(width: 44, height: 44)
                     .contentShape(Rectangle())
                 }
                 .popoverTip(bouncerTip, arrowEdge: .bottom)
+                .frame(maxWidth: .infinity, alignment: .trailing)
             }
-            .padding(.horizontal, 8)
-            .padding(.bottom, 2)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 2)
         }
         .background(.bar)
         .onChange(of: viewModel.currentURL) { _, newURL in
