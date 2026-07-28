@@ -2200,7 +2200,7 @@ struct NavBarView: View {
                                 .foregroundColor(.white)
                                 .padding(.horizontal, 5)
                                 .padding(.vertical, 1)
-                                .background(Color.red)
+                                .background(Color.blue)
                                 .clipShape(Capsule())
                                 .offset(x: 8, y: -8)
                         }
@@ -2212,7 +2212,10 @@ struct NavBarView: View {
                 .frame(maxWidth: .infinity, alignment: .trailing)
             }
             .padding(.horizontal, 12)
-            .padding(.vertical, 2)
+            // Extra top padding so the count badge (offset above the Bouncer
+            // button) doesn't clip into the top edge of the bar.
+            .padding(.top, 8)
+            .padding(.bottom, 2)
         }
         .background(.bar)
         .onChange(of: viewModel.currentURL) { _, newURL in
