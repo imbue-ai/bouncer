@@ -110,8 +110,19 @@
       </label>
     </section>
 
-    <!-- Everything below is power-user surface: full model list, per-platform
-         toggles, BYOK providers, AI-slop detection. Collapsed by default. -->
+    <!-- Active Platforms: per-site master toggle + site-specific settings.
+         Rows are rendered by popup/index.ts from
+         src/shared/platforms.config.json — adding a new platform doesn't
+         require editing this file. Sites other than X are gated behind
+         optional host permissions; their toggle triggers the browser's
+         permission prompt. -->
+    <section class="active-platforms-section">
+      <label>Active Platforms</label>
+      <div id="platformsContainer"></div>
+    </section>
+
+    <!-- Everything below is power-user surface: full model list, BYOK
+         providers, AI-slop detection. Collapsed by default. -->
     <section>
       <div class="api-provider advanced-settings" id="advancedSettings">
         <div class="api-provider-header" id="advancedSettingsHeader">
@@ -133,18 +144,6 @@
           <!-- Populated by JS -->
         </div>
       </div>
-    </section>
-
-    <!-- Platforms: per-site master toggle + site-specific settings.
-         Reuses the .api-provider accordion classes so each row already
-         inherits expand/collapse, dark-mode, and light styling. -->
-    <section>
-      <label>Platforms</label>
-
-      <!-- Platform rows are rendered by popup/index.ts from
-           src/shared/platforms.config.json. Adding a new platform doesn't
-           require editing this file. -->
-      <div id="platformsContainer"></div>
     </section>
 
     <section>

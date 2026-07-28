@@ -10,7 +10,7 @@ import {
 } from '../shared/share-encoding';
 import type { BackgroundToContentMessage, ContentUIDeps, FilteredPost, PostContent, LocalModelStatus } from '../types';
 import { getStorage, setStorage, getDescriptions, setDescriptions, aiIntentActiveForSite } from '../shared/storage';
-import { getReleaseNote } from './release-notes';
+import { getReleaseNote, WELCOME_TIP } from './release-notes';
 import { runIOSImportAnimation } from './ios';
 
 // Dependencies (set by initUI from index.ts)
@@ -416,38 +416,50 @@ function setupSignInButton(container: HTMLElement) {
 
 // ==================== Update Banner ====================
 
-// Shows a "what's new" banner inside the filter box once per version.
-// Reads release notes from src/shared/release-notes.ts. Dismissal writes
-// `lastSeenVersion` to chrome.storage.local so the banner stays gone.
+// Shows a "what's new" banner inside the filter box once per version — or,
+// on a brand-new install, the one-time welcome tip instead. Reads release
+// notes from ./release-notes.ts. Dismissal writes `lastSeenVersion` (or
+// clears `showWelcomeBanner`) to chrome.storage.local so the banner stays
+// gone. The slot only exists in the post-sign-in filter box, so the welcome
+// tip naturally appears after Google sign-in or "Skip sign-in".
 async function maybeRenderUpdateBanner(container: HTMLElement): Promise<void> {
   const slot = container.querySelector<HTMLElement>('.bouncer-update-banner-slot');
   if (!slot) return;
 
   const current = chrome.runtime.getManifest().version;
-  const { lastSeenVersion } = await getStorage(['lastSeenVersion']);
-  if (lastSeenVersion === current) return;
+  const { lastSeenVersion, showWelcomeBanner } = await getStorage(['lastSeenVersion', 'showWelcomeBanner']);
 
-  const platform = _deps.IS_IOS ? 'ios' : 'desktop';
-  const note = getReleaseNote(current, platform);
-  if (!note) {
-    // No notes for this version — silently advance so a future version still triggers.
-    await setStorage({ lastSeenVersion: current });
-    return;
+  // A fresh install gets the welcome tip — a single line, no title or
+  // bullets. onInstalled already pinned lastSeenVersion to the current
+  // version so the two banners never collide.
+  const welcome = showWelcomeBanner === true;
+  let bodyHTML: string;
+  if (welcome) {
+    bodyHTML = escapeHtml(WELCOME_TIP);
+  } else {
+    if (lastSeenVersion === current) return;
+    const note = getReleaseNote(current, _deps.IS_IOS ? 'ios' : 'desktop');
+    if (!note) {
+      // No notes for this version — silently advance so a future version still triggers.
+      await setStorage({ lastSeenVersion: current });
+      return;
+    }
+    const bulletsHTML = note.bullets.map(b => `<li>${escapeHtml(b)}</li>`).join('');
+    bodyHTML = `<div class="bouncer-update-banner-title">${escapeHtml(note.title)}</div>`
+      + `<ul class="bouncer-update-banner-bullets">${bulletsHTML}</ul>`;
   }
 
-  const bulletsHTML = note.bullets.map(b => `<li>${escapeHtml(b)}</li>`).join('');
   const html = `
     <div class="bouncer-update-banner" role="status">
       <button type="button" class="bouncer-update-banner-close" aria-label="Dismiss">×</button>
-      <div class="bouncer-update-banner-title">${escapeHtml(note.title)}</div>
-      <ul class="bouncer-update-banner-bullets">${bulletsHTML}</ul>
+      ${bodyHTML}
     </div>
   `;
   slot.replaceChildren(parseHTML(html));
 
   const closeBtn = slot.querySelector<HTMLButtonElement>('.bouncer-update-banner-close');
   closeBtn?.addEventListener('click', asyncHandler(async () => {
-    await setStorage({ lastSeenVersion: current });
+    await setStorage(welcome ? { showWelcomeBanner: false } : { lastSeenVersion: current });
     document.querySelectorAll('.bouncer-update-banner').forEach(el => el.remove());
   }));
 }

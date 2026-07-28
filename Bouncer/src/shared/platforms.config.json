@@ -9,10 +9,20 @@
   },
   {
     "id": "linkedin",
-    "targets": ["safari"],
+    "targets": ["chrome", "safari"],
+    "optionalTargets": ["chrome"],
     "manifestHost": "https://*.linkedin.com/*",
     "adapterScript": "dist/LinkedInAdapter.js",
     "cssPath": "adapters/linkedin/linkedin.css",
     "extraWebAccessible": []
+  },
+  {
+    "id": "youtube",
+    "targets": ["chrome"],
+    "optionalTargets": ["chrome"],
+    "manifestHost": "https://*.youtube.com/*",
+    "adapterScript": "dist/YouTubeAdapter.js",
+    "cssPath": "adapters/youtube/youtube.css",
+    "extraWebAccessible": ["adapters/youtube/lockup-extractor.js"]
   }
 ]

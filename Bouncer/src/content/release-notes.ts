@@ -44,8 +44,21 @@ export const RELEASE_NOTES: ReleaseNote[] = [
       'You can now remove AI-generated posts!',
       'On-device mode: nothing leaves your computer. Activate in Settings.',
     ],
+  },
+  {
+    version: '2.1.0',
+    platform: 'desktop',
+    title: "What's new in Bouncer",
+    bullets: [
+      'Support for LinkedIn and Youtube can now be found in settings.',
+    ],
   }
 ];
+
+/** First-run banner, shown once to brand-new installs instead of a "what's
+ *  new" note (see `showWelcomeBanner` in storage). A single line rather than
+ *  a titled bullet list — it reuses the same banner chrome in content/ui.ts. */
+export const WELCOME_TIP = 'Tip: Support for other platforms can be found in settings.';
 
 export function getReleaseNote(version: string, platform: ReleaseNotePlatform): ReleaseNote | undefined {
   return RELEASE_NOTES.find(n => n.version === version && n.platform === platform);

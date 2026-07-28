@@ -18,6 +18,12 @@ import {
 import { sendFeedback } from './providers';
 import { imbueWebSocket, type ForceLoginMessage } from './ws-manager';
 import { launchAuthFlow, signInAnon, isAnonymousUser, refreshAuthToken, getAuthToken, handleAppleSignIn, signOut, setOnIdentityChanged, IS_SAFARI } from './auth';
+import { initOptionalPlatforms, syncOptionalPlatformScripts } from './optional-platforms';
+
+// Register/unregister content scripts for user-granted optional platforms.
+// Runs at every service worker startup because dynamic registrations don't
+// survive extension updates.
+initOptionalPlatforms();
 
 // ==================== Tab tracking ====================
 
@@ -283,6 +289,15 @@ async function handleMessage(
 
     case 'clearCache': {
       await clearEvaluationCache();
+      return { success: true };
+    }
+
+    // Sent by the settings toggle right after the user grants an optional
+    // platform's host permission. permissions.onAdded already triggers the
+    // same sync, but the popup awaits this one so it doesn't open the
+    // platform's feed before the content script is registered.
+    case 'syncOptionalPlatforms': {
+      await syncOptionalPlatformScripts();
       return { success: true };
     }
 
@@ -840,6 +855,13 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
 chrome.runtime.onInstalled.addListener((details) => {
   if (details.reason === 'install') {
     chrome.tabs.create({ url: 'https://x.com' }).catch(err => console.error('[Background] Failed to open x.com on install:', err));
+    // First-run banner (shown once the user is past the sign-in gate), and
+    // suppress the "what's new" banner for this version — a fresh install
+    // has nothing to catch up on.
+    setStorage({
+      showWelcomeBanner: true,
+      lastSeenVersion: chrome.runtime.getManifest().version,
+    }).catch(err => console.error('[Background] Failed to set welcome flags:', err));
   }
 
   if (details.reason === 'install' || details.reason === 'update') {
