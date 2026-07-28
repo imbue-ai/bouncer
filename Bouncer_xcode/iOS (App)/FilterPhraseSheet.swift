@@ -2142,8 +2142,9 @@ private struct MainFeedView: View {
                     ))
             }
         }
-        // 220ms tween, matching the Android app's nav bar animation.
-        .animation(.easeInOut(duration: 0.22), value: viewModel.isNavBarHidden)
+        // 150ms tween — slightly quicker than the Android app's 220ms nav
+        // bar animation, per feel on device.
+        .animation(.easeInOut(duration: 0.15), value: viewModel.isNavBarHidden)
         .onChange(of: viewModel.navBarHeight) {
             viewModel.applyObscuredInsets()
         }
@@ -2176,7 +2177,7 @@ private struct MainFeedView: View {
 // SwiftUI counterpart of the Android app's
 // `snapshotFlow { translationYAnim.value } → setVerticalClipping` loop.
 // Conforming to Animatable means SwiftUI re-evaluates `body` with an
-// interpolated `animatableData` each frame of the 220ms tween, which is the
+// interpolated `animatableData` each frame of the 150ms tween, which is the
 // only way to observe an in-flight animation value; without it the insets
 // jump to the end state and the page's own bottom bar jerks instead of
 // tracking ours.
