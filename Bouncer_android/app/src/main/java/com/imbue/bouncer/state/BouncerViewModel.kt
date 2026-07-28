@@ -188,11 +188,23 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
         }
         val count = if (obj.has("filteredCount")) obj.optInt("filteredCount", 0) else null
         val theme = obj.optString("theme").takeIf { it.isNotEmpty() }
+        // `aiDetectionConfirmed` is true only for pushes triggered by an
+        // aiFilterIntent storage write — the same signal that clears the
+        // desktop indicator's `.pending` class — so unrelated pushes (phrase
+        // edits, filtered-count changes) can't clear the pending dim early
+        // while the backend is still judging the seed phrase.
+        val aiConfirmed = obj.optBoolean("aiDetectionConfirmed", false)
+        if (aiConfirmed) {
+            aiPendingFallbackJob?.cancel()
+            aiPendingFallbackJob = null
+        }
         _state.update { s ->
             s.copy(
                 phrases = phrases ?: s.phrases,
                 filteredCount = count ?: s.filteredCount,
                 themeMode = theme ?: s.themeMode,
+                aiDetectionOn = if (obj.has("aiDetectionOn")) obj.optBoolean("aiDetectionOn") else s.aiDetectionOn,
+                aiDetectionPending = if (aiConfirmed) false else s.aiDetectionPending,
             )
         }
     }
@@ -261,15 +273,33 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
             host == "twitter.com" || host.endsWith(".twitter.com")
     }
 
-    fun setAiTextFilterEnabled(enabled: Boolean) {
-        _state.update { it.copy(aiTextFilterEnabled = enabled) }
-        callJs("__ff_setAiTextFilterEnabled", enabled)
+    private var aiPendingFallbackJob: Job? = null
+
+    // Toggle AI detection through the natural-language phrase mechanism —
+    // the sparkle indicator's tap action, mirroring the iOS sheet and the
+    // desktop indicator (toggleAiDetectionViaPhrases in content/ui.ts).
+    // Off→on adds the seed phrase "AI slop" and waits for the backend to
+    // judge it; on→off deletes every AI phrase (instant, no round trip).
+    // Confirmation arrives via the feedfilterPhrasesUpdated push
+    // (applyPhrasesJson); the fallback timer keeps a dropped round trip
+    // from wedging the indicator.
+    fun toggleAiDetection() {
+        _state.update { it.copy(aiDetectionPending = true) }
+        aiPendingFallbackJob?.cancel()
+        aiPendingFallbackJob = viewModelScope.launch {
+            delay(AI_PENDING_FALLBACK_MS)
+            _state.update { it.copy(aiDetectionPending = false) }
+            callJs("__ff_loadAiSettings")
+        }
+        callJs("__ff_toggleAiDetection")
     }
 
-    fun setAiTextDetectionThreshold(value: Double) {
-        val clamped = value.coerceIn(0.0, 1.0)
-        _state.update { it.copy(aiTextDetectionThreshold = clamped) }
-        callJs("__ff_setAiTextDetectionThreshold", clamped)
+    // Same storage key the JS pipeline reads (`filterReplies`); the content
+    // script's storage.onChanged listener applies it live, including
+    // un-hiding already-filtered replies when turned off.
+    fun setFilterReplies(enabled: Boolean) {
+        _state.update { it.copy(filterReplies = enabled) }
+        callJs("__ff_setStorage", JSONObject().put("filterReplies", enabled))
     }
 
     fun goBack() {
@@ -293,8 +323,8 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
         val obj = runCatching { JSONObject(json) }.getOrElse { return }
         _state.update { s ->
             s.copy(
-                aiTextFilterEnabled = if (obj.has("aiTextFilterEnabled")) obj.optBoolean("aiTextFilterEnabled") else s.aiTextFilterEnabled,
-                aiTextDetectionThreshold = if (obj.has("aiTextDetectionThreshold")) obj.optDouble("aiTextDetectionThreshold", s.aiTextDetectionThreshold) else s.aiTextDetectionThreshold,
+                aiDetectionOn = if (obj.has("aiDetectionOn")) obj.optBoolean("aiDetectionOn") else s.aiDetectionOn,
+                filterReplies = if (obj.has("filterReplies")) obj.optBoolean("filterReplies", s.filterReplies) else s.filterReplies,
             )
         }
     }
@@ -317,5 +347,7 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
         private const val HIDE_THRESHOLD_PX = 24
         private const val SHOW_THRESHOLD_PX = 16
         private const val SHARE_LOAD_DEADLINE_MS = 8_000L
+        // Matches the iOS sheet's 10s aiPendingFallbackTask.
+        private const val AI_PENDING_FALLBACK_MS = 10_000L
     }
 }
