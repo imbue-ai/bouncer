@@ -124,18 +124,18 @@ class FilterSheetViewModel: ObservableObject {
     @Published var isEditingURL = false
     @Published var isFilteredModalOpen = false
     // Scroll-driven nav bar visibility: WebCoordinator's contentOffset
-    // observation flips this; MainFeedView slides the bar and syncs the
-    // webviews' obscuredContentInsets off it.
+    // observation flips this; MainFeedView slides the bar and animates the
+    // webviews' bottom padding off it.
     @Published var isNavBarHidden = false
     // Measured height of NavBarView's content (excluding the bottom safe
     // area), reported by MainFeedView's onGeometryChange. Drives both the
-    // bar's slide distance and the webviews' obscured-inset bottom.
+    // bar's slide distance and the webviews' bottom padding.
     @Published var navBarHeight: CGFloat = 0
 
     // Bottom safe-area (home-indicator) inset of the key window. Read from
     // UIKit rather than SwiftUI geometry because SwiftUI's bottom inset
     // includes the keyboard when it's up — the bar's slide distance and the
-    // webviews' obscured insets both want the static hardware inset.
+    // webviews' bottom padding both want the static hardware inset.
     var windowBottomInset: CGFloat {
         UIApplication.shared.connectedScenes
             .compactMap { ($0 as? UIWindowScene)?.keyWindow }
@@ -143,47 +143,10 @@ class FilterSheetViewModel: ObservableObject {
     }
 
     // How far the bar travels to clear the screen: its content height plus
-    // the home-indicator area its .background(.bar) bleeds into.
+    // the home-indicator area its .background(.bar) bleeds into. Doubles as
+    // the webviews' bottom padding while the bar is shown, so the page's
+    // bottom edge sits exactly at the bar's top edge.
     var navBarSlideDistance: CGFloat { navBarHeight + windowBottomInset }
-
-    // The iOS analog of the Android app's setDynamicToolbarMaxHeight +
-    // setVerticalClipping trick: the webviews' frames never change. Instead
-    // WebKit is told how much of the bottom edge the bar currently covers
-    // (obscuredContentInsets — the API Safari's own collapsing bars use) and
-    // it shifts the page's position:fixed / sticky elements and layout
-    // viewport to match, with no per-frame reflow.
-    private var appliedViewportInsetBottom: [ObjectIdentifier: CGFloat] = [:]
-
-    // Steady-state form, for when the bar isn't mid-animation (new webview
-    // activated, bar height re-measured).
-    func applyObscuredInsets() {
-        applyObscuredInsets(barOffset: isNavBarHidden ? navBarSlideDistance : 0)
-    }
-
-    // Per-frame form: `barOffset` is how far the bar has slid off-screen
-    // (0 = fully shown). NavBarSlideEffect feeds it the interpolated value on
-    // every frame of the slide so the page's own fixed bottom bars track our
-    // bar's top edge instead of jumping to the animation's end state.
-    func applyObscuredInsets(barOffset: CGFloat) {
-        let visibleBottom = navBarSlideDistance
-        let bottom = max(0, min(visibleBottom, visibleBottom - barOffset))
-        for id in cache.visitedPlatforms {
-            guard let wv = cache.webView(for: id) else { continue }
-            wv.obscuredContentInsets = UIEdgeInsets(top: 0, left: 0, bottom: bottom, right: 0)
-            // Keep CSS svh/lvh stable across toggles: small viewport = bar
-            // shown, large viewport = bar hidden. Only touch it when the
-            // reserved height actually changes, and only once the webview
-            // has real bounds (the API rejects insets larger than the view).
-            if appliedViewportInsetBottom[ObjectIdentifier(wv)] != visibleBottom,
-               wv.bounds.height > visibleBottom {
-                wv.setMinimumViewportInset(
-                    .zero,
-                    maximumViewportInset: UIEdgeInsets(top: 0, left: 0, bottom: visibleBottom, right: 0)
-                )
-                appliedViewportInsetBottom[ObjectIdentifier(wv)] = visibleBottom
-            }
-        }
-    }
     // AI detection (text + images, one signal) has no manual on/off switch —
     // it is driven entirely by the user's natural-language filter phrases
     // (see the extension's background/ai-intent.ts). `aiDetectionOn` mirrors
@@ -2076,12 +2039,13 @@ private struct MainFeedView: View {
     @ObservedObject var viewModel: FilterSheetViewModel
 
     var body: some View {
-        // The webview mounts and the bar are siblings in a bottom-aligned
-        // ZStack (not a VStack): the webviews keep a constant frame while the
-        // bar slides over/off them. Resizing a WKWebView forces a full page
-        // relayout, so the bar's frequent hide/show must never change the
-        // webview's bounds — the page-side effect comes from
-        // applyObscuredInsets() instead (see FilterSheetViewModel).
+        // The webviews and the bar are siblings in a bottom-aligned ZStack
+        // (not a VStack) so the bar can slide off-screen while staying
+        // mounted. The webviews' bottom padding animates on the same curve
+        // as the bar's offset, so the page's bottom edge tracks the bar's
+        // top edge through the whole tween — a WKWebView resize reflows the
+        // page, but one 150ms tween per hide/show is cheap; it's per-scroll-
+        // event resizing that would hurt.
         ZStack(alignment: .bottom) {
             ZStack {
                 // Mount every WebView the cache has created — one per
@@ -2120,6 +2084,11 @@ private struct MainFeedView: View {
                 }
             }
             .animation(.easeInOut(duration: 0.2), value: viewModel.isEditingURL)
+            // Padding inside the safe-area escape: the composite extends to
+            // the true screen bottom, and the padding pulls the webviews'
+            // bottom edge up to the bar's top edge while the bar is shown.
+            // Bar hidden → zero padding → full-bleed webview.
+            .padding(.bottom, viewModel.isNavBarHidden ? 0 : viewModel.navBarSlideDistance)
             .ignoresSafeArea(.container, edges: .bottom)
 
             if !viewModel.isFilteredModalOpen {
@@ -2129,35 +2098,34 @@ private struct MainFeedView: View {
                     } action: { height in
                         viewModel.navBarHeight = height
                     }
-                    // Draw-time slide, the counterpart of the Android app's
-                    // graphicsLayer translationY. The bar stays mounted so the
-                    // Picker/tips don't remount on every toggle. The effect
-                    // also mirrors each frame's offset into the webviews'
-                    // obscured insets — don't add a competing onChange that
-                    // sets them to the end state, or the page's fixed
-                    // elements snap ahead of the bar.
-                    .modifier(NavBarSlideEffect(
-                        offset: viewModel.isNavBarHidden ? viewModel.navBarSlideDistance : 0,
-                        viewModel: viewModel
-                    ))
+                    // Slide, don't unmount: the Picker/tips keep their state
+                    // across toggles, and the offset animates on the same
+                    // 150ms curve as the webview padding above so the two
+                    // edges move in lockstep.
+                    .offset(y: viewModel.isNavBarHidden ? viewModel.navBarSlideDistance : 0)
             }
         }
         // 150ms tween — slightly quicker than the Android app's 220ms nav
         // bar animation, per feel on device.
         .animation(.easeInOut(duration: 0.15), value: viewModel.isNavBarHidden)
-        .onChange(of: viewModel.navBarHeight) {
-            viewModel.applyObscuredInsets()
-        }
         .background(Color(.systemBackground))
         .sheet(isPresented: $viewModel.isPresented) {
             viewModel.setPanelOpen(false)
         } content: {
             FilterPhraseSheet(viewModel: viewModel)
+                .padding(.top, {
+                    if #available(iOS 26.0, *) { return CGFloat(0) }
+                    else { return CGFloat(16) }
+                }())
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
                 .presentationBackgroundInteraction(.enabled(upThrough: .medium))
                 .presentationBackground {
-                    Color(.systemBackground).opacity(0.85)
+                    if #available(iOS 26.0, *) {
+                        Color(.systemBackground).opacity(0.85)
+                    } else {
+                        Color(.systemBackground)
+                    }
                 }
         }
         .onChange(of: viewModel.isPresented) { _, newValue in
@@ -2167,38 +2135,6 @@ private struct MainFeedView: View {
                 viewModel.isNavBarHidden = false
             }
         }
-    }
-}
-
-// MARK: - Nav Bar Slide Effect
-
-// Slides the bar by `offset` and, on every frame of the animation, mirrors
-// the interpolated offset into the webviews' obscuredContentInsets — the
-// SwiftUI counterpart of the Android app's
-// `snapshotFlow { translationYAnim.value } → setVerticalClipping` loop.
-// Conforming to Animatable means SwiftUI re-evaluates `body` with an
-// interpolated `animatableData` each frame of the 150ms tween, which is the
-// only way to observe an in-flight animation value; without it the insets
-// jump to the end state and the page's own bottom bar jerks instead of
-// tracking ours.
-private struct NavBarSlideEffect: ViewModifier, Animatable {
-    var offset: CGFloat
-    var viewModel: FilterSheetViewModel
-
-    var animatableData: CGFloat {
-        get { offset }
-        set { offset = newValue }
-    }
-
-    func body(content: Content) -> some View {
-        // Deferred a runloop turn: body runs during view rendering, and
-        // touching the webviews (UIKit) mid-render is asking for re-entrancy.
-        let frameOffset = offset
-        let vm = viewModel
-        DispatchQueue.main.async {
-            vm.applyObscuredInsets(barOffset: frameOffset)
-        }
-        return content.offset(y: offset)
     }
 }
 
