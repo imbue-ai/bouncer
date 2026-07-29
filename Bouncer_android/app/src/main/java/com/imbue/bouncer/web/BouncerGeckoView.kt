@@ -6,6 +6,9 @@ import android.content.res.Configuration
 import android.net.Uri
 import android.util.Log
 import androidx.browser.customtabs.CustomTabsIntent
+import com.imbue.bouncer.push.BouncerPushDelegate
+import com.imbue.bouncer.push.NotificationPermissionBroker
+import com.imbue.bouncer.push.WebNotificationHandler
 import com.imbue.bouncer.state.BouncerViewModel
 import kotlinx.coroutines.CoroutineScope
 import org.mozilla.geckoview.AllowOrDeny
@@ -33,6 +36,13 @@ object BouncerGeckoView {
     @Volatile private var installResult: GeckoResult<WebExtension>? = null
     @Volatile private var bridge: GeckoBridge? = null
     @Volatile private var ready: Boolean = false
+
+    // For the service-worker openWindow path (notification clicks): the SW
+    // needs the currently-displayed session to load the target URL into.
+    @Volatile private var vmRef: BouncerViewModel? = null
+
+    /** The warm runtime, if any — used by the FCM service to deliver push events. */
+    fun runtimeOrNull(): GeckoRuntime? = runtime
 
     // Content-process kill in the background → onKill fires off the UI thread
     // or while the activity is paused; running the reopen+setSession synchronously
@@ -98,6 +108,7 @@ object BouncerGeckoView {
                 )
                 .build()
             val r = GeckoRuntime.create(appCtx, settings)
+            wirePushDelegates(r, appCtx, scope)
             val b = GeckoBridge(appCtx, scope, appCheck)
             val result = r.webExtensionController.ensureBuiltIn(EXT_LOCATION, EXT_ID)
             result.accept(
@@ -124,6 +135,29 @@ object BouncerGeckoView {
         }
     }
 
+    // Runtime-level Web Push wiring: the delegate answers pushManager
+    // subscribe/get/unsubscribe from x.com, the notification handler surfaces
+    // service-worker notifications as Android notifications, and the
+    // service-worker delegate serves clients.openWindow on notification click.
+    private fun wirePushDelegates(r: GeckoRuntime, appCtx: Context, scope: CoroutineScope) {
+        r.webPushController.setDelegate(BouncerPushDelegate(appCtx))
+        r.setWebNotificationDelegate(WebNotificationHandler(appCtx, scope))
+        r.setServiceWorkerDelegate(
+            object : GeckoRuntime.ServiceWorkerDelegate {
+                override fun onOpenWindow(url: String): GeckoResult<GeckoSession> {
+                    val session = vmRef?.mainSession()
+                    return if (session != null && session.isOpen) {
+                        session.loadUri(url)
+                        GeckoResult.fromValue(session)
+                    } else {
+                        Log.w(TAG, "onOpenWindow with no open session: $url")
+                        GeckoResult.fromValue(null)
+                    }
+                }
+            },
+        )
+    }
+
     fun create(
         ctx: Context,
         scope: CoroutineScope,
@@ -135,6 +169,7 @@ object BouncerGeckoView {
         // Defensive: should already be warm via Application.onCreate.
         warmUp(appCtx, scope, appCheck)
         val r = runtime!!
+        vmRef = vm
         bridge?.let { vm.attachBridge(it) }
         this.coverColor = coverColor
 
@@ -177,7 +212,41 @@ object BouncerGeckoView {
         session.progressDelegate = progressDelegate(vm)
         session.contentDelegate = contentDelegate(runtime, vm, view, appCtx)
         session.scrollDelegate = scrollDelegate(vm)
+        session.permissionDelegate = permissionDelegate(appCtx)
     }
+
+    // x.com's "turn on push notifications" toggle requests the
+    // desktop-notification content permission (also implied by
+    // pushManager.subscribe). Gecko persists the answer per-origin, and
+    // background pushes are silently dropped without a stored ALLOW — so tie
+    // the grant to the Android 13+ POST_NOTIFICATIONS runtime permission the
+    // notifications actually need. Everything else keeps the pre-existing
+    // no-delegate behavior (deny) by returning null.
+    private fun permissionDelegate(appCtx: Context) =
+        object : GeckoSession.PermissionDelegate {
+            override fun onContentPermissionRequest(
+                session: GeckoSession,
+                perm: GeckoSession.PermissionDelegate.ContentPermission,
+            ): GeckoResult<Int>? {
+                if (perm.permission !=
+                    GeckoSession.PermissionDelegate.PERMISSION_DESKTOP_NOTIFICATION
+                ) {
+                    return null
+                }
+                val result = GeckoResult<Int>()
+                NotificationPermissionBroker.ensurePermission(appCtx) { granted ->
+                    Log.i(TAG, "notification permission for ${perm.uri}: granted=$granted")
+                    result.complete(
+                        if (granted) {
+                            GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
+                        } else {
+                            GeckoSession.PermissionDelegate.ContentPermission.VALUE_DENY
+                        },
+                    )
+                }
+                return result
+            }
+        }
 
     private fun navigationDelegate(appCtx: Context, vm: BouncerViewModel) =
         object : GeckoSession.NavigationDelegate {
