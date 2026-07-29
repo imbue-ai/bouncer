@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
-  "name": "Bouncer - Heal your X feed",
-  "version": "2.0.7",
+  "name": "Bouncer - Control your X algorithm",
+  "version": "2.0.8",
   "description": "Remove the stuff you don’t want to see in your X (Twitter) feed. Filter by concept, person, emotion — anything.",
   "content_security_policy": {
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
