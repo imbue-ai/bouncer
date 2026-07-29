@@ -1,18 +1,5 @@
 /* Twitter-specific styles for Bouncer */
 
-/* Hide Twitter Trending section — locale-independent: match the sidebar
-   section that contains trend items rather than the localized aria-label.
-   Scoped to sidebarColumn so /explore's main-column trends are unaffected. */
-[data-testid="sidebarColumn"] section:has([data-testid="trend"]) {
-  display: none;
-}
-
-/* Legacy English-only rule, kept as a fallback in case X drops
-   data-testid="trend" or the <section> wrapper. */
-div[aria-label="Trending"] > :nth-child(2) > :nth-child(2) {
-  display: none;
-}
-
 /* (Removed: old HTML-injection overrides for .slop-post-content - no longer needed) */
 
 /* Ensure Twitter's BottomBar maintains full opacity during post processing */
