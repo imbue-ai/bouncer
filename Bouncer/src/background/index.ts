@@ -839,7 +839,16 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
 // Check local model statuses on extension install/update
 chrome.runtime.onInstalled.addListener((details) => {
   if (details.reason === 'install') {
-    chrome.tabs.create({ url: 'https://x.com' }).catch(err => console.error('[Background] Failed to open x.com on install:', err));
+    // Fresh install only (not updates): flag the X Pixel install conversion,
+    // then open x.com — the content script there consumes the flag and fires
+    // the pixel (see content/install-pixel.ts for why it can't fire from
+    // this service worker). Flag first so it's set before the tab reaches
+    // document_idle.
+    setStorage({ pendingInstallPixel: true })
+      .catch(err => console.error('[Background] Failed to set install pixel flag:', err))
+      .finally(() => {
+        chrome.tabs.create({ url: 'https://x.com' }).catch(err => console.error('[Background] Failed to open x.com on install:', err));
+      });
   }
 
   if (details.reason === 'install' || details.reason === 'update') {
