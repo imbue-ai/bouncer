@@ -12,7 +12,11 @@ export type { SiteId };
  *    bottom and mobile variants injected as well.
  *  - `banner`: full-width strip inserted above the main feed. Used on
  *    platforms without a usable right-hand column. */
-export type FilterBoxPlacement = 'sidebar' | 'banner';
+/** Where the filter box lives on a platform. `'external'` means the platform
+ *  mounts no filter box at all — some other surface owns the entry point into
+ *  Bouncer's settings (Instagram: the reel-describer panel's gear, which opens
+ *  the settings modal via the `bouncer-open-settings` event). */
+export type FilterBoxPlacement = 'sidebar' | 'banner' | 'external';
 
 /** Where a banner-style adapter wants the filter box inserted. */
 export interface FilterBoxAnchor {
@@ -342,6 +346,9 @@ export type ContentToBackgroundMessage =
   | { type: 'evaluatePost'; evaluationId: string; post: string; rawText: string; imageUrls: string[]; postUrl: string | null; siteId: SiteId; isReply?: boolean }
   | { type: 'suggestAnnoyingReasons'; post: string; imageUrls: string[]; siteId?: SiteId }
   | { type: 'clearCache' }
+  // Sent by the settings popup after the user grants an optional platform's
+  // host permission; resolves once its content script is registered.
+  | { type: 'syncOptionalPlatforms' }
   | { type: 'clearSinglePost'; post: string; imageUrls: string[]; postUrl?: string | null; siteId?: SiteId }
   | { type: 'getStats' }
   | { type: 'getReasoning'; post: string; imageUrls: string[]; postUrl?: string | null; siteId?: SiteId }
@@ -358,7 +365,11 @@ export type ContentToBackgroundMessage =
   | { type: 'appleSignIn'; idToken: string; rawNonce: string }
   | { type: 'nativeAppleSignIn' }
   | { type: 'signOut' }
-  | { type: 'launchOpenRouterAuth' };
+  | { type: 'launchOpenRouterAuth' }
+  // Instagram reel describer / audio filter (src/instagram/*). These bypass
+  // the feed-filter pipeline and relay straight to their imbue actions.
+  | { type: 'analyzeReel'; caption: string; thumbnailUrl: string }
+  | { type: 'analyzeReelAudio'; audioBase64: string; mimeType: string; categories: string[] };
 
 export type BackgroundToContentMessage =
   | { type: 'ping' }
@@ -523,5 +534,13 @@ export interface ImbueAiImageResponse extends ImbueResponseBase {
   confidence: number;
 }
 
+/** Response from the instagramAnalyze action. The worker passes the LLM output
+ *  through verbatim (worker_utils _parse_passthrough_response): `description` is
+ *  the <=5-word phrase describing the reel. */
+export interface ImbueInstagramResponse extends ImbueResponseBase {
+  description: string;
+  rawResponse: string;
+}
+
 /** Discriminated Imbue response — callers should narrow via the action they sent. */
-export type ImbueAPIResponse = ImbueFilterResponse | ImbueSuggestResponse | ImbueAiTextResponse | ImbueAiImageResponse;
+export type ImbueAPIResponse = ImbueFilterResponse | ImbueSuggestResponse | ImbueAiTextResponse | ImbueAiImageResponse | ImbueInstagramResponse;

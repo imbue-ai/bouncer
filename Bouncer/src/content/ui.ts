@@ -79,8 +79,19 @@ let filteredViewContainer: HTMLElement | null = null;
 let filterPhrasesContainer: HTMLElement | null = null;
 let bottomFilterContainer: HTMLElement | null = null;
 let mobileFilterContainer: HTMLElement | null = null;
+// `'external'` placements (Instagram) mount the same filter box inside a host
+// panel supplied by another content script — see mountExternalFilterBox().
+let panelFilterContainer: HTMLElement | null = null;
 let bottomFilterExpanded = true;
 let settingsModal: HTMLElement | null = null;
+
+/** Every filter box currently on the page. One box per placement, so most
+ *  platforms have one or two of these live at a time; everything that keeps
+ *  boxes in sync (phrase list, filtered count, model progress, warnings)
+ *  iterates this rather than naming the containers individually. */
+function filterBoxContainers(): (HTMLElement | null)[] {
+  return [filterPhrasesContainer, bottomFilterContainer, mobileFilterContainer, panelFilterContainer];
+}
 
 
 let activePopup: HTMLElement | null = null;
@@ -531,11 +542,19 @@ export function updateTheme() {
   const theme = _deps.adapter.getThemeMode();
   const iosFilteredModal = document.querySelector('.ff-ios-filtered-modal-backdrop');
   const iosPageContainer = _deps.getIOSPageContainer();
-  const elements = [filterPhrasesContainer, filteredViewContainer, bottomFilterContainer, mobileFilterContainer, iosPageContainer, iosFilteredModal].filter(Boolean) as Element[];
+  const elements = [...filterBoxContainers(), filteredViewContainer, iosPageContainer, iosFilteredModal].filter(Boolean) as Element[];
 
   for (const el of elements) {
     el.classList.remove('light-mode', 'dim-mode', 'dark-mode');
     el.classList.add(`${theme}-mode`);
+  }
+
+  // The panel-hosted box is the exception: its host card (Instagram's reel
+  // panel) is always white by design, so dark text is what stays readable
+  // there even when the site itself is in dark mode.
+  if (panelFilterContainer) {
+    panelFilterContainer.classList.remove('dim-mode', 'dark-mode');
+    panelFilterContainer.classList.add('light-mode');
   }
 
   // Also update the document element for CSS selectors that need it
@@ -554,7 +573,12 @@ function updateSidebarFilterVisibility() {
   }
 }
 
-function buildFilterContainerHTML(showSignOut = false): string {
+/** Markup for one filter box.
+ *  - `showSignOut`: adds the sign-out link (iOS in-app popup only).
+ *  - `showSettings`: the "…" overflow that opens the full settings modal.
+ *    Suppressed for `'external'` placements (Instagram), where the box lives
+ *    inside a page panel and a blocking overlay would cover the reel. */
+function buildFilterContainerHTML(showSignOut = false, showSettings = true): string {
   return `
     <div class="filter-phrases-container">
       <div class="bouncer-update-banner-slot"></div>
@@ -586,7 +610,7 @@ function buildFilterContainerHTML(showSignOut = false): string {
         </div>
         <div class="filter-phrases-actions-right">
           <button class="filter-pack-share-btn" type="button" aria-label="Share your filters">${shareIconSVG}</button>
-          <button class="filter-settings-btn" type="button" aria-label="Settings">${settingsIconSVG}</button>
+          ${showSettings ? `<button class="filter-settings-btn" type="button" aria-label="Settings">${settingsIconSVG}</button>` : ''}
           ${showSignOut ? '<button class="filter-signout-btn" style="font-size:12px;color:#71767b;background:none;border:none;cursor:pointer;padding:2px 0;">Sign out</button>' : ''}
         </div>
       </div>
@@ -855,7 +879,8 @@ function setupFilterBoxEventHandlers(container: HTMLElement) {
   const input = container.querySelector<HTMLInputElement>('.filter-phrases-input')!;
   const placeholderCycle = container.querySelector('.filter-placeholder-cycle');
   const toggleBtn = container.querySelector('.filtered-toggle-btn:not(.filter-pack-toggle-btn)')!;
-  const settingsBtn = container.querySelector('.filter-settings-btn')!;
+  // Absent when the box is built with showSettings = false (Instagram).
+  const settingsBtn = container.querySelector('.filter-settings-btn');
 
   // Seed the AI-detection indicator (kept fresh afterwards by the
   // storage-change listener in content/index.ts) and wire its click-toggle.
@@ -873,7 +898,7 @@ function setupFilterBoxEventHandlers(container: HTMLElement) {
   input.addEventListener('input', updatePlaceholderVisibility);
 
   // Settings button click
-  settingsBtn.addEventListener('click', () => showSettingsModal());
+  settingsBtn?.addEventListener('click', () => showSettingsModal());
 
   // Guest-trial notice: the CTA deep-links to the local model section of the
   // settings modal. If a local model is already driving filtering, the trial
@@ -1158,6 +1183,49 @@ function updateBannerFilterVisibility() {
   }
 }
 
+// ==================== External (panel-hosted) filter box ====================
+
+// Mount the standard filter box inside a host element owned by another content
+// script. Instagram uses this: the reel-describer panel (src/instagram/index.ts)
+// flips to a "settings page" and hands us its empty content slot, so the user
+// gets the real Bouncer box — phrases, AI-slop toggle, View filtered, share —
+// without a modal covering the reel. Idempotent: re-opening the page reuses
+// the already-wired box.
+//
+// The host owns positioning, theming chrome and the close button; we only own
+// what's inside the slot. The "…" overflow is suppressed (see
+// buildFilterContainerHTML) because on Instagram it would open exactly the
+// blocking overlay this exists to avoid.
+export function mountExternalFilterBox(host: HTMLElement): void {
+  if (panelFilterContainer?.isConnected && host.contains(panelFilterContainer)) {
+    updateFilteredTabCount();
+    return;
+  }
+
+  // No collapse handle here — the host panel owns show/hide.
+  const container = document.createElement('div');
+  container.className = 'filter-phrases-panel';
+
+  if (process.env.HAS_IMBUE_BACKEND === 'true' && (!isAuthenticated || guestLimitReached)) {
+    container.replaceChildren(parseHTML(getGateHTML()));
+    host.replaceChildren(container);
+    panelFilterContainer = container;
+    updateTheme();
+    setupSignInButton(container);
+    return;
+  }
+
+  container.replaceChildren(parseHTML(buildFilterContainerHTML(false, false)));
+  host.replaceChildren(container);
+  panelFilterContainer = container;
+
+  updateTheme();
+  updateFilteredTabCount();
+  setupFilterBoxEventHandlers(container);
+  // The box is built empty; pull the persisted phrases into it.
+  syncFilterPhrases();
+}
+
 export function injectBannerFilterBox() {
   const adapter = _deps.adapter;
   if (!adapter.getFilterBoxAnchor) {
@@ -1220,7 +1288,7 @@ export function syncFilterPhrases() {
   getDescriptions(_deps.descriptionsKey).then((descriptions) => {
 
     // Update desktop/tablet/mobile containers
-    [filterPhrasesContainer, bottomFilterContainer, mobileFilterContainer].forEach(container => {
+    filterBoxContainers().forEach(container => {
       if (container && container.isConnected) {
         const phrasesListContainer = container.querySelector('.filter-phrases-list');
         if (phrasesListContainer) {
@@ -2006,6 +2074,15 @@ export function showSettingsModal(section?: 'local') {
   document.addEventListener('keydown', escHandler);
 }
 
+// Platforms whose filter box is `'external'` have a page-mounted panel that
+// owns the entry into Bouncer (Instagram's reel describer). It must get out of
+// the way whenever one of our own overlays is up, so both the settings modal
+// and the filtered-posts view drive it through this event. No-op elsewhere.
+function setExternalPanelVisible(show: boolean): void {
+  if (_deps.adapter.filterBoxPlacement !== 'external') return;
+  window.dispatchEvent(new CustomEvent('bouncer-ig-describer', { detail: { show } }));
+}
+
 function closeSettingsModal() {
   if (settingsModal && settingsModal.isConnected) {
     settingsModal.classList.remove('visible');
@@ -2023,7 +2100,7 @@ function closeSettingsModal() {
 // ==================== Filtered Toggle Buttons ====================
 
 export function updateFilteredToggleButtons() {
-  const containers = [filterPhrasesContainer, bottomFilterContainer, mobileFilterContainer];
+  const containers = filterBoxContainers();
   containers.forEach(container => {
     if (container && container.isConnected) {
       const toggleBtn = container.querySelector('.filtered-toggle-btn:not(.filter-pack-toggle-btn)');
@@ -2057,7 +2134,7 @@ export function updateFilteredTabCount() {
     detail: { count: newCount, animate: shouldAnimate },
   }));
 
-  const containers = [filterPhrasesContainer, bottomFilterContainer, mobileFilterContainer];
+  const containers = filterBoxContainers();
   containers.forEach(container => {
     if (container && container.isConnected) {
       const countEl = container.querySelector('.filtered-toggle-count');
@@ -2094,7 +2171,7 @@ export function updateFilteredTabCount() {
 // ==================== Model Loading Progress ====================
 
 export function updateModelLoadingProgress(statuses: Record<string, LocalModelStatus>, selectedModel: string) {
-  const containers = [filterPhrasesContainer, bottomFilterContainer, mobileFilterContainer];
+  const containers = filterBoxContainers();
 
   const isLocalModel = selectedModel && selectedModel.startsWith('local:');
   if (!isLocalModel) {
@@ -2199,6 +2276,10 @@ export function initModelLoadingListener() {
 export function toggleFilteredTab(active: boolean) {
   if (active === filteredTabActive) return;
   filteredTabActive = active;
+
+  // Keep an external panel (Instagram's describer) clear of the filtered-posts
+  // view, and let it reappear when the view closes.
+  setExternalPanelVisible(!active);
 
   if (active) {
     if (!filteredModalBackdrop || !filteredModalBackdrop.isConnected) {
@@ -3243,7 +3324,7 @@ export function showApiKeyWarning() {
 
 function showCategoryLimitWarning() {
   // Show warning in all filter box containers
-  const containers = [filterPhrasesContainer, bottomFilterContainer, mobileFilterContainer].filter(Boolean) as HTMLElement[];
+  const containers = filterBoxContainers().filter(Boolean) as HTMLElement[];
   for (const container of containers) {
     // Don't add duplicate warnings
     if (container.querySelector('.ff-category-limit-warning')) continue;

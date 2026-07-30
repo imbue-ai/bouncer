@@ -14,5 +14,34 @@
     "adapterScript": "dist/LinkedInAdapter.js",
     "cssPath": "adapters/linkedin/linkedin.css",
     "extraWebAccessible": []
+  },
+  {
+    "id": "youtube",
+    "targets": ["chrome"],
+    "optionalTargets": ["chrome"],
+    "manifestHost": "https://*.youtube.com/*",
+    "adapterScript": "dist/YouTubeAdapter.js",
+    "cssPath": "adapters/youtube/youtube.css",
+    "extraWebAccessible": ["adapters/youtube/lockup-extractor.js"]
+  },
+  {
+    "id": "instagram",
+    "targets": ["chrome", "safari"],
+    "optionalTargets": ["chrome"],
+    "manifestHost": "https://www.instagram.com/*",
+    "adapterScript": "dist/InstagramAdapter.js",
+    "cssPath": "adapters/instagram/instagram.css",
+    "extraWebAccessible": [],
+    "extraContentScripts": [
+      {
+        "js": ["dist/instagram-hook.js"],
+        "runAt": "document_start",
+        "world": "MAIN"
+      },
+      {
+        "js": ["browser-polyfill.js", "dist/instagram.js"],
+        "runAt": "document_idle"
+      }
+    ]
   }
 ]

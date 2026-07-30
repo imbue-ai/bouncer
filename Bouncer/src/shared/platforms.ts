@@ -16,9 +16,24 @@ import platformsConfig from './platforms.config.json';
 /** Literal-tuple of every supported platform id. SiteId is derived from
  *  this, so adding a new platform automatically extends the union — there
  *  is no longer a separate type alias to keep in sync. */
-export const PLATFORM_IDS = ['twitter', 'youtube', 'linkedin'] as const;
+export const PLATFORM_IDS = ['twitter', 'youtube', 'linkedin', 'instagram'] as const;
 
 export type SiteId = typeof PLATFORM_IDS[number];
+
+/** A content script beyond the standard adapter + pipeline pair. Declared in
+ *  platforms.config.json so the same list drives both the static manifest
+ *  (generate-manifests.mjs) and the runtime registration used by optional
+ *  platforms (background/optional-platforms.ts). Instagram is the only user
+ *  today: it needs a MAIN-world hook at document_start plus the standalone
+ *  reel-describer bundle. */
+export interface PlatformContentScript {
+  readonly js: readonly string[];
+  readonly css?: readonly string[];
+  readonly runAt?: 'document_start' | 'document_end' | 'document_idle';
+  /** MAIN runs in the page's own JS context (needed to wrap page fetch/XHR);
+   *  omitted means the default isolated world. */
+  readonly world?: 'MAIN' | 'ISOLATED';
+}
 
 /** Build-time data each platform contributes to the manifest. Lives in
  *  platforms.config.json so generate-manifests.mjs can read it without
@@ -30,6 +45,14 @@ export interface PlatformBuildConfig {
    *  platforms appear where — read here, by generate-manifests.mjs, and by
    *  the iOS app (Platforms.swift). */
   readonly targets: readonly string[];
+  /** Subset of `targets` on which this platform ships behind
+   *  `optional_host_permissions` instead of `host_permissions` + a static
+   *  content script. Adding a required host permission to an already-published
+   *  extension disables it for every existing user until they re-approve;
+   *  optional hosts are silent on update. The user grants access from the
+   *  platform toggle in settings, after which the background registers the
+   *  content script at runtime (see background/optional-platforms.ts). */
+  readonly optionalTargets?: readonly string[];
   /** Pattern used in host_permissions, content_scripts, and
    *  web_accessible_resources matches. */
   readonly manifestHost: string;
@@ -40,6 +63,9 @@ export interface PlatformBuildConfig {
   /** Additional web-accessible files this platform's adapter loads via
    *  chrome.runtime.getURL (page-world helper scripts, etc.). */
   readonly extraWebAccessible: readonly string[];
+  /** Content scripts this platform needs on top of the standard
+   *  adapter + dist/content.js pair. Most platforms declare none. */
+  readonly extraContentScripts?: readonly PlatformContentScript[];
 }
 
 /** Runtime-only fields — RegExp can't live in JSON; everything else is
@@ -72,6 +98,12 @@ const PLATFORM_RUNTIME: Record<SiteId, PlatformRuntimeOnly> = {
     displayName: 'LinkedIn',
     hostPattern: /(^|\.)linkedin\.com$/i,
     feedUrl: 'https://www.linkedin.com/feed/',
+  },
+  instagram: {
+    displayName: 'Instagram',
+    hostPattern: /(^|\.)instagram\.com$/i,
+    // Bouncer's Instagram surface is the Reels viewer, not the home feed.
+    feedUrl: 'https://www.instagram.com/reels/',
   },
 };
 
@@ -114,6 +146,37 @@ export function platformById(id: string): PlatformDef | undefined {
 /** Find a platform whose host pattern matches the given hostname. */
 export function platformFromHost(host: string): PlatformDef | undefined {
   return PLATFORMS.find(p => p.hostPattern.test(host));
+}
+
+// ---------------------------------------------------------------------------
+// Optional (user-granted) platforms
+// ---------------------------------------------------------------------------
+
+/** True when this platform is gated behind optional_host_permissions on the
+ *  current build target — i.e. Bouncer has no access to the site until the
+ *  user turns its toggle on and accepts the browser's permission prompt. */
+export function isOptionalPlatform(p: PlatformDef): boolean {
+  return p.optionalTargets?.includes(CURRENT_TARGET) === true;
+}
+
+/** Every optional platform on this build target. */
+export function optionalPlatforms(): readonly PlatformDef[] {
+  return PLATFORMS_FOR_TARGET.filter(isOptionalPlatform);
+}
+
+/** Every content script a platform needs, standard pair first. Must stay in
+ *  lockstep with `platformsToManifestSlice` in generate-manifests.mjs, which
+ *  builds the same list for statically-declared platforms — optional
+ *  platforms are registered at runtime from this function instead. */
+export function contentScripts(p: PlatformDef): readonly PlatformContentScript[] {
+  return [
+    {
+      js: ['browser-polyfill.js', 'dompurify.js', p.adapterScript, 'dist/content.js'],
+      css: ['content.css', p.cssPath],
+      runAt: 'document_idle',
+    },
+    ...(p.extraContentScripts ?? []),
+  ];
 }
 
 // ---------------------------------------------------------------------------

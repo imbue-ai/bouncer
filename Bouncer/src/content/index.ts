@@ -20,7 +20,7 @@ import {
   injectFilterPhrasesInput, injectBottomFilterBox, injectMobileFilterBox,
   injectBannerFilterBox,
   syncFilterPhrases, addFilterPhrase, removeFilterPhrase, clearFilteredPosts,
-  showSettingsModal, renderFilteredPostsView,
+  showSettingsModal, renderFilteredPostsView, mountExternalFilterBox,
   initModelLoadingListener,
   markPostPending, markPostVerified, getVerificationBar,
   storeFilteredPost, hidePost, showApiKeyWarning,
@@ -611,6 +611,24 @@ import { maybeFireInstallPixel } from './install-pixel';
     });
   }
 
+  // ==================== External settings bridge ====================
+
+  // For `filterBoxPlacement === 'external'` platforms, some other script owns
+  // the entry point into Bouncer. On Instagram that's the reel-describer
+  // (src/instagram/index.ts), which shares this isolated world: flipping its
+  // panel to the settings page dispatches 'bouncer-mount-filter-box' carrying
+  // the empty slot to render into. We mount the real filter box there, so the
+  // reel keeps playing behind an in-panel page rather than a blocking overlay.
+  //
+  // The panel owns show/hide and the close button; it re-sends this event each
+  // time the page is opened, and mountExternalFilterBox is idempotent.
+  function setupExternalSettingsBridge() {
+    window.addEventListener('bouncer-mount-filter-box', (e) => {
+      const host = (e as CustomEvent<{ host?: HTMLElement }>).detail?.host;
+      if (host) mountExternalFilterBox(host);
+    });
+  }
+
   // ==================== Init ====================
 
   async function init() {
@@ -660,7 +678,9 @@ import { maybeFireInstallPixel } from './install-pixel';
     // users should be able to import shared filter packs from anywhere.
     observeImportCodes();
 
-    if (adapter.filterBoxPlacement === 'banner') {
+    if (adapter.filterBoxPlacement === 'external') {
+      setupExternalSettingsBridge();
+    } else if (adapter.filterBoxPlacement === 'banner') {
       injectBannerFilterBox();
     } else {
       injectFilterPhrasesInput();

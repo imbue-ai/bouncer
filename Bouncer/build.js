@@ -151,6 +151,7 @@ const adapters = [
   { name: 'TwitterAdapter', path: path.join(__dirname, 'adapters/twitter/TwitterAdapter.ts') },
   { name: 'YouTubeAdapter', path: path.join(__dirname, 'adapters/youtube/YouTubeAdapter.ts') },
   { name: 'LinkedInAdapter', path: path.join(__dirname, 'adapters/linkedin/LinkedInAdapter.ts') },
+  { name: 'InstagramAdapter', path: path.join(__dirname, 'adapters/instagram/InstagramAdapter.ts') },
 ].filter((a) => fs.existsSync(a.path));
 
 // Copy LiteRT-LM's wasm loader + binaries into dist/litertlm-wasm/ so the
@@ -221,10 +222,13 @@ async function build() {
   });
 
   // 3. Popup & content: fully self-contained (no external imports).
+  //    instagram.js is a standalone content script for the Instagram
+  //    reel-describer panel — separate from content.js (the feed pipeline).
   const otherCtx = await esbuild.context({
     entryPoints: [
       path.join(__dirname, 'popup.js'),
-      path.join(__dirname, 'content.js')
+      path.join(__dirname, 'content.js'),
+      path.join(__dirname, 'instagram.js')
     ],
     bundle: true,
     outdir: path.join(__dirname, 'dist'),
@@ -251,12 +255,30 @@ async function build() {
     define,
   });
 
+  // 4b. Instagram MAIN-world hook (page context, document_start): wraps
+  //     fetch/XHR to harvest per-reel audio stream URLs for the audio filter.
+  //     Content scripts can't see the page's own fetches, hence MAIN world.
+  const igHookCtx = await esbuild.context({
+    entryPoints: [path.join(__dirname, 'src/instagram/hook.ts')],
+    outfile: path.join(__dirname, 'dist/instagram-hook.js'),
+    bundle: true,
+    format: 'iife',
+    platform: 'browser',
+    target: 'es2020',
+    minify: false,
+    sourcemap: false,
+    define,
+  });
+
   // 5. iOS app builds (IIFE, LiteRT-LM stubbed). Injected into a WKWebView
   // that has no WebGPU — iOS uses a native CoreML bridge instead, so stubbing
   // keeps these bundles small.
   const stubbedIifeEntries = {
     'background-app': 'background.js',
     'popup-app': 'popup.js',
+    // Instagram reel-describer panel as a WKUserScript-injectable IIFE (the
+    // ESM dist/instagram.js build is for the browser extension).
+    'instagram-app': 'instagram.js',
   };
   const stubbedIifeCtxs = await Promise.all(
     Object.entries(stubbedIifeEntries).map(([name, src]) =>
@@ -277,7 +299,7 @@ async function build() {
     )
   );
 
-  const contexts = [bgCtx, offscreenCtx, otherCtx, signinBridgeCtx, ...stubbedIifeCtxs];
+  const contexts = [bgCtx, offscreenCtx, otherCtx, signinBridgeCtx, igHookCtx, ...stubbedIifeCtxs];
 
   // Type-strip each platform adapter (unbundled, standalone content script).
   // Each adapter ships as its own dist/<Name>.js and is loaded by the manifest

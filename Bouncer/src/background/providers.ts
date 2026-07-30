@@ -3,7 +3,7 @@
 import { convertSystemToUserMessages } from '../shared/utils';
 import { API_BASE_URLS } from '../shared/models';
 import { imbueWebSocket } from './ws-manager';
-import type { ChatMessage, APIConfig, DirectAPIResponse, ImbueFilterResponse, ImbueSuggestResponse, ImbueAiTextResponse, ImbueAiImageResponse, ImbueDetectAiIntentResponse, EvaluationPostData } from '../types';
+import type { ChatMessage, APIConfig, DirectAPIResponse, ImbueFilterResponse, ImbueSuggestResponse, ImbueAiTextResponse, ImbueAiImageResponse, ImbueDetectAiIntentResponse, ImbueInstagramResponse, EvaluationPostData } from '../types';
 
 // Call an OpenAI-compatible API directly from the extension via fetch
 // Used for OpenAI, OpenRouter, and Gemini models
@@ -264,6 +264,46 @@ export async function callImbueDetectAiIntent(
     console.warn(`[AiIntentDetect] ✗ error after ${wallMs}ms:`, err);
     throw err;
   }
+}
+
+// Call the Imbue instagramAnalyze action via the same WebSocket gateway.
+// Sends one reel's caption + thumbnail; the server applies its hardcoded
+// five-word-phrase prompt (INSTAGRAM_SYSTEM_PROMPT) and the worker returns the
+// phrase as `description`. The caption may be empty or spam — that's expected,
+// the server prompt handles it. Only the first image URL is used server-side.
+export async function callImbueInstagramAnalyze(
+  caption: string,
+  thumbnailUrl: string,
+): Promise<ImbueInstagramResponse> {
+  const message: Record<string, unknown> = {
+    action: 'instagramAnalyze',
+    tweetData: { text: caption, imageUrls: thumbnailUrl ? [thumbnailUrl] : [] },
+    version: chrome.runtime.getManifest().version,
+  };
+  return imbueWebSocket.send(message) as unknown as Promise<ImbueInstagramResponse>;
+}
+
+// Call the Imbue audioFilter action via the same WebSocket gateway: a short
+// base64 audio clip + the user's filter categories in, the standard tweetFilter
+// parse (shouldHide / reasoning / category) out. Size limits: the binding one
+// is the AWS API Gateway 32 KB WS FRAME limit — Chrome sends each message as a
+// single frame, so the whole JSON message must stay under 32,768 bytes or the
+// gateway closes the socket (code 1009). The server's own audioData cap
+// (120,000 b64 chars) is far above that. audioFormat in {mp4, m4a, mp3, wav,
+// aac, ogg, webm, flac} (unknown values fall back to mp4).
+export async function callImbueAudioFilter(
+  audioBase64: string,
+  audioFormat: string,
+  categories: string[],
+): Promise<ImbueFilterResponse> {
+  const message: Record<string, unknown> = {
+    action: 'audioFilter',
+    tweetData: { audioData: audioBase64, audioFormat },
+    categories,
+    version: chrome.runtime.getManifest().version,
+  };
+  // Audio inference is slower than text, but still fail reasonably fast.
+  return imbueWebSocket.send(message, { timeout: 30000 }) as unknown as Promise<ImbueFilterResponse>;
 }
 
 // Call the Imbue AI-text-detection worker via the same WebSocket gateway.

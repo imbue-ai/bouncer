@@ -1,0 +1,37 @@
+/* Instagram adapter styles.
+ *
+ * The shared pipeline mounts a verification bar / pending-dim on each post
+ * element. On Instagram the "post" element is the reel's video wrapper, so that
+ * chrome would stripe or grey out the video itself. Suppress it — on reels the
+ * only feedback we want is the reel quietly disappearing when it matches. */
+
+body.site-instagram .post-verification-bar {
+  display: none !important;
+}
+
+body.site-instagram [data-ff-pending] {
+  opacity: 1 !important;
+}
+
+/* Instagram has no right-hand sidebar, so the pipeline's desktop sidebar filter
+ * UI (injectFilterPhrasesInput) can't mount, and content.css hides the bottom
+ * pill above 1024px — leaving desktop Instagram with no filter UI at all. Show
+ * the pill on desktop, but float it top-right (like the Twitter sidebar box)
+ * instead of spanning the bottom edge.
+ *
+ * updateBottomFilterPosition() writes inline left/width to match the feed column,
+ * so these overrides need !important to win. */
+@media (min-width: 1025px) {
+  body.site-instagram .filter-phrases-bottom {
+    display: block !important;
+    top: 16px !important;
+    right: 16px !important;
+    bottom: auto !important;
+    left: auto !important;
+    width: 300px !important;
+    /* Floating box: round all corners and restore the bottom border (the default
+     * pill drops them since it's normally flush against the bottom edge). */
+    border-radius: 16px !important;
+    border-bottom: 2px solid rgb(234, 133, 84) !important;
+  }
+}

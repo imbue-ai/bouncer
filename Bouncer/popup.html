@@ -110,8 +110,21 @@
       </label>
     </section>
 
-    <!-- Everything below is power-user surface: full model list, per-platform
-         toggles, BYOK providers, AI-slop detection. Collapsed by default. -->
+    <!-- Platforms: per-site master toggle + site-specific settings. Top-level,
+         not buried in Advanced Settings — turning Bouncer on for a site is a
+         primary action, and for platforms behind optional host permissions
+         this toggle is the only way to grant access.
+         Rows are rendered by popup/index.ts from
+         src/shared/platforms.config.json, so adding a new platform doesn't
+         require editing this file. Reuses the .api-provider accordion classes
+         for expand/collapse, dark-mode, and light styling. -->
+    <section class="platforms-section">
+      <label>Platforms</label>
+      <div id="platformsContainer"></div>
+    </section>
+
+    <!-- Everything below is power-user surface: full model list, BYOK
+         providers, AI-slop detection. Collapsed by default. -->
     <section>
       <div class="api-provider advanced-settings" id="advancedSettings">
         <div class="api-provider-header" id="advancedSettingsHeader">
@@ -133,18 +146,6 @@
           <!-- Populated by JS -->
         </div>
       </div>
-    </section>
-
-    <!-- Platforms: per-site master toggle + site-specific settings.
-         Reuses the .api-provider accordion classes so each row already
-         inherits expand/collapse, dark-mode, and light styling. -->
-    <section>
-      <label>Platforms</label>
-
-      <!-- Platform rows are rendered by popup/index.ts from
-           src/shared/platforms.config.json. Adding a new platform doesn't
-           require editing this file. -->
-      <div id="platformsContainer"></div>
     </section>
 
     <section>

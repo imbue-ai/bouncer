@@ -15,9 +15,15 @@ import {
   handleSettingsChange, handleFilterPackChange, handlePageLoad, suggestAnnoyingReasons,
   replayDetectorStates,
 } from './pipeline';
-import { sendFeedback } from './providers';
+import { sendFeedback, callImbueInstagramAnalyze, callImbueAudioFilter } from './providers';
 import { imbueWebSocket, type ForceLoginMessage } from './ws-manager';
 import { launchAuthFlow, signInAnon, isAnonymousUser, refreshAuthToken, getAuthToken, handleAppleSignIn, signOut, setOnIdentityChanged, IS_SAFARI } from './auth';
+import { initOptionalPlatforms, syncOptionalPlatformScripts } from './optional-platforms';
+
+// Register/unregister content scripts for user-granted optional platforms.
+// Runs at every service worker startup because dynamic registrations don't
+// survive extension updates.
+initOptionalPlatforms();
 
 // ==================== Tab tracking ====================
 
@@ -279,6 +285,55 @@ async function handleMessage(
         console.error('[Bouncer] suggestAnnoyingReasons error:', err);
         return { reasons: [], error: (err as Error).message };
       }
+    }
+
+    case 'analyzeReel': {
+      // Instagram reel describer (separate from the feed filter pipeline).
+      // Forwards caption + thumbnail to the imbue instagramAnalyze action and
+      // returns the <=5-word phrase. Caption/thumbnail validation + the prompt
+      // all live server-side; we just relay.
+      try {
+        const result = await callImbueInstagramAnalyze(message.caption || '', message.thumbnailUrl || '');
+        return { description: result.description || '' };
+      } catch (err) {
+        console.error('[Bouncer] analyzeReel error:', err);
+        return { error: (err as Error).message };
+      }
+    }
+
+    case 'analyzeReelAudio': {
+      // Instagram reel AUDIO filter (experimental). Relays a short base64 clip
+      // of an upcoming reel's audio + the user's filter categories to the imbue
+      // audioFilter action (Gemma audio worker). The response is the standard
+      // tweetFilter parse; `category` is the matched category (or "None").
+      try {
+        // The server keys the clip container off audioFormat, not a full mime
+        // type — reduce e.g. "audio/webm;codecs=opus" to "webm".
+        const mime = message.mimeType || 'audio/webm';
+        const format = /webm/.test(mime) ? 'webm' : /ogg/.test(mime) ? 'ogg' : 'mp4';
+        const result = await callImbueAudioFilter(
+          message.audioBase64 || '',
+          format,
+          message.categories || [],
+        );
+        return {
+          shouldHide: !!result.shouldHide,
+          matchedCategory: result.category ?? null,
+          reasoning: result.reasoning ?? null,
+        };
+      } catch (err) {
+        console.warn('[Bouncer] analyzeReelAudio error:', err);
+        return { error: (err as Error).message };
+      }
+    }
+
+    // Sent by the settings toggle right after the user grants an optional
+    // platform's host permission. permissions.onAdded already triggers the
+    // same sync, but the popup awaits this one so it doesn't open the
+    // platform's feed before the content script is registered.
+    case 'syncOptionalPlatforms': {
+      await syncOptionalPlatformScripts();
+      return { success: true };
     }
 
     case 'clearCache': {

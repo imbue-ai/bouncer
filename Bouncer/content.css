@@ -18,6 +18,8 @@
 .filter-phrases-bottom *,
 .filter-phrases-mobile,
 .filter-phrases-mobile *,
+.filter-phrases-panel,
+.filter-phrases-panel *,
 .filtered-view-container,
 .filtered-view-container *,
 .post-verification-bar,
@@ -3326,3 +3328,25 @@ body.ff-ios .ff-ios-page.dark-mode .ff-ios-page-header {
   color: rgba(255, 255, 255, 0.55);
 }
 
+
+/* ==================== Panel-hosted filter box ====================
+   The `'external'` placement (Instagram): the same filter box, rendered inside
+   the reel panel's card instead of a pill of its own. The host card already
+   supplies the background, rounded corners and gradient border, so this
+   variant drops its own chrome and just fills the slot. */
+
+.filter-phrases-panel .filter-phrases-container {
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  /* Long phrase lists scroll inside the card rather than growing it off-screen. */
+  max-height: min(70vh, 520px);
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+/* Leave room for the page's ✕, which sits in the card's top-right corner. */
+.filter-phrases-panel .filter-phrases-title-row {
+  padding-right: 26px;
+}
