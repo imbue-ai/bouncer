@@ -1,2 +1,6 @@
 /*.html
   Cache-Control: no-cache
+
+/v1/en/packs.json
+  Access-Control-Allow-Origin: *
+  Cache-Control: no-cache

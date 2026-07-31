@@ -989,6 +989,36 @@ article {
   border-top-color: #cfd9de;
 }
 
+.ff-bounce-quote-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: #8899a6;
+  cursor: pointer;
+  user-select: none;
+}
+
+.ff-bounce-quote-row:hover {
+  color: #d6d9db;
+}
+
+.ff-bounce-quote-toggle {
+  margin: 0;
+  cursor: pointer;
+  accent-color: #1d9bf0;
+}
+
+.twitter-light .ff-bounce-quote-row {
+  color: #536471;
+}
+
+.twitter-light .ff-bounce-quote-row:hover {
+  color: #0f1419;
+}
+
 .ff-annoying-empty {
   color: #8899a6;
   font-size: 13px;
@@ -1287,7 +1317,8 @@ article {
   border: var(--green-border-width) solid rgb(var(--bouncer-brand-rgb));
   border-radius: 16px;
   display: flex;
-  flex-direction: column
+  flex-direction: column;
+  container-type: inline-size;
 }
 
 /* ==================== Sign-in prompt ==================== */
@@ -1547,6 +1578,121 @@ article {
   align-items: baseline;
   flex-wrap: wrap;
   column-gap: 4px;
+  row-gap: 5px;
+  position: relative;
+}
+
+/* Paused state: grey out the whole "Filter out [chips] and [input]" sentence
+   plus the inline pause button, and show the centered play overlay on top.
+   The overlay itself is excluded from the dim so the play button stays vivid. */
+.filter-phrases-header.paused > :not(.filter-paused-overlay),
+.filter-phrases-header.paused > .filter-phrases-list > * {
+  opacity: 0.15;
+  pointer-events: none;
+  filter: grayscale(1);
+}
+
+.filter-paused-overlay {
+  display: none;
+  position: absolute;
+  inset: 0;
+  align-items: center;
+  justify-content: center;
+  z-index: 2;
+}
+
+.filter-phrases-header.paused .filter-paused-overlay {
+  display: flex;
+}
+
+/* Inline pause button, sized to sit comfortably next to the input. The
+   parent header uses align-items: baseline, which would otherwise place the
+   button's bottom at the text baseline — making a 24px square extend ~24px
+   above the baseline and inflating the line height upward. align-self: center
+   keeps the button centered within whatever line height the surrounding
+   chips/input establish, so it stops pushing the row up. */
+.filter-pause-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: center;
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 9999px;
+  color: rgb(113, 118, 123);
+  line-height: 0;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.filter-pause-btn:hover {
+  background: rgba(29, 155, 240, 0.1);
+  color: rgb(29, 155, 240);
+}
+
+.filter-pause-btn:active {
+  opacity: 0.7;
+}
+
+.filter-pause-btn svg {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
+}
+
+.light-mode .filter-pause-btn {
+  color: rgb(83, 100, 113);
+}
+
+.light-mode .filter-pause-btn:hover {
+  background: rgba(29, 155, 240, 0.1);
+  color: rgb(29, 155, 240);
+}
+
+/* Larger circular play button centered over the greyed-out sentence. */
+.filter-paused-play-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  background: rgba(113, 118, 123, 0.9);
+  border: none;
+  border-radius: 9999px;
+  color: #fff;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  transition: background 0.15s ease, transform 0.1s ease;
+}
+
+.filter-paused-play-btn:hover {
+  background: rgb(113, 118, 123);
+}
+
+.light-mode .filter-paused-play-btn {
+  background: rgba(83, 100, 113, 0.9);
+}
+
+.light-mode .filter-paused-play-btn:hover {
+  background: rgb(83, 100, 113);
+}
+
+.filter-paused-play-btn:active {
+  transform: scale(0.96);
+}
+
+.filter-paused-play-btn svg {
+  width: 22px;
+  height: 22px;
+  fill: currentColor;
+  /* Optical centering for a right-pointing triangle. */
+  margin-left: 2px;
 }
 
 .filter-phrases-label {
@@ -1562,6 +1708,15 @@ article {
   flex: 1;
   min-width: 80px;
   gap: 4px;
+}
+
+/* When the input wraps internally, the header gets .input-wraps and the
+   and-input element claims the whole row so the textarea has the full
+   container width to extend into — typing a long phrase then reads as one
+   line until it genuinely needs more, instead of wrapping many times at
+   whatever narrow space was left next to the chips. */
+.filter-phrases-header.input-wraps .filter-phrases-and-input {
+  flex-basis: 100%;
 }
 
 .filter-phrases-and {
@@ -1590,13 +1745,22 @@ article {
   border-bottom: 2px solid rgb(113, 118, 123) !important;
   border-radius: 0 !important;
   color: rgb(231, 233, 234);
+  font-family: inherit;
   font-size: 15px;
   font-weight: 600;
+  line-height: 1.2em;
   outline: none !important;
   appearance: none;
   -webkit-appearance: none;
   box-shadow: none !important;
   transition: border-color 0.2s;
+  display: block;
+  box-sizing: border-box;
+  resize: none;
+  overflow: hidden;
+  min-height: 1.2em;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .filter-phrases-container .filter-phrases-input:focus {
@@ -1679,6 +1843,140 @@ article {
   margin-left: 0;
 }
 
+/* Active filter-pack chip that replaces the pack's individual phrases inline
+   in the "Filter out…" list. Color is picked per pack via --chip-color and
+   set inline by createPackChip(). */
+.filter-pack-chip {
+  --chip-color: #8EAFCB;
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  margin: 0 1px;
+  vertical-align: baseline;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--chip-color) 18%, transparent);
+  color: color-mix(in srgb, var(--chip-color), white 55%);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.25;
+  white-space: nowrap;
+  cursor: pointer;
+  position: relative;
+  transition: color 0.2s;
+}
+
+.filter-pack-chip:hover {
+  color: #ef4444;
+  text-decoration: line-through;
+}
+
+.filter-pack-chip:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--chip-color) 80%, transparent);
+  outline-offset: 1px;
+}
+
+.filter-pack-chip-label {
+  display: inline-block;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.filter-pack-chip-tooltip {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 9999;
+  width: max-content;
+  max-width: 260px;
+  padding: 6px 10px;
+  background: rgba(20, 23, 26, 0.95);
+  color: rgb(231, 233, 234);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.45;
+  white-space: normal;
+  word-break: break-word;
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+  visibility: hidden;
+  opacity: 0;
+  transition: opacity 0.12s, visibility 0.12s;
+}
+
+.filter-pack-chip-tooltip::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 5px solid transparent;
+  border-top-color: rgba(20, 23, 26, 0.95);
+}
+
+.filter-pack-chip:hover .filter-pack-chip-tooltip,
+.filter-pack-chip:focus-visible .filter-pack-chip-tooltip {
+  visibility: visible;
+  opacity: 1;
+  transition-delay: 0.12s;
+}
+
+.light-mode .filter-pack-chip {
+  background: color-mix(in srgb, var(--chip-color) 16%, transparent);
+  color: color-mix(in srgb, var(--chip-color), black 40%);
+  border-color: color-mix(in srgb, var(--chip-color) 45%, transparent);
+}
+
+.light-mode .filter-pack-chip:hover {
+  color: #dc2626;
+  text-decoration: line-through;
+}
+
+.light-mode .filter-pack-chip-tooltip {
+  background: rgba(15, 20, 25, 0.96);
+  color: rgb(247, 249, 249);
+}
+
+.light-mode .filter-pack-chip-tooltip::after {
+  border-top-color: rgba(15, 20, 25, 0.96);
+}
+
+/* The AI slop chip is a global filter rather than a phrase pack,
+   so it inverts the surrounding theme (matching the special filter-pack
+   badge) — light fill + dark text in dark mode, dark fill + light text in
+   light mode — rather than using the hashed-hue pack coloring. */
+.filter-pack-chip.filter-pack-chip-ai-text {
+  background: rgb(231, 233, 234);
+  color: rgb(15, 20, 25);
+  border-color: rgb(231, 233, 234);
+}
+
+.filter-pack-chip.filter-pack-chip-ai-text:hover {
+  color: #ef4444;
+  text-decoration: line-through;
+}
+
+.filter-pack-chip.filter-pack-chip-ai-text:focus-visible {
+  outline-color: rgba(0, 0, 0, 0.5);
+}
+
+.light-mode .filter-pack-chip.filter-pack-chip-ai-text {
+  background: rgb(15, 20, 25);
+  color: rgb(231, 233, 234);
+  border-color: rgb(15, 20, 25);
+}
+
+.light-mode .filter-pack-chip.filter-pack-chip-ai-text:hover {
+  color: #ef4444;
+  text-decoration: line-through;
+}
+
+.light-mode .filter-pack-chip.filter-pack-chip-ai-text:focus-visible {
+  outline-color: rgba(255, 255, 255, 0.5);
+}
+
 /* Model loading progress display */
 .filter-model-loading {
   padding: 8px 0;
@@ -1754,6 +2052,34 @@ article {
 
 .filtered-toggle-btn.active:hover {
   background: rgba(29, 155, 240, 0.2);
+}
+
+.filter-pack-toggle-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.filter-pack-toggle-btn:disabled:hover {
+  background: transparent;
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+/* View Filtered button — borderless at all times, background only on hover. */
+.filter-phrases-container .filtered-toggle-btn:not(.filter-pack-toggle-btn),
+.filter-phrases-container .filtered-toggle-btn:not(.filter-pack-toggle-btn).active,
+.filter-phrases-container .filtered-toggle-btn:not(.filter-pack-toggle-btn).active:hover {
+  border: none;
+  background: transparent;
+}
+
+.filter-phrases-container .filtered-toggle-btn:not(.filter-pack-toggle-btn):hover,
+.filter-phrases-container .filtered-toggle-btn:not(.filter-pack-toggle-btn).active:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.light-mode .filter-phrases-container .filtered-toggle-btn:not(.filter-pack-toggle-btn):hover,
+.light-mode .filter-phrases-container .filtered-toggle-btn:not(.filter-pack-toggle-btn).active:hover {
+  background: rgba(0, 0, 0, 0.06);
 }
 
 .filtered-toggle-count {
@@ -2095,17 +2421,17 @@ article {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-top: 8px;
+  margin-top: 16px;
   gap: 12px;
 }
 
 /* Left side of the actions row: Filter packs + View filtered sit side by side
-   with comfortable spacing; Settings stays on the right via the outer row's
-   justify-content: space-between. */
+   with comfortable spacing; the right-side group (Share + Settings) stays on
+   the right via the outer row's justify-content: space-between. */
 .filter-phrases-actions-left {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
   flex-wrap: nowrap;
 }
 
@@ -2292,6 +2618,8 @@ article {
   height: 14px;
 }
 
+/* Settings button — circular icon button (horizontal ellipsis), matches the
+   share button's footprint so the two read as a pair on the right of the row. */
 /* Settings button — circular icon button (horizontal ellipsis), matches the
    share button's footprint so the two read as a pair on the right of the row. */
 .filter-phrases-container .filter-settings-btn {
@@ -3326,3 +3654,688 @@ body.ff-ios .ff-ios-page.dark-mode .ff-ios-page-header {
   color: rgba(255, 255, 255, 0.55);
 }
 
+
+/* ======================================
+   Filter Packs
+   ====================================== */
+
+.filter-pack-add-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  padding: 5px;
+  margin-top: 2px;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  color: rgba(231, 233, 234, 0.45);
+  line-height: 0;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+
+.filter-pack-add-btn:hover {
+  border-color: rgba(255, 255, 255, 0.18);
+  color: rgb(231, 233, 234);
+}
+
+/* Filter-pack region — single collapsing wrapper for the share button + pack
+   badges. Uses the CSS grid 1fr ↔ 0fr trick so the open/close transition
+   animates against the content's actual height. */
+.filter-pack-region {
+  display: grid;
+  grid-template-rows: 1fr;
+  margin-top: 10px;
+  opacity: 1;
+  transition: grid-template-rows 0.15s ease, opacity 0.12s ease, margin-top 0.15s ease;
+}
+
+.filter-pack-region.collapsed {
+  grid-template-rows: 0fr;
+  opacity: 0;
+  margin-top: 0;
+  pointer-events: none;
+}
+
+.filter-pack-region-inner {
+  box-sizing: border-box;
+  overflow: hidden;
+  min-height: 0;
+  position: relative;
+  padding-top: 12px;
+  transition: padding-top 0.15s ease;
+}
+
+.filter-pack-region.collapsed .filter-pack-region-inner {
+  padding-top: 0;
+}
+
+.filter-pack-badges-inner {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.filter-pack-badge {
+  --pack-color: #8EAFCB;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  background: none;
+  color: rgb(231, 233, 234);
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.filter-pack-badge::before {
+  content: '';
+  display: block;
+  flex-shrink: 0;
+  /* Pin to border-box so the 16x16 visible footprint stays identical to the
+     edit-mode swatch button — eliminates a 2px horizontal shift when entering
+     edit mode caused by box-sizing/appearance differences between pseudo-
+     elements and <button>. */
+  box-sizing: border-box;
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  background-color: var(--pack-color);
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 14px 14px;
+  border: 1px solid color-mix(in srgb, var(--pack-color), white 22%);
+  transition: background-image 0.15s;
+}
+
+.filter-pack-badge.active::before {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'%3E%3Cpath d='M2.5 7.5 L6 11 L11.5 3.5' fill='none' stroke='white' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+
+.filter-pack-badge.editing::before {
+  display: none;
+}
+
+.filter-pack-badge:hover {
+  background: color-mix(in srgb, var(--pack-color) 10%, transparent);
+  border-color: color-mix(in srgb, var(--pack-color) 35%, transparent);
+}
+
+.filter-pack-badge.active {
+  border-color: color-mix(in srgb, var(--pack-color) 55%, transparent);
+  color: rgb(231, 233, 234);
+  font-weight: 600;
+}
+
+.filter-pack-badge.active:hover {
+  border-color: color-mix(in srgb, var(--pack-color) 70%, transparent);
+}
+
+/* Brief "pop and settle" jiggle applied to a chip when its pack is activated
+   — modeled after Xcode's matching-brace highlight, which scales the matched
+   glyph up sharply and lets it bounce back. A touch of rotation makes the
+   rebound read as a jiggle rather than a pulse. */
+@keyframes filter-pack-chip-jiggle {
+  0%   { transform: scale(1)    rotate(0deg); }
+  22%  { transform: scale(1.08) rotate(-1.6deg); }
+  46%  { transform: scale(0.96) rotate(1.2deg); }
+  72%  { transform: scale(1.02) rotate(-0.5deg); }
+  100% { transform: scale(1)    rotate(0deg); }
+}
+
+.filter-pack-chip.jiggling {
+  animation: filter-pack-chip-jiggle 380ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  transform-origin: center;
+}
+
+/* Counterpart to the jiggle: when a pack is deactivated, the chip shrinks
+   toward its center and fades out before the next sync removes it from the
+   DOM. Callers must await the animation so the chip isn't torn out mid-frame. */
+@keyframes filter-pack-chip-removal {
+  0%   { transform: scale(1);    opacity: 1; }
+  100% { transform: scale(0.88); opacity: 0; }
+}
+
+.filter-pack-chip.removing {
+  animation: filter-pack-chip-removal 120ms ease-in forwards;
+  transform-origin: center;
+  pointer-events: none;
+}
+
+.filter-pack-badge-label {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  outline: none;
+  line-height: 1.3;
+}
+
+.filter-pack-phrase-preview {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.6;
+  font-size: 13px;
+  line-height: 1.3;
+  padding-left: 6px;
+}
+
+.filter-pack-suggested-heading {
+  width: 100%;
+  padding: 2px 2px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.6;
+}
+
+.filter-pack-suggested-heading:not(:first-child) {
+  padding-top: 10px;
+}
+
+/* Special non-deletable "Filter AI slop" pack — exempt from the hue-driven
+   coloring used for user packs. Stays transparent like a regular badge; the
+   inline "Recommended" pill (below) carries the distinct visual weight, and
+   the swatch becomes a checkbox-style active indicator. */
+.filter-pack-badge.filter-pack-badge-special .filter-pack-badge-label {
+  max-width: none;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+.filter-pack-badge.filter-pack-badge-special::before {
+  background-color: rgb(231, 233, 234);
+  border: 1px solid rgb(231, 233, 234);
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 14px 14px;
+  opacity: 1;
+  margin-right: 0;
+}
+
+.filter-pack-badge.filter-pack-badge-special.active::before {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'%3E%3Cpath d='M2.5 7.5 L6 11 L11.5 3.5' fill='none' stroke='%230f1419' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+
+.light-mode .filter-pack-badge.filter-pack-badge-special::before {
+  background-color: rgb(15, 20, 25);
+  border-color: rgb(15, 20, 25);
+}
+
+.light-mode .filter-pack-badge.filter-pack-badge-special.active::before {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'%3E%3Cpath d='M2.5 7.5 L6 11 L11.5 3.5' fill='none' stroke='%23e7e9ea' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+
+/* "Recommended" pill on the AI-text badge. Uses the theme-opposite background
+   so the pill itself reads as a strong system-managed marker on an otherwise
+   transparent badge. */
+.filter-pack-badge-recommended {
+  margin-left: auto;
+  flex-shrink: 0;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  background: rgb(231, 233, 234);
+  color: rgb(15, 20, 25);
+  line-height: 1.2;
+}
+
+.light-mode .filter-pack-badge-recommended {
+  background: rgb(15, 20, 25);
+  color: rgb(231, 233, 234);
+}
+
+.filter-pack-badge-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  overflow: hidden;
+  max-width: 0;
+  opacity: 0;
+  transition: max-width 0.15s, opacity 0.15s;
+}
+
+.filter-pack-badge:hover .filter-pack-badge-actions {
+  max-width: 64px;
+  opacity: 1;
+}
+
+.filter-pack-badge-remove,
+.filter-pack-badge-edit,
+.filter-pack-badge-share {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  color: inherit;
+  line-height: 0;
+  opacity: 0.6;
+  cursor: pointer;
+  border-radius: 0;
+  transition: opacity 0.15s;
+}
+
+.filter-pack-badge-share svg {
+  width: 11px;
+  height: 11px;
+  fill: currentColor;
+}
+
+.filter-pack-badge-remove:hover:not(:disabled),
+.filter-pack-badge-edit:hover,
+.filter-pack-badge-share:hover:not(:disabled) {
+  opacity: 1;
+}
+
+.filter-pack-badge-remove:disabled {
+  opacity: 0;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.filter-pack-badge-share:disabled {
+  opacity: 0.25;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.filter-pack-badge.editing {
+  display: block;
+  position: relative;
+  align-items: initial;
+  gap: 0;
+  /* Top/bottom + left padding match the collapsed badge (6px 8px) so the
+     swatch and pack-name title don't shift when entering edit mode. The
+     extra right padding leaves room for the absolutely-positioned Done btn. */
+  padding: 6px 48px 6px 8px;
+  color: rgb(231, 233, 234);
+  cursor: default;
+}
+
+.filter-pack-edit-sentence {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  column-gap: 4px;
+  font-size: 15px;
+  font-weight: 400;
+  /* Match the collapsed label's line-height (1.3) so the swatch + title
+     vertical center matches the collapsed badge exactly. */
+  line-height: 1.3;
+  word-break: break-word;
+  color: rgb(231, 233, 234);
+}
+
+.filter-pack-edit-title {
+  display: inline;
+  outline: none;
+  font-weight: 600;
+  border-bottom: 1px solid transparent;
+  cursor: text;
+  padding: 0 1px;
+  transition: border-color 0.15s, background 0.15s;
+  white-space: nowrap;
+}
+
+.filter-pack-edit-title:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.filter-pack-edit-title:focus {
+  border-bottom-color: rgba(255, 255, 255, 0.35);
+  background: transparent;
+}
+
+.light-mode .filter-pack-edit-title:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.light-mode .filter-pack-edit-title:focus {
+  border-bottom-color: rgba(0, 0, 0, 0.3);
+  background: transparent;
+}
+
+.filter-pack-edit-includes {
+  font-size: 15px;
+  font-weight: 400;
+  color: rgb(231, 233, 234);
+  white-space: nowrap;
+}
+
+.filter-pack-edit-phrases-list {
+  display: contents;
+}
+
+.filter-pack-edit-and-input {
+  display: flex;
+  align-items: baseline;
+  flex: 1;
+  min-width: 80px;
+  gap: 4px;
+}
+
+.filter-pack-edit-and {
+  font-size: 15px;
+  font-weight: 400;
+  color: rgb(231, 233, 234);
+  white-space: nowrap;
+}
+
+.filter-pack-edit-phrases-list:empty ~ .filter-pack-edit-and-input .filter-pack-edit-and {
+  display: none;
+}
+
+.filter-pack-edit-input-wrapper {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+.filter-pack-edit-phrases-input {
+  width: 100%;
+  padding: 0 4px 2px 4px;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid rgb(113, 118, 123);
+  border-radius: 0;
+  color: rgb(231, 233, 234);
+  font-size: 15px;
+  font-weight: 600;
+  outline: none;
+  appearance: none;
+  -webkit-appearance: none;
+  box-shadow: none;
+  transition: border-color 0.2s;
+}
+
+.filter-pack-edit-phrases-input:focus {
+  border-bottom-color: rgb(234, 133, 84);
+  box-shadow: none;
+}
+
+.filter-pack-edit-phrases-input::placeholder {
+  color: rgb(80, 85, 90);
+  font-weight: 400;
+}
+
+.light-mode .filter-pack-edit-sentence,
+.light-mode .filter-pack-edit-includes,
+.light-mode .filter-pack-edit-and {
+  color: rgb(15, 20, 25);
+}
+
+.light-mode .filter-pack-edit-phrases-input {
+  color: rgb(15, 20, 25);
+  border-bottom-color: rgba(0, 0, 0, 0.4);
+}
+
+.light-mode .filter-pack-edit-phrases-input:focus {
+  border-bottom-color: rgb(234, 133, 84);
+}
+
+.light-mode .filter-pack-edit-phrases-input::placeholder {
+  color: rgba(15, 20, 25, 0.4);
+}
+
+.filter-pack-edit-color-swatch {
+  /* Lock dimensions to match the collapsed ::before exactly (16x16 border-box,
+     border included). Without explicit box-sizing/appearance, <button> UA
+     defaults can change the rendered footprint by ~2px and shift everything
+     to the swatch's right (title, "includes", phrases) horizontally. */
+  box-sizing: border-box;
+  appearance: none;
+  -webkit-appearance: none;
+  flex-shrink: 0;
+  align-self: center;
+  width: 16px;
+  height: 16px;
+  margin: 0 4px 0 0;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--pack-color), white 22%);
+  border-radius: 3px;
+  background-color: var(--pack-color);
+  cursor: pointer;
+  transition: transform 0.1s, border-color 0.15s;
+}
+
+.filter-pack-edit-color-swatch:hover {
+  border-color: color-mix(in srgb, var(--pack-color), white 35%);
+  transform: scale(1.08);
+}
+
+.filter-pack-color-picker {
+  position: absolute;
+  z-index: 50;
+  display: grid;
+  /* 7 swatches per row × 2 rows fits the 14-color palette compactly. */
+  grid-template-columns: repeat(7, auto);
+  gap: 5px;
+  padding: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  background: rgb(22, 24, 28);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+}
+
+.light-mode .filter-pack-color-picker {
+  background: rgb(255, 255, 255);
+  border-color: rgba(0, 0, 0, 0.12);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.15);
+}
+
+.filter-pack-color-swatch {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: transform 0.1s, border-color 0.15s, box-shadow 0.15s;
+}
+
+.light-mode .filter-pack-color-swatch {
+  border-color: rgba(0, 0, 0, 0.18);
+}
+
+.filter-pack-color-swatch:hover {
+  transform: scale(1.12);
+  border-color: rgba(255, 255, 255, 0.45);
+}
+
+.light-mode .filter-pack-color-swatch:hover {
+  border-color: rgba(0, 0, 0, 0.5);
+}
+
+.filter-pack-color-swatch.selected {
+  border-color: rgb(231, 233, 234);
+  box-shadow: 0 0 0 2px rgba(231, 233, 234, 0.25);
+}
+
+.light-mode .filter-pack-color-swatch.selected {
+  border-color: rgb(15, 20, 25);
+  box-shadow: 0 0 0 2px rgba(15, 20, 25, 0.18);
+}
+
+.filter-pack-edit-done {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  flex-shrink: 0;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  color: rgb(113, 118, 123);
+  font-size: 12px;
+  font-weight: 500;
+  /* Match the sentence's first-line height (1.5 × 15px) so Done's text
+     baseline aligns with the "<pack name> includes" line above it. */
+  line-height: calc(15px * 1.5);
+  cursor: pointer;
+  transition: color 0.15s;
+}
+
+.filter-pack-edit-done:hover {
+  color: rgb(231, 233, 234);
+}
+
+.light-mode .filter-pack-edit-done {
+  color: rgb(83, 100, 113);
+}
+
+.light-mode .filter-pack-edit-done:hover {
+  color: rgb(15, 20, 25);
+}
+
+.light-mode .filter-pack-add-btn {
+  border-color: rgba(0, 0, 0, 0.08);
+  color: rgba(15, 20, 25, 0.35);
+}
+
+.light-mode .filter-pack-add-btn:hover {
+  border-color: rgba(0, 0, 0, 0.18);
+  color: rgb(15, 20, 25);
+}
+
+.light-mode .filter-pack-badge {
+  color: rgb(15, 20, 25);
+  border-color: rgba(0, 0, 0, 0.08);
+}
+
+.light-mode .filter-pack-badge::before {
+  background-color: var(--pack-color);
+  border-color: color-mix(in srgb, var(--pack-color), black 30%);
+}
+
+.light-mode .filter-pack-badge:hover {
+  background: color-mix(in srgb, var(--pack-color) 10%, transparent);
+  border-color: color-mix(in srgb, var(--pack-color) 40%, transparent);
+}
+
+.light-mode .filter-pack-badge.active {
+  border-color: color-mix(in srgb, var(--pack-color) 55%, transparent);
+  color: rgb(15, 20, 25);
+}
+
+.light-mode .filter-pack-badge.active:hover {
+  border-color: color-mix(in srgb, var(--pack-color) 70%, transparent);
+}
+
+.light-mode .filter-pack-badge-remove:hover:not(:disabled) {
+  background: rgba(0, 0, 0, 0.08);
+}
+
+.light-mode .filter-pack-badge-label[contenteditable="true"] {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+/* Circular share button on the actions row, sitting just to the left of
+   Settings. Sized to match X's own icon-button affordances. */
+.filter-pack-share-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 9999px;
+  color: rgb(113, 118, 123);
+  line-height: 0;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.filter-pack-share-btn:hover {
+  background: rgba(29, 155, 240, 0.1);
+  color: rgb(29, 155, 240);
+}
+
+.filter-pack-share-btn:active {
+  opacity: 0.7;
+}
+
+.filter-pack-share-btn svg {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  fill: currentColor;
+}
+
+.light-mode .filter-pack-share-btn {
+  color: rgb(83, 100, 113);
+}
+
+.light-mode .filter-pack-share-btn:hover {
+  background: rgba(29, 155, 240, 0.1);
+  color: rgb(29, 155, 240);
+}
+
+.filter-phrases-mobile .filter-pack-add-btn {
+  padding: 4px;
+}
+
+.filter-phrases-mobile .filter-pack-share-btn {
+  width: 24px;
+  height: 24px;
+}
+
+.filter-phrases-mobile .filter-pack-share-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.filter-phrases-mobile .filter-pack-badge {
+  font-size: 13px;
+  padding: 5px 6px 5px 9px;
+}
+
+.filter-phrases-mobile .filter-phrases-title-row {
+  padding-bottom: 6px;
+}
+
+/* When the filter box gets too narrow, the left group (Filter packs +
+   View filtered) collides with the right group (Share + Settings) and spills
+   over the side. Drop the share button first — settings is the higher-priority
+   affordance — and tighten the row's outer gap. Query is on .filter-phrases-container
+   (32px wider than the actions row due to padding), so threshold ≈ row-320 + 32.
+   Placed at the end of the file so it wins over the earlier duplicated
+   `.filter-pack-share-btn { display: inline-flex }` declarations. */
+@container (max-width: 300px) {
+  .filter-pack-share-btn {
+    display: none;
+  }
+  .filter-phrases-actions {
+    gap: 5px;
+  }
+}

@@ -655,6 +655,17 @@ async function handleMessage(
       return { success: true, cancelled, modelId };
     }
 
+    case 'fetchUrl': {
+      try {
+        const res = await fetch(message.url);
+        if (!res.ok) return { error: `HTTP ${res.status}` };
+        const data = await res.json() as unknown;
+        return { data };
+      } catch (err) {
+        return { error: String(err) };
+      }
+    }
+
     default:
       return { error: `Unknown message type: ${(message as { type: string }).type}` };
   }
@@ -779,11 +790,9 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
       }
     }
 
-    const filtersChanged = Object.keys(changes).some(
-      key => key.startsWith('descriptions_')
-    );
-    if (filtersChanged) {
-      handleFilterPackChange();
+    const descKey = Object.keys(changes).find(key => key.startsWith('descriptions_'));
+    if (descKey) {
+      handleFilterPackChange(changes[descKey]);
       // Deletions resolve locally and immediately: dropping the last AI
       // phrase turns AI detection off right now, not after the debounce.
       pruneAiFilterPhrases().catch(err =>

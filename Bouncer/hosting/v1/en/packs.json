@@ -1,0 +1,16 @@
+{
+  "v": 1,
+  "updated": "2026-04-29",
+  "packs": [
+    {
+      "id": "sp_millan",
+      "name": "Millan's gripes",
+      "phrases": ["alarmism", "racism", "dating", "AI hype", "panting over eliteness"]
+    },
+    {
+      "id": "sp_events",
+      "name": "Current events",
+      "phrases": ["war", "politics"]
+    }
+  ]
+}

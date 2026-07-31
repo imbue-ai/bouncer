@@ -2,7 +2,7 @@
 // Entry point: post processing, observers, init, storage/message listeners
 
 import type { PlatformAdapter, PostContent, PipelineResponse, BackgroundToContentMessage, DescriptionKey, AiFilterIntentState } from '../types';
-import { getStorage, removeStorage, getDescriptions, setDescriptions, phraseSetKey } from '../shared/storage';
+import { getStorage, removeStorage, getDescriptions, setDescriptions, phraseSetKey, filteringPausedKeyFor } from '../shared/storage';
 import { enabledStorageKey } from '../shared/platforms';
 import { FILTER_PACK_CODE_PREFIX } from '../shared/share-encoding';
 
@@ -371,7 +371,7 @@ import { maybeFireInstallPixel } from './install-pixel';
         };
 
         // Store in filtered posts list
-        storeFilteredPost(article, mergedContent, response.reasoning, response.rawResponse || '', response.category || null);
+        storeFilteredPost(article, mergedContent, response.reasoning, response.rawResponse || '', response.category || null, response.matches ?? null);
 
         const bar = article.querySelector('.post-verification-bar');
         const wasVerified = bar && bar.classList.contains('verified');
@@ -716,7 +716,7 @@ import { maybeFireInstallPixel } from './install-pixel';
         isLocalModelActive = newModel.startsWith('local:') || false;
       }
       if (changes[descriptionsKey]) {
-        syncFilterPhrases();
+        void syncFilterPhrases();
         // The AI-detection state is per-platform (this platform's phrases ∩
         // the judged aiPhrases — see aiIntentActiveForSite), so editing this
         // platform's list can flip the sparkle even when the global
@@ -787,6 +787,28 @@ import { maybeFireInstallPixel } from './install-pixel';
             delete cell.dataset.filteredByExtension;
             processedPosts.delete(article);
           });
+        }
+      }
+      const pausedKey = filteringPausedKeyFor(adapter.siteId);
+      if (changes[pausedKey]) {
+        // Apply the .paused class to every filter card (sidebar, bottom,
+        // mobile) so a second tab — or this tab after a settings-side toggle
+        // — reflects the new state immediately.
+        const isPaused = changes[pausedKey].newValue === true;
+        document.querySelectorAll('.filter-phrases-header').forEach(el => {
+          (el as HTMLElement).classList.toggle('paused', isPaused);
+        });
+        // Unpausing should behave like re-adding all phrase filters. Pausing
+        // is paired with restoreOrRefreshFilteredPosts on the originating tab,
+        // so we only need to re-evaluate on the false transition here. Skip
+        // the re-eval if no phrases are configured — pause only zeros out
+        // descriptions in the pipeline, so unpausing an empty list is a no-op
+        // and would otherwise flash every visible post grey for nothing.
+        if (!isPaused) {
+          void (async () => {
+            const descs = await getDescriptions(descriptionsKey);
+            if (descs.length > 0) reEvaluateAllPosts();
+          })();
         }
       }
     });
