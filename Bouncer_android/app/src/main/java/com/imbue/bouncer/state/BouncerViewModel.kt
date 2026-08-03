@@ -7,6 +7,9 @@ import android.net.Uri
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.imbue.bouncer.push.NotificationPermissionBroker
+import com.imbue.bouncer.push.PushRegistrar
+import com.imbue.bouncer.push.PushSubscriptionStore
 import com.imbue.bouncer.web.GeckoBridge
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -35,6 +38,11 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
     // job clears the pending flag so we don't fire late if the load stalls.
     private var pendingShareFilterPack = false
     private var pendingShareTimeoutJob: Job? = null
+
+    // Enable-notifications flow: set while the user is on x.com's push-settings
+    // page being coached to tap the real toggle. Cleared when the subscription
+    // registers (→ home) or the user navigates away.
+    private var pendingPushToggle = false
 
     // Scroll-driven nav bar visibility. lastScrollY is the page's last reported
     // Y. accumulatedDown/Up integrate single-direction motion so a slow scroll
@@ -127,8 +135,98 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
         if (!_state.value.hasLoggedIn && (url.contains("x.com/home") || url.contains("twitter.com/home"))) {
             prefs.edit().putBoolean(KEY_LOGGED_IN, true).apply()
             _state.update { it.copy(hasLoggedIn = true) }
+            maybePromptEnableNotifications()
+        }
+        // If the user navigates off the settings page during the guided flow
+        // without enabling (e.g. taps back), drop the coaching banner.
+        if (pendingPushToggle && !isPushSettings(url)) {
+            cancelEnableNotifications()
         }
     }
+
+    // ----- Enable-notifications flow -----
+
+    // Offer to turn on x.com push notifications. Shown once per install (a
+    // decline or completion sets the flag), triggered either on a fresh login
+    // (onUrlChanged) or, for users who are already logged in at launch
+    // (returning users, backup-restored state), once the timeline settles
+    // (onPageStop). Skipped if a subscription already exists.
+    private var notifPromptEvaluated = false
+
+    private fun maybePromptEnableNotifications() {
+        if (notifPromptEvaluated) return
+        if (prefs.getBoolean(KEY_NOTIF_PROMPTED, false)) { notifPromptEvaluated = true; return }
+        if (pendingPushToggle || _state.value.enablingNotifications) return
+        notifPromptEvaluated = true
+        // Don't nag someone who already turned notifications on.
+        val alreadySubscribed = runCatching {
+            PushSubscriptionStore(getApplication()).get("https://x.com/") != null
+        }.getOrDefault(false)
+        if (alreadySubscribed) {
+            prefs.edit().putBoolean(KEY_NOTIF_PROMPTED, true).apply()
+            return
+        }
+        _state.update { it.copy(showEnableNotificationsPrompt = true) }
+    }
+
+    fun dismissEnableNotificationsPrompt() {
+        prefs.edit().putBoolean(KEY_NOTIF_PROMPTED, true).apply()
+        _state.update { it.copy(showEnableNotificationsPrompt = false) }
+    }
+
+    // User accepted: cover the webview, navigate to x.com's push settings, and
+    // (once it loads) drive the toggle from bridge_page.js. The toggle's own
+    // handler calls pushManager.subscribe → our WebPushDelegate, which is what
+    // registers the subscription with x.com. We return home when JS reports back.
+    fun acceptEnableNotifications() {
+        prefs.edit().putBoolean(KEY_NOTIF_PROMPTED, true).apply()
+        pendingPushToggle = true
+        // Coaching banner (not a full cover): the user must see and tap x.com's
+        // real toggle themselves — Gecko refuses pushManager.subscribe() without
+        // a genuine user gesture, which a scripted click can't supply.
+        _state.update {
+            it.copy(showEnableNotificationsPrompt = false, enablingNotifications = true)
+        }
+        // Grant the Android POST_NOTIFICATIONS runtime permission up front (this
+        // native tap is a valid gesture for it), so the later web-toggle tap
+        // flows straight through our permission delegate without a second stop.
+        NotificationPermissionBroker.ensurePermission(getApplication()) { granted ->
+            Log.i(tag, "POST_NOTIFICATIONS granted=$granted")
+        }
+        // Authoritative completion: our WebPushDelegate actually registered the
+        // subscription (⇒ the user tapped the toggle, permission is granted, and
+        // subscribe reached us). Wait a beat for the site to POST the endpoint to
+        // its own server, then head home.
+        PushRegistrar.onSubscriptionRegistered = { scope ->
+            if (pendingPushToggle && isOnX(scope)) {
+                viewModelScope.launch {
+                    delay(PUSH_REGISTER_GRACE_MS)
+                    if (pendingPushToggle) finishPushToggle(returnHome = true)
+                }
+            }
+        }
+        navigateTo(PUSH_SETTINGS_URL)
+    }
+
+    fun cancelEnableNotifications() {
+        if (!pendingPushToggle) return
+        finishPushToggle(returnHome = false)
+    }
+
+    private fun finishPushToggle(returnHome: Boolean) {
+        pendingPushToggle = false
+        PushRegistrar.onSubscriptionRegistered = null
+        if (returnHome) {
+            navigateTo("https://x.com/home")
+            // Keep the banner until home actually paints (onPageStop clears it).
+        } else {
+            _state.update { it.copy(enablingNotifications = false) }
+        }
+    }
+
+    private fun isPushSettings(url: String): Boolean =
+        url.contains("x.com/settings/push_notifications") ||
+            url.contains("twitter.com/settings/push_notifications")
 
     fun setCanGoBack(canGoBack: Boolean) {
         _state.update { it.copy(canGoBack = canGoBack) }
@@ -145,6 +243,22 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
             pendingShareTimeoutJob?.cancel()
             pendingShareTimeoutJob = null
             callJs("__ff_shareFilterPack")
+        }
+        val url = _state.value.currentUrl
+        if (pendingPushToggle && isPushSettings(url)) {
+            // Settings page loaded during the guided flow: scroll the real
+            // toggle into view and highlight it so the user can tap it. We
+            // can't tap it for them (no user activation), so we just guide.
+            callJs("__ff_revealPushToggle")
+        } else if (_state.value.enablingNotifications && !pendingPushToggle &&
+            (url.contains("x.com/home") || url.contains("twitter.com/home"))
+        ) {
+            // Home has repainted after enabling — safe to drop the banner.
+            _state.update { it.copy(enablingNotifications = false) }
+        } else if (_state.value.hasLoggedIn && isOnX(url)) {
+            // Already-logged-in users (returning / backup-restored state) never
+            // hit the login transition, so evaluate the one-time prompt here.
+            maybePromptEnableNotifications()
         }
     }
 
@@ -343,6 +457,11 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
         private const val KEY_ONBOARDED = "hasCompletedOnboarding"
         private const val KEY_LOGGED_IN = "hasLoggedIn"
         private const val KEY_BOUNCER_TOOLTIP_SEEN = "hasSeenBouncerTooltip"
+        private const val KEY_NOTIF_PROMPTED = "hasPromptedNotifications"
+        private const val PUSH_SETTINGS_URL = "https://x.com/settings/push_notifications"
+        // Grace after the subscription registers, for the site to POST its
+        // endpoint to its own server before we navigate away.
+        private const val PUSH_REGISTER_GRACE_MS = 1_500L
         private const val TOP_PIN_PX = 80
         private const val HIDE_THRESHOLD_PX = 24
         private const val SHOW_THRESHOLD_PX = 16

@@ -236,6 +236,21 @@ fun BouncerApp(viewModel: BouncerViewModel = viewModel()) {
                     WindowInsets.navigationBars.only(WindowInsetsSides.Bottom),
                 ),
         )
+        if (state.enablingNotifications) {
+            EnableNotificationsBanner(
+                onCancel = viewModel::cancelEnableNotifications,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .windowInsetsPadding(WindowInsets.systemBars.only(WindowInsetsSides.Top)),
+            )
+        }
+    }
+
+    if (state.showEnableNotificationsPrompt) {
+        EnableNotificationsDialog(
+            onEnable = viewModel::acceptEnableNotifications,
+            onDismiss = viewModel::dismissEnableNotificationsPrompt,
+        )
     }
 
     if (state.popupActive) {

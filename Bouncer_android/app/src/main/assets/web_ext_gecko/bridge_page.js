@@ -29,7 +29,7 @@
     "feedfilterAiSettings"
   ];
 
-  window.__ffExtensionVersion = "1.1.3";
+  window.__ffExtensionVersion = "1.1.5";
   window.__ff_platform = "android";
 
   function dispatchBridge(name, arg) {
@@ -72,6 +72,44 @@
   // functions in the shared JS, so we provide thin shims here.
   window.__ff_setSheetClass = function (open) {
     try { document.body.classList.toggle('ff-panel-open', !!open); } catch (e) {}
+  };
+
+  // Native calls this on the x.com push-notification settings page during the
+  // guided-enable flow. We can't click the toggle ourselves — Gecko requires a
+  // genuine user gesture for pushManager.subscribe(), and a scripted click has
+  // no user activation, so it's silently denied. Instead we just help the user
+  // find the real toggle: scroll the first checkbox into view and pulse a
+  // highlight ring around its row. Their own tap carries the activation.
+  window.__ff_revealPushToggle = function () {
+    var start = Date.now();
+    var TIMEOUT_MS = 8000;
+    function attempt() {
+      var box = document.querySelector('input[type="checkbox"]');
+      if (box) {
+        // The tappable row is an ancestor of the hidden input; walk up a few
+        // levels for something with real height to highlight.
+        var target = box;
+        for (var i = 0; i < 4 && target.parentElement; i++) {
+          target = target.parentElement;
+          if (target.getBoundingClientRect().height >= 36) break;
+        }
+        try { target.scrollIntoView({ block: "center", behavior: "smooth" }); } catch (e) {}
+        try {
+          var prev = target.style.boxShadow;
+          var prevT = target.style.transition;
+          target.style.transition = "box-shadow 0.4s ease";
+          target.style.boxShadow = "0 0 0 3px rgba(120,86,255,0.9)";
+          setTimeout(function () {
+            target.style.boxShadow = prev || "";
+            setTimeout(function () { target.style.transition = prevT || ""; }, 500);
+          }, 1600);
+        } catch (e) {}
+        return;
+      }
+      if (Date.now() - start > TIMEOUT_MS) return;
+      setTimeout(attempt, 200);
+    }
+    attempt();
   };
 
   window.__ff_loadAiSettings = function () {

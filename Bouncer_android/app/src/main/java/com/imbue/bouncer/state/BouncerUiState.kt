@@ -24,4 +24,10 @@ data class BouncerUiState(
     val hasSeenBouncerTooltip: Boolean = false,
     val popupActive: Boolean = false,
     val navBarVisible: Boolean = true,
+    // Post-login one-time "turn on notifications?" prompt.
+    val showEnableNotificationsPrompt: Boolean = false,
+    // Covers the webview while we drive x.com's push-settings toggle, so the
+    // user sees a branded "Enabling notifications…" overlay instead of the
+    // settings page flashing by.
+    val enablingNotifications: Boolean = false,
 )

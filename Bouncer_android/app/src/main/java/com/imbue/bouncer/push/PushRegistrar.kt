@@ -45,6 +45,16 @@ object PushRegistrar {
     private val mainHandler = Handler(Looper.getMainLooper())
 
     /**
+     * Fires (on the main thread) with the scope each time a subscription is
+     * successfully registered. The enable-notifications flow uses this as the
+     * authoritative "notifications are on" signal — proof the user granted
+     * permission and the site's subscribe() reached us and got an endpoint —
+     * rather than guessing from the settings-page checkbox.
+     */
+    @Volatile
+    var onSubscriptionRegistered: ((scope: String) -> Unit)? = null
+
+    /**
      * Starts a web-push registration for [scope]. The returned result
      * completes when Play Services answers (or null on failure/timeout).
      */
@@ -128,6 +138,7 @@ object PushRegistrar {
                     record.authSecret,
                 ),
             )
+            mainHandler.post { onSubscriptionRegistered?.invoke(request.scope) }
             return
         }
         // No pending request: GMS rotated the token for an existing
