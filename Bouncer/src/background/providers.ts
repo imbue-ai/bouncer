@@ -271,13 +271,25 @@ export async function callImbueDetectAiIntent(
 // five-word-phrase prompt (INSTAGRAM_SYSTEM_PROMPT) and the worker returns the
 // phrase as `description`. The caption may be empty or spam — that's expected,
 // the server prompt handles it. Only the first image URL is used server-side.
+//
+// `frameBase64`, when present, is a still from the MIDDLE of the reel captured
+// off the already-buffered <video> (see src/instagram/frame.ts) — a much better
+// summary of a reel than its cover thumbnail, which is often just a title card.
+// It's sent as a data: URL in the same `imageUrls` slot the thumbnail uses, so
+// the server needs no new field; the frame module keeps it inside the 32 KB WS
+// frame cap that binds every message on this socket. Falls back to the
+// thumbnail URL whenever no frame could be captured.
 export async function callImbueInstagramAnalyze(
   caption: string,
   thumbnailUrl: string,
+  frameBase64?: string,
 ): Promise<ImbueInstagramResponse> {
+  const image = frameBase64
+    ? `data:image/jpeg;base64,${frameBase64}`
+    : thumbnailUrl;
   const message: Record<string, unknown> = {
     action: 'instagramAnalyze',
-    tweetData: { text: caption, imageUrls: thumbnailUrl ? [thumbnailUrl] : [] },
+    tweetData: { text: caption, imageUrls: image ? [image] : [] },
     version: chrome.runtime.getManifest().version,
   };
   return imbueWebSocket.send(message) as unknown as Promise<ImbueInstagramResponse>;

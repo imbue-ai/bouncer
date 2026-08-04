@@ -245,7 +245,17 @@
         }
       },
 
-      getURL(path) { return 'feedfilter://local/' + path; },
+      // Bundled resources the extension loads as bytes (icons, mostly) are
+      // injected as data: URLs by FilteredWebView.bundledAssetDataURLs() —
+      // there is no chrome-extension:// origin here to resolve a real URL
+      // against, and an <img> pointed at the feedfilter://local/ placeholder
+      // below just renders broken. Anything not in the map keeps the old
+      // placeholder, which the remaining call sites only compare or log.
+      getURL(path) {
+        var assets = (typeof __ffBundledAssets !== 'undefined') ? __ffBundledAssets : null;
+        if (assets && assets[path]) return assets[path];
+        return 'feedfilter://local/' + path;
+      },
 
       getManifest() { return { version: (typeof __ffExtensionVersion !== 'undefined' ? __ffExtensionVersion : 'unknown') }; },
 

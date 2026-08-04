@@ -123,6 +123,11 @@ export interface FilteredPost {
   rawResponse: string;
   category: string | null;
   timestamp: number;
+  /** Adapter-defined stable identity for the post, from
+   *  `getPostContentKey`. Restore matches on `post.postUrl` where a platform
+   *  has one; Instagram doesn't (reels carry no per-post URL in the feed), so
+   *  this is what lets a bounced reel be found again and un-hidden. */
+  contentKey?: string;
 }
 
 // ==================== Models & Config ====================
@@ -368,7 +373,13 @@ export type ContentToBackgroundMessage =
   | { type: 'launchOpenRouterAuth' }
   // Instagram reel describer / audio filter (src/instagram/*). These bypass
   // the feed-filter pipeline and relay straight to their imbue actions.
-  | { type: 'analyzeReel'; caption: string; thumbnailUrl: string }
+  | { type: 'analyzeReel'; caption: string; thumbnailUrl: string;
+      /** Bare base64 JPEG of a frame from the middle of the reel, when one
+       *  could be captured (src/instagram/frame.ts). A far better summary of
+       *  the reel than the cover thumbnail, which is often a title card.
+       *  Absent when the reel isn't buffered yet — `thumbnailUrl` is the
+       *  fallback and is always sent. */
+      frameBase64?: string }
   | { type: 'analyzeReelAudio'; audioBase64: string; mimeType: string; categories: string[] };
 
 export type BackgroundToContentMessage =
@@ -470,6 +481,18 @@ export type StorageSchema = SettingsBase & {
   // content script on x.com, which fires the X Pixel install conversion and
   // clears it (see content/install-pixel.ts).
   pendingInstallPixel: boolean;
+  // Instagram "intentional scrolling": the reel-describer panel that names the
+  // reel you're on plus the next few, so you choose what to watch instead of
+  // being fed it. Default true. Off collapses the panel to a floating icon and
+  // stops describing reels entirely — no inference, no upcoming phrases (see
+  // src/instagram/index.ts). Feed filtering is unaffected either way, which is
+  // why this is storage-only and never reaches the pipeline's `Settings`.
+  instagramIntentionalScroll: boolean;
+  // Set by the popup whenever the Instagram platform toggle is switched ON;
+  // consumed by the Instagram content script, which plays the welcome carousel
+  // over the Reels feed the toggle just sent the user to, then clears it (see
+  // src/instagram/intro.ts).
+  pendingInstagramIntro: boolean;
 } & DescriptionKeys & PlatformEnabledKeys;
 
 // ==================== API Response Types ====================

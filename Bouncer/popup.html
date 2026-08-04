@@ -34,6 +34,31 @@
       <button id="modalCloseBtn" class="modal-close-btn">&times;</button>
     </header>
 
+    <!-- Audio filtering (Instagram only — it's the one platform that hands us
+         a per-post audio stream). Hidden unless the embedding page says which
+         site it is; the toolbar popup has no such context, so it stays out of
+         the way there. Writes `audioFilterTerms`, which the reel audio filter
+         (src/instagram/audiofilter.ts) picks up live. -->
+    <section id="audioFilterSection" style="display: none;">
+      <label>Audio Filters</label>
+      <div class="audio-filter-list" id="audioFilterList"></div>
+      <input type="text" id="audioFilterInput" class="audio-filter-input"
+             placeholder="e.x. synthetic narration, undisclosed ads"
+             autocomplete="off" aria-label="Add an audio filter">
+    </section>
+
+    <!-- Intentional scrolling (Instagram only): the reel-describer panel that
+         names the reel you're on and the next few. Its own section rather than
+         a row nested under the Instagram platform toggle — it's a choice about
+         how the feed behaves, not a detail of the on/off switch. -->
+    <section id="intentionalScrollSection" style="display: none;">
+      <label class="toggle-switch toggle-switch--split">
+        <span class="toggle-switch-label">Intentional scrolling</span>
+        <input type="checkbox" id="enableIntentionalScroll" checked>
+        <span class="toggle-switch-slider" aria-hidden="true"></span>
+      </label>
+    </section>
+
     <!-- Model choice: the two headline options. The full model dropdown
          (BYOK providers, custom models) lives under Advanced Settings;
          popup/index.ts keeps these radios and the dropdown in sync via the

@@ -1,4 +1,4 @@
-// Instagram MAIN-world hook — harvests per-reel AUDIO stream URLs.
+// Instagram MAIN-world hook — harvests per-reel AUDIO and VIDEO stream URLs.
 //
 // The reel <video> elements use blob:/MSE sources, so the DOM never exposes a
 // fetchable media URL. But every reel's media object in Instagram's own
@@ -18,6 +18,15 @@ const SOURCE = 'bouncer-ig-audio-hook';
 interface HookEntry {
   filenames: string[];
   audioUrl: string;
+  /** Lowest-bandwidth VIDEO track, when the manifest carries one. Lets the
+   *  frame grabber decode a reel Instagram hasn't mounted a <video> for — it
+   *  only ever keeps 2-3 in the DOM, far fewer than the panel describes ahead
+   *  (see src/instagram/frame.ts). */
+  videoUrl?: string;
+  /** The reel's length in seconds, straight off the media object. Same reason
+   *  as videoUrl: the chooser screen offers reels whose <video> isn't mounted,
+   *  so their length can't be read from the DOM (see src/instagram/durations.ts). */
+  durationSec?: number;
 }
 
 // Media ids whose manifest we've already posted (responses repeat media).
@@ -33,18 +42,24 @@ function fileNameOf(url: string): string | null {
   }
 }
 
-// Lowest-bandwidth audio Representation's BaseURL. Lowest because we may have
-// to truncate the clip to the backend's size cap — fewer bits/sec = more
-// seconds of soundtrack under the cap.
-function audioUrlFromManifest(xml: string): string | null {
+// Lowest-bandwidth Representation of one kind, by BaseURL.
+//
+// Lowest for both kinds, for the same reason from opposite directions: audio
+// gets truncated to a byte cap, so fewer bits/sec buys more seconds of
+// soundtrack; video is only ever decoded down to a ~200px still, so anything
+// above the smallest rendition is bytes off the user's connection for detail
+// that's thrown away.
+function trackUrlFromManifest(xml: string, kind: 'audio' | 'video'): string | null {
   try {
     const doc = new DOMParser().parseFromString(xml, 'text/xml');
+    const mimeRe = kind === 'audio' ? /^audio\// : /^video\//;
+    const codecRe = kind === 'audio' ? /^(mp4a|opus)/ : /^(avc|hev|hvc|vp0?9|av01)/;
     let bestUrl: string | null = null;
     let bestBw = Infinity;
     for (const rep of Array.from(doc.getElementsByTagName('Representation'))) {
       const mime = rep.getAttribute('mimeType') ?? rep.parentElement?.getAttribute('mimeType') ?? '';
       const codecs = rep.getAttribute('codecs') ?? '';
-      if (!/^audio\//.test(mime) && !/^(mp4a|opus)/.test(codecs)) continue;
+      if (!mimeRe.test(mime) && !codecRe.test(codecs)) continue;
       const url = rep.getElementsByTagName('BaseURL')[0]?.textContent?.trim();
       if (!url) continue;
       const bw = Number(rep.getAttribute('bandwidth')) || Infinity;
@@ -84,7 +99,13 @@ function harvest(root: unknown): void {
           : manifest.slice(0, 128);
         if (!seenMedia.has(key)) {
           seenMedia.add(key);
-          const audioUrl = audioUrlFromManifest(manifest);
+          const audioUrl = trackUrlFromManifest(manifest, 'audio');
+          const videoUrl = trackUrlFromManifest(manifest, 'video');
+          const rawDuration = obj.video_duration;
+          const durationSec =
+            typeof rawDuration === 'number' && Number.isFinite(rawDuration) && rawDuration > 0
+              ? rawDuration
+              : undefined;
           const filenames: string[] = [];
           const iv = obj.image_versions2 as { candidates?: { url?: string }[] } | undefined;
           for (const c of iv?.candidates ?? []) {
@@ -98,7 +119,18 @@ function harvest(root: unknown): void {
               if (f) filenames.push(f);
             }
           }
-          if (audioUrl && filenames.length > 0) found.push({ filenames, audioUrl });
+          // An entry is worth posting if ANY of the three resolved: the audio
+          // filter needs audioUrl, the frame grabber needs videoUrl, the
+          // chooser needs durationSec, and a manifest missing one shouldn't
+          // deny the others. Each consumer guards on its own field.
+          if ((audioUrl || videoUrl || durationSec) && filenames.length > 0) {
+            found.push({
+              filenames,
+              audioUrl: audioUrl ?? '',
+              ...(videoUrl ? { videoUrl } : {}),
+              ...(durationSec ? { durationSec } : {}),
+            });
+          }
         }
       }
       for (const v of Object.values(obj)) if (v && typeof v === 'object') stack.push(v);

@@ -2,8 +2,8 @@
 
 import { toBlob } from 'html-to-image';
 import { asyncHandler } from '../shared/async';
-import { cleanReasoning, escapeHtml, formatPostForEvaluation, parseHTML, GUEST_FILTER_LIMIT, AI_DETECTION_SEED_PHRASE, phraseAddNeedsReEvaluation } from '../shared/utils';
-import { init as initPopup } from '../popup/index';
+import { cleanReasoning, escapeHtml, formatPostForEvaluation, parseHTML, GUEST_FILTER_LIMIT, AI_DETECTION_SEED_PHRASE, phraseAddNeedsReEvaluation, SETTINGS_DOTS_PATH } from '../shared/utils';
+import { init as initPopup, applySiteScopedSettings } from '../popup/index';
 import {
   encodeFilterPackCode, decodeFilterPackCode, buildFilterPackShareUrl,
   FILTER_PACK_SHARE_URL_REGEX,
@@ -79,8 +79,9 @@ let filteredViewContainer: HTMLElement | null = null;
 let filterPhrasesContainer: HTMLElement | null = null;
 let bottomFilterContainer: HTMLElement | null = null;
 let mobileFilterContainer: HTMLElement | null = null;
-// `'external'` placements (Instagram) mount the same filter box inside a host
-// panel supplied by another content script — see mountExternalFilterBox().
+// `'external'` placements (Instagram) have no in-page filter box; the same box
+// is mounted as the top section of the settings modal instead, and dies with it
+// — see mountExternalFilterBox() and showSettingsModal().
 let panelFilterContainer: HTMLElement | null = null;
 let bottomFilterExpanded = true;
 let settingsModal: HTMLElement | null = null;
@@ -516,7 +517,7 @@ injectPlaceholderKeyframes();
 const shareIconSVG = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><g><path d="M12 2.59l5.7 5.7-1.41 1.42L13 6.41V16h-2V6.41l-3.3 3.3-1.41-1.42L12 2.59zM21 15l-.02 3.51c0 1.38-1.12 2.49-2.5 2.49H5.5C4.11 21 3 19.88 3 18.5V15h2v3.5c0 .28.22.5.5.5h12.98c.28 0 .5-.22.5-.5L19 15h2z"></path></g></svg>';
 
 // X-style horizontal ellipsis icon used by the settings button on the actions row.
-const settingsIconSVG = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><g><path d="M3 12c0-1.1.9-2 2-2s2 .9 2 2-.9 2-2 2-2-.9-2-2zm9 2c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm7 0c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2z"></path></g></svg>';
+const settingsIconSVG = `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><g><path d="${SETTINGS_DOTS_PATH}"></path></g></svg>`;
 
 // ==================== State Accessors ====================
 
@@ -547,14 +548,6 @@ export function updateTheme() {
   for (const el of elements) {
     el.classList.remove('light-mode', 'dim-mode', 'dark-mode');
     el.classList.add(`${theme}-mode`);
-  }
-
-  // The panel-hosted box is the exception: its host card (Instagram's reel
-  // panel) is always white by design, so dark text is what stays readable
-  // there even when the site itself is in dark mode.
-  if (panelFilterContainer) {
-    panelFilterContainer.classList.remove('dim-mode', 'dark-mode');
-    panelFilterContainer.classList.add('light-mode');
   }
 
   // Also update the document element for CSS selectors that need it
@@ -1185,18 +1178,18 @@ function updateBannerFilterVisibility() {
 
 // ==================== External (panel-hosted) filter box ====================
 
-// Mount the standard filter box inside a host element owned by another content
-// script. Instagram uses this: the reel-describer panel (src/instagram/index.ts)
-// flips to a "settings page" and hands us its empty content slot, so the user
-// gets the real Bouncer box — phrases, AI-slop toggle, View filtered, share —
-// without a modal covering the reel. Idempotent: re-opening the page reuses
-// the already-wired box.
+// Mount the standard filter box inside a host element that isn't one of our
+// own placements. Platforms with `filterBoxPlacement === 'external'`
+// (Instagram) have nowhere in the page to put a filter box, so the settings
+// modal carries one at the top instead and hands its slot to this function —
+// the user gets the real box (phrases, AI-slop toggle, View filtered, share)
+// merged into the same page as the settings themselves. Idempotent: re-opening
+// the modal reuses an already-wired box.
 //
-// The host owns positioning, theming chrome and the close button; we only own
-// what's inside the slot. The "…" overflow is suppressed (see
-// buildFilterContainerHTML) because on Instagram it would open exactly the
-// blocking overlay this exists to avoid.
-export function mountExternalFilterBox(host: HTMLElement): void {
+// The host owns positioning and theming chrome; we only own what's inside the
+// slot. The "…" overflow is suppressed (see buildFilterContainerHTML) because
+// this box IS the settings page — the button would reopen the page it's on.
+function mountExternalFilterBox(host: HTMLElement): void {
   if (panelFilterContainer?.isConnected && host.contains(panelFilterContainer)) {
     updateFilteredTabCount();
     return;
@@ -1958,9 +1951,38 @@ export function showSettingsModal(section?: 'local') {
     settingsModal.remove();
   }
 
+  // `'external'` platforms (Instagram) have no in-page filter box, so their
+  // settings page carries one — and it opens in place of the panel that
+  // launched it rather than as a centred dialog: same corner, no backdrop, the
+  // feed behind it still scrolling and playing.
+  const inline = _deps.adapter.filterBoxPlacement === 'external';
+
   // Create modal overlay
   settingsModal = document.createElement('div');
-  settingsModal.className = 'settings-modal-overlay';
+  settingsModal.className = `settings-modal-overlay${inline ? ' settings-modal-overlay--inline' : ''}`;
+
+  // One scrolling column holding every section of the page.
+  const stack = document.createElement('div');
+  stack.className = 'settings-modal-stack';
+  settingsModal.appendChild(stack);
+
+  // Our own header + the filter box sit above the settings pane, which is told
+  // to drop its duplicate header (`hostOwnsHeader`). The result reads as one
+  // page: "Bouncer Settings", then filter phrases as its first section, then
+  // the rest of the settings — rather than two stacked cards.
+  const hostOwnsHeader = inline;
+  const filtersHost = inline ? document.createElement('div') : null;
+  if (filtersHost) {
+    // Themed here rather than by updateTheme(): this host is ours, not one of
+    // the tracked filter-box containers, and it only lives as long as the panel.
+    filtersHost.className = `settings-modal-filters ${_deps.adapter.getThemeMode()}-mode`;
+    stack.classList.add('has-filters', `${_deps.adapter.getThemeMode()}-mode`);
+    stack.appendChild(filtersHost);
+  }
+
+  // The panel this replaces (Instagram's reel describer) must get out of the
+  // way while it's up.
+  setExternalPanelVisible(false);
 
   // Declare iframe outside branches so message handler can access it
   let iframe: HTMLIFrameElement | undefined;
@@ -1977,6 +1999,13 @@ export function showSettingsModal(section?: 'local') {
         .replace(/body\.dark-mode/g, '.settings-modal-iframe.dark-mode')
         .replace(/body\.dim-mode/g, '.settings-modal-iframe.dim-mode')
         .replace(/body\.light-mode/g, '.settings-modal-iframe.light-mode')
+        // Rewritten for the same reason as the theme classes above: with no
+        // iframe, `body` is the site's, so a rule keyed off it would either
+        // never match or leak onto the page. This one hides the settings reels
+        // have no use for. (The `.host-owns-header` rules need no entry of
+        // their own — they're written as `body.modal-mode.host-owns-header`,
+        // so the rewrite below already re-roots them.)
+        .replace(/body\.site-instagram/g, '.settings-modal-iframe.site-instagram')
         .replace(/body\.modal-mode/g, '.settings-modal-iframe');
       document.head.appendChild(style);
     }
@@ -1987,9 +2016,10 @@ export function showSettingsModal(section?: 'local') {
     container.replaceChildren(parseHTML(popup.html));
     container.style.overflow = 'auto';
 
-    // Show close button (modal mode)
+    // Show close button (modal mode) — unless the merged page's own header
+    // above already carries one.
     const closeBtnEl = container.querySelector<HTMLElement>('.modal-close-btn');
-    if (closeBtnEl) closeBtnEl.style.display = 'block';
+    if (closeBtnEl && !hostOwnsHeader) closeBtnEl.style.display = 'block';
 
     // Wire up close button
     const modalCloseBtn = container.querySelector('#modalCloseBtn');
@@ -2000,8 +2030,13 @@ export function showSettingsModal(section?: 'local') {
     // Apply theme
     const theme = _deps.adapter.getThemeMode();
     container.classList.add(theme + '-mode');
+    // Everything below this point is the state the iframe path delivers through
+    // its `setTheme` message on load. There's no iframe here and no parent to
+    // send it, so set it directly — and on the container, since that's what the
+    // rewritten popup CSS keys off.
+    container.classList.toggle('host-owns-header', hostOwnsHeader);
 
-    settingsModal.appendChild(container);
+    stack.appendChild(container);
     document.body.appendChild(settingsModal);
 
     // Trigger animation after append
@@ -2010,23 +2045,55 @@ export function showSettingsModal(section?: 'local') {
     });
 
     // Run popup JS directly via import (no eval)
-    initPopup().catch((e: Error) => {
-      console.error('[FeedFilter] Error running popup init:', e, e.stack);
-    });
+    initPopup()
+      // Instagram's own settings — the audio-filter terms and the
+      // intentional-scrolling toggle — ship hidden and are revealed per site.
+      // Ordered after init() because it renders the sections this reads.
+      .then(() => applySiteScopedSettings(container, _deps.adapter.siteId))
+      .catch((e: Error) => {
+        console.error('[FeedFilter] Error running popup init:', e, e.stack);
+      });
   } else {
     // Extension mode: load popup.html in iframe
     iframe = document.createElement('iframe');
     iframe.className = 'settings-modal-iframe';
     iframe.src = chrome.runtime.getURL('popup.html') + (section === 'local' ? '#local' : '');
 
-    // Send current theme to iframe once it loads
+    // Send current theme to iframe once it loads, along with whether this page
+    // owns its own header chrome.
     iframe.addEventListener('load', () => {
       const theme = _deps.adapter.getThemeMode();
-      iframe!.contentWindow!.postMessage({ type: 'setTheme', theme }, '*');
+      iframe!.contentWindow!.postMessage(
+        { type: 'setTheme', theme, hostOwnsHeader, siteId: _deps.adapter.siteId }, '*');
     });
 
-    settingsModal.appendChild(iframe);
+    stack.appendChild(iframe);
     document.body.appendChild(settingsModal);
+  }
+
+  // Mount once the overlay is in the document so the box's theme classes and
+  // filtered-count read off a connected node, then prepend the page header —
+  // after the mount, which replaces the host's children wholesale.
+  if (filtersHost) {
+    mountExternalFilterBox(filtersHost);
+
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'settings-modal-close';
+    closeBtn.type = 'button';
+    closeBtn.setAttribute('aria-label', 'Close');
+    closeBtn.textContent = '×';
+    closeBtn.addEventListener('click', () => closeSettingsModal());
+
+    const title = document.createElement('span');
+    title.className = 'settings-modal-title';
+    title.textContent = 'Bouncer Settings';
+
+    // Ours rather than the pane's, so it stays put when the box below is
+    // swapped for the sign-in gate — and so the page has exactly one header.
+    const header = document.createElement('div');
+    header.className = 'settings-modal-header';
+    header.append(title, closeBtn);
+    filtersHost.prepend(header);
   }
 
   // Listen for messages from iframe
@@ -2083,7 +2150,14 @@ function setExternalPanelVisible(show: boolean): void {
   window.dispatchEvent(new CustomEvent('bouncer-ig-describer', { detail: { show } }));
 }
 
-function closeSettingsModal() {
+export function closeSettingsModal() {
+  // The modal-hosted filter box (if any) dies with the overlay — drop the
+  // reference so refreshes don't operate on a detached node.
+  panelFilterContainer = null;
+  // Only hand the page back to the reel panel if the filtered-posts view isn't
+  // the thing that's up; that view drives this same flag independently.
+  if (!filteredTabActive) setExternalPanelVisible(true);
+
   if (settingsModal && settingsModal.isConnected) {
     settingsModal.classList.remove('visible');
     setTimeout(() => {
@@ -2273,6 +2347,16 @@ export function initModelLoadingListener() {
 
 // ==================== Filtered Tab / Modal ====================
 
+// What the current platform's filtered items are called, for the panel title
+// and its empty state. Reels aren't "posts" and videos aren't either.
+function filteredItemNoun(): string {
+  switch (_deps.adapter.siteId) {
+    case 'youtube': return 'videos';
+    case 'instagram': return 'reels';
+    default: return 'posts';
+  }
+}
+
 export function toggleFilteredTab(active: boolean) {
   if (active === filteredTabActive) return;
   filteredTabActive = active;
@@ -2280,6 +2364,12 @@ export function toggleFilteredTab(active: boolean) {
   // Keep an external panel (Instagram's describer) clear of the filtered-posts
   // view, and let it reappear when the view closes.
   setExternalPanelVisible(!active);
+
+  // The filtered-posts view supersedes the settings page. This matters for
+  // `'external'` platforms, where the "View filtered" button lives inside the
+  // settings modal — that modal outranks this backdrop, so leaving it up would
+  // hide the very view the click just opened.
+  if (active) closeSettingsModal();
 
   if (active) {
     if (!filteredModalBackdrop || !filteredModalBackdrop.isConnected) {
@@ -2300,7 +2390,7 @@ export function toggleFilteredTab(active: boolean) {
         <button class="filtered-modal-close" aria-label="Close">
           <svg viewBox="0 0 24 24"><path d="M10.59 12L4.54 5.96l1.42-1.42L12 10.59l6.04-6.05 1.42 1.42L13.41 12l6.05 6.04-1.42 1.42L12 13.41l-6.04 6.05-1.42-1.42L10.59 12z"></path></svg>
         </button>
-        <span class="filtered-modal-title">${_deps.adapter.siteId === 'youtube' ? 'Filtered videos' : 'Filtered posts'}</span>
+        <span class="filtered-modal-title">Filtered ${filteredItemNoun()}</span>
       `));
 
       const content = document.createElement('div');
@@ -2372,13 +2462,23 @@ function createRestoreButton(post: FilteredPost, postContent: PostContent): HTML
     if (idx !== -1) filteredPosts.splice(idx, 1);
     filteredPostKeys.delete(key);
 
-    // Try to unhide original article in the feed
+    // Try to unhide the original article in the feed. Match on the post URL
+    // where the platform has one; fall back to the adapter's content key for
+    // platforms that don't (Instagram reels expose no per-post URL in the
+    // feed, so URL-matching alone silently restored nothing).
     for (const article of _deps.findPosts()) {
       const postUrl = _deps.adapter.getPostUrl(article);
-      if (postUrl && postContent.postUrl && postUrl.includes(postContent.postUrl)) {
+      const urlMatch = !!postUrl && !!postContent.postUrl && postUrl.includes(postContent.postUrl);
+      const keyMatch = !urlMatch && !!post.contentKey
+        && _deps.adapter.getPostContentKey(article) === post.contentKey;
+      if (urlMatch || keyMatch) {
         const container = _deps.adapter.getPostContainer(article);
         container.style.display = '';
         container.style.visibility = '';
+        // Instagram fades a filtered reel out on the container before removing
+        // it, so clear that too or the reel comes back invisible.
+        container.style.opacity = '';
+        container.style.transition = '';
         delete container.dataset.filteredByExtension;
         article.style.opacity = '';
         article.style.transition = '';
@@ -2534,7 +2634,7 @@ function buildYouTubeCard(post: FilteredPost): HTMLElement {
 }
 
 export function renderFilteredPostsView(container: Element) {
-  const noun = _deps.adapter.siteId === 'youtube' ? 'videos' : 'posts';
+  const noun = filteredItemNoun();
   if (filteredPosts.length === 0) {
     container.replaceChildren(parseHTML(`
       <div class="filtered-posts-container">
@@ -2909,7 +3009,9 @@ export function storeFilteredPost(article: HTMLElement, contentObj: PostContent,
     reasoning,
     rawResponse,
     category: category || null,
-    timestamp: Date.now()
+    timestamp: Date.now(),
+    // Captured while we still hold the element — restore has only the record.
+    contentKey: _deps.adapter.getPostContentKey?.(article) || undefined,
   });
   updateFilteredTabCount();
 }
@@ -3905,6 +4007,13 @@ export function handleDOMMutation() {
   if (mobileFilterContainer && !mobileFilterContainer.isConnected) {
     mobileFilterContainer = null;
   }
+  // `'external'` platforms have no in-page filter box of any kind — the box
+  // lives in the settings panel their host script opens. Without this gate the
+  // fall-through below re-injects the bottom pill on every DOM mutation, which
+  // is how Instagram ended up with a second, unowned filter box floating over
+  // the reel (adapters/instagram/instagram.css used to position it).
+  if (_deps.adapter.filterBoxPlacement === 'external') return;
+
   if (_deps.adapter.filterBoxPlacement === 'banner') {
     if (!filterPhrasesContainer) {
       injectBannerFilterBox();

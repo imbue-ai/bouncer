@@ -65,10 +65,36 @@ final class WebViewCache: ObservableObject {
     func webView(for platform: String, create: Bool = false) -> WKWebView? {
         if let existing = webViews[platform] { return existing }
         guard create, let def = Platforms.byId(platform) else { return nil }
+        armInstagramIntroIfNeeded(platform)
         let wv = FilteredWebView.WebViewFactory.make(platform: def, coordinator: coordinator)
         webViews[platform] = wv
         visitedPlatforms.append(platform)
         return wv
+    }
+
+    // Instagram's reel-describer opens with a welcome carousel, armed by a
+    // one-shot `pendingInstagramIntro` storage flag that the describer consumes
+    // and clears on boot (src/instagram/index.ts). On desktop the popup writes
+    // that flag when Instagram's platform toggle is switched on; iOS never runs
+    // that path — the platform is entered from the native picker — so without
+    // this the tour would never play here.
+    //
+    // Written straight into the UserDefaults store backing chrome.storage.local
+    // (keys are "ffstore_" + the polyfill's "ff_local_" prefix + the key, values
+    // are the raw JSON strings the polyfill exchanges — see the storage bridge
+    // in FilteredWebView). It has to land BEFORE the webview exists, or the
+    // content script can reach document_idle ahead of the flag and miss it.
+    //
+    // Guarded by its own native flag so the tour plays once, on the first-ever
+    // visit, rather than on the first visit of every app launch. Toggling
+    // Instagram off and back on from the in-page settings still replays it —
+    // that path runs the popup's own code, exactly as on desktop.
+    private func armInstagramIntroIfNeeded(_ platform: String) {
+        guard platform == "instagram" else { return }
+        let defaults = UserDefaults.standard
+        guard !defaults.bool(forKey: "hasArmedInstagramIntro") else { return }
+        defaults.set(true, forKey: "hasArmedInstagramIntro")
+        defaults.set("true", forKey: "ffstore_ff_local_pendingInstagramIntro")
     }
 
     // Make `active`'s webview the audible / focused one; pause + mute media

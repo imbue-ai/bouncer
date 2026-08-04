@@ -104,6 +104,21 @@ enum Platforms {
                 "static.licdn.com", "media.licdn.com",
             ]
         ),
+        PlatformDef(
+            id: "instagram",
+            displayName: "Instagram",
+            // Bouncer's Instagram surface is the Reels viewer, not the home
+            // feed — matches PLATFORM_RUNTIME.instagram.feedUrl on the JS side.
+            feedURL: "https://www.instagram.com/reels/",
+            loginURL: nil,
+            adapterScriptName: "InstagramAdapter",
+            cssFile: "instagram",
+            cssSubdir: "adapters/instagram",
+            hostRoots: [
+                "instagram.com", "cdninstagram.com",
+                "fbcdn.net", "facebook.com",
+            ]
+        ),
     ]
 
     /// Platforms actually shown on iOS: the entries `defined` above that are

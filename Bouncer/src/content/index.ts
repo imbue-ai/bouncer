@@ -20,7 +20,7 @@ import {
   injectFilterPhrasesInput, injectBottomFilterBox, injectMobileFilterBox,
   injectBannerFilterBox,
   syncFilterPhrases, addFilterPhrase, removeFilterPhrase, clearFilteredPosts,
-  showSettingsModal, renderFilteredPostsView, mountExternalFilterBox,
+  showSettingsModal, closeSettingsModal, renderFilteredPostsView,
   initModelLoadingListener,
   markPostPending, markPostVerified, getVerificationBar,
   storeFilteredPost, hidePost, showApiKeyWarning,
@@ -615,17 +615,41 @@ import { maybeFireInstallPixel } from './install-pixel';
 
   // For `filterBoxPlacement === 'external'` platforms, some other script owns
   // the entry point into Bouncer. On Instagram that's the reel-describer
-  // (src/instagram/index.ts), which shares this isolated world: flipping its
-  // panel to the settings page dispatches 'bouncer-mount-filter-box' carrying
-  // the empty slot to render into. We mount the real filter box there, so the
-  // reel keeps playing behind an in-panel page rather than a blocking overlay.
-  //
-  // The panel owns show/hide and the close button; it re-sends this event each
-  // time the page is opened, and mountExternalFilterBox is idempotent.
+  // (src/instagram/index.ts), which shares this isolated world: its gear
+  // dispatches 'bouncer-open-settings' and we put up the settings modal — which
+  // for these platforms leads with the filter box, since there is no in-page
+  // one. showSettingsModal tears down and rebuilds, so repeat clicks are safe.
+  // The welcome tour drives the panel too — stepping onto the filters step
+  // opens it, stepping back closes it — hence the matching close event.
   function setupExternalSettingsBridge() {
-    window.addEventListener('bouncer-mount-filter-box', (e) => {
-      const host = (e as CustomEvent<{ host?: HTMLElement }>).detail?.host;
-      if (host) mountExternalFilterBox(host);
+    window.addEventListener('bouncer-open-settings', () => showSettingsModal());
+    window.addEventListener('bouncer-close-settings', () => closeSettingsModal());
+    // Swiping a reel out of the describer panel offers filter phrases (see
+    // src/instagram/bounce.ts). Picking one comes back here rather than writing
+    // storage directly, so it goes through the same addFilterPhrase path as
+    // X's trash-can suggestions — dedupe, length budget, and the re-evaluation
+    // sweep that hides matching reels already on screen.
+    // A reel swiped out of the describer panel is hidden by that script, but
+    // the record of it lives here — file it under "View filtered" so it shows
+    // up alongside classifier-filtered reels and can be restored.
+    window.addEventListener('bouncer-bounce-reel', (e) => {
+      const card = (e as CustomEvent<{ card?: HTMLElement }>).detail?.card;
+      if (!card) return;
+      // The pipeline's unit is the "post" element (the cover image's parent),
+      // not the card wrapper the panel tracks — find it inside.
+      const article = card.matches(adapter.selectors.post)
+        ? card
+        : card.querySelector<HTMLElement>(adapter.selectors.post);
+      if (!article) return;
+      const content = extractPostContent(article);
+      storeFilteredPost(article, content, 'Swiped away in the Bouncer panel');
+    });
+
+    window.addEventListener('bouncer-add-filter-phrase', (e) => {
+      const phrase = (e as CustomEvent<{ phrase?: string }>).detail?.phrase;
+      if (!phrase) return;
+      addFilterPhrase(phrase).catch(err =>
+        console.error('[Bouncer] Add filter phrase from bounce popup failed:', err));
     });
   }
 

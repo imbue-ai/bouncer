@@ -26,6 +26,86 @@ header {
   gap: 12px;
 }
 
+/* Label left, switch right — for a one-line setting that needs no explanation.
+   The input still sits immediately before the slider, so the
+   `input:checked + .toggle-switch-slider` rule keeps working. */
+.toggle-switch--split {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  gap: 12px;
+}
+
+/* Settings that don't apply to the site this page is embedded on. Reels have
+   no threads, so there are no replies to filter there. */
+body.site-instagram .filter-replies-section {
+  display: none;
+}
+
+/* ==================== Audio filtering ====================
+   A single underlined line to type into, matching the "Filter out" affordance
+   on the filter card above it. The placeholder is a static suggestion list, not
+   a value — it never becomes a term unless the user types one. */
+
+#audioFilterSection .audio-filter-input {
+  width: 100%;
+  padding: 4px 0 6px;
+  border: none;
+  border-bottom: 1px solid #cfd9de;
+  border-radius: 0;
+  background: none;
+  font-family: inherit;
+  font-size: 14px;
+  color: #0f1419;
+  outline: none;
+}
+
+#audioFilterSection .audio-filter-input::placeholder {
+  color: #8b98a5;
+}
+
+#audioFilterSection .audio-filter-input:focus {
+  border-bottom-color: rgb(200, 110, 65);
+}
+
+.audio-filter-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.audio-filter-list:empty {
+  display: none;
+}
+
+.audio-filter-term {
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid #cfd9de;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.audio-filter-term:hover {
+  border-color: rgb(200, 110, 65);
+  color: rgb(200, 110, 65);
+}
+
+body.dark-mode .audio-filter-input,
+body.dim-mode #audioFilterSection .audio-filter-input {
+  color: rgb(231, 233, 234);
+  border-bottom-color: rgb(47, 51, 54);
+}
+
+body.dark-mode .audio-filter-term,
+body.dim-mode .audio-filter-term {
+  border-color: rgb(47, 51, 54);
+  color: rgb(231, 233, 234);
+}
+
 /* Close button - hidden in popup, shown in modal iframe */
 .modal-close-btn {
   display: none;
@@ -46,6 +126,21 @@ header {
 /* Show close button when loaded in iframe (modal mode) */
 body.modal-mode .modal-close-btn {
   display: block;
+}
+
+/* ...unless the embedding page renders its own "Bouncer Settings" header above
+   us and continues straight into these sections (Instagram's merged filter +
+   settings page). Ours would be a second title and a second ×. */
+body.modal-mode.host-owns-header header {
+  display: none;
+}
+
+/* The header is gone (the host draws it), so this is the gap between the host's
+   filter card above — "View filtered" is its last row — and "Audio Filters",
+   the first section in here. Enough to read as a section break across the two
+   documents, without the full 16px the header used to occupy. */
+body.modal-mode.host-owns-header .container {
+  padding-top: 10px;
 }
 
 /* In modal mode, fill the iframe width so the body shrinks when a vertical scrollbar appears */

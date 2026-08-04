@@ -28,6 +28,116 @@ async function platformPermissionGranted(p: PlatformDef): Promise<boolean> {
   }
 }
 
+// ==================== Audio filtering (Instagram) ====================
+//
+// Instagram's audio filter (src/instagram/audiofilter.ts) classifies each
+// reel's AUDIO — it grabs the stream the page fetched, transcodes it to Opus
+// and asks the backend whether it matches any of these terms. That pipeline was
+// already built and has always read `audioFilterTerms` at boot; what never
+// existed was anywhere to SET them, so it ran with an empty list. This is that
+// surface. The Instagram content script watches the key, so edits here reach
+// the running filter without a reload.
+//
+// Terms are a flat list rather than per-platform: no other platform gives us a
+// per-post audio stream to classify.
+const AUDIO_TERMS_KEY = 'audioFilterTerms';
+const MAX_AUDIO_TERMS_LENGTH = 1000;
+
+async function readAudioTerms(): Promise<string[]> {
+  const data = await chrome.storage.local.get(AUDIO_TERMS_KEY);
+  const stored = (data as Record<string, unknown>)[AUDIO_TERMS_KEY];
+  return Array.isArray(stored) ? stored.filter((x): x is string => typeof x === 'string') : [];
+}
+
+function renderAudioTerms(listEl: HTMLElement, terms: string[]): void {
+  listEl.replaceChildren();
+  for (const term of terms) {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'audio-filter-term';
+    chip.textContent = term;
+    chip.title = 'Click to remove';
+    chip.addEventListener('click', asyncHandler(async () => {
+      const next = (await readAudioTerms()).filter(t => t !== term);
+      await chrome.storage.local.set({ [AUDIO_TERMS_KEY]: next });
+      renderAudioTerms(listEl, next);
+    }));
+    listEl.appendChild(chip);
+  }
+}
+
+/** Reveal the settings that only make sense on particular sites, scoped to
+ *  whichever element the popup's styles hang off.
+ *
+ *  Only the embedding page knows which site this is, and some settings are
+ *  meaningless on some of them — see the `site-*` rules in popup.css. Audio
+ *  filtering is the reverse case: shown only where a per-post audio stream
+ *  exists to classify, which today means Instagram alone.
+ *
+ *  `root` is a parameter rather than a hardcoded `document.body` because the
+ *  popup has two mounts. In the extension it loads in an iframe and its styles
+ *  key off `body`; the native app injects it into the host page instead, where
+ *  `body` belongs to the site and the popup's CSS is rewritten to key off the
+ *  container div (see showSettingsModal in content/ui.ts). The iframe path
+ *  reaches this through its `setTheme` message; the native path — which has no
+ *  parent to message it — calls it directly. */
+export function applySiteScopedSettings(root: HTMLElement, siteId?: string): void {
+  const isInstagram = siteId === 'instagram';
+  root.classList.toggle('site-instagram', isInstagram);
+  if (!isInstagram) return;
+  initAudioFilterSection();
+  const scrollSection = document.getElementById('intentionalScrollSection');
+  if (scrollSection) scrollSection.style.display = '';
+}
+
+// The "already wired" guard is marked on the section element rather than held
+// in a module variable: in the iframe path each open loads a fresh document (so
+// a module flag would reset on its own), but the native app injects this popup
+// straight into the page and re-runs init() on every open, against a brand-new
+// element while the module lives on. A module flag would leave every open after
+// the first hidden and unwired.
+function initAudioFilterSection(): void {
+  const section = document.getElementById('audioFilterSection');
+  const listEl = document.getElementById('audioFilterList');
+  const input = document.getElementById('audioFilterInput') as HTMLInputElement | null;
+  if (!section || !listEl || !input) return;
+  if (section.dataset.ffReady === '1') return;
+  section.dataset.ffReady = '1';
+  section.style.display = '';
+
+  const add = async (raw: string): Promise<void> => {
+    const term = raw.trim();
+    if (!term) return;
+    const terms = await readAudioTerms();
+    if (terms.includes(term)) return;
+    // Same budget as the content filters: this list rides along with every
+    // audio classification, so an unbounded one inflates every request.
+    if ([...terms, term].reduce((n, t) => n + t.length, 0) > MAX_AUDIO_TERMS_LENGTH) return;
+    const next = [...terms, term];
+    await chrome.storage.local.set({ [AUDIO_TERMS_KEY]: next });
+    renderAudioTerms(listEl, next);
+  };
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ',') return;
+    e.preventDefault();
+    void add(input.value).then(() => { input.value = ''; });
+  });
+  input.addEventListener('paste', (e) => {
+    const pasted = e.clipboardData?.getData('text') ?? '';
+    if (!pasted.includes(',')) return;
+    e.preventDefault();
+    void (async () => {
+      for (const term of pasted.split(',')) await add(term);
+      input.value = '';
+    })();
+  });
+
+  readAudioTerms()
+    .then(terms => renderAudioTerms(listEl, terms))
+    .catch(err => console.error('[Popup] Failed to load audio filter terms:', err));
+}
+
 // Platform-specific accordion sub-content (Twitter's "Filter replies",
 // YouTube's "Show placeholder", etc.). Add an entry here when a platform
 // needs its own row-nested toggle; LinkedIn-style platforms (no sub-row)
@@ -192,13 +302,19 @@ export async function init() {
       });
     }
 
-    // Listen for theme message from parent
+    // Listen for theme message from parent. It also tells us whether this is
+    // the top of the modal: on Instagram the parent stacks a filter section
+    // above us and owns the page header, so our own × must stay hidden rather
+    // than turn up halfway down the page.
     window.addEventListener('message', (event) => {
-      const data = event.data as { type?: string; theme?: string } | null;
+      const data = event.data as
+        { type?: string; theme?: string; hostOwnsHeader?: boolean; siteId?: string } | null;
       if (data && data.type === 'setTheme') {
         const theme = data.theme;
         document.body.classList.remove('light-mode', 'dim-mode', 'dark-mode');
         document.body.classList.add(`${theme}-mode`);
+        document.body.classList.toggle('host-owns-header', data.hostOwnsHeader === true);
+        applySiteScopedSettings(document.body, data.siteId);
       }
     });
 
@@ -357,6 +473,11 @@ function setupStorageListener() {
       const el = document.getElementById('enableYoutubePlaceholder') as HTMLInputElement | null;
       if (el && el.checked !== checked) el.checked = checked;
     }
+    if (areaName === 'local' && changes.instagramIntentionalScroll) {
+      const checked = changes.instagramIntentionalScroll.newValue !== false;
+      const el = document.getElementById('enableIntentionalScroll') as HTMLInputElement | null;
+      if (el && el.checked !== checked) el.checked = checked;
+    }
     if (areaName === 'local' && changes.aiTextDetectionThreshold) {
       const v = clampThreshold(changes.aiTextDetectionThreshold.newValue);
       const thresholdEl = document.getElementById('aiTextThreshold') as HTMLInputElement | null;
@@ -409,6 +530,7 @@ async function loadSettings() {
     'pendingLocalModelSelection',
     'filterReplies',
     'youtubeShowPlaceholder',
+    'instagramIntentionalScroll',
     // Per-platform master-switch keys come from the registry.
     ...PLATFORMS.map(p => enabledStorageKey(p.id)),
   ]);
@@ -453,6 +575,10 @@ async function loadSettings() {
   // behavior unless the user opts in).
   const ytPlaceholderEl = document.getElementById('enableYoutubePlaceholder') as HTMLInputElement | null;
   if (ytPlaceholderEl) ytPlaceholderEl.checked = data.youtubeShowPlaceholder === true;
+
+  // Intentional scrolling (Instagram) — on by default, so treat missing as true.
+  const intentionalScrollEl = document.getElementById('enableIntentionalScroll') as HTMLInputElement | null;
+  if (intentionalScrollEl) intentionalScrollEl.checked = data.instagramIntentionalScroll !== false;
 
   // Passive AI-detection indicator + threshold sliders. On/off state is
   // driven entirely by the inferred AI-removal intent (natural language) —
@@ -857,6 +983,13 @@ function setupEventListeners() {
         }
         document.getElementById(platformRowId(p.id))?.classList.toggle('disabled', !checked);
         await setStorage({ [enabledStorageKey(p.id)]: checked });
+        // Arm the Instagram welcome carousel every time the platform is
+        // switched on. Written before the tab opens so the content script
+        // can't reach document_idle ahead of the flag; it consumes and clears
+        // it (src/instagram/intro.ts).
+        if (checked && p.id === 'instagram') {
+          await setStorage({ pendingInstagramIntro: true });
+        }
         if (checked && isOptionalPlatform(p)) {
           await chrome.runtime.sendMessage({ type: 'syncOptionalPlatforms' })
             .catch(err => console.error(`[Popup] Optional platform sync for ${p.id} failed:`, err));
@@ -870,6 +1003,11 @@ function setupEventListeners() {
     const checked = (e.target as HTMLInputElement).checked;
     await setStorage({ youtubeShowPlaceholder: checked });
   })().catch(err => console.error('[Popup] enableYoutubePlaceholder change failed:', err)); });
+
+  document.getElementById('enableIntentionalScroll')?.addEventListener('change', (e) => { (async () => {
+    const checked = (e.target as HTMLInputElement).checked;
+    await setStorage({ instagramIntentionalScroll: checked });
+  })().catch(err => console.error('[Popup] enableIntentionalScroll change failed:', err)); });
 
   // AI-text-detection threshold (range slider). Live-update the percentage
   // display on `input` (every drag tick); persist only on `change` (release)

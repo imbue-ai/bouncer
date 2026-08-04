@@ -74,31 +74,27 @@ export function parseAPIResponse(content: string): ParsedResult {
   return { shouldHide: false, reasoning: 'Could not parse response', category: null };
 }
 
-// A minimalist gear/cog icon as a stroked SVG element (no surrounding circle,
-// just the cog outline + center axle). Built via createElementNS so it stays
-// CSP-safe (no innerHTML). Used by the Instagram reel-describer panel to open
-// Bouncer's settings; `color` sets the stroke.
-export function makeGearIcon(color: string, size = 20): SVGSVGElement {
+/** The "…" overflow glyph — three filled dots. Single source of truth for the
+ *  settings affordance across every Bouncer surface: content/ui.ts inlines it
+ *  into the filter box's markup, and makeSettingsIcon() builds the same shape
+ *  as DOM for callers that can't use an HTML string. */
+export const SETTINGS_DOTS_PATH =
+  'M3 12c0-1.1.9-2 2-2s2 .9 2 2-.9 2-2 2-2-.9-2-2zm9 2c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm7 0c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2z';
+
+/** The settings "…" icon as an SVG element. Built via createElementNS so it
+ *  stays CSP-safe (no innerHTML). Used by the Instagram reel-describer panel to
+ *  open Bouncer's settings; `color` sets the fill. */
+export function makeSettingsIcon(color: string, size = 20): SVGSVGElement {
   const NS = 'http://www.w3.org/2000/svg';
   const svg = document.createElementNS(NS, 'svg');
   svg.setAttribute('width', String(size));
   svg.setAttribute('height', String(size));
   svg.setAttribute('viewBox', '0 0 24 24');
-  svg.setAttribute('fill', 'none');
-  svg.setAttribute('stroke', color);
-  svg.setAttribute('stroke-width', '2');
-  svg.setAttribute('stroke-linecap', 'round');
-  svg.setAttribute('stroke-linejoin', 'round');
-  const circle = document.createElementNS(NS, 'circle');
-  circle.setAttribute('cx', '12');
-  circle.setAttribute('cy', '12');
-  circle.setAttribute('r', '3');
+  svg.setAttribute('aria-hidden', 'true');
+  svg.setAttribute('focusable', 'false');
   const path = document.createElementNS(NS, 'path');
-  path.setAttribute(
-    'd',
-    'M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z',
-  );
-  svg.appendChild(circle);
+  path.setAttribute('d', SETTINGS_DOTS_PATH);
+  path.setAttribute('fill', color);
   svg.appendChild(path);
   return svg;
 }

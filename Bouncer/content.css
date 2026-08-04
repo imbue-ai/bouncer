@@ -2369,6 +2369,91 @@ article {
   visibility: visible;
 }
 
+/* `'external'` platforms (Instagram) open the settings in place of the panel
+   they were launched from: pinned to the same corner, no backdrop, and no
+   full-screen layer — the feed behind stays visible, scrollable and clickable.
+   The z-index matches the reel panel's so Instagram's own chrome can't cover
+   it. */
+.settings-modal-overlay--inline {
+  position: fixed;
+  inset: 20px 20px auto auto;
+  display: block;
+  background: none;
+  z-index: 2147483647;
+}
+
+/* One scrolling column per modal. Usually it wraps the settings pane alone and
+   is invisible; platforms with no in-page filter box (Instagram) also get one
+   stacked on top. The stack owns the entrance scale so both sections animate as
+   a single page instead of two cards sliding independently. */
+.settings-modal-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  transform: scale(0.95);
+  transition: transform 0.2s ease;
+}
+
+.settings-modal-overlay.visible .settings-modal-stack {
+  transform: scale(1);
+}
+
+/* Header + filter section, above the settings pane. Padding and type match
+   popup.css's own header and .container so the seam between our DOM and the
+   iframe's is invisible. */
+.settings-modal-filters {
+  width: 320px;
+  max-width: 90vw;
+  box-sizing: border-box;
+  background: #fff;
+  color: #0f1419;
+}
+
+.settings-modal-filters.dark-mode {
+  background: rgb(0, 0, 0);
+  color: rgb(231, 233, 234);
+}
+
+.settings-modal-filters.dim-mode {
+  background: rgb(21, 32, 43);
+  color: rgb(247, 249, 249);
+}
+
+.settings-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 16px 12px;
+  padding: 16px 0 4px;
+}
+
+.settings-modal-title {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+/* The page's only close button — the settings pane's is suppressed via
+   `hostOwnsHeader`. */
+.settings-modal-close {
+  padding: 0;
+  border: none;
+  background: none;
+  font-size: 24px;
+  line-height: 1;
+  color: #536471;
+  cursor: pointer;
+}
+
+.settings-modal-close:hover {
+  color: #0f1419;
+}
+
+.settings-modal-filters.dark-mode .settings-modal-close:hover,
+.settings-modal-filters.dim-mode .settings-modal-close:hover {
+  color: rgb(231, 233, 234);
+}
+
 .settings-modal-iframe {
   width: 320px;
   height: 470px;
@@ -2378,12 +2463,45 @@ article {
   border-radius: 16px;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
   overflow: hidden;
-  transform: scale(0.95);
-  transition: transform 0.2s ease, height 0.2s ease;
+  transition: height 0.2s ease;
 }
 
-.settings-modal-overlay.visible .settings-modal-iframe {
-  transform: scale(1);
+.settings-modal-stack.has-filters.dark-mode { background: rgb(0, 0, 0); }
+.settings-modal-stack.has-filters.dim-mode { background: rgb(21, 32, 43); }
+
+/* Merged page: the stack takes over the card chrome — one radius, one shadow,
+   one scroll for both sections — so the settings pane drops the corners and
+   shadow that would otherwise draw a seam under the filter section sitting
+   flush above it. Only here does the stack clip; left alone it would cut off
+   the settings pane's own drop shadow on every other platform. */
+.settings-modal-stack.has-filters {
+  /* Pinned 20px from the top, so this is "to the bottom of the viewport". */
+  max-height: calc(100vh - 40px);
+  overflow: auto;
+  /* The scroll container is wider than the 320px sections inside it by exactly
+     the scrollbar's width. Left transparent, that strip shows the page through
+     the panel; painting the stack itself makes the whole card read as one
+     surface. Themed from JS, like the filter section it wraps. */
+  background: #fff;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 0, 0, 0.22) transparent;
+  border-radius: 16px;
+  /* Softer than the dialog's: this panel floats over a live page rather than a
+     dimmed one, and matches the reel panel it replaces. */
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+}
+
+.settings-modal-stack.has-filters .settings-modal-iframe {
+  max-height: none;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+/* Both sections keep their natural height so the stack above is what scrolls.
+   Left to shrink (the flex default) the settings pane would compress to fit and
+   scroll internally instead, splitting one page into two scroll regions. */
+.settings-modal-stack.has-filters > * {
+  flex-shrink: 0;
 }
 
 /* In-app popup (div instead of iframe) needs its own background */
@@ -3058,6 +3176,26 @@ body.ff-ios .ff-ios-page.dark-mode .ff-ios-page-header {
   display: none;
 }
 
+/* The panel-hosted box is a transparent, scroll-clipped section of the settings
+   page. Neither belongs in a shared image: give it back an opaque card
+   background (its host's) and let the full phrase list be captured. */
+.filter-phrases-panel .filter-phrases-container.ff-capture {
+  max-height: none;
+  overflow: visible;
+}
+
+.filter-phrases-panel.light-mode .filter-phrases-container.ff-capture {
+  background-color: rgb(255, 255, 255);
+}
+
+.filter-phrases-panel.dark-mode .filter-phrases-container.ff-capture {
+  background-color: rgb(0, 0, 0);
+}
+
+.filter-phrases-panel.dim-mode .filter-phrases-container.ff-capture {
+  background-color: rgb(21, 32, 43);
+}
+
 /* ======================================
    linkedin adaptation: sidebar z-index + filtered-posts card style
    ====================================== */
@@ -3330,23 +3468,42 @@ body.ff-ios .ff-ios-page.dark-mode .ff-ios-page-header {
 
 
 /* ==================== Panel-hosted filter box ====================
-   The `'external'` placement (Instagram): the same filter box, rendered inside
-   the reel panel's card instead of a pill of its own. The host card already
-   supplies the background, rounded corners and gradient border, so this
-   variant drops its own chrome and just fills the slot. */
+   The `'external'` placement (Instagram): the same filter box, rendered as the
+   first section of the settings page rather than a pill of its own. It drops
+   every trace of being a card — background, brand border, corners — so it reads
+   as one more settings section under the "Bouncer Settings" header, flowing
+   straight into "Filtering Mode" below it. No divider: the sections are spaced,
+   not ruled, exactly like the pane's own. */
 
 .filter-phrases-panel .filter-phrases-container {
-  padding: 0;
-  background: transparent;
+  /* Top padding is load-bearing: this box scroll-clips (max-height + overflow
+     below), and the AI-slop pill is the first thing in it — flush against the
+     clip edge its top gets shaved off. */
+  padding: 8px 16px 16px;
+  background: none;
   border: none;
   border-radius: 0;
-  /* Long phrase lists scroll inside the card rather than growing it off-screen. */
-  max-height: min(70vh, 520px);
+  /* Long phrase lists scroll inside the section rather than pushing the
+     settings off-screen. */
+  max-height: min(50vh, 420px);
   overflow-x: hidden;
   overflow-y: auto;
 }
 
-/* Leave room for the page's ✕, which sits in the card's top-right corner. */
+/* Audio filters sit directly under the content filters as a second phrase row.
+   Same affordance, its own label — spaced apart rather than ruled off, matching
+   how the settings pane below separates its own sections. */
+.filter-audio-section {
+  margin-top: 14px;
+}
+
+/* The page header above already says "Bouncer" — this row keeps only the
+   AI-detection pill, right-aligned as a section control. */
+.filter-phrases-panel .filter-phrases-box-name {
+  display: none;
+}
+
 .filter-phrases-panel .filter-phrases-title-row {
-  padding-right: 26px;
+  justify-content: flex-end;
+  padding-bottom: 6px;
 }

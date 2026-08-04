@@ -100,6 +100,19 @@ struct FilteredWebView: UIViewRepresentable {
             // YT webview keeps that state and any future webview shares it.
             config.websiteDataStore = .default()
             config.allowsInlineMediaPlayback = true
+            // iOS defaults this to `.all`, which blocks any playback a user
+            // gesture didn't start. Instagram's Reels feed calls play() as you
+            // scroll — and a scroll is not a user activation in WebKit — so with
+            // the default the feed just sits on the first frame of every reel,
+            // and the frame grabber (src/instagram/frame.ts) has nothing
+            // buffered to capture. Reels is a platform whose whole surface is
+            // autoplaying video, so this has to be open.
+            //
+            // It applies to every platform in the app, not just Instagram:
+            // videos on X now autoplay the way they do in a desktop browser.
+            // Cross-webview audio focus is already handled — setActive() in
+            // WebViewCache pauses and mutes every webview but the visible one.
+            config.mediaTypesRequiringUserActionForPlayback = []
 
             let webView = WKWebView(frame: .zero, configuration: config)
             webView.navigationDelegate = coordinator
@@ -153,15 +166,26 @@ struct FilteredWebView: UIViewRepresentable {
                 controller.addUserScript(WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: .page))
                 print("[FeedFilter] Injected lockup-extractor.js (page world)")
             } else { print("[FeedFilter] lockup-extractor.js NOT bundled") }
+            // Instagram's audio filter needs the reel's audio stream URL, which
+            // only appears in Instagram's own API responses — so this hook wraps
+            // page-world fetch/XHR. Same page-world reason as the extractors
+            // above; on desktop it's the `world: MAIN` content script declared in
+            // platforms.config.json. Self-guards by hostname.
+            if let source = loadBundledScript(named: "instagram-hook", ext: "js", subdirectory: "dist") {
+                controller.addUserScript(WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: .page))
+                print("[FeedFilter] Injected instagram-hook.js (page world)")
+            } else { print("[FeedFilter] instagram-hook.js NOT bundled") }
 
-            // 1. ChromePolyfill.js — document start. Prepends two globals the
-            // JS bundles read at load: the extension version, and the on-device
+            // 1. ChromePolyfill.js — document start. Prepends three globals the
+            // JS bundles read at load: the extension version, the on-device
             // model catalog (single source of truth: LocalInferenceService.models;
-            // shared/models.ts turns it into PREDEFINED_MODELS.iosLocal).
+            // shared/models.ts turns it into PREDEFINED_MODELS.iosLocal), and the
+            // bundled-asset map backing chrome.runtime.getURL (see below).
             if let source = loadBundledScript(named: "ChromePolyfill", ext: "js") {
                 let version = extensionManifestVersion() ?? "0.0.0"
                 let patched = "var __ffExtensionVersion = '\(version)';\n"
                     + "var __iosLocalModels = \(LocalInferenceService.modelCatalogJSON());\n"
+                    + "var __ffBundledAssets = \(bundledAssetDataURLs());\n"
                     + source
                 let script = WKUserScript(source: patched, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: world)
                 controller.addUserScript(script)
@@ -208,6 +232,18 @@ struct FilteredWebView: UIViewRepresentable {
                 let script = WKUserScript(source: source, injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: world)
                 controller.addUserScript(script)
                 print("[FeedFilter] Injected content.js")
+            }
+
+            // 6b. instagram-app.js — the Reels "up next" describer panel, which
+            // also owns the gear that opens Bouncer's settings on Instagram
+            // (the adapter's filterBoxPlacement is 'external', so content.js
+            // mounts no filter box there). Injected on every page like the
+            // adapters; it self-guards by hostname. Desktop ships the same
+            // bundle as dist/instagram.js via platforms.config.json.
+            if let source = loadBundledScript(named: "instagram-app", ext: "js", subdirectory: "dist") {
+                let script = WKUserScript(source: source, injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: world)
+                controller.addUserScript(script)
+                print("[FeedFilter] Injected instagram-app.js")
             }
 
             // 7. CSS injection — document end (in page world)
@@ -347,6 +383,33 @@ struct FilteredWebView: UIViewRepresentable {
                 document.head.appendChild(style);
             })();
             """
+        }
+
+        // chrome.runtime.getURL() has nothing to resolve against in a WKWebView
+        // — there is no chrome-extension:// origin — so the polyfill hands back
+        // a dead feedfilter://local/ URL. That is fine for the call sites that
+        // only compare or log it, but not for the ones that hand it to the
+        // browser as a *resource*: Instagram's collapsed describer button and
+        // its welcome carousel both set an <img> src to icons/icon48.png, which
+        // would render broken. This map pairs each bundled icon's
+        // extension-relative path with a self-contained data: URL; getURL
+        // prefers it over the dead scheme (see ChromePolyfill.js). Small enough
+        // (a few KB of base64 all told) to inline in the document-start
+        // preamble.
+        private static func bundledAssetDataURLs() -> String {
+            var map: [String: String] = [:]
+            for name in ["icon16", "icon32", "icon48", "icon128"] {
+                guard let url = Bundle.main.url(
+                        forResource: name, withExtension: "png", subdirectory: "icons"),
+                      let data = try? Data(contentsOf: url) else {
+                    print("[FeedFilter] icons/\(name).png NOT bundled")
+                    continue
+                }
+                map["icons/\(name).png"] = "data:image/png;base64," + data.base64EncodedString()
+            }
+            guard let json = try? JSONSerialization.data(withJSONObject: map),
+                  let encoded = String(data: json, encoding: .utf8) else { return "{}" }
+            return encoded
         }
 
         private static func extensionManifestVersion() -> String? {

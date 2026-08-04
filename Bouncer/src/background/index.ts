@@ -289,11 +289,13 @@ async function handleMessage(
 
     case 'analyzeReel': {
       // Instagram reel describer (separate from the feed filter pipeline).
-      // Forwards caption + thumbnail to the imbue instagramAnalyze action and
-      // returns the <=5-word phrase. Caption/thumbnail validation + the prompt
-      // all live server-side; we just relay.
+      // Forwards caption + image to the imbue instagramAnalyze action and
+      // returns the <=5-word phrase. Caption/image validation + the prompt all
+      // live server-side; we just relay. The image is a mid-reel frame when the
+      // content script could grab one, else the cover thumbnail.
       try {
-        const result = await callImbueInstagramAnalyze(message.caption || '', message.thumbnailUrl || '');
+        const result = await callImbueInstagramAnalyze(
+          message.caption || '', message.thumbnailUrl || '', message.frameBase64);
         return { description: result.description || '' };
       } catch (err) {
         console.error('[Bouncer] analyzeReel error:', err);
