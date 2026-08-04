@@ -27,6 +27,7 @@ import { captureMidFrame, installFrameSources } from './frame';
 import { playSwipe, playTap, addDemoPhrase, removeDemoPhrase, clearDemoArtifacts } from './demo';
 import { railAnchoredBox, clampLeft, isNarrowViewport } from './layout';
 import { installDurationSource } from './durations';
+import { installReelGate, type ReelGate } from './gate';
 import { makeSettingsIcon } from '../shared/utils';
 import { enabledStorageKey } from '../shared/platforms';
 
@@ -181,21 +182,25 @@ let tourRunning = false;
 
 // ==================== Phone-width flow ====================
 //
-// On a viewport too narrow to stand the panel beside the reel (the iOS app), the
-// reel IS the screen: the rail is overlaid on its right edge, and the panel — 320px
-// of text pinned over the video — takes the thing you came to watch. So at that
-// width the panel isn't mounted at all, and the describer falls back to its
-// collapsed icon, which keeps settings one tap away without covering anything.
+// On a viewport too narrow to stand the panel beside the reel (the iOS app),
+// arriving at a reel doesn't start it. The reel is held at a still frame under a
+// card carrying its description and length, and it plays only once you hold on
+// it for a second — see ./gate.ts for the gestures and why they're split that
+// way. The card carries the settings gear too, so nothing has to sit over the
+// video between reels.
 //
-// Above that width nothing here changes and the panel is byte-for-byte what it
-// was.
+// Above that width nothing here runs and the panel is byte-for-byte what it was.
 
 // Whether the describer has a surface mounted, in either shape. This is tracked
 // rather than derived from the DOM because what gets mounted now varies, and
 // "is #bouncer-ig-frame in the DOM" can no longer answer it on its own.
 let describerActive = false;
 
-/** Whether this viewport is one where the floating panel is not mounted. */
+let gate: ReelGate | null = null;
+
+/** Whether the phone-width flow — held reels wearing a description card — is
+ *  what's driving. Requires the describer to be on: turning intentional
+ *  scrolling off restores the plain feed, autoplay included. */
 function fullscreenFlow(): boolean {
   return intentionalScrolling && isNarrowViewport();
 }
@@ -270,6 +275,17 @@ window.addEventListener(DESCRIBER_EVENT, (e) => {
   const show = (e as CustomEvent<{ show?: boolean }>).detail?.show ?? true;
   describerHidden = !show;
   applyPanelVisibility();
+  // The card has no persistent element for applyPanelVisibility to toggle —
+  // it's raised per arrival — so it's pulled down and put back explicitly. The
+  // reel stays held throughout: closing settings shouldn't drop you into a reel
+  // that started playing behind the modal.
+  if (!fullscreenFlow()) return;
+  if (describerHidden) {
+    gate?.hideCard();
+    return;
+  }
+  const reel = activeReel();
+  if (reel) showPausedCard(reel);
 });
 
 // First-run tour, armed by the popup's Instagram toggle. Consume the flag
@@ -428,11 +444,18 @@ function mountPanel(): void {
     return;
   }
 
-  // Phone width: the panel would cover the reel rather than sit beside it, so
-  // it gives way to the collapsed icon — settings stay reachable, the video
-  // stays watchable.
+  // Phone width: nothing is pinned over the reel at all. The description card
+  // is raised per arrival by onArrive() and carries its own gear, so settings
+  // stay one tap away without a permanent overlay — which is the whole
+  // complaint this flow exists to answer.
   if (isNarrowViewport()) {
-    mountCollapsed(parent);
+    gate = installReelGate({
+      onSettings: () => window.dispatchEvent(new CustomEvent(OPEN_SETTINGS_EVENT)),
+      ownsVideo: (video) => cardForVideo(video) !== null,
+      // No second surface on this branch — the card is the only one.
+      otherSurfaceUp: () => false,
+    });
+    describerActive = true;
     return;
   }
 
@@ -767,10 +790,15 @@ function refreshPanel(): void {
 
   // Kicked off before the panel renders, and deliberately outside the guard
   // below: the slice is what gets described ahead of scroll whether or not
-  // there is a panel mounted to show the result in.
-  for (const reel of [current, ...upcoming]) {
-    if (reel) void describeReel(reel);
+  // there is a panel mounted to show the result in. Skipped entirely while the
+  // phone-width flow is on placeholders — no request is made, so working on the
+  // interaction costs nothing.
+  if (describingReels()) {
+    for (const reel of [current, ...upcoming]) {
+      if (reel) void describeReel(reel);
+    }
   }
+  refreshHeldReel(current);
 
   if (!currentTextEl || !upcomingListEl) return;
   // Before the memo guard below: the panel's *position* has to track the page
@@ -883,6 +911,61 @@ function refreshPanel(): void {
   upcomingListEl.replaceChildren(...rows);
   // Re-anchor after the block changes height.
   positionPanel();
+}
+
+// ==================== Held reels ====================
+
+// Placeholder labels while the description pipeline is being sorted out.
+//
+// Waiting on inference makes the card impossible to judge: it either resolves
+// or it doesn't, and what you're looking at is latency rather than layout. With
+// this on, no inference is requested at all and the card is labelled by
+// position, so nothing is spent while the interaction is being worked out.
+//
+// Flip to false to put real descriptions back; nothing else changes. The
+// desktop panel is unaffected either way — it has been on real inference
+// throughout, and this only ever applies to the phone-width flow.
+const PLACEHOLDER_DESCRIPTIONS = true;
+
+/** What the card labels a reel with: its description, or — while
+ *  PLACEHOLDER_DESCRIPTIONS is on — a stand-in. */
+function displayDescription(reel: Reel): string | null {
+  return PLACEHOLDER_DESCRIPTIONS ? 'This reel' : descriptionFor(reel);
+}
+
+/** Whether reels should actually be sent for description right now. */
+function describingReels(): boolean {
+  return !(fullscreenFlow() && PLACEHOLDER_DESCRIPTIONS);
+}
+
+function activeReel(): Reel | null {
+  if (activeReelId === null) return null;
+  return orderedReels.find((r) => r.reelId === activeReelId) ?? null;
+}
+
+/** Land on a reel: held at a still frame, wearing its description and length,
+ *  playing only once held. */
+function showPausedCard(reel: Reel): void {
+  // content.js has the screen (settings, or the filtered-posts list) — the reel
+  // stays held either way, we just don't stack a card over their overlay.
+  if (describerHidden) return;
+  gate?.showCard(reel.card, {
+    thumbnailUrl: reel.thumbnailUrl,
+    description: displayDescription(reel),
+  });
+}
+
+/** Fold a newly-resolved description into the card. Driven from refreshPanel,
+ *  so it runs on every arrival and again as each phrase returns. */
+function refreshHeldReel(current: Reel | null): void {
+  if (!fullscreenFlow() || !current) return;
+  gate?.setDescription(current.card, displayDescription(current));
+}
+
+/** The active reel changed while the phone-width flow is driving. */
+function onArrive(reel: Reel): void {
+  gate?.hold(reel.card);
+  showPausedCard(reel);
 }
 
 // ==================== Reel scraping ====================
@@ -1038,6 +1121,19 @@ function insertOrdered(reel: Reel): void {
   orderedReels.splice(i, 0, reel);
 }
 
+/** The discovered reel card a <video> sits inside, if any. The gate asks this
+ *  before holding anything: a video the scraper never claimed (a DM preview, an
+ *  ad, a surface whose markup we don't recognise) is none of our business and
+ *  must keep playing normally. */
+function cardForVideo(video: HTMLVideoElement): HTMLElement | null {
+  let el: HTMLElement | null = video.parentElement;
+  for (let i = 0; i < 25 && el; i++) {
+    if (cards.has(el)) return el;
+    el = el.parentElement;
+  }
+  return null;
+}
+
 const observer = new IntersectionObserver(
   (entries) => {
     for (const entry of entries) {
@@ -1081,6 +1177,10 @@ function updateActive(): void {
   // advances the feed, and that must not dismiss the offer it just raised.
   if (suppressBounceDismissOnce) suppressBounceDismissOnce = false;
   else dismissBouncePopup();
+  // Before refreshPanel: the card is raised here, and refreshHeldReel (called
+  // from refreshPanel) is what then keeps it in step with a description still
+  // on its way.
+  if (fullscreenFlow()) onArrive(reel);
   refreshPanel();
 }
 
@@ -1194,6 +1294,10 @@ function removePanel(): void {
   lastRenderKey = '';
   lastCurrentDesc = null;
   shownUpcomingIds = new Set();
+  // The gate especially: leaving it installed would keep pausing video on
+  // whatever Instagram page comes next.
+  gate?.teardown();
+  gate = null;
   describerActive = false;
   observer.disconnect();
   ratios.clear();
