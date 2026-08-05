@@ -98,6 +98,7 @@ class GeckoBridge(
             "feedfilterPhrasesUpdated" -> scope.launch(Dispatchers.Main) { v.onPhrasesUpdated(arg) }
             "feedfilterModalClosed" -> scope.launch(Dispatchers.Main) { v.onModalClosed() }
             "feedfilterAiSettings" -> scope.launch(Dispatchers.Main) { v.onAiSettingsReply(arg) }
+            "feedfilterPushDirectResult" -> scope.launch(Dispatchers.Main) { v.onPushDirectResult(arg) }
             else -> Log.w(tag, "unknown bridge message: $name")
         }
     }

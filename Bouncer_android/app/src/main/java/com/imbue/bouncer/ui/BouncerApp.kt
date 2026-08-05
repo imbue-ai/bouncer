@@ -226,7 +226,7 @@ fun BouncerApp(viewModel: BouncerViewModel = viewModel()) {
             onReload = viewModel::reload,
             onNavigate = viewModel::navigateTo,
             onBouncerClick = { viewModel.setSheetPresented(true) },
-            showBouncerTooltip = state.hasLoggedIn && !state.hasSeenBouncerTooltip,
+            showBouncerTooltip = state.reachedTimeline && !state.hasSeenBouncerTooltip,
             onBouncerTooltipDismissed = viewModel::markBouncerTooltipSeen,
             onUrlFieldFocusChanged = { isUrlFieldFocused = it },
             modifier = Modifier

@@ -83,7 +83,7 @@ fun EnableNotificationsBanner(
                     color = MaterialTheme.colorScheme.onPrimaryContainer,
                 )
                 Text(
-                    "Tap the highlighted \"Push notifications\" toggle, then Allow.",
+                    "Tap the \"Turn on X notifications\" button, then Allow.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onPrimaryContainer,
                 )

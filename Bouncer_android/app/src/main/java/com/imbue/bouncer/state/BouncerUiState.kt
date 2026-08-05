@@ -21,6 +21,11 @@ data class BouncerUiState(
     val filterReplies: Boolean = true,
     val hasCompletedOnboarding: Boolean = false,
     val hasLoggedIn: Boolean = false,
+    // Set once we actually observe the /home timeline this session — the
+    // authoritative "logged in and browsing" signal. Unlike the persisted
+    // hasLoggedIn (which Auto Backup can restore stale), this can't be true on
+    // the login screen, so UI gated on it (the bouncer tooltip) won't misfire.
+    val reachedTimeline: Boolean = false,
     val hasSeenBouncerTooltip: Boolean = false,
     val popupActive: Boolean = false,
     val navBarVisible: Boolean = true,

@@ -26,11 +26,65 @@
     "feedfilterWsSend",
     "feedfilterWsClose",
     "feedfilterModalClosed",
-    "feedfilterAiSettings"
+    "feedfilterAiSettings",
+    "feedfilterPushDirectResult"
   ];
 
-  window.__ffExtensionVersion = "1.1.5";
+  window.__ffExtensionVersion = "1.1.8";
   window.__ff_platform = "android";
+
+  // ---- Direct push-enable (experiment): intercept x.com's own network calls ----
+  // Runs at document_start, before x.com's bundle, so we see every request.
+  // Two purposes: (1) capture the bearer + CSRF token x.com authenticates with,
+  // so we can replay its push-registration call ourselves; (2) log the actual
+  // notifications-settings requests it makes, to learn that call's exact shape.
+  (function installNetworkTap() {
+    function captureHeaders(headers) {
+      try {
+        var h = headers ? new Headers(headers) : null;
+        if (h && h.get("authorization") && !window.__ff_authHeaders) {
+          var ct0 = (document.cookie.match(/(?:^|;\s*)ct0=([^;]+)/) || [])[1] || "";
+          window.__ff_authHeaders = {
+            authorization: h.get("authorization"),
+            "x-csrf-token": h.get("x-csrf-token") || ct0
+          };
+          try { console.log("[Bouncer] captured x.com auth headers"); } catch (e) {}
+        }
+      } catch (e) {}
+    }
+    function logSettings(method, url, body) {
+      if (url && /notifications\/settings|\/push/i.test(url)) {
+        try {
+          console.log("[Bouncer] x.com API " + (method || "GET") + " " + url +
+            (body ? " body=" + (typeof body === "string" ? body : "[obj]").slice(0, 800) : ""));
+        } catch (e) {}
+      }
+    }
+    var origFetch = window.fetch;
+    if (origFetch) {
+      window.fetch = function (input, init) {
+        try {
+          var url = (typeof input === "string") ? input : (input && input.url);
+          var method = (init && init.method) || (input && input.method) || "GET";
+          captureHeaders(init && init.headers);
+          logSettings(method, url, init && init.body);
+        } catch (e) {}
+        return origFetch.apply(this, arguments);
+      };
+    }
+    var XHR = window.XMLHttpRequest;
+    if (XHR && XHR.prototype) {
+      var origSet = XHR.prototype.setRequestHeader;
+      XHR.prototype.setRequestHeader = function (name, value) {
+        try {
+          if (/^authorization$/i.test(name) && value && !window.__ff_xhrAuth) {
+            window.__ff_xhrAuth = value;
+          }
+        } catch (e) {}
+        return origSet.apply(this, arguments);
+      };
+    }
+  })();
 
   function dispatchBridge(name, arg) {
     var s = (typeof arg === "string") ? arg : JSON.stringify(arg);
@@ -74,6 +128,101 @@
     try { document.body.classList.toggle('ff-panel-open', !!open); } catch (e) {}
   };
 
+  // ---- Direct push-enable button (option #4) ----
+  // x.com's VAPID application server key (from its web bundle). Ties the
+  // subscription to x.com's sender so its server's VAPID-signed pushes are
+  // accepted by our FCM endpoint.
+  var X_VAPID = "BF5oEo0xDUpgylKDTlsd8pZmxQA1leYINiY-rSscWYK_3tWAkz4VMbtf1MLE_Yyd6iII6o-e3Q9TCN5vZMzVMEs";
+
+  function b64urlToU8(s) {
+    s = String(s).replace(/-/g, "+").replace(/_/g, "/");
+    var pad = s.length % 4 ? "====".slice(s.length % 4) : "";
+    var raw = atob(s + pad);
+    var u = new Uint8Array(raw.length);
+    for (var i = 0; i < raw.length; i++) u[i] = raw.charCodeAt(i);
+    return u;
+  }
+
+  function result(ok, stage, detail) {
+    try {
+      window.webkit.messageHandlers.feedfilterPushDirectResult.postMessage(
+        JSON.stringify({ ok: !!ok, stage: stage || "", detail: detail || "" })
+      );
+    } catch (e) {}
+  }
+
+  // Injects a real, tappable in-page button on the current (home) page. The
+  // user's tap on it is a genuine user gesture, so pushManager.subscribe() —
+  // which Gecko refuses without user activation — is allowed. This is the whole
+  // trick that lets us skip the slow settings page.
+  window.__ff_showEnablePushButton = function () {
+    if (document.getElementById("ff-enable-push")) return;
+    var btn = document.createElement("button");
+    btn.id = "ff-enable-push";
+    btn.textContent = "🔔  Turn on X notifications";
+    var s = btn.style;
+    s.position = "fixed";
+    s.left = "50%";
+    s.bottom = "120px";
+    s.transform = "translateX(-50%)";
+    s.zIndex = "2147483647";
+    s.padding = "14px 22px";
+    s.borderRadius = "9999px";
+    s.border = "none";
+    s.background = "#7856ff";
+    s.color = "#fff";
+    s.fontSize = "16px";
+    s.fontWeight = "600";
+    s.boxShadow = "0 6px 24px rgba(0,0,0,0.35)";
+    s.cursor = "pointer";
+    btn.addEventListener("click", function () {
+      btn.disabled = true;
+      btn.textContent = "Turning on…";
+      enablePushDirect().then(function (r) {
+        result(r.ok, r.stage, r.detail);
+        try { btn.remove(); } catch (e) {}
+      });
+    });
+    document.body.appendChild(btn);
+  };
+
+  function enablePushDirect() {
+    // Runs inside the button's click handler → user activation is present.
+    return (async function () {
+      var reg;
+      try {
+        reg = await navigator.serviceWorker.ready;
+      } catch (e) {
+        return { ok: false, stage: "sw", detail: String(e) };
+      }
+      var sub;
+      try {
+        sub = await reg.pushManager.getSubscription();
+        if (!sub) {
+          sub = await reg.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: b64urlToU8(X_VAPID)
+          });
+        }
+      } catch (e) {
+        return { ok: false, stage: "subscribe", detail: String(e) };
+      }
+      var json = sub.toJSON();
+      try {
+        console.log("[Bouncer] direct subscribe ok; endpoint=" +
+          String(sub.endpoint).slice(0, 64) + " haveAuth=" + !!window.__ff_authHeaders);
+      } catch (e) {}
+      // Iteration 1: navigate to the settings page so x.com's own client syncs
+      // this existing subscription to its backend, and our network tap logs the
+      // exact registration call. Iteration 2 will replay that call directly and
+      // drop this navigation entirely.
+      try {
+        setTimeout(function () { location.href = "/settings/push_notifications"; }, 50);
+      } catch (e) {}
+      return { ok: true, stage: "subscribed", detail: String(sub.endpoint).slice(0, 64) };
+    })();
+  }
+
   // Native calls this on the x.com push-notification settings page during the
   // guided-enable flow. We can't click the toggle ourselves — Gecko requires a
   // genuine user gesture for pushManager.subscribe(), and a scripted click has
@@ -82,10 +231,16 @@
   // highlight ring around its row. Their own tap carries the activation.
   window.__ff_revealPushToggle = function () {
     var start = Date.now();
-    var TIMEOUT_MS = 8000;
+    // x.com renders the settings content client-side and can take ~10s, so
+    // keep polling well past that before giving up on finding the toggle.
+    var TIMEOUT_MS = 25000;
     function attempt() {
       var box = document.querySelector('input[type="checkbox"]');
       if (box) {
+        try {
+          console.log("[Bouncer] push toggle rendered after " +
+            (Date.now() - start) + "ms");
+        } catch (e) {}
         // The tappable row is an ancestor of the hidden input; walk up a few
         // levels for something with real height to highlight.
         var target = box;

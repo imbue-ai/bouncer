@@ -132,15 +132,21 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
 
     fun onUrlChanged(url: String) {
         _state.update { it.copy(currentUrl = url) }
-        if (!_state.value.hasLoggedIn && (url.contains("x.com/home") || url.contains("twitter.com/home"))) {
+        // The login/signup flow is proof we're NOT authenticated. hasLoggedIn is
+        // a sticky pref (and survives Auto Backup across reinstalls), so it can
+        // be stale-true after a logout or a restore; correct it here so the
+        // tooltip and notifications prompt don't fire on the logged-out screen.
+        if (_state.value.hasLoggedIn && isLoginFlow(url)) {
+            prefs.edit().putBoolean(KEY_LOGGED_IN, false).apply()
+            _state.update { it.copy(hasLoggedIn = false) }
+        }
+        if (isHome(url) && !_state.value.reachedTimeline) {
+            _state.update { it.copy(reachedTimeline = true) }
+        }
+        if (!_state.value.hasLoggedIn && isHome(url)) {
             prefs.edit().putBoolean(KEY_LOGGED_IN, true).apply()
             _state.update { it.copy(hasLoggedIn = true) }
             maybePromptEnableNotifications()
-        }
-        // If the user navigates off the settings page during the guided flow
-        // without enabling (e.g. taps back), drop the coaching banner.
-        if (pendingPushToggle && !isPushSettings(url)) {
-            cancelEnableNotifications()
         }
     }
 
@@ -174,59 +180,60 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
         _state.update { it.copy(showEnableNotificationsPrompt = false) }
     }
 
-    // User accepted: cover the webview, navigate to x.com's push settings, and
-    // (once it loads) drive the toggle from bridge_page.js. The toggle's own
-    // handler calls pushManager.subscribe → our WebPushDelegate, which is what
-    // registers the subscription with x.com. We return home when JS reports back.
+    // User accepted. Option #4: instead of sending them to the slow settings
+    // page, inject an in-page button on the current (home) page. Their tap on
+    // it is a genuine user gesture, so pushManager.subscribe() is allowed —
+    // that registers our FCM endpoint, and (iteration 1) x.com's own client
+    // then syncs the subscription to its backend when we visit settings.
     fun acceptEnableNotifications() {
         prefs.edit().putBoolean(KEY_NOTIF_PROMPTED, true).apply()
         pendingPushToggle = true
-        // Coaching banner (not a full cover): the user must see and tap x.com's
-        // real toggle themselves — Gecko refuses pushManager.subscribe() without
-        // a genuine user gesture, which a scripted click can't supply.
         _state.update {
             it.copy(showEnableNotificationsPrompt = false, enablingNotifications = true)
         }
         // Grant the Android POST_NOTIFICATIONS runtime permission up front (this
-        // native tap is a valid gesture for it), so the later web-toggle tap
-        // flows straight through our permission delegate without a second stop.
+        // native tap is a valid gesture for it), so the in-page subscribe flows
+        // straight through our permission delegate without a second stop.
         NotificationPermissionBroker.ensurePermission(getApplication()) { granted ->
             Log.i(tag, "POST_NOTIFICATIONS granted=$granted")
         }
-        // Authoritative completion: our WebPushDelegate actually registered the
-        // subscription (⇒ the user tapped the toggle, permission is granted, and
-        // subscribe reached us). Wait a beat for the site to POST the endpoint to
-        // its own server, then head home.
-        PushRegistrar.onSubscriptionRegistered = { scope ->
-            if (pendingPushToggle && isOnX(scope)) {
-                viewModelScope.launch {
-                    delay(PUSH_REGISTER_GRACE_MS)
-                    if (pendingPushToggle) finishPushToggle(returnHome = true)
-                }
-            }
-        }
-        navigateTo(PUSH_SETTINGS_URL)
+        callJs("__ff_showEnablePushButton")
+    }
+
+    // bridge_page.js reports the in-page subscribe result. On success it
+    // navigates itself to the settings page to let x.com sync; we just clear
+    // the banner and let the flow settle.
+    fun onPushDirectResult(json: String) {
+        val obj = runCatching { JSONObject(json) }.getOrNull()
+        val ok = obj?.optBoolean("ok", false) ?: false
+        Log.i(tag, "push direct result: ok=$ok stage=${obj?.optString("stage")} detail=${obj?.optString("detail")}")
+        pendingPushToggle = false
+        _state.update { it.copy(enablingNotifications = false) }
     }
 
     fun cancelEnableNotifications() {
         if (!pendingPushToggle) return
-        finishPushToggle(returnHome = false)
-    }
-
-    private fun finishPushToggle(returnHome: Boolean) {
         pendingPushToggle = false
-        PushRegistrar.onSubscriptionRegistered = null
-        if (returnHome) {
-            navigateTo("https://x.com/home")
-            // Keep the banner until home actually paints (onPageStop clears it).
-        } else {
-            _state.update { it.copy(enablingNotifications = false) }
-        }
+        _state.update { it.copy(enablingNotifications = false) }
     }
 
     private fun isPushSettings(url: String): Boolean =
         url.contains("x.com/settings/push_notifications") ||
             url.contains("twitter.com/settings/push_notifications")
+
+    private fun isHome(url: String): Boolean =
+        url.contains("x.com/home") || url.contains("twitter.com/home")
+
+    // The unauthenticated login/signup flow (initialUrl for logged-out users is
+    // x.com/i/flow/login). Kept narrow so ordinary /i/flow/ dialogs that a
+    // logged-in user might hit don't trip a false logout.
+    private fun isLoginFlow(url: String): Boolean =
+        url.contains("/i/flow/login") ||
+            url.contains("/i/flow/signup") ||
+            url.contains("x.com/login") ||
+            url.contains("twitter.com/login") ||
+            url.contains("/logout") ||
+            url.contains("/account/access")
 
     fun setCanGoBack(canGoBack: Boolean) {
         _state.update { it.copy(canGoBack = canGoBack) }
@@ -245,19 +252,10 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
             callJs("__ff_shareFilterPack")
         }
         val url = _state.value.currentUrl
-        if (pendingPushToggle && isPushSettings(url)) {
-            // Settings page loaded during the guided flow: scroll the real
-            // toggle into view and highlight it so the user can tap it. We
-            // can't tap it for them (no user activation), so we just guide.
-            callJs("__ff_revealPushToggle")
-        } else if (_state.value.enablingNotifications && !pendingPushToggle &&
-            (url.contains("x.com/home") || url.contains("twitter.com/home"))
-        ) {
-            // Home has repainted after enabling — safe to drop the banner.
-            _state.update { it.copy(enablingNotifications = false) }
-        } else if (_state.value.hasLoggedIn && isOnX(url)) {
-            // Already-logged-in users (returning / backup-restored state) never
-            // hit the login transition, so evaluate the one-time prompt here.
+        if (_state.value.hasLoggedIn && isHome(url)) {
+            // Users already logged in at launch (returning / backup-restored
+            // state) never hit the login transition; the authenticated timeline
+            // (/home) is the signal to evaluate the one-time prompt for them.
             maybePromptEnableNotifications()
         }
     }
