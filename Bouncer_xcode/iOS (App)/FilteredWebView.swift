@@ -258,6 +258,43 @@ struct FilteredWebView: UIViewRepresentable {
                 """, injectionTime: .atDocumentEnd, forMainFrameOnly: true)
             controller.addUserScript(appleLoginRemovalScript)
             print("[FeedFilter] Injected Apple-login removal")
+
+            // 10. LinkedIn app-upsell removal — LinkedIn's mobile web nags with
+            // "get the full app experience" prompts: a bottom banner
+            // (.upsell-bottom) and a blocking bottom sheet that mounts, with its
+            // gray scrim, inside a .top-level-modal-container. linkedin.css
+            // hides both instantly; this observer then removes the nodes and
+            // clears any scroll lock the blocking sheet left behind. Structural
+            // class selectors only (no text matching), so it works in every
+            // locale. The container is removed only when it holds the upsell
+            // sheet, leaving it available for legitimate modals.
+            let linkedInUpsellRemovalScript = WKUserScript(source: """
+                (function() {
+                    var host = location.hostname;
+                    if (host !== 'linkedin.com' && !host.endsWith('.linkedin.com')) return;
+                    function removeUpsells() {
+                        var removed = false;
+                        document.querySelectorAll('.upsell-bottom').forEach(function(el) {
+                            el.remove();
+                            removed = true;
+                        });
+                        document.querySelectorAll('.blocking-upsell-bottom-sheet').forEach(function(el) {
+                            (el.closest('.top-level-modal-container') || el).remove();
+                            removed = true;
+                        });
+                        if (removed) {
+                            [document.documentElement, document.body].forEach(function(el) {
+                                if (el && el.style.overflow === 'hidden') el.style.overflow = '';
+                            });
+                        }
+                    }
+                    var observer = new MutationObserver(removeUpsells);
+                    observer.observe(document.documentElement, { childList: true, subtree: true });
+                    removeUpsells();
+                })();
+                """, injectionTime: .atDocumentEnd, forMainFrameOnly: true)
+            controller.addUserScript(linkedInUpsellRemovalScript)
+            print("[FeedFilter] Injected LinkedIn upsell removal")
         }
 
         // MARK: - Popup Bridge
