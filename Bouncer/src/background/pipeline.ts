@@ -1042,7 +1042,12 @@ async function processBatch(): Promise<void> {
       );
     }
 
-    console.log(`[Eval] shouldHide=${result.shouldHide}, category="${result.category}", reasoning="${result.reasoning?.substring(0, 80)}"`);
+    // wall = this post's full evaluation (detectors + image fetch), measured
+    // from dequeue; infer = the local model's generate() alone, absent for
+    // cloud models (whose network wall time is the meaningful number anyway).
+    const evalSec = ((Date.now() - startTime) / 1000).toFixed(2);
+    const inferPart = result.inferenceTime != null ? ` infer=${result.inferenceTime.toFixed(2)}s` : '';
+    console.log(`[Eval] shouldHide=${result.shouldHide}, category="${result.category}", wall=${evalSec}s${inferPart}, reasoning="${result.reasoning?.substring(0, 80)}"`);
 
     const evalResult: EvaluationResult = {
       shouldHide: result.shouldHide,
