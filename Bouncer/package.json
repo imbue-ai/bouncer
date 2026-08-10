@@ -37,7 +37,7 @@
     "vitest": "^4.0.18"
   },
   "dependencies": {
-    "@litert-lm/core": "^0.12.1",
+    "@litert-lm/core": "^0.15.0",
     "dompurify": "^3.3.1",
     "firebase": "^12.11.0",
     "html-to-image": "^1.11.13"

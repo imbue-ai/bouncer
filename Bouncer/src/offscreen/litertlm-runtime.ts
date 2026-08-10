@@ -126,6 +126,21 @@ export class LitertlmRuntime {
   private modelDef: LocalModelDef | null = null;
   private activeConversation: Conversation | null = null;
   private generating = false;
+  // Prefix cache (mirrors the iOS getOrBuildBase pattern): a long-lived
+  // "base" Conversation holds the prefilled preface (system prompt), and
+  // each generate() clones it — clone() copies the KV cache, so only the
+  // per-post user message is prefilled per call. Keyed by the preface
+  // content + session config so a changed system prompt rebuilds the base.
+  private baseConversation: Conversation | null = null;
+  private baseKey: string | null = null;
+  // The previous generate()'s clone, kept alive until the NEXT clone has been
+  // scheduled. The engine records each clone task as the base session's
+  // "last task", but the task is owned by the *cloned* session — deleting the
+  // clone right away erases that task, and the next clone() then fails with
+  // "Dependency task N is invalid" (see runtime/framework/resource_management/
+  // serial_execution_manager.cc upstream). A completed-but-undeleted task is a
+  // valid dependency, so deferring the delete by one call is sufficient.
+  private retiredClone: Conversation | null = null;
   // LiteRT-LM serializes work through its own executor mutex, but we keep an
   // explicit chain here for the same reason as before: unload() and
   // interrupt() must wait for any in-flight generate() to settle before
@@ -188,6 +203,7 @@ export class LitertlmRuntime {
       catch (e) { console.error('[LiteRT-LM] Error deleting conversation:', e); }
       this.activeConversation = null;
     }
+    await this.dropBase();
     try { await this.engine?.delete(); }
     catch (e) { console.error('[LiteRT-LM] Error deleting engine:', e); }
     this.engine = null;
@@ -227,47 +243,112 @@ export class LitertlmRuntime {
 
       const { prefaceMessages, userText } = this.splitMessages(messages);
 
-      // Always GREEDY (top-1); a requested temperature in _params is
-      // deliberately ignored. The GPU backend's max_top_k defaults to 1
-      // and Engine.create can only raise it by supplying a complete
-      // GpuArtisanConfig (whose defaults live in the wasm binary), so a
-      // TOP_K session with k > 1 is rejected at session startup inside
-      // sendMessage ("Top-K value 40 must be <= 1") — and the failed
-      // attempt poisons the engine's context handler (every later session
-      // RET_CHECKs with "processed context is already set"), so a
-      // try-sampled-then-retry-greedy fallback is not viable either.
-      // Until the engine is created with a raised max_top_k, sampled
-      // callers (phrase suggestions request temperature 0.7) get clamped
-      // to deterministic greedy output instead of an error.
-      const conversationConfig: ConversationConfig = {
-        preface: { messages: prefaceMessages },
-        sessionConfig: {
-          ...(maxTokens > 0 ? { maxOutputTokens: maxTokens } : {}),
-          samplerParams: {
-            type: SamplerType.GREEDY,
-            k: 1,
-            temperature: 0,
-            seed: 0,
-          },
-        },
-      };
-
-      // Create a fresh Conversation per call so each classification is
-      // stateless — no KV-cache carryover between unrelated posts.
-      const conversation = await this.engine.createConversation(conversationConfig);
-      this.activeConversation = conversation;
-      this.generating = true;
+      // Clone from the prefix-cached base so only the user message needs
+      // prefill; each clone is stateless — no KV-cache carryover between
+      // unrelated posts.
+      const base = await this.getOrBuildBase(prefaceMessages, maxTokens);
+      let conversation: Conversation | null = null;
+      let failed = false;
       try {
+        conversation = await base.clone();
+        // The new clone task has been scheduled with its dependency on the
+        // previous clone's task already resolved, so the previous clone is
+        // now safe to delete.
+        await this.deleteRetiredClone();
+        this.activeConversation = conversation;
+        this.generating = true;
         const response = await conversation.sendMessage(userText);
         const raw = this.extractText(response);
         return raw.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+      } catch (e) {
+        // A failed clone or send may reflect broken engine state that a stale
+        // base would keep reproducing on every clone; drop it so the next
+        // call rebuilds from scratch (same recovery as iOS
+        // dropBaseConversation).
+        failed = true;
+        throw e;
       } finally {
         this.generating = false;
         this.activeConversation = null;
-        // Best-effort dispose. Errors here would mask a generation error.
-        try { await conversation.delete(); } catch { /* noop */ }
+        if (failed) {
+          // Best-effort dispose. Errors here would mask the generation error.
+          if (conversation) {
+            try { await conversation.delete(); } catch { /* noop */ }
+          }
+          await this.dropBase();
+        } else {
+          // Keep the clone alive until the next generate() schedules its
+          // clone — see retiredClone.
+          this.retiredClone = conversation;
+        }
       }
     });
+  }
+
+  private async deleteRetiredClone(): Promise<void> {
+    if (!this.retiredClone) return;
+    const retired = this.retiredClone;
+    this.retiredClone = null;
+    try { await retired.delete(); }
+    catch (e) { console.error('[LiteRT-LM] Error deleting retired clone:', e); }
+  }
+
+  // Return the cached base Conversation for this preface + config, building
+  // (and preface-prefilling) a fresh one on any miss. Callers already hold
+  // the enqueue chain, so there is no concurrent-access hazard on the cache.
+  private async getOrBuildBase(prefaceMessages: Message[], maxTokens: number): Promise<Conversation> {
+    if (!this.engine) throw new Error('Engine not loaded');
+    const key = JSON.stringify({ prefaceMessages, maxTokens });
+    if (this.baseConversation && this.baseKey === key) {
+      return this.baseConversation;
+    }
+    // Same diagnostic as the iOS side: distinguishes first-call/dropped-base
+    // misses from a changed preface so device logs explain per-post rebuilds.
+    console.log(`[LiteRT-LM] base rebuild reason=${this.baseConversation ? 'key-changed' : 'no-base'}`);
+    await this.dropBase();
+
+    // Always GREEDY (top-1); a requested temperature in generate()'s params
+    // is deliberately ignored. The GPU backend's max_top_k defaults to 1
+    // and Engine.create can only raise it by supplying a complete
+    // GpuArtisanConfig (whose defaults live in the wasm binary), so a
+    // TOP_K session with k > 1 is rejected at session startup inside
+    // sendMessage ("Top-K value 40 must be <= 1") — and the failed
+    // attempt poisons the engine's context handler (every later session
+    // RET_CHECKs with "processed context is already set"), so a
+    // try-sampled-then-retry-greedy fallback is not viable either.
+    // Until the engine is created with a raised max_top_k, sampled
+    // callers (phrase suggestions request temperature 0.7) get clamped
+    // to deterministic greedy output instead of an error.
+    const conversationConfig: ConversationConfig = {
+      preface: { messages: prefaceMessages },
+      // Prefill the preface into the base's KV cache at creation time so
+      // clones inherit it instead of re-prefilling the system prompt per post.
+      prefillPrefaceOnInit: true,
+      sessionConfig: {
+        ...(maxTokens > 0 ? { maxOutputTokens: maxTokens } : {}),
+        samplerParams: {
+          type: SamplerType.GREEDY,
+          k: 1,
+          temperature: 0,
+          seed: 0,
+        },
+      },
+    };
+
+    const base = await this.engine.createConversation(conversationConfig);
+    this.baseConversation = base;
+    this.baseKey = key;
+    return base;
+  }
+
+  private async dropBase(): Promise<void> {
+    await this.deleteRetiredClone();
+    if (this.baseConversation) {
+      try { await this.baseConversation.delete(); }
+      catch (e) { console.error('[LiteRT-LM] Error deleting base conversation:', e); }
+    }
+    this.baseConversation = null;
+    this.baseKey = null;
   }
 
   private extractText(message: Message): string {
