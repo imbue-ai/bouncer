@@ -27,3 +27,15 @@
 .dark-mode .ff-why-annoying-btn--linkedin-header:hover {
   background: rgba(255, 255, 255, 0.12);
 }
+
+/* linkedin adaptation: suppress the mobile-web "get the full app experience"
+ * upsells (these classes only exist on the mobile layout, so this is inert on
+ * desktop SDUI). The blocking bottom sheet mounts inside a
+ * .top-level-modal-container along with its gray scrim, so the whole container
+ * must go — but only while it holds the upsell (:has guard), since other
+ * modals may mount into the same container. Class selectors only, no text
+ * matching, so this holds across locales. */
+.upsell-bottom,
+.top-level-modal-container:has(.blocking-upsell-bottom-sheet) {
+  display: none !important;
+}
