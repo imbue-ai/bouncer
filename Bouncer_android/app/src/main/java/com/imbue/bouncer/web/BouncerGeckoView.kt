@@ -189,6 +189,7 @@ object BouncerGeckoView {
                         ext.setMessageDelegate(b, PORT_NAME)
                         Log.i(TAG, "setMessageDelegate registered for port=$PORT_NAME on ${ext.id}")
                         Log.i(TAG, "extension ready: ${ext.id}")
+                        grantHostPermissions(appCtx, r, ext)
                     } else {
                         Log.e(TAG, "ensureBuiltIn returned null")
                     }
@@ -205,6 +206,49 @@ object BouncerGeckoView {
             bridge = b
             runtime = r
         }
+    }
+
+    // Gecko treats every MV3 host permission as user-optional ("origin
+    // controls") — even for privileged built-in extensions — and auto-grants
+    // the manifest's origins only on a FRESH install (Extension.sys.mjs gates
+    // the grant on startupReason == ADDON_INSTALL). An ensureBuiltIn
+    // version-bump upgrade that ADDS a host (e.g. *.linkedin.com) therefore
+    // leaves the new origin ungranted, and content scripts silently never
+    // inject on that site while previously-granted origins keep working.
+    // GeckoView has no permission UI of its own; the embedder is the "user",
+    // so grant every manifest origin explicitly. No-ops when nothing is
+    // missing, so running it on every warm-up is cheap and self-heals any
+    // future host added to the manifest.
+    private fun grantHostPermissions(appCtx: Context, runtime: GeckoRuntime, ext: WebExtension) {
+        val wanted = manifestHostPermissions(appCtx)
+        val granted = ext.metaData?.grantedOptionalOrigins?.toSet() ?: emptySet()
+        val missing = wanted.filterNot { it in granted }
+        if (missing.isEmpty()) {
+            Log.i(TAG, "host origins already granted: $granted")
+            return
+        }
+        runtime.webExtensionController
+            .addOptionalPermissions(ext.id, emptyArray(), missing.toTypedArray(), emptyArray())
+            .accept(
+                { updated ->
+                    val now = updated?.metaData?.grantedOptionalOrigins?.joinToString() ?: "?"
+                    Log.i(TAG, "granted host origins $missing; now granted: $now")
+                },
+                { err -> Log.e(TAG, "addOptionalPermissions failed for $missing", err) },
+            )
+    }
+
+    // The extension's host_permissions, read from the bundled manifest so the
+    // grant list can never drift from what the manifest actually declares.
+    private fun manifestHostPermissions(appCtx: Context): List<String> = runCatching {
+        val json = appCtx.assets.open("web_ext_gecko/manifest.json")
+            .bufferedReader().use { it.readText() }
+        val arr = org.json.JSONObject(json).optJSONArray("host_permissions")
+            ?: return@runCatching emptyList()
+        List(arr.length()) { arr.getString(it) }
+    }.getOrElse { err ->
+        Log.w(TAG, "failed to read manifest host_permissions", err)
+        emptyList()
     }
 
     // Materialize the geckoview-config.yaml consumed via configFilePath(). It
