@@ -1,7 +1,7 @@
 // Background script entry point: message handler, storage listener, startup, tab tracking
 
 import { PREDEFINED_MODELS } from '../shared/models';
-import { cacheKeyFor, GUEST_FILTER_LIMIT } from '../shared/utils';
+import { cacheKeyFor, GUEST_FILTER_LIMIT, isEmbeddedApp } from '../shared/utils';
 import { getStorage, setStorage, removeStorage, phraseSetKey } from '../shared/storage';
 import type { AiFilterIntentState, ContentToBackgroundMessage, LocalModelStatus } from '../types';
 import { refreshAiFilterIntent, pruneAiFilterPhrases, canJudgeAiIntent } from './ai-intent';
@@ -843,12 +843,24 @@ chrome.runtime.onInstalled.addListener((details) => {
     // then open x.com — the content script there consumes the flag and fires
     // the pixel (see content/install-pixel.ts for why it can't fire from
     // this service worker). Flag first so it's set before the tab reaches
-    // document_idle.
-    setStorage({ pendingInstallPixel: true })
-      .catch(err => console.error('[Background] Failed to set install pixel flag:', err))
-      .finally(() => {
-        chrome.tabs.create({ url: 'https://x.com' }).catch(err => console.error('[Background] Failed to open x.com on install:', err));
-      });
+    // document_idle. The value is a per-install UUID sent as the pixel's
+    // conversion_id: consuming the flag isn't atomic, so simultaneous x.com
+    // tabs can each fire, but they all send the same conversion_id and X
+    // dedupes them into one conversion.
+    //
+    // Two guards keep this to one arming per real install:
+    //  - In the iOS/Android app webviews, ChromePolyfill synthesizes this
+    //    'install' event on EVERY page load — skip entirely there (app
+    //    installs must not report as extension install conversions).
+    //  - installPixelArmed persists across repeat 'install' events that keep
+    //    storage (e.g. Chrome's extension Repair), so those never re-arm.
+    (async () => {
+      if (isEmbeddedApp()) return;
+      const { installPixelArmed } = await getStorage(['installPixelArmed']);
+      if (installPixelArmed) return;
+      await setStorage({ pendingInstallPixel: crypto.randomUUID(), installPixelArmed: true });
+      await chrome.tabs.create({ url: 'https://x.com' });
+    })().catch(err => console.error('[Background] Install pixel arming failed:', err));
   }
 
   if (details.reason === 'install' || details.reason === 'update') {

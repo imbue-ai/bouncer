@@ -457,8 +457,15 @@ export type StorageSchema = SettingsBase & {
   lastSeenVersion: string;
   // Set by the background on fresh install (never on update); consumed by the
   // content script on x.com, which fires the X Pixel install conversion and
-  // clears it (see content/install-pixel.ts).
-  pendingInstallPixel: boolean;
+  // clears it (see content/install-pixel.ts). Holds a per-install UUID sent as
+  // the pixel's conversion_id so X dedupes duplicate fires server-side.
+  // (Installs predating the UUID may still hold the legacy value `true`.)
+  pendingInstallPixel: string;
+  // Durable once-per-install latch for the pixel: set alongside
+  // pendingInstallPixel and never cleared, so repeat onInstalled 'install'
+  // events that keep storage (Chrome Repair, synthetic events from embedded
+  // hosts) can't re-arm the conversion.
+  installPixelArmed: boolean;
 } & DescriptionKeys & PlatformEnabledKeys;
 
 // ==================== API Response Types ====================

@@ -19,6 +19,8 @@ import androidx.compose.ui.unit.dp
 fun BouncerSettings(
     filterReplies: Boolean,
     onFilterRepliesChange: (Boolean) -> Unit,
+    notificationsEnabled: Boolean,
+    onNotificationsEnabledChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier.fillMaxWidth().padding(bottom = 8.dp)) {
@@ -30,6 +32,21 @@ fun BouncerSettings(
                 Switch(
                     checked = filterReplies,
                     onCheckedChange = onFilterRepliesChange,
+                )
+            },
+            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+        )
+
+        // App-level display switch. On subscribes (if needed) and shows X
+        // notifications; off just suppresses display — the subscription and OS
+        // permission stay in place (see WebNotificationHandler / BouncerViewModel).
+        ListItem(
+            headlineContent = { Text("Push notifications") },
+            trailingContent = {
+                Switch(
+                    checked = notificationsEnabled,
+                    onCheckedChange = onNotificationsEnabledChange,
                 )
             },
             colors = ListItemDefaults.colors(containerColor = Color.Transparent),
