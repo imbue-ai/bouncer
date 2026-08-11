@@ -38,6 +38,15 @@ class WebNotificationHandler(
 
     override fun onShowNotification(notification: WebNotification) {
         Log.i(TAG, "onShowNotification from ${notification.source ?: notification.origin}")
+        if (!notificationsEnabled()) {
+            // Suppressed at the app level: keep the subscription + permission
+            // intact (so x.com keeps sending), just don't surface it on Android.
+            // Still ack the service worker so its showNotification bookkeeping
+            // resolves and it keeps delivering.
+            Log.i(TAG, "notifications off at app level; suppressing display")
+            scope.launch(Dispatchers.Main) { notification.show() }
+            return
+        }
         ensureChannel()
         // The web icon (e.g. the sender's avatar) needs a network fetch; post
         // the notification from a coroutine once that resolves either way.
@@ -99,6 +108,12 @@ class WebNotificationHandler(
     // update a thread) and is stable across the show/close callback pair.
     private fun tagFor(n: WebNotification): String = n.tag ?: n.origin.orEmpty()
 
+    // App-level display switch (the settings sheet's "Push notifications" toggle).
+    // Independent of the subscription/permission — off just hides notifications.
+    private fun notificationsEnabled(): Boolean =
+        appCtx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getBoolean(KEY_NOTIFICATIONS_ON, true)
+
     private fun manager(): NotificationManager =
         appCtx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
@@ -113,6 +128,9 @@ class WebNotificationHandler(
 
     companion object {
         private const val TAG = "FF/WebNotification"
+        // Shared with BouncerViewModel — the settings toggle writes this key.
+        const val PREFS = "bouncer_prefs"
+        const val KEY_NOTIFICATIONS_ON = "notificationsOn"
         const val CHANNEL_ID = "web_notifications"
         const val ACTION_CLICK = "com.imbue.bouncer.WEB_NOTIFICATION_CLICK"
         const val EXTRA_NOTIFICATION = "web_notification"

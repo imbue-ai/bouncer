@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Bouncer Bridge",
-  "version": "1.1.20",
+  "version": "1.1.30",
   "description": "Bouncer content scripts and native bridge for the Android GeckoView host.",
   "browser_specific_settings": {
     "gecko": { "id": "bouncer@imbue.com" }
@@ -12,7 +12,8 @@
   ],
   "host_permissions": [
     "https://x.com/*",
-    "https://twitter.com/*"
+    "https://twitter.com/*",
+    "https://*.linkedin.com/*"
   ],
   "background": {
     "scripts": ["background.js"]
@@ -25,7 +26,7 @@
       "js": ["gsi_button_fix.js"]
     },
     {
-      "matches": ["https://x.com/*", "https://twitter.com/*"],
+      "matches": ["https://x.com/*", "https://twitter.com/*", "https://*.linkedin.com/*"],
       "exclude_matches": [
         "https://x.com/i/flow/*",
         "https://twitter.com/i/flow/*",
@@ -41,7 +42,7 @@
       "js": ["bridge_iso.js"]
     },
     {
-      "matches": ["https://x.com/*", "https://twitter.com/*"],
+      "matches": ["https://x.com/*", "https://twitter.com/*", "https://*.linkedin.com/*"],
       "exclude_matches": [
         "https://x.com/i/flow/*",
         "https://twitter.com/i/flow/*",
@@ -58,9 +59,24 @@
         "build_flag.js",
         "bridge_page.js",
         "ChromePolyfill.js",
-        "adapters/twitter/fiber-extractor.js",
         "dist/background-app.js"
       ]
+    },
+    {
+      "matches": ["https://x.com/*", "https://twitter.com/*"],
+      "exclude_matches": [
+        "https://x.com/i/flow/*",
+        "https://twitter.com/i/flow/*",
+        "https://x.com/login*",
+        "https://twitter.com/login*",
+        "https://x.com/signup*",
+        "https://twitter.com/signup*",
+        "https://x.com/account/*",
+        "https://twitter.com/account/*"
+      ],
+      "world": "MAIN",
+      "run_at": "document_start",
+      "js": ["adapters/twitter/fiber-extractor.js"]
     },
     {
       "matches": ["https://x.com/*", "https://twitter.com/*"],
@@ -84,6 +100,20 @@
       "css": [
         "content.css",
         "adapters/twitter/twitter.css"
+      ]
+    },
+    {
+      "matches": ["https://*.linkedin.com/*"],
+      "world": "MAIN",
+      "run_at": "document_end",
+      "js": [
+        "dompurify.js",
+        "dist/LinkedInAdapter.js",
+        "dist/content.js"
+      ],
+      "css": [
+        "content.css",
+        "adapters/linkedin/linkedin.css"
       ]
     }
   ]

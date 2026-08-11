@@ -29,10 +29,15 @@ data class BouncerUiState(
     val hasSeenBouncerTooltip: Boolean = false,
     val popupActive: Boolean = false,
     val navBarVisible: Boolean = true,
-    // Post-login one-time "turn on notifications?" prompt.
-    val showEnableNotificationsPrompt: Boolean = false,
-    // Covers the webview while we drive x.com's push-settings toggle, so the
-    // user sees a branded "Enabling notifications…" overlay instead of the
-    // settings page flashing by.
-    val enablingNotifications: Boolean = false,
+    // While true, an opaque "Turning on notifications…" cover hides the webview:
+    // the covered fallback displays x.com's push-settings page on the real surface
+    // to enable push, and we don't want that settings page to flash by.
+    val pushEnableCoverVisible: Boolean = false,
+    // True while an auto-enable attempt is running (off-screen render → click →
+    // subscribe). Drives KEEP_SCREEN_ON so the phone doesn't sleep mid-render
+    // (the off-screen render is throttled and takes ~30s), and gates the settings
+    // "Turn on notifications" button.
+    val pushEnableInProgress: Boolean = false,
+    // Whether x.com push is subscribed (drives the settings button's state).
+    val notificationsEnabled: Boolean = false,
 )
