@@ -1,12 +1,21 @@
 package com.imbue.bouncer.ui
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
+import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
@@ -18,11 +27,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.BottomSheetDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.SheetState
 import androidx.compose.material3.SheetValue
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -57,6 +68,16 @@ import kotlin.math.roundToInt
 // Material 3 BottomAppBar's default container height (BottomAppBarDefaults.ContainerHeight).
 private val NAV_BAR_CONTENT_HEIGHT = 80.dp
 
+// Unwrap the Activity from the Compose LocalContext (usually a ContextThemeWrapper).
+private fun Context.findActivity(): Activity? {
+    var c: Context? = this
+    while (c is ContextWrapper) {
+        if (c is Activity) return c
+        c = c.baseContext
+    }
+    return null
+}
+
 // Captured-once system bar inset measurements (status bar height + gesture
 // pill / nav bar inset). Held in pixels so we can feed them into Gecko's
 // dynamic-toolbar math without round-tripping through Dp.
@@ -66,9 +87,8 @@ private data class StaticSysBarInsets(val topPx: Int, val bottomPx: Int)
 @Composable
 fun BouncerApp(viewModel: BouncerViewModel = viewModel()) {
     val state by viewModel.state.collectAsState()
-    var isUrlFieldFocused by remember { mutableStateOf(false) }
     val imeVisible = WindowInsets.isImeVisible
-    val navBarEffectivelyVisible = state.navBarVisible && (!imeVisible || isUrlFieldFocused)
+    val navBarEffectivelyVisible = state.navBarVisible && !imeVisible
 
     if (!state.hasCompletedOnboarding) {
         Onboarding(onDone = viewModel::completeOnboarding)
@@ -93,6 +113,20 @@ fun BouncerApp(viewModel: BouncerViewModel = viewModel()) {
     // after the GeckoView is constructed (e.g. light/dark switch).
     LaunchedEffect(coverColor) {
         BouncerGeckoView.setCoverColor(coverColor)
+    }
+
+    // Hold the screen on while an auto-enable is in flight: the off-screen
+    // settings render is throttled (~30s) and Gecko suspends rendering entirely
+    // if the screen sleeps, which would strand the enable. Cleared as soon as the
+    // toggle is clicked+subscribed (the backend POST finishes without a screen).
+    val activity = remember(ctx) { ctx.findActivity() }
+    LaunchedEffect(state.pushEnableInProgress) {
+        val window = activity?.window ?: return@LaunchedEffect
+        if (state.pushEnableInProgress) {
+            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        } else {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
     }
 
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -168,8 +202,12 @@ fun BouncerApp(viewModel: BouncerViewModel = viewModel()) {
     // the gesture pill via the static padding below, so we only reserve
     // barContentHeightPx — the NavBar content's overlap over the
     // GeckoView's bounds.
+    // Route through BouncerGeckoView (not geckoView directly) so it remembers
+    // this value and re-applies it after every setSession() swap — otherwise a
+    // platform switch or crash recovery resets the compositor's dynamic-toolbar
+    // height to 0 and x.com's fixed bottom bar drops behind our nav bar.
     LaunchedEffect(geckoView, barContentHeightPx) {
-        geckoView.setDynamicToolbarMaxHeight(barContentHeightPx.roundToInt())
+        BouncerGeckoView.setDynamicToolbarMaxHeight(barContentHeightPx.roundToInt())
     }
 
     // Single source of truth for the bar's vertical offset. graphicsLayer
@@ -193,7 +231,9 @@ fun BouncerApp(viewModel: BouncerViewModel = viewModel()) {
                 // longer overlapping the GeckoView (it's moving through the
                 // gesture-pill padded area), so the clip stays at -max.
                 val clip = -y.coerceIn(0f, barContentHeightPx).roundToInt()
-                geckoView.setVerticalClipping(clip)
+                // Via BouncerGeckoView so the latest clip is stored and replayed
+                // onto whatever session is attached after a setSession() swap.
+                BouncerGeckoView.setVerticalClipping(clip)
             }
     }
 
@@ -224,11 +264,10 @@ fun BouncerApp(viewModel: BouncerViewModel = viewModel()) {
             currentUrl = state.currentUrl,
             filteredCount = state.filteredCount,
             onReload = viewModel::reload,
-            onNavigate = viewModel::navigateTo,
+            onSelectPlatform = { BouncerGeckoView.switchToPlatform(it) },
             onBouncerClick = { viewModel.setSheetPresented(true) },
-            showBouncerTooltip = state.hasLoggedIn && !state.hasSeenBouncerTooltip,
+            showBouncerTooltip = state.reachedTimeline && !state.hasSeenBouncerTooltip,
             onBouncerTooltipDismissed = viewModel::markBouncerTooltipSeen,
-            onUrlFieldFocusChanged = { isUrlFieldFocused = it },
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .graphicsLayer { translationY = translationYAnim.value }
@@ -236,6 +275,34 @@ fun BouncerApp(viewModel: BouncerViewModel = viewModel()) {
                     WindowInsets.navigationBars.only(WindowInsetsSides.Bottom),
                 ),
         )
+
+        // Opaque cover shown while we briefly display x.com's push-settings page
+        // on the real webview to auto-enable notifications (a surfaceless
+        // background tab won't render it cold). Fills the whole screen — over the
+        // webview AND the nav bar — and swallows touches so the user can't
+        // interact with the settings page underneath.
+        if (state.pushEnableCoverVisible) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.background)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                    ) {},
+                contentAlignment = Alignment.Center,
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.height(20.dp))
+                    Text(
+                        text = "Turning on notifications…",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onBackground,
+                    )
+                }
+            }
+        }
     }
 
     if (state.popupActive) {
@@ -298,12 +365,14 @@ fun BouncerApp(viewModel: BouncerViewModel = viewModel()) {
                 aiDetectionOn = state.aiDetectionOn,
                 aiDetectionPending = state.aiDetectionPending,
                 filterReplies = state.filterReplies,
+                notificationsEnabled = state.notificationsEnabled,
                 onAdd = viewModel::addPhrase,
                 onRemove = viewModel::removePhrase,
                 onViewFiltered = viewModel::openFilteredModal,
                 onShareFilterPack = viewModel::shareFilterPack,
                 onToggleAiDetection = viewModel::toggleAiDetection,
                 onFilterRepliesChange = viewModel::setFilterReplies,
+                onNotificationsEnabledChange = viewModel::setNotificationsEnabled,
                 modifier = Modifier.imePadding(),
             )
         }

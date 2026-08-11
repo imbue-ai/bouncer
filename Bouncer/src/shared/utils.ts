@@ -8,6 +8,17 @@ import type { ChatMessage, PostContent, SiteId } from '../types';
 // Set effectively unlimited so anonymous users realistically never hit it.
 export const GUEST_FILTER_LIMIT = 1_000_000_000;
 
+// True when running inside the iOS/Android app webviews, where
+// ChromePolyfill.js (which marks itself via chrome._polyfilled) stands in for
+// the real extension APIs. The polyfill synthesizes onInstalled({reason:
+// 'install'}) on every page load, so anything that must happen once per real
+// install (e.g. the X Pixel install conversion) has to be gated on this.
+// Real browsers — Chrome, Safari, Firefox — never set the marker.
+export function isEmbeddedApp(): boolean {
+  return typeof chrome !== 'undefined' &&
+    !!(chrome as unknown as { _polyfilled?: boolean })._polyfilled;
+}
+
 // The phrase the sparkle indicator plants to turn AI detection on. Its
 // meaning is ours by construction, so background/ai-intent.ts engages
 // detection immediately when it appears — without (and regardless of) the

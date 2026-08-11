@@ -31,6 +31,9 @@ class BouncerApplication : Application() {
             return
         }
         appCheck = AppCheckBridge(this).also { it.configure() }
+        if (BuildConfig.DEBUG) {
+            com.imbue.bouncer.push.PushSubscriptionStore(this).dumpToLog(TAG)
+        }
         // Pay the GeckoRuntime cost here (still main thread, but during process
         // startup where there's no input-dispatch deadline) instead of on the
         // first composition. The splash screen covers the wall-clock gap.

@@ -21,7 +21,23 @@ data class BouncerUiState(
     val filterReplies: Boolean = true,
     val hasCompletedOnboarding: Boolean = false,
     val hasLoggedIn: Boolean = false,
+    // Set once we actually observe the /home timeline this session — the
+    // authoritative "logged in and browsing" signal. Unlike the persisted
+    // hasLoggedIn (which Auto Backup can restore stale), this can't be true on
+    // the login screen, so UI gated on it (the bouncer tooltip) won't misfire.
+    val reachedTimeline: Boolean = false,
     val hasSeenBouncerTooltip: Boolean = false,
     val popupActive: Boolean = false,
     val navBarVisible: Boolean = true,
+    // While true, an opaque "Turning on notifications…" cover hides the webview:
+    // the covered fallback displays x.com's push-settings page on the real surface
+    // to enable push, and we don't want that settings page to flash by.
+    val pushEnableCoverVisible: Boolean = false,
+    // True while an auto-enable attempt is running (off-screen render → click →
+    // subscribe). Drives KEEP_SCREEN_ON so the phone doesn't sleep mid-render
+    // (the off-screen render is throttled and takes ~30s), and gates the settings
+    // "Turn on notifications" button.
+    val pushEnableInProgress: Boolean = false,
+    // Whether x.com push is subscribed (drives the settings button's state).
+    val notificationsEnabled: Boolean = false,
 )
