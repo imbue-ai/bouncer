@@ -21,7 +21,7 @@ const ENV_KEYS = [
   'FIREBASE_PROJECT_ID', 'FIREBASE_STORAGE_BUCKET',
   'FIREBASE_MESSAGING_SENDER_ID', 'FIREBASE_APP_ID',
   'GOOGLE_CLIENT_ID', 'IMBUE_WS_URL',
-  'BOUNCER_SIGNIN_DOMAIN', 'TWITTER_EVENT_ID',
+  'BOUNCER_SIGNIN_DOMAIN',
 ];
 
 // Keys that must all be present for the Imbue backend (Firebase auth +

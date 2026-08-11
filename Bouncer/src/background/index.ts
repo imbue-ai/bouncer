@@ -836,19 +836,22 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
 
 // ==================== Extension lifecycle ====================
 
+// Post-install landing page: runs the Google Ads and X Ads install-conversion
+// snippets first-party on imbue.com — where they can read the _gcl_aw /
+// twclid ad-click cookies the ad landing page stores on that domain — then
+// forwards the user to x.com. The snippets can't run inside the extension
+// itself: the MV3 worker has no DOM and bans remote code, and content-script
+// fetches are subject to the host page's CSP. Open-source builds (no Imbue
+// backend) skip straight to x.com.
+const INSTALL_LANDING_URL = process.env.HAS_IMBUE_BACKEND === 'true'
+  ? 'https://imbue.com/product/bouncer/just_installed_redirect.html'
+  : null;
+
 // Check local model statuses on extension install/update
 chrome.runtime.onInstalled.addListener((details) => {
   if (details.reason === 'install') {
-    // Fresh install only (not updates): flag the X Pixel install conversion,
-    // then open x.com — the content script there consumes the flag and fires
-    // the pixel (see content/install-pixel.ts for why it can't fire from
-    // this service worker). Flag first so it's set before the tab reaches
-    // document_idle.
-    setStorage({ pendingInstallPixel: true })
-      .catch(err => console.error('[Background] Failed to set install pixel flag:', err))
-      .finally(() => {
-        chrome.tabs.create({ url: 'https://x.com' }).catch(err => console.error('[Background] Failed to open x.com on install:', err));
-      });
+    // Fresh install only (not updates): open the just-installed landing page.
+    chrome.tabs.create({ url: INSTALL_LANDING_URL ?? 'https://x.com' }).catch(err => console.error('[Background] Failed to open tab on install:', err));
   }
 
   if (details.reason === 'install' || details.reason === 'update') {

@@ -455,10 +455,6 @@ export type StorageSchema = SettingsBase & {
   googleAuthToken: string;
   openrouterCodeVerifier: string;
   lastSeenVersion: string;
-  // Set by the background on fresh install (never on update); consumed by the
-  // content script on x.com, which fires the X Pixel install conversion and
-  // clears it (see content/install-pixel.ts).
-  pendingInstallPixel: boolean;
 } & DescriptionKeys & PlatformEnabledKeys;
 
 // ==================== API Response Types ====================

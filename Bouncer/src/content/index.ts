@@ -36,7 +36,6 @@ import {
 } from './ui';
 
 import { formatPostForEvaluation, phraseAddNeedsReEvaluation } from '../shared/utils';
-import { maybeFireInstallPixel } from './install-pixel';
 
 (function() {
   'use strict';
@@ -985,11 +984,6 @@ import { maybeFireInstallPixel } from './install-pixel';
   chrome.runtime.sendMessage({ type: 'pageLoad' }).catch(() => {
     // Ignore errors if background isn't ready yet
   });
-
-  // First page load after a fresh install: report the install conversion.
-  // Deliberately outside init() — it should fire even when filtering is
-  // disabled for this platform.
-  maybeFireInstallPixel().catch(err => console.error('[Bouncer] Install pixel failed:', err));
 
   // Start when DOM is ready
   if (document.readyState === 'loading') {
