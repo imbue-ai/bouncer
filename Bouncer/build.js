@@ -151,6 +151,7 @@ const adapters = [
   { name: 'TwitterAdapter', path: path.join(__dirname, 'adapters/twitter/TwitterAdapter.ts') },
   { name: 'YouTubeAdapter', path: path.join(__dirname, 'adapters/youtube/YouTubeAdapter.ts') },
   { name: 'LinkedInAdapter', path: path.join(__dirname, 'adapters/linkedin/LinkedInAdapter.ts') },
+  { name: 'YouTubeKidsAdapter', path: path.join(__dirname, 'adapters/youtubekids/YouTubeKidsAdapter.ts') },
 ].filter((a) => fs.existsSync(a.path));
 
 // Copy LiteRT-LM's wasm loader + binaries into dist/litertlm-wasm/ so the

@@ -16,7 +16,7 @@ import platformsConfig from './platforms.config.json';
 /** Literal-tuple of every supported platform id. SiteId is derived from
  *  this, so adding a new platform automatically extends the union — there
  *  is no longer a separate type alias to keep in sync. */
-export const PLATFORM_IDS = ['twitter', 'youtube', 'linkedin'] as const;
+export const PLATFORM_IDS = ['twitter', 'youtube', 'linkedin', 'youtubekids'] as const;
 
 export type SiteId = typeof PLATFORM_IDS[number];
 
@@ -73,6 +73,11 @@ const PLATFORM_RUNTIME: Record<SiteId, PlatformRuntimeOnly> = {
     hostPattern: /(^|\.)linkedin\.com$/i,
     feedUrl: 'https://www.linkedin.com/feed/',
   },
+  youtubekids: {
+    displayName: 'YouTube Kids',
+    hostPattern: /(^|\.)youtubekids\.com$/i,
+    feedUrl: 'https://www.youtubekids.com/',
+  },
 };
 
 export type PlatformDef = PlatformBuildConfig & PlatformRuntimeOnly;
@@ -114,6 +119,12 @@ export function platformById(id: string): PlatformDef | undefined {
 /** Find a platform whose host pattern matches the given hostname. */
 export function platformFromHost(host: string): PlatformDef | undefined {
   return PLATFORMS.find(p => p.hostPattern.test(host));
+}
+
+/** Platforms whose posts are videos — they share the video-card style in the
+ *  filtered-posts panel and the `yt:<videoId>` classification cache keys. */
+export function isVideoPlatform(id: SiteId | undefined): boolean {
+  return id === 'youtube' || id === 'youtubekids';
 }
 
 // ---------------------------------------------------------------------------

@@ -191,6 +191,21 @@ describe('cacheKeyFor', () => {
     const key = cacheKeyFor('twitter', 'user: tweet text', ['http://a.jpg'], 'https://x.com/user/status/1');
     expect(key).toBe(generateCacheKey('user: tweet text', ['http://a.jpg']));
   });
+
+  it('keys YouTube Kids on the video id, sharing the cache with youtube.com', () => {
+    const kids = cacheKeyFor('youtubekids', 'Kids Title',
+      ['https://i.ytimg.com/vi/dQw4w9WgXcQ/mqdefault.jpg'], 'https://www.youtubekids.com/watch?v=dQw4w9WgXcQ');
+    expect(kids).toBe('yt:dQw4w9WgXcQ');
+    // Same video seen on youtube.com must hit the same cache entry.
+    const main = cacheKeyFor('youtube', 'Different Rendered Title', [],
+      'https://www.youtube.com/watch?v=dQw4w9WgXcQ');
+    expect(kids).toBe(main);
+  });
+
+  it('falls back to the text/image key for YouTube Kids when no video id is derivable', () => {
+    const key = cacheKeyFor('youtubekids', 'Kids Title', ['http://a.jpg'], null);
+    expect(key).toBe(generateCacheKey('Kids Title', ['http://a.jpg']));
+  });
 });
 
 // ==================== checkRateLimitError ====================

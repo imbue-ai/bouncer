@@ -104,17 +104,19 @@ export function youtubeVideoIdFromUrl(url: string | null | undefined): string | 
   }
 }
 
-// Cache key for a classified post. YouTube keys purely on the video id (via
-// `postUrl`) so the same video always hits cache regardless of title/thumbnail
-// churn or A/B variants; every other platform keys on text + image URLs.
-// Falls back to the text/image key when the video id can't be derived.
+// Cache key for a classified post. YouTube (and YouTube Kids — same video
+// corpus, same id space) keys purely on the video id (via `postUrl`) so the
+// same video always hits cache regardless of title/thumbnail churn, A/B
+// variants, or which of the two sites it appears on; every other platform
+// keys on text + image URLs. Falls back to the text/image key when the video
+// id can't be derived.
 export function cacheKeyFor(
   siteId: SiteId | undefined,
   post: string,
   imageUrls: string[] | null | undefined,
   postUrl: string | null | undefined,
 ): string {
-  if (siteId === 'youtube') {
+  if (siteId === 'youtube' || siteId === 'youtubekids') {
     const id = youtubeVideoIdFromUrl(postUrl);
     if (id) return 'yt:' + id;
   }

@@ -10,6 +10,7 @@ import {
 } from '../shared/share-encoding';
 import type { BackgroundToContentMessage, ContentUIDeps, FilteredPost, PostContent, LocalModelStatus } from '../types';
 import { getStorage, setStorage, getDescriptions, setDescriptions, aiIntentActiveForSite } from '../shared/storage';
+import { isVideoPlatform } from '../shared/platforms';
 import { getReleaseNote } from './release-notes';
 import { runIOSImportAnimation } from './ios';
 
@@ -1152,7 +1153,15 @@ function updateBannerFilterVisibility() {
   // widgets (e.g. the watch-page autoplay/next panel) above our box after
   // injection. Re-anchor so we stay at the top — needed for the sticky
   // positioning on the watch sidebar to land above YT's own header row.
+  // The `nextSibling` check makes the re-anchor a real no-op when the box
+  // already sits directly before the anchor node: `insertBefore` into the
+  // SAME position still fires mutation records, and this function runs from
+  // a body-wide MutationObserver — without the check, an anchor like
+  // YouTube Kids' `{ insertBefore: homeRenderer }` (box not first in its
+  // parent) re-inserts on every mutation and the observer feeds itself an
+  // infinite loop that pegs the CPU.
   if (expected.insertBefore && filterPhrasesContainer !== expected.insertBefore
+      && filterPhrasesContainer.nextSibling !== expected.insertBefore
       && filterPhrasesContainer.previousElementSibling) {
     expected.parent.insertBefore(filterPhrasesContainer, expected.insertBefore);
   }
@@ -2219,7 +2228,7 @@ export function toggleFilteredTab(active: boolean) {
         <button class="filtered-modal-close" aria-label="Close">
           <svg viewBox="0 0 24 24"><path d="M10.59 12L4.54 5.96l1.42-1.42L12 10.59l6.04-6.05 1.42 1.42L13.41 12l6.05 6.04-1.42 1.42L12 13.41l-6.04 6.05-1.42-1.42L10.59 12z"></path></svg>
         </button>
-        <span class="filtered-modal-title">${_deps.adapter.siteId === 'youtube' ? 'Filtered videos' : 'Filtered posts'}</span>
+        <span class="filtered-modal-title">${isVideoPlatform(_deps.adapter.siteId) ? 'Filtered videos' : 'Filtered posts'}</span>
       `));
 
       const content = document.createElement('div');
@@ -2453,7 +2462,7 @@ function buildYouTubeCard(post: FilteredPost): HTMLElement {
 }
 
 export function renderFilteredPostsView(container: Element) {
-  const noun = _deps.adapter.siteId === 'youtube' ? 'videos' : 'posts';
+  const noun = isVideoPlatform(_deps.adapter.siteId) ? 'videos' : 'posts';
   if (filteredPosts.length === 0) {
     container.replaceChildren(parseHTML(`
       <div class="filtered-posts-container">
@@ -2470,10 +2479,10 @@ export function renderFilteredPostsView(container: Element) {
   container.replaceChildren(parseHTML('<div class="slop-posts-container"></div>'));
   const postsContainer = container.querySelector('.slop-posts-container')!;
 
-  const isYouTube = _deps.adapter.siteId === 'youtube';
+  const isYouTube = isVideoPlatform(_deps.adapter.siteId);
 
-  // Render posts in reverse order (newest first); YouTube uses video lockups,
-  // every other platform uses the tweet-style card.
+  // Render posts in reverse order (newest first); YouTube-family platforms
+  // use video lockups, every other platform uses the tweet-style card.
   [...filteredPosts].reverse().forEach((post) => {
     postsContainer.appendChild(isYouTube ? buildYouTubeCard(post) : buildTwitterCard(post));
   });
@@ -2641,7 +2650,7 @@ function buildTwitterCard(post: FilteredPost): HTMLElement {
     }
     // YouTube's `handle` (e.g. "/@channel") and `timeText` (e.g. "1.2M views • 3 months ago")
     // aren't meaningful identity in the filtered card the way Twitter's `@handle` / "2h" are.
-    if ((postContent.handle || postContent.timeText) && _deps.adapter.siteId !== 'youtube') {
+    if ((postContent.handle || postContent.timeText) && !isVideoPlatform(_deps.adapter.siteId)) {
       const handleSpan = document.createElement('span');
       handleSpan.className = 'slop-post-handle';
       const parts = [postContent.handle, postContent.timeText].filter(Boolean);

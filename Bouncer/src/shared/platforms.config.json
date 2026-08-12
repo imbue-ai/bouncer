@@ -22,5 +22,13 @@
     "adapterScript": "dist/LinkedInAdapter.js",
     "cssPath": "adapters/linkedin/linkedin.css",
     "extraWebAccessible": []
+  },
+  {
+    "id": "youtubekids",
+    "targets": ["chrome", "safari"],
+    "manifestHost": "https://www.youtubekids.com/*",
+    "adapterScript": "dist/YouTubeKidsAdapter.js",
+    "cssPath": "adapters/youtubekids/youtubekids.css",
+    "extraWebAccessible": []
   }
 ]

@@ -2,7 +2,7 @@
 
 import type { IOSDeps, DescriptionKey, SiteId } from '../types';
 import { clampThreshold, clampImageThreshold, clampReplyThreshold, getDescriptions, setDescriptions, getStorage, aiIntentActiveForSite } from '../shared/storage';
-import { platformById, descriptionsStorageKey } from '../shared/platforms';
+import { platformById, descriptionsStorageKey, isVideoPlatform } from '../shared/platforms';
 import { parseHTML } from '../shared/utils';
 import { shareFilterPackForIOS, toggleAiDetectionViaPhrases } from './ui';
 
@@ -258,7 +258,7 @@ export function showIOSFilteredModal() {
     backdrop.classList.add('filtered-view-container--linkedin');
   }
   // Title noun matches the desktop modal's logic in toggleFilteredTab().
-  const titleNoun = _deps.adapter.siteId === 'youtube' ? 'Filtered videos' : 'Filtered posts';
+  const titleNoun = isVideoPlatform(_deps.adapter.siteId) ? 'Filtered videos' : 'Filtered posts';
   backdrop.replaceChildren(parseHTML(`
     <div class="ff-ios-filtered-modal">
       <div class="ff-ios-filtered-modal-header">
