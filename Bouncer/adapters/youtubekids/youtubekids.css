@@ -1,0 +1,305 @@
+/* YouTube Kids-specific styles for Bouncer.
+ *
+ * Two surfaces live here:
+ *   1. The banner filter box — `.filter-phrases-banner--youtubekids`,
+ *      anchored directly above `ytk-kids-home-screen-renderer` on the home
+ *      screen. Same shared Bouncer markup as every platform; these rules
+ *      restyle it to feel native to YTK's chunky rounded look.
+ *   2. The filtered-videos panel cards — `buildYouTubeCard` markup (shared
+ *      with youtube.com), re-scoped to `body.site-youtubekids` because each
+ *      platform only loads its own stylesheet.
+ *
+ * YouTube Kids web is light-only, so there are no `html[dark]` variants —
+ * the shared `.dark-mode` modal classes are covered anyway for safety. */
+
+/* When the YouTube Kids platform toggle is off, the content script's init
+ * flow adds `body.bouncer-disabled` — CSS hides any chrome that slips
+ * through. */
+body.bouncer-disabled .filter-phrases-banner,
+body.bouncer-disabled .ff-why-annoying-btn {
+  display: none !important;
+}
+
+/* The left-edge "processing" bar (grey pulse while a post is classified) is
+ * a Twitter affordance — on a rounded kid tile it reads as broken UI.
+ * Suppress it; tiles still dim while pending via the shared
+ * [data-ff-pending] rule. */
+body.site-youtubekids .post-verification-bar {
+  display: none;
+}
+
+/* Belt and braces: `hidePost` sets `display: none` inline, but Polymer
+ * re-binding a recycled tile can reset inline styles. The data attribute
+ * survives, so this rule keeps the tile gone. */
+ytk-compact-video-renderer[data-filtered-by-extension="true"] {
+  display: none !important;
+}
+
+/* ===== Share button — hide (Twitter-only feature, matches YT) ===== */
+.filter-phrases-banner--youtubekids .filter-pack-share-btn {
+  display: none !important;
+}
+
+/* ===== Banner filter box above the home grid ===== */
+
+/* Full-width slot above the home screen; the card inside is centered and
+ * capped so it doesn't stretch across YTK's very wide grid. */
+.filter-phrases-banner.filter-phrases-banner--youtubekids {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 12px 24px 4px;
+  font-family: "YouTube Sans", "Roboto", "Arial", sans-serif;
+  box-sizing: border-box;
+}
+
+.filter-phrases-banner--youtubekids .filter-phrases-container {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 12px 20px;
+  background-color: #ffffff !important;
+  /* Brand orange outline — matches the Twitter panel. Color comes from the
+   * `--bouncer-brand-rgb` variable defined in content.css's :root. */
+  border: var(--green-border-width) solid rgb(var(--bouncer-brand-rgb)) !important;
+  /* Extra-round corners to match YTK's bubbly tiles. */
+  border-radius: 20px !important;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Title row: bold "Bouncer" header — the orange border carries the brand. */
+.filter-phrases-banner--youtubekids .filter-phrases-title-row {
+  padding-bottom: 2px;
+}
+
+.filter-phrases-banner--youtubekids .filter-phrases-box-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 0;
+  font-family: "YouTube Sans", "Roboto", "Arial", sans-serif;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.1px;
+  color: #0f0f0f;
+  text-transform: none;
+}
+
+/* Header row ("Filter out X, Y and ___"). The banner is wide, so label,
+ * tags, and input share one row and wrap naturally. */
+.filter-phrases-banner--youtubekids .filter-phrases-header {
+  column-gap: 4px;
+  row-gap: 4px;
+}
+
+.filter-phrases-banner--youtubekids .filter-phrases-label,
+.filter-phrases-banner--youtubekids .filter-phrases-and {
+  font-size: 14px;
+  font-weight: 400;
+  color: #0f0f0f;
+}
+
+/* Phrase tags — bolder than body text so they read as user content. */
+.filter-phrases-banner--youtubekids .filter-phrase-inline {
+  font-size: 14px;
+  font-weight: 600;
+  color: #606060;
+}
+
+.filter-phrases-banner--youtubekids .filter-phrase-inline:hover {
+  color: #cc0000;
+}
+
+.filter-phrases-banner--youtubekids .filter-phrase-separator {
+  font-size: 14px;
+  color: #0f0f0f;
+}
+
+/* Input — flat underline, focused state uses the Bouncer brand color. */
+.filter-phrases-banner--youtubekids .filter-phrases-container .filter-phrases-input {
+  font-size: 14px;
+  font-weight: 600;
+  color: #0f0f0f;
+  border-bottom: 2px solid rgba(0, 0, 0, 0.2) !important;
+  padding: 0 2px 2px !important;
+}
+
+.filter-phrases-banner--youtubekids .filter-phrases-container .filter-phrases-input:focus {
+  border-bottom-color: rgb(var(--bouncer-brand-rgb)) !important;
+}
+
+/* Nudge the cycling placeholder up 2px so its baseline aligns with the
+ * input's typed text (same metric quirk as youtube.com). */
+.filter-phrases-banner--youtubekids .filter-placeholder-cycle {
+  top: -2px;
+}
+
+/* Actions row — "View filtered" pill + icon buttons. */
+.filter-phrases-banner--youtubekids .filter-phrases-actions {
+  margin-top: 4px;
+}
+
+.filter-phrases-banner--youtubekids .filter-phrases-container .filtered-toggle-btn {
+  padding: 6px 14px;
+  background: rgba(0, 0, 0, 0.05);
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 18px;
+  color: #0f0f0f;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.filter-phrases-banner--youtubekids .filtered-toggle-btn:hover {
+  background: rgba(0, 0, 0, 0.08);
+  border-color: rgba(0, 0, 0, 0.15);
+}
+
+.filter-phrases-banner--youtubekids .filtered-toggle-count {
+  color: inherit;
+}
+
+/* Settings icon button — circular, secondary text color. */
+.filter-phrases-banner--youtubekids .filter-phrases-container .filter-settings-btn {
+  color: #606060;
+}
+
+.filter-phrases-banner--youtubekids .filter-phrases-container .filter-settings-btn:hover {
+  background: rgba(0, 0, 0, 0.05);
+  color: #0f0f0f;
+}
+
+/* AI-text toggle row — secondary text, tighter spacing. */
+.filter-phrases-banner--youtubekids .filter-ai-text-toggle {
+  margin-top: 0;
+  font-size: 12px;
+  color: #606060;
+}
+
+/* Sign-in prompt — neutral soft button; the card's orange border already
+ * carries the brand. */
+.filter-phrases-banner--youtubekids .google-signin-btn {
+  background: #ffffff !important;
+  border: 1px solid rgba(0, 0, 0, 0.12) !important;
+  color: #0f0f0f !important;
+  font-weight: 500;
+}
+
+.filter-phrases-banner--youtubekids .google-signin-btn-label {
+  white-space: nowrap;
+}
+
+.filter-phrases-banner--youtubekids .google-signin-btn:hover {
+  background: #f2f2f2 !important;
+  border-color: rgba(0, 0, 0, 0.2) !important;
+}
+
+/* ===== Filtered-videos panel cards =====
+ * The filtered panel renders video lockups (thumbnail-first) via
+ * `buildYouTubeCard` — same markup as youtube.com, re-scoped here. Light
+ * palette only; `.dark-mode` variants kept for the shared modal classes in
+ * case the theme detector ever reports dark. */
+
+body.site-youtubekids .slop-posts-container {
+  gap: 4px;
+  padding: 8px 0;
+}
+
+body.site-youtubekids .yt-card {
+  border-bottom: none;
+}
+
+body.site-youtubekids .yt-card-inner {
+  padding: 8px 16px 12px;
+}
+
+/* Thumbnail: 16:9, extra-rounded like YTK's own tiles. */
+body.site-youtubekids .yt-card-thumb {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border-radius: 16px;
+  background: rgba(0, 0, 0, 0.1);
+}
+
+body.site-youtubekids .dark-mode .yt-card-thumb {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+body.site-youtubekids .yt-card-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* Category tag sits in a right-aligned row just above the thumbnail. */
+body.site-youtubekids .yt-card-tag-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 8px;
+}
+
+body.site-youtubekids .yt-card-tag {
+  margin-left: 0;
+}
+
+/* Info row: title column. YTK tiles carry no channel byline or avatar, so
+ * the avatar circle usually renders empty — hide it and let the title span
+ * the row. */
+body.site-youtubekids .yt-card-info {
+  display: flex;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+body.site-youtubekids .yt-card-avatar {
+  display: none;
+}
+
+body.site-youtubekids .yt-card-text {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Title: up to two lines, then ellipsis. */
+body.site-youtubekids .yt-card-title {
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.3;
+  margin: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  color: #0f0f0f;
+}
+
+body.site-youtubekids .yt-card-channel,
+body.site-youtubekids .yt-card-meta {
+  font-size: 12px;
+  line-height: 1.3;
+  margin-top: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #606060;
+}
+
+body.site-youtubekids .yt-card-meta {
+  margin-top: 2px;
+}
+
+body.site-youtubekids .dark-mode .yt-card-title {
+  color: #f1f1f1;
+}
+
+body.site-youtubekids .dark-mode .yt-card-channel,
+body.site-youtubekids .dark-mode .yt-card-meta {
+  color: #aaa;
+}
+
+body.site-youtubekids .yt-card-reasoning {
+  margin-top: 10px;
+}
