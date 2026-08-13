@@ -3199,6 +3199,8 @@ function detectorLabel(name: string): string {
     case 'filter': return 'Filter';
     case 'aiText': return 'AI text';
     case 'aiImage': return 'AI image';
+    case 'youtubeAudio': return 'Audio';
+    case 'youtubeTranscript': return 'Transcript';
     default: return name;
   }
 }

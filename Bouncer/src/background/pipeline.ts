@@ -3,12 +3,12 @@
 import {
   parseAPIResponse, checkRateLimitError, checkApiError, checkAuthenticationError,
   RATE_LIMIT_TYPE_CONFIG, API_ERROR_TYPE_CONFIG, GUEST_FILTER_LIMIT,
-  AI_DETECTION_SEED_PHRASE,
+  AI_DETECTION_SEED_PHRASE, youtubeVideoIdFromUrl,
 } from '../shared/utils';
 import { isAnonymousUser } from './auth';
 import { PREDEFINED_MODELS, API_DISPLAY_NAMES, DEFAULT_MODEL } from '../shared/models';
 import { buildAPIMessages, parseTableYesnoResponse } from '../shared/prompts';
-import { callDirectAPI, callAnthropicAPI, callImbueAPI, callImbueAiTextDetection, callImbueAiImageDetection } from './providers';
+import { callDirectAPI, callAnthropicAPI, callImbueAPI, callImbueAiTextDetection, callImbueAiImageDetection, callImbueYouTubeAudioFilter, callImbueYouTubeTranscriptFilter } from './providers';
 import { runDetectors, type Detector, type DetectorResult } from './detectors';
 import { callLocalInference, localEngine } from './local-model';
 import { iosLocalClassify, iosLocalGenerate, iosLocalAiTextDetect } from './ios-local-bridge';
@@ -107,14 +107,42 @@ function computeAiImageSkipReason(
   return null;
 }
 
-// The full per-post plan. Always three entries so the popup is consistent. A
-// detector that can't run gets a skipReason instead of a willRun=true flag.
+// Only YouTube-family surfaces carry a per-tile videoId we can hand to the
+// audio/transcript worker. `youtubeVideoId` returns that id (or null) so both
+// the tab plan and the detector list gate on the same check.
+function youtubeVideoId(siteId: SiteId | undefined, postUrl: string | null): string | null {
+  if (siteId !== 'youtube' && siteId !== 'youtubekids') return null;
+  return youtubeVideoIdFromUrl(postUrl);
+}
+
+// Why the YouTube audio/transcript detector won't run for a given post (or null
+// if it will). Both modes reuse the user's filter phrases as their categories,
+// so they're gated on the same filter-enabled check — an extra signal for the
+// topics the user already filters, not a separate control.
+function computeYouTubeSkipReason(
+  filterEnabled: boolean,
+  videoId: string | null,
+): string | null {
+  if (process.env.HAS_IMBUE_BACKEND !== 'true') return 'YouTube classification requires Imbue backend';
+  if (!filterEnabled) return 'No filter phrases configured';
+  if (!videoId) return 'No video id for this post';
+  return null;
+}
+
+// The full per-post plan. Always at least three entries so the popup is
+// consistent; a fourth YouTube entry (audio OR transcript, per the user's
+// youtubeClassifyMode) is appended only on YouTube-family surfaces with a mode
+// other than 'off'. A detector that can't run gets a skipReason instead of a
+// willRun=true flag.
 function buildTabPlan(
   filterEnabled: boolean,
   aiSkipReason: string | null,
   aiImageSkipReason: string | null,
+  youtubeApplicable: boolean,
+  youtubeSkipReason: string | null,
+  youtubeDetectorName: string,
 ): TabPlanEntry[] {
-  return [
+  const plan: TabPlanEntry[] = [
     {
       name: 'filter',
       willRun: filterEnabled,
@@ -131,6 +159,14 @@ function buildTabPlan(
       skipReason: aiImageSkipReason ?? undefined,
     },
   ];
+  if (youtubeApplicable) {
+    plan.push({
+      name: youtubeDetectorName,
+      willRun: !youtubeSkipReason,
+      skipReason: youtubeSkipReason ?? undefined,
+    });
+  }
+  return plan;
 }
 
 // Send the initial evaluationStarted + per-skipped detectorResponse messages
@@ -224,6 +260,10 @@ function buildLiveDetectors(args: {
   aiThreshold: number;
   aiImageThreshold: number;
   useIosLocalAiText: boolean;
+  youtubeEnabled: boolean;
+  youtubeMode: 'off' | 'transcript' | 'audio';
+  youtubeVideoId: string | null;
+  youtubeCategories: string[];
 }): Detector[] {
   const detectors: Detector[] = [];
   if (args.filterEnabled) {
@@ -277,6 +317,33 @@ function buildLiveDetectors(args: {
             : `Images don't look like AI${detail}`,
           category: isAi ? 'Looks like AI image' : null,
           rawResponse: null,
+        };
+      })(),
+    });
+  }
+  if (args.youtubeEnabled && args.youtubeVideoId && args.youtubeMode !== 'off') {
+    const videoId = args.youtubeVideoId;
+    const isAudio = args.youtubeMode === 'audio';
+    detectors.push({
+      name: isAudio ? 'youtubeAudio' : 'youtubeTranscript',
+      // The verdict cache makes repeat views instant, but a first-seen video
+      // pays the full fetch + classification. Audio (fetch + transcode +
+      // map-reduce-over-time) is the slower of the two; give both a long soft
+      // timeout so a slow classification doesn't wedge the race (a hide can
+      // still land late and remove the tile on arrival) while the other
+      // detectors resolve the keep/hide decision meanwhile.
+      timeoutMs: isAudio ? 60000 : 30000,
+      promise: (async (): Promise<DetectorResult> => {
+        const resp = isAudio
+          ? await callImbueYouTubeAudioFilter(videoId, args.youtubeCategories)
+          : await callImbueYouTubeTranscriptFilter(videoId, args.youtubeCategories);
+        const label = isAudio ? 'Audio' : 'Transcript';
+        return {
+          shouldHide: !!resp.shouldHide,
+          reasoning: resp.reasoning
+            || (resp.shouldHide ? `${label} matches a filter topic` : `${label} doesn't match a filter topic`),
+          category: resp.category ?? null,
+          rawResponse: resp.rawResponse ?? null,
         };
       })(),
     });
@@ -502,7 +569,7 @@ export async function getSettings(siteId?: SiteId): Promise<Settings> {
     'customModels', 'predefinedModelKwargs', 'aiTextDetectionThreshold',
     'aiTextReplyDetectionThreshold', 'aiImageDetectionThreshold',
     'aiFilterIntent',
-    'filterReplies', 'youtubeShowPlaceholder',
+    'filterReplies', 'youtubeShowPlaceholder', 'youtubeClassifyMode',
     ...platformEnabledKeys,
   ] as const;
   const [data, descriptions] = await Promise.all([
@@ -556,7 +623,12 @@ export async function getSettings(siteId?: SiteId): Promise<Settings> {
     aiFilterIntentActive: aiIntentActiveForSite(data, descriptions),
     filterReplies: data.filterReplies !== false,
     platformEnabled,
-    youtubeShowPlaceholder: data.youtubeShowPlaceholder === true
+    youtubeShowPlaceholder: data.youtubeShowPlaceholder === true,
+    // Default 'transcript' — the lighter caption-based path. 'audio' and 'off'
+    // are opt-in via the popup. Anything unrecognized falls back to the default.
+    youtubeClassifyMode: (data.youtubeClassifyMode === 'off' || data.youtubeClassifyMode === 'audio')
+      ? data.youtubeClassifyMode
+      : 'transcript'
   };
 }
 
@@ -1009,7 +1081,23 @@ async function processBatch(): Promise<void> {
     const aiImageSkipReason = computeAiImageSkipReason(aiImageToggleOn, imageUrls);
     const aiImageEnabled = !aiImageSkipReason;
 
-    const tabPlan = buildTabPlan(filterEnabled, aiSkipReason, aiImageSkipReason);
+    // YouTube audio/transcript: an extra detector on YouTube-family surfaces
+    // that classifies the video's soundtrack against the user's filter phrases.
+    // The user's youtubeClassifyMode picks the path: 'transcript' (default,
+    // light — caption text, one inference) or 'audio' (heavier — soundtrack
+    // map-reduce). Reuses effectiveDescriptions as categories, so it only runs
+    // when filtering is on (imbue path only). 'off' runs neither.
+    const youtubeMode = settings.youtubeClassifyMode;
+    const youtubeVideo = youtubeVideoId(item.siteId, item.postUrl);
+    const youtubeApplicable = (item.siteId === 'youtube' || item.siteId === 'youtubekids')
+      && process.env.HAS_IMBUE_BACKEND === 'true'
+      && settings.selectedModel === 'imbue'
+      && youtubeMode !== 'off';
+    const youtubeSkipReason = computeYouTubeSkipReason(filterEnabled, youtubeVideo);
+    const youtubeEnabled = youtubeApplicable && !youtubeSkipReason;
+    const youtubeDetectorName = youtubeMode === 'audio' ? 'youtubeAudio' : 'youtubeTranscript';
+
+    const tabPlan = buildTabPlan(filterEnabled, aiSkipReason, aiImageSkipReason, youtubeApplicable, youtubeSkipReason, youtubeDetectorName);
     const snapshots = dispatchInitialTabs(batchTabId, item.evaluationId, tabPlan);
 
     const detectors = buildLiveDetectors({
@@ -1026,6 +1114,10 @@ async function processBatch(): Promise<void> {
       // trained on E4B last-token logits — E2B shares the vocab dim so it
       // would run but produce garbage confidences. Route only E4B locally.
       useIosLocalAiText: apiConfig.apiName === 'iosLocal',
+      youtubeEnabled,
+      youtubeMode,
+      youtubeVideoId: youtubeVideo,
+      youtubeCategories: settings.effectiveDescriptions || [],
     });
 
     if (detectors.length === 0) {
@@ -1054,11 +1146,21 @@ async function processBatch(): Promise<void> {
       detectorStates: buildDetectorStates(tabPlan, snapshots),
     };
 
-    // Update cache
-    evaluationCache.set(cacheKey, evalResult);
-    if (evaluationCache.size > CACHE_SIZE) {
-      const firstKey = evaluationCache.keys().next().value;
-      if (firstKey !== undefined) evaluationCache.delete(firstKey);
+    // Update cache — but don't persist a premature "keep" when the YouTube
+    // audio/transcript detector was supposed to run and didn't produce a verdict
+    // (timed out / errored). Caching that keep would stick, and the tile would
+    // never be re-queried, so a late HIDE would be lost forever. Skipping the
+    // write re-evaluates the tile next scroll; by then the backend has finished
+    // and cached the verdict, so it returns fast + definitive. A HIDE result is
+    // always cacheable (it's already a final decision).
+    const youtubeSnap = snapshots.get(youtubeDetectorName);
+    const youtubeSettled = !youtubeEnabled || youtubeSnap?.status === 'success';
+    if (result.shouldHide || youtubeSettled) {
+      evaluationCache.set(cacheKey, evalResult);
+      if (evaluationCache.size > CACHE_SIZE) {
+        const firstKey = evaluationCache.keys().next().value;
+        if (firstKey !== undefined) evaluationCache.delete(firstKey);
+      }
     }
 
     // Update stats

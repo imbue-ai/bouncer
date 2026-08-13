@@ -207,6 +207,12 @@ interface SettingsBase {
   // as a "Filtered by Bouncer" placeholder card (see youtube.css). Default
   // false — remove the card outright, matching Twitter's behavior.
   youtubeShowPlaceholder: boolean;
+  // How the video's audio is classified against the filter phrases on
+  // YouTube-family surfaces. 'transcript' (default) fetches the caption track
+  // and classifies the text — one cheap inference per video. 'audio' fetches
+  // the soundtrack and map-reduces it through the audio model — heavier, but
+  // hears non-speech (music/SFX/tone). 'off' disables audio classification.
+  youtubeClassifyMode: 'off' | 'transcript' | 'audio';
 }
 
 export interface Settings extends SettingsBase {

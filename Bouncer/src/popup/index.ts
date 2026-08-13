@@ -16,13 +16,37 @@ const platformToggleId = (id: SiteId) => `enable${id.charAt(0).toUpperCase()}${i
 // YouTube's "Show placeholder", etc.). Add an entry here when a platform
 // needs its own row-nested toggle; LinkedIn-style platforms (no sub-row)
 // just return ''.
+// Coerce a stored/DOM value to a valid mode, defaulting to the light path.
+function normalizeYoutubeClassifyMode(v: unknown): 'off' | 'transcript' | 'audio' {
+  return v === 'off' || v === 'audio' ? v : 'transcript';
+}
+
+// The audio/transcript classification-mode picker. Shown on every YouTube-family
+// row; the setting is global, so all instances share the `youtube-classify-mode`
+// class (NOT an id — ids would collide across the youtube + youtubekids rows)
+// and are kept in sync by the change/onChanged handlers.
+function youtubeClassifyModeHTML(): string {
+  return '<label class="checkbox-label">'
+    + '<span>Classify video audio via</span>'
+    + '<select class="youtube-classify-mode">'
+    + '<option value="transcript">Transcript (light)</option>'
+    + '<option value="audio">Audio (thorough)</option>'
+    + '<option value="off">Off</option>'
+    + '</select>'
+    + '</label>';
+}
+
 function platformSubContentHTML(id: SiteId): string {
   switch (id) {
     case 'youtube':
       return '<div class="api-provider-content"><label class="checkbox-label">'
         + '<input type="checkbox" id="enableYoutubePlaceholder">'
         + '<span>Show "Filtered by Bouncer" placeholder instead of removing</span>'
-        + '</label></div>';
+        + '</label>'
+        + youtubeClassifyModeHTML()
+        + '</div>';
+    case 'youtubekids':
+      return '<div class="api-provider-content">' + youtubeClassifyModeHTML() + '</div>';
     default:
       return '';
   }
@@ -329,6 +353,11 @@ function setupStorageListener() {
       const el = document.getElementById('enableYoutubePlaceholder') as HTMLInputElement | null;
       if (el && el.checked !== checked) el.checked = checked;
     }
+    if (areaName === 'local' && changes.youtubeClassifyMode) {
+      const mode = normalizeYoutubeClassifyMode(changes.youtubeClassifyMode.newValue);
+      document.querySelectorAll<HTMLSelectElement>('.youtube-classify-mode')
+        .forEach(sel => { if (sel.value !== mode) sel.value = mode; });
+    }
     if (areaName === 'local' && changes.aiTextDetectionThreshold) {
       const v = clampThreshold(changes.aiTextDetectionThreshold.newValue);
       const thresholdEl = document.getElementById('aiTextThreshold') as HTMLInputElement | null;
@@ -381,6 +410,7 @@ async function loadSettings() {
     'pendingLocalModelSelection',
     'filterReplies',
     'youtubeShowPlaceholder',
+    'youtubeClassifyMode',
     // Per-platform master-switch keys come from the registry.
     ...PLATFORMS.map(p => enabledStorageKey(p.id)),
   ]);
@@ -422,6 +452,12 @@ async function loadSettings() {
   // behavior unless the user opts in).
   const ytPlaceholderEl = document.getElementById('enableYoutubePlaceholder') as HTMLInputElement | null;
   if (ytPlaceholderEl) ytPlaceholderEl.checked = data.youtubeShowPlaceholder === true;
+
+  // YouTube audio-classification mode (transcript by default). Hydrate every
+  // instance — one per YouTube-family row, all bound to the one global setting.
+  const ytMode = normalizeYoutubeClassifyMode(data.youtubeClassifyMode);
+  document.querySelectorAll<HTMLSelectElement>('.youtube-classify-mode')
+    .forEach(sel => { sel.value = ytMode; });
 
   // Passive AI-detection indicator + threshold sliders. On/off state is
   // driven entirely by the inferred AI-removal intent (natural language) —
@@ -807,6 +843,15 @@ function setupEventListeners() {
     const checked = (e.target as HTMLInputElement).checked;
     await setStorage({ youtubeShowPlaceholder: checked });
   })().catch(err => console.error('[Popup] enableYoutubePlaceholder change failed:', err)); });
+
+  // YouTube audio-classification mode. All row instances write the one global
+  // setting; the storage.onChanged handler keeps the other instances in sync.
+  document.querySelectorAll<HTMLSelectElement>('.youtube-classify-mode').forEach(sel => {
+    sel.addEventListener('change', (e) => { (async () => {
+      const mode = normalizeYoutubeClassifyMode((e.target as HTMLSelectElement).value);
+      await setStorage({ youtubeClassifyMode: mode });
+    })().catch(err => console.error('[Popup] youtubeClassifyMode change failed:', err)); });
+  });
 
   // AI-text-detection threshold (range slider). Live-update the percentage
   // display on `input` (every drag tick); persist only on `change` (release)

@@ -319,6 +319,45 @@ export async function callImbueAiImageDetection(
   }
 }
 
+// Call the Imbue youtubeAudioFilter worker via the same WebSocket gateway.
+// Unlike the other detectors this one sends only a YouTube videoId (not the
+// media): the GPU worker fetches + transcodes the video's audio off YouTube
+// and runs it through the Gemma audio model, returning the standard
+// tweetFilter parse (shouldHide / reasoning / category). The whole fetch +
+// transcode + map-reduce-over-time audio inference is slow relative to text, so
+// allow a long timeout — but the server verdict cache means each unique video
+// only pays it once. A timeout on a still-running non-matching video is
+// harmless: the tile stays visible (= "keep"), and the backend's verdict lands
+// in cache for the next encounter.
+export async function callImbueYouTubeAudioFilter(
+  videoId: string,
+  categories: string[],
+): Promise<ImbueFilterResponse> {
+  const message: Record<string, unknown> = {
+    action: 'youtubeAudioFilter',
+    tweetData: { videoId },
+    categories,
+    version: chrome.runtime.getManifest().version,
+  };
+  return imbueWebSocket.send(message, { timeout: 60000 }) as unknown as Promise<ImbueFilterResponse>;
+}
+
+// The lighter sibling of callImbueYouTubeAudioFilter: the worker fetches the
+// video's caption track and classifies the transcript TEXT (one inference)
+// rather than the audio. Same videoId-in, standard tweetFilter parse out.
+export async function callImbueYouTubeTranscriptFilter(
+  videoId: string,
+  categories: string[],
+): Promise<ImbueFilterResponse> {
+  const message: Record<string, unknown> = {
+    action: 'youtubeTranscriptFilter',
+    tweetData: { videoId },
+    categories,
+    version: chrome.runtime.getManifest().version,
+  };
+  return imbueWebSocket.send(message, { timeout: 30000 }) as unknown as Promise<ImbueFilterResponse>;
+}
+
 interface FeedbackMessage {
   action: string;
   tweetData: { text: string; imageUrls: string[] };
