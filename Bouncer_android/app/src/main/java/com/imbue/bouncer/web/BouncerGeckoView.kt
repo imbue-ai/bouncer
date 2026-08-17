@@ -25,6 +25,7 @@ import org.mozilla.geckoview.GeckoRuntimeSettings
 import org.mozilla.geckoview.GeckoSession
 import org.mozilla.geckoview.GeckoView
 import org.mozilla.geckoview.WebExtension
+import org.mozilla.geckoview.WebRequestError
 
 object BouncerGeckoView {
     private const val TAG = "FF/Gecko"
@@ -610,6 +611,21 @@ object BouncerGeckoView {
                 return GeckoResult.allow()
             }
 
+            // A failed top-level load renders NOTHING (the default delegate
+            // returns no error page), leaving a blank white view that looks
+            // like a frozen app — the exact symptom Play review rejected v11
+            // for. Surface it to the VM, which shows a native error view and
+            // auto-retries when connectivity returns.
+            override fun onLoadError(
+                session: GeckoSession,
+                uri: String?,
+                error: WebRequestError,
+            ): GeckoResult<String>? {
+                Log.w(TAG, "onLoadError uri=$uri category=${error.category} code=${error.code}")
+                if (isActiveSession(session)) vm.onLoadError(uri)
+                return null
+            }
+
             override fun onNewSession(
                 session: GeckoSession,
                 uri: String,
@@ -668,7 +684,7 @@ object BouncerGeckoView {
             }
             override fun onPageStop(session: GeckoSession, success: Boolean) {
                 Log.i(TAG, "stop: success=$success")
-                if (isActiveSession(session)) vm.onPageStop()
+                if (isActiveSession(session)) vm.onPageStop(success)
             }
             override fun onSessionStateChange(
                 session: GeckoSession,
