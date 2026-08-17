@@ -3,6 +3,9 @@ package com.imbue.bouncer.state
 import android.app.Application
 import android.content.Context
 import android.content.SharedPreferences
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.net.Uri
 import android.util.Log
 import android.widget.Toast
@@ -481,6 +484,77 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
             url.contains("/logout") ||
             url.contains("/account/access")
 
+    // ----- Load-failure handling (offline launch etc.) -----
+    //
+    // GeckoView shows NO error page when a top-level load fails (the default
+    // NavigationDelegate.onLoadError returns null), so a launch without
+    // network leaves a permanently blank white view — which a user (or a Play
+    // reviewer) reads as a frozen app. Track the failure, surface a native
+    // error view, and auto-retry as soon as a usable network appears.
+    private var failedUrl: String? = null
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
+
+    fun onLoadError(uri: String?) {
+        failedUrl = uri
+        _state.update { it.copy(loadFailed = true) }
+        watchForConnectivity()
+    }
+
+    fun retryLoad() {
+        _state.update { it.copy(loadFailed = false) }
+        session?.loadUri(failedUrl ?: currentUrlOrInitial())
+    }
+
+    // Retry when connectivity comes back. onAvailable fires as soon as a
+    // network connects (also immediately on registration if one exists);
+    // VALIDATED in onCapabilitiesChanged is the stronger "internet actually
+    // works" signal that arrives once the connectivity check passes. Retrying
+    // on both is safe: retryLoad clears loadFailed, so the second event
+    // no-ops unless the first retry already failed again — in which case the
+    // extra attempt is exactly what we want.
+    private fun watchForConnectivity() {
+        if (networkCallback != null) return
+        val cm = getApplication<Application>()
+            .getSystemService(ConnectivityManager::class.java) ?: return
+        val cb = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                retryFailedLoadOnMain()
+            }
+            override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
+                if (caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) {
+                    retryFailedLoadOnMain()
+                }
+            }
+        }
+        runCatching { cm.registerDefaultNetworkCallback(cb) }
+            .onSuccess { networkCallback = cb }
+            .onFailure { Log.w(tag, "registerDefaultNetworkCallback failed", it) }
+    }
+
+    // NetworkCallback methods run on a ConnectivityManager binder thread;
+    // session/loadUri and state updates belong on Main.
+    private fun retryFailedLoadOnMain() {
+        viewModelScope.launch {
+            if (_state.value.loadFailed) {
+                Log.i(tag, "network available; retrying failed load")
+                retryLoad()
+            }
+        }
+    }
+
+    private fun stopWatchingConnectivity() {
+        val cb = networkCallback ?: return
+        networkCallback = null
+        val cm = getApplication<Application>()
+            .getSystemService(ConnectivityManager::class.java) ?: return
+        runCatching { cm.unregisterNetworkCallback(cb) }
+    }
+
+    override fun onCleared() {
+        stopWatchingConnectivity()
+        super.onCleared()
+    }
+
     fun setCanGoBack(canGoBack: Boolean) {
         _state.update { it.copy(canGoBack = canGoBack) }
     }
@@ -489,7 +563,15 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
         _state.update { it.copy(canGoForward = canGoForward) }
     }
 
-    fun onPageStop() {
+    fun onPageStop(success: Boolean) {
+        if (!success) return
+        // A load succeeded: the failure that put up the error view is over.
+        // Stop the connectivity watcher too — it re-registers on the next error.
+        failedUrl = null
+        stopWatchingConnectivity()
+        if (_state.value.loadFailed) {
+            _state.update { it.copy(loadFailed = false) }
+        }
         maybeLoadAiSettings()
         if (pendingShareFilterPack && isOnX(_state.value.currentUrl)) {
             pendingShareFilterPack = false
@@ -681,6 +763,12 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun reload() {
+        // After a failed load there may be no committed page to reload —
+        // session.reload() is a silent no-op then. Re-drive the failed URL.
+        if (_state.value.loadFailed) {
+            retryLoad()
+            return
+        }
         session?.reload()
     }
 
