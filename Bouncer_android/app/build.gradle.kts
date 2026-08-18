@@ -33,8 +33,8 @@ android {
         applicationId = "com.imbue.bouncer"
         minSdk = 26
         targetSdk = 36
-        versionCode = 7
-        versionName = "1.0.6"
+        versionCode = 12
+        versionName = "1.1.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -59,7 +59,8 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -119,7 +120,7 @@ abstract class CopyExtensionAssetsTask : org.gradle.api.DefaultTask() {
         if (root.exists()) root.deleteRecursively()
         val out = root.resolve("web_ext_gecko")
         out.mkdirs()
-        listOf("background-app.js", "content.js", "TwitterAdapter.js", "popup-app.js").forEach { name ->
+        listOf("background-app.js", "content.js", "TwitterAdapter.js", "LinkedInAdapter.js", "popup-app.js").forEach { name ->
             bouncer.resolve("dist/$name").copyTo(out.resolve("dist/$name").also { it.parentFile.mkdirs() }, overwrite = true)
         }
         listOf("dompurify.js", "content.css", "popup.html", "popup.css").forEach { name ->
@@ -131,6 +132,10 @@ abstract class CopyExtensionAssetsTask : org.gradle.api.DefaultTask() {
         )
         bouncer.resolve("adapters/twitter/fiber-extractor.js").copyTo(
             out.resolve("adapters/twitter/fiber-extractor.js").also { it.parentFile.mkdirs() },
+            overwrite = true,
+        )
+        bouncer.resolve("adapters/linkedin/linkedin.css").copyTo(
+            out.resolve("adapters/linkedin/linkedin.css").also { it.parentFile.mkdirs() },
             overwrite = true,
         )
         iosShell.resolve("ChromePolyfill.js").copyTo(out.resolve("ChromePolyfill.js"), overwrite = true)
@@ -174,6 +179,7 @@ val copyExtensionAssets = tasks.register<CopyExtensionAssetsTask>("copyExtension
         bouncer.resolve("dist/background-app.js"),
         bouncer.resolve("dist/content.js"),
         bouncer.resolve("dist/TwitterAdapter.js"),
+        bouncer.resolve("dist/LinkedInAdapter.js"),
         bouncer.resolve("dist/popup-app.js"),
         bouncer.resolve("dompurify.js"),
         bouncer.resolve("content.css"),
@@ -181,6 +187,7 @@ val copyExtensionAssets = tasks.register<CopyExtensionAssetsTask>("copyExtension
         bouncer.resolve("popup.css"),
         bouncer.resolve("adapters/twitter/twitter.css"),
         bouncer.resolve("adapters/twitter/fiber-extractor.js"),
+        bouncer.resolve("adapters/linkedin/linkedin.css"),
         iosShell.resolve("ChromePolyfill.js"),
     )
     outputDir.set(layout.buildDirectory.dir("generated/bouncerAssets"))
@@ -206,6 +213,7 @@ dependencies {
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.core.splashscreen)
+    implementation(libs.androidx.fragment)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)

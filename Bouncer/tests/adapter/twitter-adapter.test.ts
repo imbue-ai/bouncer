@@ -339,6 +339,9 @@ describe('getThemeMode', () => {
 
 // ==================== isMainPost ====================
 
+// The main post is identified by matching status ids from the page URL
+// against the article's timestamp links — locale-independent (no reliance
+// on the localized "Timeline: Conversation" aria-label).
 describe('isMainPost', () => {
   let adapter: PlatformAdapter;
   beforeEach(() => {
@@ -349,43 +352,6 @@ describe('isMainPost', () => {
   function setPath(path: string) {
     window.location.href = `https://x.com${path}`;
   }
-
-  function buildConversationTimeline(articleCount: number) {
-    const timeline = document.createElement('div');
-    timeline.setAttribute('aria-label', 'Timeline: Conversation');
-    const articles: HTMLElement[] = [];
-    for (let i = 0; i < articleCount; i++) {
-      const article = document.createElement('article');
-      article.setAttribute('data-testid', 'tweet');
-      timeline.appendChild(article);
-      articles.push(article);
-    }
-    document.body.appendChild(timeline);
-    return articles;
-  }
-
-  it('returns true for the first article on a status page', () => {
-    setPath('/user/status/12345');
-    const articles = buildConversationTimeline(3);
-    expect(adapter.isMainPost(articles[0])).toBe(true);
-  });
-
-  it('returns false for a reply (not first article) on a status page', () => {
-    setPath('/user/status/12345');
-    const articles = buildConversationTimeline(3);
-    expect(adapter.isMainPost(articles[1])).toBe(false);
-    expect(adapter.isMainPost(articles[2])).toBe(false);
-  });
-
-  it('returns false on the home page regardless of article', () => {
-    setPath('/home');
-    const articles = buildConversationTimeline(2);
-    expect(adapter.isMainPost(articles[0])).toBe(false);
-  });
-
-  // Mobile web layout (the iOS app's WKWebView) has no aria-labelled
-  // conversation container — the adapter falls back to matching the
-  // article's own status id against the page URL.
 
   function buildArticleWithStatusLink(statusPath: string) {
     const article = document.createElement('article');
@@ -399,7 +365,27 @@ describe('isMainPost', () => {
     return article;
   }
 
-  it('no conversation timeline: true for an article with no self status link (main post)', () => {
+  it('returns true when the article status id matches the page URL', () => {
+    setPath('/user/status/12345');
+    const article = buildArticleWithStatusLink('/user/status/12345');
+    expect(adapter.isMainPost(article)).toBe(true);
+  });
+
+  it('returns false for a reply (different status id)', () => {
+    setPath('/user/status/12345');
+    const article = buildArticleWithStatusLink('/replier/status/99999');
+    expect(adapter.isMainPost(article)).toBe(false);
+  });
+
+  it('returns false on the home page regardless of article', () => {
+    setPath('/home');
+    const article = buildArticleWithStatusLink('/user/status/12345');
+    expect(adapter.isMainPost(article)).toBe(false);
+  });
+
+  // Mobile web layout (the iOS app's WKWebView): the main post's timestamp
+  // isn't a link at all, so an article with no status link is the main post.
+  it('returns true for an article with no status link (mobile main post)', () => {
     setPath('/user/status/12345');
     const article = document.createElement('article');
     article.setAttribute('data-testid', 'tweet');
@@ -407,16 +393,105 @@ describe('isMainPost', () => {
     expect(adapter.isMainPost(article)).toBe(true);
   });
 
-  it('no conversation timeline: true when the article status id matches the page URL', () => {
+  // Desktop permalink: a quoted tweet's <time> (not a link) precedes the
+  // main timestamp in DOM order — the matching link must still be found.
+  it('returns true when a quoted tweet time precedes the matching status link', () => {
     setPath('/user/status/12345');
-    const article = buildArticleWithStatusLink('/user/status/12345');
+    const article = document.createElement('article');
+    article.setAttribute('data-testid', 'tweet');
+    const quoteTime = document.createElement('time');
+    article.appendChild(quoteTime);
+    const link = document.createElement('a');
+    link.href = 'https://x.com/user/status/12345';
+    const mainTime = document.createElement('time');
+    link.appendChild(mainTime);
+    article.appendChild(link);
+    document.body.appendChild(article);
     expect(adapter.isMainPost(article)).toBe(true);
   });
 
-  it('no conversation timeline: false for a reply (different status id)', () => {
+  it('returns false for a reply containing an unlinked quoted-tweet time', () => {
     setPath('/user/status/12345');
     const article = buildArticleWithStatusLink('/replier/status/99999');
+    const quoteTime = document.createElement('time');
+    article.prepend(quoteTime);
     expect(adapter.isMainPost(article)).toBe(false);
+  });
+});
+
+// ==================== getShareButton ====================
+
+describe('getShareButton', () => {
+  let adapter: PlatformAdapter;
+  beforeEach(() => {
+    adapter = new TwitterAdapter();
+    document.body.innerHTML = '';
+  });
+
+  function buildActionBar(article: HTMLElement, opts: { shareAriaLabel?: string } = {}) {
+    const group = document.createElement('div');
+    group.setAttribute('role', 'group');
+    for (const testid of ['reply', 'retweet', 'like', 'bookmark']) {
+      const btn = document.createElement('button');
+      btn.setAttribute('data-testid', testid);
+      group.appendChild(btn);
+    }
+    const share = document.createElement('button');
+    if (opts.shareAriaLabel) {
+      share.setAttribute('aria-label', opts.shareAriaLabel);
+    }
+    group.appendChild(share);
+    article.appendChild(group);
+    return share;
+  }
+
+  it('finds the share button by aria-label on English UI', () => {
+    const article = document.createElement('article');
+    const share = buildActionBar(article, { shareAriaLabel: 'Share post' });
+    document.body.appendChild(article);
+    expect(adapter.getShareButton(article)).toBe(share);
+  });
+
+  it('falls back to the last untagged button in the action bar on non-English UI', () => {
+    const article = document.createElement('article');
+    const share = buildActionBar(article, { shareAriaLabel: 'Postear compartido' });
+    document.body.appendChild(article);
+    expect(adapter.getShareButton(article)).toBe(share);
+  });
+
+  it('ignores other role=group widgets without a reply button', () => {
+    const article = document.createElement('article');
+    const mediaControls = document.createElement('div');
+    mediaControls.setAttribute('role', 'group');
+    mediaControls.appendChild(document.createElement('button'));
+    article.appendChild(mediaControls);
+    document.body.appendChild(article);
+    expect(adapter.getShareButton(article)).toBe(null);
+  });
+});
+
+// ==================== getSearchForm ====================
+
+describe('getSearchForm', () => {
+  let adapter: PlatformAdapter;
+  beforeEach(() => {
+    adapter = new TwitterAdapter();
+    document.body.innerHTML = '';
+  });
+
+  it('finds the search form by role=search regardless of locale', () => {
+    const form = document.createElement('form');
+    form.setAttribute('role', 'search');
+    form.setAttribute('aria-label', 'Buscar');
+    document.body.appendChild(form);
+    expect(adapter.getSearchForm()).toBe(form);
+  });
+
+  it('falls back to the English aria-label when role is absent', () => {
+    const form = document.createElement('form');
+    form.setAttribute('aria-label', 'Search');
+    document.body.appendChild(form);
+    expect(adapter.getSearchForm()).toBe(form);
   });
 });
 

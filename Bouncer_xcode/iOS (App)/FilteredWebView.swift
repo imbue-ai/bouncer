@@ -258,6 +258,43 @@ struct FilteredWebView: UIViewRepresentable {
                 """, injectionTime: .atDocumentEnd, forMainFrameOnly: true)
             controller.addUserScript(appleLoginRemovalScript)
             print("[FeedFilter] Injected Apple-login removal")
+
+            // 10. LinkedIn app-upsell removal — LinkedIn's mobile web nags with
+            // "get the full app experience" prompts: a bottom banner
+            // (.upsell-bottom) and a blocking bottom sheet that mounts, with its
+            // gray scrim, inside a .top-level-modal-container. linkedin.css
+            // hides both instantly; this observer then removes the nodes and
+            // clears any scroll lock the blocking sheet left behind. Structural
+            // class selectors only (no text matching), so it works in every
+            // locale. The container is removed only when it holds the upsell
+            // sheet, leaving it available for legitimate modals.
+            let linkedInUpsellRemovalScript = WKUserScript(source: """
+                (function() {
+                    var host = location.hostname;
+                    if (host !== 'linkedin.com' && !host.endsWith('.linkedin.com')) return;
+                    function removeUpsells() {
+                        var removed = false;
+                        document.querySelectorAll('.upsell-bottom').forEach(function(el) {
+                            el.remove();
+                            removed = true;
+                        });
+                        document.querySelectorAll('.blocking-upsell-bottom-sheet').forEach(function(el) {
+                            (el.closest('.top-level-modal-container') || el).remove();
+                            removed = true;
+                        });
+                        if (removed) {
+                            [document.documentElement, document.body].forEach(function(el) {
+                                if (el && el.style.overflow === 'hidden') el.style.overflow = '';
+                            });
+                        }
+                    }
+                    var observer = new MutationObserver(removeUpsells);
+                    observer.observe(document.documentElement, { childList: true, subtree: true });
+                    removeUpsells();
+                })();
+                """, injectionTime: .atDocumentEnd, forMainFrameOnly: true)
+            controller.addUserScript(linkedInUpsellRemovalScript)
+            print("[FeedFilter] Injected LinkedIn upsell removal")
         }
 
         // MARK: - Popup Bridge
@@ -639,11 +676,27 @@ struct FilteredWebView: UIViewRepresentable {
         private var canGoBackObservation: NSKeyValueObservation?
         private var canGoForwardObservation: NSKeyValueObservation?
         private var urlObservation: NSKeyValueObservation?
+        private var contentOffsetObservation: NSKeyValueObservation?
+
+        // Scroll-driven nav bar visibility. lastScrollY is the active
+        // webview's last reported Y; accumulatedDown/Up integrate
+        // single-direction motion so a slow scroll still trips the threshold
+        // instead of dying to per-event jitter. Mirrors the Android app's
+        // BouncerViewModel.onScroll (constants there are px, here pt).
+        private var lastScrollY: CGFloat = 0
+        private var accumulatedDown: CGFloat = 0
+        private var accumulatedUp: CGFloat = 0
+        private var navBarHiddenTarget = false
+
+        private static let topPin: CGFloat = 80        // within this of the top → always show
+        private static let hideThreshold: CGFloat = 24
+        private static let showThreshold: CGFloat = 16
 
         func activate(_ webView: WKWebView) {
             canGoBackObservation?.invalidate()
             canGoForwardObservation?.invalidate()
             urlObservation?.invalidate()
+            contentOffsetObservation?.invalidate()
 
             canGoBackObservation = webView.observe(\.canGoBack, options: [.initial, .new]) { [weak self] wv, _ in
                 DispatchQueue.main.async {
@@ -659,6 +712,72 @@ struct FilteredWebView: UIViewRepresentable {
                 DispatchQueue.main.async {
                     self?.sheetViewModel.currentURL = wv.url?.absoluteString ?? ""
                 }
+                // Any navigation (links, back/forward swipe) re-shows the bar.
+                self?.setNavBarHidden(false)
+            }
+
+            // Re-seed the direction tracker at the new webview's position —
+            // cached webviews sit at different offsets, and treating the jump
+            // between them as a scroll would flap the bar on platform switch.
+            lastScrollY = webView.scrollView.contentOffset.y + webView.scrollView.adjustedContentInset.top
+            accumulatedDown = 0
+            accumulatedUp = 0
+            setNavBarHidden(false)
+            contentOffsetObservation = webView.scrollView.observe(\.contentOffset, options: [.new]) { [weak self] sv, _ in
+                self?.handleScroll(sv)
+            }
+        }
+
+        // KVO fires on the main thread for both finger-down scrolling and
+        // deceleration, which is why this is KVO and not the scroll view's
+        // pan gesture (that goes silent during momentum).
+        private func handleScroll(_ scrollView: UIScrollView) {
+            let y = scrollView.contentOffset.y + scrollView.adjustedContentInset.top
+            let delta = y - lastScrollY
+
+            // Near the top (including top rubber-band): pin the bar visible.
+            if y < Self.topPin {
+                lastScrollY = y
+                accumulatedDown = 0
+                accumulatedUp = 0
+                setNavBarHidden(false)
+                return
+            }
+            lastScrollY = y
+
+            // Bottom rubber-band oscillates past the end of the content;
+            // reacting to it makes the bar flicker.
+            let maxY = scrollView.contentSize.height + scrollView.adjustedContentInset.bottom - scrollView.bounds.height
+            guard scrollView.contentOffset.y < maxY else { return }
+            // Only user-driven scrolls — skips page-load offset resets and JS
+            // scrollTo, which would hide the bar with no gesture behind it.
+            guard scrollView.isTracking || scrollView.isDragging || scrollView.isDecelerating else { return }
+            // A single-event jump this large is an anchor navigation or layout
+            // shift mid-touch, not scrolling.
+            guard abs(delta) < 100 else {
+                accumulatedDown = 0
+                accumulatedUp = 0
+                return
+            }
+
+            if delta > 0 {
+                accumulatedDown += delta
+                accumulatedUp = 0
+                if accumulatedDown > Self.hideThreshold { setNavBarHidden(true) }
+            } else if delta < 0 {
+                accumulatedUp -= delta
+                accumulatedDown = 0
+                if accumulatedUp > Self.showThreshold { setNavBarHidden(false) }
+            }
+        }
+
+        private func setNavBarHidden(_ hidden: Bool) {
+            // Compare-and-set outside the dispatch so a stream of scroll
+            // events costs one main-queue hop per state change, not per event.
+            guard navBarHiddenTarget != hidden else { return }
+            navBarHiddenTarget = hidden
+            DispatchQueue.main.async { [weak self] in
+                self?.sheetViewModel.isNavBarHidden = hidden
             }
         }
 
@@ -757,11 +876,48 @@ struct FilteredWebView: UIViewRepresentable {
                 action: #selector(popupCancelTapped)
             )
 
-            guard let presentingVC = webView.findViewController() else { return popup }
-            presentingVC.present(nav, animated: true)
             popupViewController = nav
+            presentPopup(nav, from: webView, attempts: 10)
 
             return popup
+        }
+
+        // UIKit's present(_:animated:) is a silent no-op when the presenting
+        // view controller is already presenting something or a transition is
+        // in flight — which used to leave the Google/Apple sign-in flow
+        // loading in a webview that was never shown. Present from the top of
+        // the presentation stack, and retry briefly while a transition
+        // settles. WebKit only needs the webview returned synchronously; the
+        // sheet itself can appear a beat later.
+        private func presentPopup(_ nav: UIViewController, from webView: WKWebView, attempts: Int) {
+            // Superseded by another popup, or cancelled/dismissed meanwhile.
+            guard popupViewController === nav else { return }
+
+            let retry: () -> Void = { [weak self, weak webView] in
+                guard attempts > 1 else {
+                    // Give up: drop our reference so the never-shown popup
+                    // deallocates instead of lingering as an invisible window.
+                    self?.popupWebView = nil
+                    self?.popupViewController = nil
+                    return
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                    guard let self, let webView else { return }
+                    self.presentPopup(nav, from: webView, attempts: attempts - 1)
+                }
+            }
+
+            guard let base = webView.findViewController() ?? webView.window?.rootViewController else {
+                retry()
+                return
+            }
+            var top = base
+            while let presented = top.presentedViewController { top = presented }
+            guard !top.isBeingPresented, !top.isBeingDismissed else {
+                retry()
+                return
+            }
+            top.present(nav, animated: true)
         }
 
         @objc private func popupCancelTapped() {

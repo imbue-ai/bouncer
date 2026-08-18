@@ -1,21 +1,13 @@
-# Add project specific ProGuard rules here.
-# You can control the set of applied configuration files using the
-# proguardFiles setting in build.gradle.
-#
-# For more details, see
-#   http://developer.android.com/guide/developing/tools/proguard.html
+# Keep file/line info so release crash traces are readable; the mapping.txt
+# uploaded to Play Console handles deobfuscating class/method names.
+-keepattributes SourceFile,LineNumberTable
+-renamesourcefileattribute SourceFile
 
-# If your project uses WebView with JS, uncomment the following
-# and specify the fully qualified class name to the JavaScript interface
-# class:
-#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
-#   public *;
-#}
-
-# Uncomment this to preserve the line number information for
-# debugging stack traces.
-#-keepattributes SourceFile,LineNumberTable
-
-# If you keep the line number information, uncomment this to
-# hide the original source file name.
-#-renamesourcefileattribute SourceFile
+# GeckoView's debug-config path (taken whenever the device marks this app as
+# its "debug app", e.g. Play pre-launch testing) loads GeckoView's bundled
+# SnakeYAML, whose static initializers call getClass().getPackage().getName().
+# R8's default repackaging moves those classes into the root package, making
+# getPackage() return null and crashing GeckoRuntime.create() at startup with
+# ExceptionInInitializerError. GeckoView's consumer rules only -dontwarn
+# SnakeYAML (Mozilla bug 1838031), so keep it intact here.
+-keep class org.yaml.snakeyaml.** { *; }

@@ -1,10 +1,5 @@
 /* Twitter-specific styles for Bouncer */
 
-/* Hide Twitter Trending section */
-div[aria-label="Trending"] > :nth-child(2) > :nth-child(2) {
-  display: none;
-}
-
 /* (Removed: old HTML-injection overrides for .slop-post-content - no longer needed) */
 
 /* Ensure Twitter's BottomBar maintains full opacity during post processing */

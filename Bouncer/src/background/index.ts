@@ -1,7 +1,7 @@
 // Background script entry point: message handler, storage listener, startup, tab tracking
 
 import { PREDEFINED_MODELS } from '../shared/models';
-import { cacheKeyFor, GUEST_FILTER_LIMIT } from '../shared/utils';
+import { cacheKeyFor, GUEST_FILTER_LIMIT, isEmbeddedApp } from '../shared/utils';
 import { getStorage, setStorage, removeStorage, phraseSetKey } from '../shared/storage';
 import type { AiFilterIntentState, ContentToBackgroundMessage, LocalModelStatus } from '../types';
 import { refreshAiFilterIntent, pruneAiFilterPhrases, canJudgeAiIntent } from './ai-intent';
@@ -851,17 +851,46 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
 
 // ==================== Extension lifecycle ====================
 
+// Post-install landing page: runs the Google Ads and X Ads install-conversion
+// snippets first-party on imbue.com — where they can read the _gcl_aw /
+// twclid ad-click cookies the ad landing page stores on that domain — then
+// forwards the user to x.com. The snippets can't run inside the extension
+// itself: the MV3 worker has no DOM and bans remote code, and content-script
+// fetches are subject to the host page's CSP. Open-source builds (no Imbue
+// backend) skip straight to x.com.
+const INSTALL_LANDING_URL = process.env.HAS_IMBUE_BACKEND === 'true'
+  ? 'https://imbue.com/product/bouncer/just_installed_redirect.html'
+  : null;
+
 // Check local model statuses on extension install/update
 chrome.runtime.onInstalled.addListener((details) => {
   if (details.reason === 'install') {
-    chrome.tabs.create({ url: 'https://x.com' }).catch(err => console.error('[Background] Failed to open x.com on install:', err));
-    // First-run banner (shown once the user is past the sign-in gate), and
-    // suppress the "what's new" banner for this version — a fresh install
-    // has nothing to catch up on.
-    setStorage({
-      showWelcomeBanner: true,
-      lastSeenVersion: chrome.runtime.getManifest().version,
-    }).catch(err => console.error('[Background] Failed to set welcome flags:', err));
+    // Fresh install only (not updates): open the just-installed landing page.
+    //
+    // Two guards keep this to one tab per real install:
+    //  - In the iOS/Android app webviews, ChromePolyfill synthesizes this
+    //    'install' event on EVERY page load — skip entirely there (app
+    //    installs must not report as extension install conversions, and the
+    //    landing page fires the conversion snippets every time it loads).
+    //  - installPixelArmed persists across repeat 'install' events that keep
+    //    storage (e.g. Chrome's extension Repair), so those never re-open
+    //    the landing page.
+    // The welcome flags sit behind the same guards: synthetic embedded
+    // 'install' events would otherwise re-arm the banner after every dismissal.
+    (async () => {
+      if (isEmbeddedApp()) return;
+      const { installPixelArmed } = await getStorage(['installPixelArmed']);
+      if (installPixelArmed) return;
+      await setStorage({
+        installPixelArmed: true,
+        // First-run banner (shown once the user is past the sign-in gate), and
+        // suppress the "what's new" banner for this version — a fresh install
+        // has nothing to catch up on.
+        showWelcomeBanner: true,
+        lastSeenVersion: chrome.runtime.getManifest().version,
+      });
+      await chrome.tabs.create({ url: INSTALL_LANDING_URL ?? 'https://x.com' });
+    })().catch(err => console.error('[Background] Failed to open tab on install:', err));
   }
 
   if (details.reason === 'install' || details.reason === 'update') {

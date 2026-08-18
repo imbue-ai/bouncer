@@ -461,6 +461,13 @@ export type StorageSchema = SettingsBase & {
   // Set by onInstalled on a fresh install; drives the one-time "Welcome to
   // Bouncer" banner and is cleared when that banner is dismissed.
   showWelcomeBanner: boolean;
+  // Durable once-per-install latch for the install-conversion landing page:
+  // set the first time onInstalled 'install' opens it and never cleared, so
+  // repeat 'install' events that keep storage (Chrome Repair, synthetic
+  // events from embedded hosts) can't re-open it and double-count the
+  // conversion. (Devices that ran the old in-extension pixel code may hold
+  // this flag already — that correctly suppresses a second conversion.)
+  installPixelArmed: boolean;
 } & DescriptionKeys & PlatformEnabledKeys;
 
 // ==================== API Response Types ====================

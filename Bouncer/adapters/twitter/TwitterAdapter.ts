@@ -281,21 +281,26 @@ const BouncerTwitterAdapter = class TwitterAdapter implements PlatformAdapter {
     if (!this.isPermalinkView()) {
       return false;
     }
-    const conversationTimeline = document.querySelector('div[aria-label="Timeline: Conversation"]');
-    if (conversationTimeline) {
-      const firstArticle = conversationTimeline.querySelector(this.selectors.post);
-      return firstArticle === article;
-    }
-    // Mobile web layout (the iOS app's WKWebView): no aria-labelled
-    // conversation container, so identify the main post by status id
-    // instead. Replies' timestamp links carry their own ids; the main
-    // post's timestamp on the detail view isn't a link at all, so an
-    // article with no self status link is also the main post.
+    // Identify the main post by status id — locale-independent (the old
+    // aria-label="Timeline: Conversation" selector broke on non-English
+    // locales and mis-identified the ancestor tweet as main on reply
+    // permalinks). Replies' and ancestors' timestamps link to their own
+    // status ids; the main post's timestamp links to the page's own status
+    // on desktop, and isn't a link at all on mobile web (the iOS app's
+    // WKWebView) — so an article with no status link is also the main post.
     const pageStatusId = window.location.pathname.match(/\/status\/(\d+)/)?.[1];
     if (!pageStatusId) return false;
-    const postUrl = this.getPostUrl(article);
-    if (!postUrl) return true;
-    return postUrl.match(/\/status\/(\d+)/)?.[1] === pageStatusId;
+    // Check every <time>, not just the first: a quoted tweet embeds its own
+    // <time>, which precedes the main timestamp in DOM order on desktop.
+    let sawStatusLink = false;
+    for (const time of article.querySelectorAll('time')) {
+      const href = time.closest('a')?.href;
+      const id = href?.match(/\/status\/(\d+)/)?.[1];
+      if (!id) continue;
+      sawStatusLink = true;
+      if (id === pageStatusId) return true;
+    }
+    return !sawStatusLink;
   }
 
   getPostUrl(article: HTMLElement) {
@@ -571,7 +576,18 @@ const BouncerTwitterAdapter = class TwitterAdapter implements PlatformAdapter {
   }
 
   getShareButton(article: HTMLElement): HTMLElement | null {
-    return article.querySelector('button[aria-label="Share post"]');
+    // Fast path: English UI.
+    const byLabel = article.querySelector<HTMLElement>('button[aria-label="Share post"]');
+    if (byLabel) return byLabel;
+    // Locale-independent fallback: the share button carries no data-testid
+    // (unlike reply/retweet/like/bookmark) and sits last in the tweet's
+    // [role="group"] action bar. Anchor the group via the reply button so
+    // we don't match other role="group" widgets (e.g. media controls).
+    const group = article.querySelector('[data-testid="reply"]')?.closest('[role="group"]');
+    if (!group) return null;
+    const buttons = Array.from(group.querySelectorAll<HTMLElement>('button'));
+    const untagged = buttons.filter(b => !b.dataset.testid);
+    return untagged[untagged.length - 1] || buttons[buttons.length - 1] || null;
   }
 
   insertActionButton(article: HTMLElement, button: HTMLElement): void {
@@ -586,7 +602,9 @@ const BouncerTwitterAdapter = class TwitterAdapter implements PlatformAdapter {
   }
 
   getSearchForm(): HTMLElement | null {
-    return document.querySelector('form[aria-label="Search"]');
+    // role="search" is locale-independent; keep the English aria-label as
+    // a fallback in case X drops the role.
+    return document.querySelector('form[role="search"], form[aria-label="Search"]');
   }
 };
 
