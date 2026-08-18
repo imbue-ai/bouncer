@@ -46,13 +46,30 @@ function readPlatformConfig() {
 // host_permissions, content_scripts, and web_accessible_resources all gain
 // the corresponding rows — but only on the build targets listed in that
 // entry's `targets` array.
+//
+// Platforms listing this target in `optionalTargets` are deliberately kept
+// OUT of host_permissions and content_scripts: a published update that adds
+// new required host permissions (or static content scripts, whose match
+// patterns count as host permissions) gets the extension disabled for every
+// existing user until they re-approve. Those platforms land in
+// optional_host_permissions — silent on update — and their content scripts
+// are registered at runtime once the user grants access (see
+// src/background/optional-platforms.ts, which builds the same js/css lists
+// via contentScriptFiles() in src/shared/platforms.ts).
+// web_accessible_resources `matches` are not permissions and trigger no
+// warning, so optional platforms may appear there statically.
 function platformsToManifestSlice(target) {
   const platforms = readPlatformConfig().filter(p => p.targets.includes(target));
+  const optional = platforms.filter(p => (p.optionalTargets ?? []).includes(target));
+  const required = platforms.filter(p => !optional.includes(p));
   const sharedContentJs = ['browser-polyfill.js', 'dompurify.js'];
   const sharedContentCss = ['content.css'];
   return {
-    host_permissions: platforms.map(p => p.manifestHost),
-    content_scripts: platforms.map(p => ({
+    host_permissions: required.map(p => p.manifestHost),
+    ...(optional.length > 0
+      ? { optional_host_permissions: optional.map(p => p.manifestHost) }
+      : {}),
+    content_scripts: required.map(p => ({
       matches: [p.manifestHost],
       js: [...sharedContentJs, p.adapterScript, 'dist/content.js'],
       css: [...sharedContentCss, p.cssPath],
@@ -65,6 +82,9 @@ function platformsToManifestSlice(target) {
           'popup.css',
           'dist/popup.js',
           'browser-polyfill.js',
+          // First-install "activate other platforms?" iframe — only relevant
+          // on targets that actually have optional platforms to offer.
+          ...(optional.length > 0 ? ['onboarding.html', 'dist/onboarding.js'] : []),
           ...platforms.flatMap(p => p.extraWebAccessible ?? []),
           'icons/a-bouncer-2x-black.png',
           'icons/icon48.png',

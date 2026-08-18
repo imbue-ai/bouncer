@@ -30,6 +30,14 @@ export interface PlatformBuildConfig {
    *  platforms appear where — read here, by generate-manifests.mjs, and by
    *  the iOS app (Platforms.swift). */
   readonly targets: readonly string[];
+  /** Subset of `targets` on which this platform ships behind
+   *  `optional_host_permissions` instead of `host_permissions` + a static
+   *  content script. Adding a required host permission to an already-published
+   *  extension disables it for every existing user until they re-approve;
+   *  optional hosts are silent on update. The user grants access from the
+   *  platform toggle in settings, after which the background registers the
+   *  content script at runtime (see background/optional-platforms.ts). */
+  readonly optionalTargets?: readonly string[];
   /** Pattern used in host_permissions, content_scripts, and
    *  web_accessible_resources matches. */
   readonly manifestHost: string;
@@ -114,6 +122,33 @@ export function platformById(id: string): PlatformDef | undefined {
 /** Find a platform whose host pattern matches the given hostname. */
 export function platformFromHost(host: string): PlatformDef | undefined {
   return PLATFORMS.find(p => p.hostPattern.test(host));
+}
+
+// ---------------------------------------------------------------------------
+// Optional (user-granted) platforms
+// ---------------------------------------------------------------------------
+
+/** True when this platform is gated behind optional_host_permissions on the
+ *  current build target — i.e. Bouncer has no access to the site until the
+ *  user turns its toggle on and accepts the browser's permission prompt. */
+export function isOptionalPlatform(p: PlatformDef): boolean {
+  return p.optionalTargets?.includes(CURRENT_TARGET) === true;
+}
+
+/** Every optional platform on this build target. */
+export function optionalPlatforms(): readonly PlatformDef[] {
+  return PLATFORMS_FOR_TARGET.filter(isOptionalPlatform);
+}
+
+/** The js/css file lists for a platform's content script. Must stay in
+ *  lockstep with `platformsToManifestSlice` in generate-manifests.mjs, which
+ *  builds the same lists for statically-declared platforms — optional
+ *  platforms are registered at runtime through this function instead. */
+export function contentScriptFiles(p: PlatformDef): { js: string[]; css: string[] } {
+  return {
+    js: ['browser-polyfill.js', 'dompurify.js', p.adapterScript, 'dist/content.js'],
+    css: ['content.css', p.cssPath],
+  };
 }
 
 // ---------------------------------------------------------------------------

@@ -5,7 +5,12 @@
 //   1. Desktop web (the SDUI / server-driven UI served to the Chrome extension
 //      on www.linkedin.com). Class names are hashed/obfuscated, so we rely on
 //      stable semantic hooks: role, aria-label, data-testid, componentkey.
-//      Posts are `div[role="listitem"][componentkey*="FeedType"]`.
+//      Posts are `div[role="listitem"]` cards keyed by a componentkey
+//      containing "FeedType". LinkedIn has shipped two shapes of this: an
+//      older one where the listitem itself carries the componentkey, and the
+//      current one where the componentkey sits on a wrapper div whose direct
+//      child is the listitem (the wrapper also holds a sibling
+//      "replaceableCommentTools" div). We match both.
 //
 //   2. Mobile web (the variant served inside the iOS WKWebView and to mobile
 //      browsers). Built from stable BEM-ish hooks — main-feed-activity-card,
@@ -35,9 +40,10 @@ const BouncerLinkedInAdapter = class LinkedInAdapter implements PlatformAdapter 
   // mobile-web feed. Each side's selector is disjoint, so on a given page only
   // one variant ever matches.
   selectors: PlatformSelectors = {
-    // Desktop: listitem whose componentkey contains "FeedType".
+    // Desktop: the listitem card, whether the FeedType componentkey is on the
+    // listitem itself (older SDUI) or on its wrapper div (current SDUI).
     // Mobile: <article data-id="main-feed-card">.
-    post: 'article[data-id="main-feed-card"], div[role="listitem"][componentkey*="FeedType"]',
+    post: 'article[data-id="main-feed-card"], div[role="listitem"][componentkey*="FeedType"], div[componentkey*="FeedType"] > div[role="listitem"]',
     // Desktop right-hand aside rail. Mobile web has none (querySelector simply
     // returns null there — strictly safer than an empty selector, which throws).
     sidebar: 'aside[aria-label="Aside"]',
@@ -48,8 +54,11 @@ const BouncerLinkedInAdapter = class LinkedInAdapter implements PlatformAdapter 
     nav: 'header',
     // Neither layout has a Twitter-style mobile BottomBar.
     bottomBar: '',
-    // MutationObserver target: the list/region that receives new post children.
-    mutations: '[data-testid="mainFeed"], .attributed-text-segment-list__content',
+    // DOM-recycling detection: elements whose re-render inside an existing
+    // post should trigger a re-eval. Must sit INSIDE a post (the content
+    // script walks closest(post) from each match), so this targets the post
+    // body text on both layouts.
+    mutations: '[data-testid="expandable-text-box"], .attributed-text-segment-list__content',
     // Post body text.
     textContent: '[data-testid="expandable-text-box"], .attributed-text-segment-list__content',
   };
@@ -517,11 +526,13 @@ const BouncerLinkedInAdapter = class LinkedInAdapter implements PlatformAdapter 
 
   getPostContentKey(article: HTMLElement): string {
     // linkedin adaptation: prefer the per-post stable identifiers — mobile's
-    // data-activity-urn or desktop's componentkey. Fall back to permalink, then
-    // to text content.
+    // data-activity-urn or desktop's componentkey. On the current SDUI the
+    // componentkey lives on the listitem's wrapper div, so resolve it via
+    // closest() (matches the element itself on the older layout). Fall back
+    // to permalink, then to text content.
     const urn = article.getAttribute('data-activity-urn');
     if (urn) return urn;
-    const key = article.getAttribute('componentkey');
+    const key = article.closest('[componentkey*="FeedType"]')?.getAttribute('componentkey');
     if (key) return key;
     return this.getPostUrl(article)
       || article.querySelector(this.selectors.textContent)?.textContent?.substring(0, 200)
@@ -530,9 +541,13 @@ const BouncerLinkedInAdapter = class LinkedInAdapter implements PlatformAdapter 
 
   getPostContainer(article: HTMLElement): HTMLElement {
     // Mobile: hide the whole feed row (<li class="feed-item">) so no gap is left
-    // behind. Desktop: the listitem div is itself the top-level unit. The
-    // closest()-or-self form yields the right container in both layouts.
-    return article.closest<HTMLElement>('li.feed-item') || article;
+    // behind. Desktop: hide the FeedType-keyed unit — on the current SDUI
+    // that's the wrapper div (which also holds the sibling comment-tools
+    // region); on the older layout the listitem carries the key itself, so
+    // closest() matches the element and this is hide-self.
+    return article.closest<HTMLElement>('li.feed-item')
+      || article.closest<HTMLElement>('div[componentkey*="FeedType"]')
+      || article;
   }
 
   hidePost(article: HTMLElement): void {

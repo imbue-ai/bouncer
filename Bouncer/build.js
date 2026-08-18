@@ -220,11 +220,12 @@ async function build() {
     define,
   });
 
-  // 3. Popup & content: fully self-contained (no external imports).
+  // 3. Popup, content & onboarding: fully self-contained (no external imports).
   const otherCtx = await esbuild.context({
     entryPoints: [
       path.join(__dirname, 'popup.js'),
-      path.join(__dirname, 'content.js')
+      path.join(__dirname, 'content.js'),
+      path.join(__dirname, 'onboarding.js')
     ],
     bundle: true,
     outdir: path.join(__dirname, 'dist'),
