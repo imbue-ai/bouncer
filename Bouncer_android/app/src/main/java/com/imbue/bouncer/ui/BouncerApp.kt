@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.BottomSheetDefaults
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
@@ -50,6 +51,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
@@ -259,6 +261,44 @@ fun BouncerApp(viewModel: BouncerViewModel = viewModel()) {
                     .fillMaxSize()
                     .padding(top = topDp, bottom = bottomDp),
             )
+        }
+        // Native offline/error view for a failed top-level load. GeckoView
+        // renders nothing on load failure, so without this the user sits on a
+        // blank white view that reads as a frozen app (Play review rejected
+        // v11 for exactly that). Drawn UNDER the NavBar so reload stays
+        // reachable; swallows touches so the dead page beneath isn't
+        // interactable. Cleared by retry, by the NavBar reload, or
+        // automatically when connectivity returns (BouncerViewModel).
+        if (state.loadFailed) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.background)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                    ) {},
+                contentAlignment = Alignment.Center,
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = "Can't connect",
+                        style = MaterialTheme.typography.headlineSmall,
+                        color = MaterialTheme.colorScheme.onBackground,
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        text = "Check your internet connection.\nBouncer will retry automatically.",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onBackground,
+                        textAlign = TextAlign.Center,
+                    )
+                    Spacer(Modifier.height(24.dp))
+                    Button(onClick = viewModel::retryLoad) {
+                        Text("Try again")
+                    }
+                }
+            }
         }
         NavBar(
             currentUrl = state.currentUrl,

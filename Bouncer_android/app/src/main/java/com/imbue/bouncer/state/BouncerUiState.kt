@@ -40,4 +40,10 @@ data class BouncerUiState(
     val pushEnableInProgress: Boolean = false,
     // Whether x.com push is subscribed (drives the settings button's state).
     val notificationsEnabled: Boolean = false,
+    // A top-level document load failed (e.g. no network at launch). GeckoView
+    // renders NOTHING on a failed load — without this flag the user would sit
+    // on a blank white view that reads as a frozen app. Drives the native
+    // offline/error overlay in BouncerApp; cleared by retry or the next
+    // successful page load.
+    val loadFailed: Boolean = false,
 )
