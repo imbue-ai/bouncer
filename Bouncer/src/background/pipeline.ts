@@ -9,6 +9,7 @@ import { isAnonymousUser } from './auth';
 import { PREDEFINED_MODELS, API_DISPLAY_NAMES, DEFAULT_MODEL } from '../shared/models';
 import { buildAPIMessages, parseTableYesnoResponse } from '../shared/prompts';
 import { callDirectAPI, callAnthropicAPI, callImbueAPI, callImbueAiTextDetection, callImbueAiImageDetection, callImbueYouTubeAudioFilter, callImbueYouTubeTranscriptFilter } from './providers';
+import { fetchYouTubeTranscript } from './youtube-transcript';
 import { runDetectors, type Detector, type DetectorResult } from './detectors';
 import { callLocalInference, localEngine } from './local-model';
 import { iosLocalClassify, iosLocalGenerate, iosLocalAiTextDetect } from './ios-local-bridge';
@@ -19,7 +20,7 @@ export { DEFAULT_AI_TEXT_DETECTION_THRESHOLD, DEFAULT_AI_IMAGE_DETECTION_THRESHO
 import type {
   EvaluationResult, PipelineResponse, PipelineError, PendingEvaluation,
   ErrorState, Settings, APIConfig, ChatMessage, BackgroundToContentMessage, LocalModelDef,
-  SiteId, DetectorSnapshot,
+  SiteId, DetectorSnapshot, ImbueFilterResponse,
 } from '../types';
 
 // ==================== Constants ====================
@@ -113,6 +114,36 @@ function computeAiImageSkipReason(
 function youtubeVideoId(siteId: SiteId | undefined, postUrl: string | null): string | null {
   if (siteId !== 'youtube' && siteId !== 'youtubekids') return null;
   return youtubeVideoIdFromUrl(postUrl);
+}
+
+// The backend's tweetFilter route truncates text at this many chars
+// (MAX_TWEET_TEXT_CHARS), so send no more than it will read.
+const MAX_TRANSCRIPT_CHARS = 2000;
+
+// Transcript mode: fetch the caption track in the extension (YouTube rate
+// limits the backend's shared egress IPs; browser IPs are effectively
+// unthrottled) and classify the text via the standard tweetFilter route — the
+// same FILTER_SYSTEM_PROMPT the backend transcript worker uses. Returns null
+// for captionless videos (a definitive keep). If the YouTube fetch itself
+// fails (network hiccup, InnerTube API change), fall back to the backend
+// videoId path, which still knows how to fetch + classify server-side.
+async function classifyYouTubeTranscript(
+  videoId: string,
+  categories: string[],
+): Promise<ImbueFilterResponse | null> {
+  let transcript: string | null;
+  try {
+    transcript = await fetchYouTubeTranscript(videoId);
+  } catch (err) {
+    console.warn(`[Pipeline] YouTube transcript fetch failed for ${videoId}; falling back to backend fetch:`, err);
+    return callImbueYouTubeTranscriptFilter(videoId, categories);
+  }
+  if (transcript === null) return null;
+  return callImbueAPI(
+    { text: transcript.slice(0, MAX_TRANSCRIPT_CHARS), imageUrls: [] },
+    categories,
+    'filterPost',
+  );
 }
 
 // Why the YouTube audio/transcript detector won't run for a given post (or null
