@@ -34,6 +34,7 @@ import {
   isGuestLimitReached,
   refreshAiIndicatorUI,
   setKeepOnlyMode,
+  maybeShowPlatformOnboarding,
 } from './ui';
 
 import { formatPostForEvaluation, phraseAddNeedsReEvaluation } from '../shared/utils';
@@ -668,6 +669,11 @@ import { formatPostForEvaluation, phraseAddNeedsReEvaluation } from '../shared/u
     }
 
     await checkLocalModelActive();
+    // First-install "activate other platforms?" popup. Fired before (and not
+    // awaited by) the auth check so it appears ahead of — and independent
+    // of — any sign-in gating.
+    maybeShowPlatformOnboarding().catch(err =>
+      console.error('[Bouncer] Platform onboarding popup failed:', err));
     await checkAuthStatus();
 
     if (enabled) {

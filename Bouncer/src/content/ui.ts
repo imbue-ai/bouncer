@@ -10,6 +10,7 @@ import {
 } from '../shared/share-encoding';
 import type { BackgroundToContentMessage, ContentUIDeps, FilteredPost, PostContent, LocalModelStatus } from '../types';
 import { getStorage, setStorage, getDescriptions, setDescriptions, aiIntentActiveForSite } from '../shared/storage';
+import { optionalPlatforms } from '../shared/platforms';
 import { getReleaseNote, WELCOME_TIP } from './release-notes';
 import { runIOSImportAnimation } from './ios';
 
@@ -399,6 +400,59 @@ function showSignInPopup(variant: 'signin' | 'guestLimit') {
 // the background). Thin wrapper over the shared popup.
 function showGuestLimitPopup() {
   showSignInPopup('guestLimit');
+}
+
+// ==================== First-install platform onboarding ====================
+
+let platformOnboardingBackdrop: HTMLElement | null = null;
+
+// One-time popup shown right after install (onInstalled opens x.com and sets
+// `showPlatformOnboarding`), asking whether to also activate Bouncer on the
+// optional platforms (YouTube/LinkedIn on the Chrome build). Deliberately
+// shown before — and fully independent of — the sign-in gate.
+//
+// The dialog body is onboarding.html in an extension iframe rather than
+// content-script DOM: chrome.permissions.request() needs a user gesture in an
+// extension context, and a gesture doesn't survive a message hop to the
+// background — a click inside the iframe satisfies both (same trick as the
+// settings modal below). Any dismissal — activate, "Not now", or a backdrop
+// click — clears the flag so the popup never comes back.
+export async function maybeShowPlatformOnboarding(): Promise<void> {
+  if (_deps.IS_IOS || chrome._polyfilled) return; // extension-only UI
+  if (optionalPlatforms().length === 0) return;   // nothing to offer on this target
+  const { showPlatformOnboarding } = await getStorage(['showPlatformOnboarding']);
+  if (showPlatformOnboarding !== true) return;
+  if (platformOnboardingBackdrop?.isConnected) return; // idempotent
+
+  const theme = _deps.adapter.getThemeMode();
+  const backdrop = document.createElement('div');
+  backdrop.className = `bouncer-onboarding-backdrop ${theme}-mode`;
+  const iframe = document.createElement('iframe');
+  iframe.className = 'bouncer-onboarding-iframe';
+  iframe.src = chrome.runtime.getURL('onboarding.html') + `?theme=${theme}`;
+  backdrop.appendChild(iframe);
+  document.body.appendChild(backdrop);
+  platformOnboardingBackdrop = backdrop;
+
+  const close = () => {
+    window.removeEventListener('message', messageHandler);
+    backdrop.remove();
+    platformOnboardingBackdrop = null;
+    setStorage({ showPlatformOnboarding: false }).catch(err =>
+      console.error('[Bouncer] Failed to clear platform onboarding flag:', err));
+  };
+  const messageHandler = (event: MessageEvent<{ type?: string; height?: number }>) => {
+    if (event.source !== iframe.contentWindow || !event.data) return;
+    if (event.data.type === 'bouncerOnboardingDone') {
+      close();
+    } else if (event.data.type === 'bouncerOnboardingResize' && typeof event.data.height === 'number') {
+      iframe.style.height = `${event.data.height}px`;
+    }
+  };
+  window.addEventListener('message', messageHandler);
+  backdrop.addEventListener('click', (e) => {
+    if (e.target === backdrop) close();
+  });
 }
 
 // Wire up the sign-in button click handler inside a container.

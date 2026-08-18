@@ -857,10 +857,12 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
 // forwards the user to x.com. The snippets can't run inside the extension
 // itself: the MV3 worker has no DOM and bans remote code, and content-script
 // fetches are subject to the host page's CSP. Open-source builds (no Imbue
-// backend) skip straight to x.com.
-const INSTALL_LANDING_URL = process.env.HAS_IMBUE_BACKEND === 'true'
-  ? 'https://imbue.com/product/bouncer/just_installed_redirect.html'
-  : null;
+// backend) and dev builds skip straight to x.com — a dev install is never a
+// real conversion, so the X/Google pixels must not fire for it.
+const INSTALL_LANDING_URL =
+  process.env.HAS_IMBUE_BACKEND === 'true' && process.env.BOUNCER_ENV !== 'dev'
+    ? 'https://imbue.com/product/bouncer/just_installed_redirect.html'
+    : null;
 
 // Check local model statuses on extension install/update
 chrome.runtime.onInstalled.addListener((details) => {
@@ -887,6 +889,9 @@ chrome.runtime.onInstalled.addListener((details) => {
         // suppress the "what's new" banner for this version — a fresh install
         // has nothing to catch up on.
         showWelcomeBanner: true,
+        // One-time "activate other platforms?" popup, shown on x.com ahead
+        // of (and independent of) the sign-in gate.
+        showPlatformOnboarding: true,
         lastSeenVersion: chrome.runtime.getManifest().version,
       });
       await chrome.tabs.create({ url: INSTALL_LANDING_URL ?? 'https://x.com' });

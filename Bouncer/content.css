@@ -1542,6 +1542,41 @@ article {
   font-weight: 600;
 }
 
+/* First-install "activate other platforms?" popup. The card is an extension
+   iframe (onboarding.html) so its buttons can call permissions.request();
+   backgrounds mirror the guest popup so the iframe doesn't flash a
+   mismatched color before its document paints. */
+.bouncer-onboarding-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+  animation: backdrop-fade-in 0.1s ease-out;
+}
+
+.bouncer-onboarding-iframe {
+  width: min(360px, calc(100vw - 40px));
+  /* Placeholder height until the page reports its real content height via
+     the bouncerOnboardingResize message. */
+  height: 330px;
+  border: none;
+  border-radius: 16px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+  background: #15202b;
+  transition: height 0.15s ease;
+}
+
+.dim-mode .bouncer-onboarding-iframe {
+  background: #1e2732;
+}
+
+.light-mode .bouncer-onboarding-iframe {
+  background: #ffffff;
+}
+
 .filter-phrases-header {
   display: flex;
   align-items: baseline;

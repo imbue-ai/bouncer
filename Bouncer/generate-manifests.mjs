@@ -82,6 +82,9 @@ function platformsToManifestSlice(target) {
           'popup.css',
           'dist/popup.js',
           'browser-polyfill.js',
+          // First-install "activate other platforms?" iframe — only relevant
+          // on targets that actually have optional platforms to offer.
+          ...(optional.length > 0 ? ['onboarding.html', 'dist/onboarding.js'] : []),
           ...platforms.flatMap(p => p.extraWebAccessible ?? []),
           'icons/a-bouncer-2x-black.png',
           'icons/icon48.png',

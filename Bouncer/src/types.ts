@@ -461,6 +461,11 @@ export type StorageSchema = SettingsBase & {
   // Set by onInstalled on a fresh install; drives the one-time "Welcome to
   // Bouncer" banner and is cleared when that banner is dismissed.
   showWelcomeBanner: boolean;
+  // Set by onInstalled on a fresh install; drives the one-time "activate
+  // other platforms?" popup shown on x.com before any sign-in gating (see
+  // maybeShowPlatformOnboarding in content/ui.ts). Cleared when the popup
+  // is dismissed, whichever way.
+  showPlatformOnboarding: boolean;
   // Durable once-per-install latch for the install-conversion landing page:
   // set the first time onInstalled 'install' opens it and never cleared, so
   // repeat 'install' events that keep storage (Chrome Repair, synthetic
