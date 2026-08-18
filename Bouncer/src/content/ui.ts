@@ -566,6 +566,37 @@ function updateSidebarFilterVisibility() {
   }
 }
 
+// LinkedIn (browser only) "keep only" mode. Cached here for synchronous
+// label rendering; loaded and kept current from content/index.ts (init and
+// its storage-change listener) via setKeepOnlyMode. Always false elsewhere —
+// the selector below is only rendered on LinkedIn.
+let keepOnlyMode = false;
+
+export function setKeepOnlyMode(on: boolean) {
+  keepOnlyMode = on;
+  document.querySelectorAll<HTMLElement>('.filter-mode-select').forEach(sel => {
+    sel.querySelector('.filter-mode-option--filter')?.classList.toggle('active', !on);
+    sel.querySelector('.filter-mode-option--keep')?.classList.toggle('active', on);
+  });
+}
+
+// LinkedIn (browser only) gets a mode selector where the static "Filter out"
+// label normally sits. Collapsed it shows just the active mode; hovering fans
+// both options out vertically around that spot ("Filter out" up, "Keep only"
+// down — see .filter-mode-select in linkedin.css) and clicking one selects
+// that mode. Everywhere else (other platforms, the iOS app) the label stays
+// a plain span.
+function buildModeLabelHTML(): string {
+  if (_deps.adapter.siteId !== 'linkedin' || _deps.IS_IOS) {
+    return '<span class="filter-phrases-label">Filter out</span>';
+  }
+  return `
+    <span class="filter-phrases-label filter-mode-select">
+      <button type="button" class="filter-mode-option filter-mode-option--filter${keepOnlyMode ? '' : ' active'}" title="Hide posts that match your phrases">Filter out</button>
+      <button type="button" class="filter-mode-option filter-mode-option--keep${keepOnlyMode ? ' active' : ''}" title="Hide everything except posts that match your phrases">Keep only</button>
+    </span>`;
+}
+
 function buildFilterContainerHTML(showSignOut = false): string {
   return `
     <div class="filter-phrases-container">
@@ -575,7 +606,7 @@ function buildFilterContainerHTML(showSignOut = false): string {
         ${aiIndicatorHTML}
       </div>
       <div class="filter-phrases-header">
-        <span class="filter-phrases-label">Filter out</span>
+        ${buildModeLabelHTML()}
         <span class="filter-phrases-list"></span>
         <span class="filter-phrases-and-input">
           <span class="filter-phrases-and">and</span>
@@ -886,6 +917,17 @@ function setupFilterBoxEventHandlers(container: HTMLElement) {
 
   // Settings button click
   settingsBtn.addEventListener('click', () => showSettingsModal());
+
+  // "Filter out" / "Keep only" mode selector — the buttons only exist on
+  // LinkedIn browser builds (see buildModeLabelHTML). Just write the mode;
+  // the storage-change listener in content/index.ts flips the labels and
+  // re-evaluates the feed under the new polarity.
+  container.querySelectorAll<HTMLButtonElement>('.filter-mode-option').forEach(btn => {
+    btn.addEventListener('click', asyncHandler(async () => {
+      const wantKeepOnly = btn.classList.contains('filter-mode-option--keep');
+      if (wantKeepOnly !== keepOnlyMode) await setStorage({ linkedinKeepOnly: wantKeepOnly });
+    }));
+  });
 
   // Guest-trial notice: the CTA deep-links to the local model section of the
   // settings modal. If a local model is already driving filtering, the trial

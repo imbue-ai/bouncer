@@ -468,6 +468,12 @@ export type StorageSchema = SettingsBase & {
   // conversion. (Devices that ran the old in-extension pixel code may hold
   // this flag already — that correctly suppresses a second conversion.)
   installPixelArmed: boolean;
+  // LinkedIn "keep only" mode (browser extension only, not the iOS app).
+  // The pipeline classifies posts against the filter phrases exactly as in
+  // filter-out mode; the content script negates the verdict at the last
+  // moment so matching posts are the ones that STAY in the feed. Purely a
+  // frontend flag — the background never reads it.
+  linkedinKeepOnly: boolean;
 } & DescriptionKeys & PlatformEnabledKeys;
 
 // ==================== API Response Types ====================

@@ -33,6 +33,7 @@ import {
   updateDetectorState,
   isGuestLimitReached,
   refreshAiIndicatorUI,
+  setKeepOnlyMode,
 } from './ui';
 
 import { formatPostForEvaluation, phraseAddNeedsReEvaluation } from '../shared/utils';
@@ -96,6 +97,16 @@ import { formatPostForEvaluation, phraseAddNeedsReEvaluation } from '../shared/u
   // storage-change listener below. Defaults to true so the gate is a no-op
   // until the user explicitly opts out.
   let filterReplies = true;
+  // LinkedIn "keep only" mode (browser only — the iOS app never offers it).
+  // The pipeline runs completely unchanged; the verdict is negated at the
+  // last moment (see effectiveShouldHide in evaluatePost) so matching posts
+  // are the ones that stay. Cached like filterReplies: loaded on init, kept
+  // current by the storage-change listener.
+  const keepOnlyAvailable = adapter.siteId === 'linkedin' && !IS_IOS;
+  let keepOnlyMode = false;
+  // Gates the negation: with zero filter phrases every verdict is a skip
+  // (shouldHide=false), and negating those would hide the entire feed.
+  let sitePhraseCount = 0;
   let currentlyProcessingPostUrl: string | null = null;
 
   // ==================== Wire up modules ====================
@@ -342,7 +353,15 @@ import { formatPostForEvaluation, phraseAddNeedsReEvaluation } from '../shared/u
       // positives are effectively zero. Manual user-flagged hides (in ui.ts)
       // remain unaffected — this only vetoes the AI's automatic decision.
       const containsShareCode = (article.textContent || '').includes(FILTER_PACK_CODE_PREFIX);
-      const effectiveShouldHide = response.shouldHide && !containsShareCode;
+      // "Keep only" mode (LinkedIn browser only): identical pipeline, verdict
+      // negated at the last moment — matching posts stay, everything else is
+      // hidden. Only engages with at least one phrase set (a phraseless feed
+      // yields all-skip verdicts, whose negation would blank the feed), and
+      // the share-code veto still wins so import buttons survive.
+      const verdictHides = (keepOnlyMode && sitePhraseCount > 0)
+        ? !response.shouldHide
+        : response.shouldHide;
+      const effectiveShouldHide = verdictHides && !containsShareCode;
 
       postReasonings.set(article, {
         shouldHide: effectiveShouldHide,
@@ -618,13 +637,16 @@ import { formatPostForEvaluation, phraseAddNeedsReEvaluation } from '../shared/u
     // pre-date the toggle keep filtering as before. The {id}Enabled naming
     // convention is centralized in the platform registry.
     const platformKey = enabledStorageKey(adapter.siteId);
-    const data = await getStorage(['enabled', 'filterReplies', platformKey]);
+    const data = await getStorage(['enabled', 'filterReplies', 'linkedinKeepOnly', platformKey]);
     let globalEnabled = data.enabled !== false;
     const platformEnabled = data[platformKey] !== false;
     enabled = globalEnabled && platformEnabled;
     // Treat undefined as true so users on builds released before this
     // setting existed keep their current behavior.
     filterReplies = data.filterReplies !== false;
+    keepOnlyMode = keepOnlyAvailable && data.linkedinKeepOnly === true;
+    setKeepOnlyMode(keepOnlyMode);
+    sitePhraseCount = (await getDescriptions(descriptionsKey)).length;
 
     // Platform is off — don't inject any UI, don't observe posts, don't
     // wire up any listeners beyond the one that watches for re-enable.
@@ -725,6 +747,7 @@ import { formatPostForEvaluation, phraseAddNeedsReEvaluation } from '../shared/u
         refreshAiIndicatorUI().catch(err => console.error('[Bouncer] refreshAiIndicatorUI failed:', err));
         const oldDescs = (changes[descriptionsKey].oldValue as string[] | undefined) || [];
         const newDescs = (changes[descriptionsKey].newValue as string[] | undefined) || [];
+        sitePhraseCount = newDescs.length;
         // Only re-evaluate when a phrase was added, not removed. Planting the
         // seed phrase alone must not sweep (phraseAddNeedsReEvaluation): it is
         // not a filter category, and the aiFilterIntent write it provokes runs
@@ -767,6 +790,30 @@ import { formatPostForEvaluation, phraseAddNeedsReEvaluation } from '../shared/u
             !== phraseSetKey(aiPhrasesOf(changes.aiFilterIntent.newValue))) {
           reEvaluateAllPosts();
         }
+      }
+      if (changes.linkedinKeepOnly && keepOnlyAvailable) {
+        keepOnlyMode = changes.linkedinKeepOnly.newValue === true;
+        setKeepOnlyMode(keepOnlyMode);
+        // Flipping the mode inverts every past verdict: restore everything we
+        // hid, reset the filtered panel, and re-run the visible feed under the
+        // new polarity. Cheap — the backend cache still holds every verdict,
+        // only the negation changes.
+        document.querySelectorAll<HTMLElement>('[data-filtered-by-extension="true"]').forEach(cell => {
+          cell.style.display = '';
+          cell.style.visibility = '';
+          delete cell.dataset.filteredByExtension;
+          // The fade-out before hidePost leaves opacity:0 on the article
+          // itself — clear it or restored posts come back invisible.
+          const article = cell.matches(adapter.selectors.post)
+            ? cell
+            : cell.querySelector<HTMLElement>(adapter.selectors.post);
+          if (article) {
+            article.style.opacity = '';
+            article.style.transition = '';
+          }
+        });
+        clearFilteredPosts();
+        reEvaluateAllPosts();
       }
       if (changes.filterReplies) {
         filterReplies = changes.filterReplies.newValue !== false;
