@@ -342,6 +342,9 @@ export type ContentToBackgroundMessage =
   | { type: 'evaluatePost'; evaluationId: string; post: string; rawText: string; imageUrls: string[]; postUrl: string | null; siteId: SiteId; isReply?: boolean }
   | { type: 'suggestAnnoyingReasons'; post: string; imageUrls: string[]; siteId?: SiteId }
   | { type: 'clearCache' }
+  // Sent by the settings popup after the user grants an optional platform's
+  // host permission; resolves once its content script is registered.
+  | { type: 'syncOptionalPlatforms' }
   | { type: 'clearSinglePost'; post: string; imageUrls: string[]; postUrl?: string | null; siteId?: SiteId }
   | { type: 'getStats' }
   | { type: 'getReasoning'; post: string; imageUrls: string[]; postUrl?: string | null; siteId?: SiteId }
@@ -455,6 +458,14 @@ export type StorageSchema = SettingsBase & {
   googleAuthToken: string;
   openrouterCodeVerifier: string;
   lastSeenVersion: string;
+  // Set by onInstalled on a fresh install; drives the one-time "Welcome to
+  // Bouncer" banner and is cleared when that banner is dismissed.
+  showWelcomeBanner: boolean;
+  // Set by onInstalled on a fresh install; drives the one-time "activate
+  // other platforms?" popup shown on x.com before any sign-in gating (see
+  // maybeShowPlatformOnboarding in content/ui.ts). Cleared when the popup
+  // is dismissed, whichever way.
+  showPlatformOnboarding: boolean;
   // Durable once-per-install latch for the install-conversion landing page:
   // set the first time onInstalled 'install' opens it and never cleared, so
   // repeat 'install' events that keep storage (Chrome Repair, synthetic
@@ -462,6 +473,12 @@ export type StorageSchema = SettingsBase & {
   // conversion. (Devices that ran the old in-extension pixel code may hold
   // this flag already — that correctly suppresses a second conversion.)
   installPixelArmed: boolean;
+  // LinkedIn "keep only" mode (browser extension only, not the iOS app).
+  // The pipeline classifies posts against the filter phrases exactly as in
+  // filter-out mode; the content script negates the verdict at the last
+  // moment so matching posts are the ones that STAY in the feed. Purely a
+  // frontend flag — the background never reads it.
+  linkedinKeepOnly: boolean;
 } & DescriptionKeys & PlatformEnabledKeys;
 
 // ==================== API Response Types ====================

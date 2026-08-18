@@ -10,7 +10,8 @@ import {
 } from '../shared/share-encoding';
 import type { BackgroundToContentMessage, ContentUIDeps, FilteredPost, PostContent, LocalModelStatus } from '../types';
 import { getStorage, setStorage, getDescriptions, setDescriptions, aiIntentActiveForSite } from '../shared/storage';
-import { getReleaseNote } from './release-notes';
+import { optionalPlatforms } from '../shared/platforms';
+import { getReleaseNote, WELCOME_TIP } from './release-notes';
 import { runIOSImportAnimation } from './ios';
 
 // Dependencies (set by initUI from index.ts)
@@ -401,6 +402,59 @@ function showGuestLimitPopup() {
   showSignInPopup('guestLimit');
 }
 
+// ==================== First-install platform onboarding ====================
+
+let platformOnboardingBackdrop: HTMLElement | null = null;
+
+// One-time popup shown right after install (onInstalled opens x.com and sets
+// `showPlatformOnboarding`), asking whether to also activate Bouncer on the
+// optional platforms (YouTube/LinkedIn on the Chrome build). Deliberately
+// shown before — and fully independent of — the sign-in gate.
+//
+// The dialog body is onboarding.html in an extension iframe rather than
+// content-script DOM: chrome.permissions.request() needs a user gesture in an
+// extension context, and a gesture doesn't survive a message hop to the
+// background — a click inside the iframe satisfies both (same trick as the
+// settings modal below). Any dismissal — activate, "Not now", or a backdrop
+// click — clears the flag so the popup never comes back.
+export async function maybeShowPlatformOnboarding(): Promise<void> {
+  if (_deps.IS_IOS || chrome._polyfilled) return; // extension-only UI
+  if (optionalPlatforms().length === 0) return;   // nothing to offer on this target
+  const { showPlatformOnboarding } = await getStorage(['showPlatformOnboarding']);
+  if (showPlatformOnboarding !== true) return;
+  if (platformOnboardingBackdrop?.isConnected) return; // idempotent
+
+  const theme = _deps.adapter.getThemeMode();
+  const backdrop = document.createElement('div');
+  backdrop.className = `bouncer-onboarding-backdrop ${theme}-mode`;
+  const iframe = document.createElement('iframe');
+  iframe.className = 'bouncer-onboarding-iframe';
+  iframe.src = chrome.runtime.getURL('onboarding.html') + `?theme=${theme}`;
+  backdrop.appendChild(iframe);
+  document.body.appendChild(backdrop);
+  platformOnboardingBackdrop = backdrop;
+
+  const close = () => {
+    window.removeEventListener('message', messageHandler);
+    backdrop.remove();
+    platformOnboardingBackdrop = null;
+    setStorage({ showPlatformOnboarding: false }).catch(err =>
+      console.error('[Bouncer] Failed to clear platform onboarding flag:', err));
+  };
+  const messageHandler = (event: MessageEvent<{ type?: string; height?: number }>) => {
+    if (event.source !== iframe.contentWindow || !event.data) return;
+    if (event.data.type === 'bouncerOnboardingDone') {
+      close();
+    } else if (event.data.type === 'bouncerOnboardingResize' && typeof event.data.height === 'number') {
+      iframe.style.height = `${event.data.height}px`;
+    }
+  };
+  window.addEventListener('message', messageHandler);
+  backdrop.addEventListener('click', (e) => {
+    if (e.target === backdrop) close();
+  });
+}
+
 // Wire up the sign-in button click handler inside a container.
 // launchSignIn handles the platform split (Google popup vs Apple tab).
 function setupSignInButton(container: HTMLElement) {
@@ -416,38 +470,50 @@ function setupSignInButton(container: HTMLElement) {
 
 // ==================== Update Banner ====================
 
-// Shows a "what's new" banner inside the filter box once per version.
-// Reads release notes from src/shared/release-notes.ts. Dismissal writes
-// `lastSeenVersion` to chrome.storage.local so the banner stays gone.
+// Shows a "what's new" banner inside the filter box once per version — or,
+// on a brand-new install, the one-time welcome tip instead. Reads release
+// notes from ./release-notes.ts. Dismissal writes `lastSeenVersion` (or
+// clears `showWelcomeBanner`) to chrome.storage.local so the banner stays
+// gone. The slot only exists in the post-sign-in filter box, so the welcome
+// tip naturally appears after Google sign-in or "Skip sign-in".
 async function maybeRenderUpdateBanner(container: HTMLElement): Promise<void> {
   const slot = container.querySelector<HTMLElement>('.bouncer-update-banner-slot');
   if (!slot) return;
 
   const current = chrome.runtime.getManifest().version;
-  const { lastSeenVersion } = await getStorage(['lastSeenVersion']);
-  if (lastSeenVersion === current) return;
+  const { lastSeenVersion, showWelcomeBanner } = await getStorage(['lastSeenVersion', 'showWelcomeBanner']);
 
-  const platform = _deps.IS_IOS ? 'ios' : 'desktop';
-  const note = getReleaseNote(current, platform);
-  if (!note) {
-    // No notes for this version — silently advance so a future version still triggers.
-    await setStorage({ lastSeenVersion: current });
-    return;
+  // A fresh install gets the welcome tip — a single line, no title or
+  // bullets. onInstalled already pinned lastSeenVersion to the current
+  // version so the two banners never collide.
+  const welcome = showWelcomeBanner === true;
+  let bodyHTML: string;
+  if (welcome) {
+    bodyHTML = escapeHtml(WELCOME_TIP);
+  } else {
+    if (lastSeenVersion === current) return;
+    const note = getReleaseNote(current, _deps.IS_IOS ? 'ios' : 'desktop');
+    if (!note) {
+      // No notes for this version — silently advance so a future version still triggers.
+      await setStorage({ lastSeenVersion: current });
+      return;
+    }
+    const bulletsHTML = note.bullets.map(b => `<li>${escapeHtml(b)}</li>`).join('');
+    bodyHTML = `<div class="bouncer-update-banner-title">${escapeHtml(note.title)}</div>`
+      + `<ul class="bouncer-update-banner-bullets">${bulletsHTML}</ul>`;
   }
 
-  const bulletsHTML = note.bullets.map(b => `<li>${escapeHtml(b)}</li>`).join('');
   const html = `
     <div class="bouncer-update-banner" role="status">
       <button type="button" class="bouncer-update-banner-close" aria-label="Dismiss">×</button>
-      <div class="bouncer-update-banner-title">${escapeHtml(note.title)}</div>
-      <ul class="bouncer-update-banner-bullets">${bulletsHTML}</ul>
+      ${bodyHTML}
     </div>
   `;
   slot.replaceChildren(parseHTML(html));
 
   const closeBtn = slot.querySelector<HTMLButtonElement>('.bouncer-update-banner-close');
   closeBtn?.addEventListener('click', asyncHandler(async () => {
-    await setStorage({ lastSeenVersion: current });
+    await setStorage(welcome ? { showWelcomeBanner: false } : { lastSeenVersion: current });
     document.querySelectorAll('.bouncer-update-banner').forEach(el => el.remove());
   }));
 }
@@ -554,6 +620,37 @@ function updateSidebarFilterVisibility() {
   }
 }
 
+// LinkedIn (browser only) "keep only" mode. Cached here for synchronous
+// label rendering; loaded and kept current from content/index.ts (init and
+// its storage-change listener) via setKeepOnlyMode. Always false elsewhere —
+// the selector below is only rendered on LinkedIn.
+let keepOnlyMode = false;
+
+export function setKeepOnlyMode(on: boolean) {
+  keepOnlyMode = on;
+  document.querySelectorAll<HTMLElement>('.filter-mode-select').forEach(sel => {
+    sel.querySelector('.filter-mode-option--filter')?.classList.toggle('active', !on);
+    sel.querySelector('.filter-mode-option--keep')?.classList.toggle('active', on);
+  });
+}
+
+// LinkedIn (browser only) gets a mode selector where the static "Filter out"
+// label normally sits. Collapsed it shows just the active mode; hovering fans
+// both options out vertically around that spot ("Filter out" up, "Keep only"
+// down — see .filter-mode-select in linkedin.css) and clicking one selects
+// that mode. Everywhere else (other platforms, the iOS app) the label stays
+// a plain span.
+function buildModeLabelHTML(): string {
+  if (_deps.adapter.siteId !== 'linkedin' || _deps.IS_IOS) {
+    return '<span class="filter-phrases-label">Filter out</span>';
+  }
+  return `
+    <span class="filter-phrases-label filter-mode-select">
+      <button type="button" class="filter-mode-option filter-mode-option--filter${keepOnlyMode ? '' : ' active'}" title="Hide posts that match your phrases">Filter out</button>
+      <button type="button" class="filter-mode-option filter-mode-option--keep${keepOnlyMode ? ' active' : ''}" title="Hide everything except posts that match your phrases">Keep only</button>
+    </span>`;
+}
+
 function buildFilterContainerHTML(showSignOut = false): string {
   return `
     <div class="filter-phrases-container">
@@ -563,7 +660,7 @@ function buildFilterContainerHTML(showSignOut = false): string {
         ${aiIndicatorHTML}
       </div>
       <div class="filter-phrases-header">
-        <span class="filter-phrases-label">Filter out</span>
+        ${buildModeLabelHTML()}
         <span class="filter-phrases-list"></span>
         <span class="filter-phrases-and-input">
           <span class="filter-phrases-and">and</span>
@@ -874,6 +971,17 @@ function setupFilterBoxEventHandlers(container: HTMLElement) {
 
   // Settings button click
   settingsBtn.addEventListener('click', () => showSettingsModal());
+
+  // "Filter out" / "Keep only" mode selector — the buttons only exist on
+  // LinkedIn browser builds (see buildModeLabelHTML). Just write the mode;
+  // the storage-change listener in content/index.ts flips the labels and
+  // re-evaluates the feed under the new polarity.
+  container.querySelectorAll<HTMLButtonElement>('.filter-mode-option').forEach(btn => {
+    btn.addEventListener('click', asyncHandler(async () => {
+      const wantKeepOnly = btn.classList.contains('filter-mode-option--keep');
+      if (wantKeepOnly !== keepOnlyMode) await setStorage({ linkedinKeepOnly: wantKeepOnly });
+    }));
+  });
 
   // Guest-trial notice: the CTA deep-links to the local model section of the
   // settings modal. If a local model is already driving filtering, the trial

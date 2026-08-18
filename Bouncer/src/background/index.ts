@@ -18,6 +18,12 @@ import {
 import { sendFeedback } from './providers';
 import { imbueWebSocket, type ForceLoginMessage } from './ws-manager';
 import { launchAuthFlow, signInAnon, isAnonymousUser, refreshAuthToken, getAuthToken, handleAppleSignIn, signOut, setOnIdentityChanged, IS_SAFARI } from './auth';
+import { initOptionalPlatforms, syncOptionalPlatformScripts } from './optional-platforms';
+
+// Register/unregister content scripts for user-granted optional platforms.
+// Runs at every service worker startup because dynamic registrations don't
+// survive extension updates.
+initOptionalPlatforms();
 
 // ==================== Tab tracking ====================
 
@@ -283,6 +289,15 @@ async function handleMessage(
 
     case 'clearCache': {
       await clearEvaluationCache();
+      return { success: true };
+    }
+
+    // Sent by the settings toggle right after the user grants an optional
+    // platform's host permission. permissions.onAdded already triggers the
+    // same sync, but the popup awaits this one so it doesn't open the
+    // platform's feed before the content script is registered.
+    case 'syncOptionalPlatforms': {
+      await syncOptionalPlatformScripts();
       return { success: true };
     }
 
@@ -842,10 +857,12 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
 // forwards the user to x.com. The snippets can't run inside the extension
 // itself: the MV3 worker has no DOM and bans remote code, and content-script
 // fetches are subject to the host page's CSP. Open-source builds (no Imbue
-// backend) skip straight to x.com.
-const INSTALL_LANDING_URL = process.env.HAS_IMBUE_BACKEND === 'true'
-  ? 'https://imbue.com/product/bouncer/just_installed_redirect.html'
-  : null;
+// backend) and dev builds skip straight to x.com — a dev install is never a
+// real conversion, so the X/Google pixels must not fire for it.
+const INSTALL_LANDING_URL =
+  process.env.HAS_IMBUE_BACKEND === 'true' && process.env.BOUNCER_ENV !== 'dev'
+    ? 'https://imbue.com/product/bouncer/just_installed_redirect.html'
+    : null;
 
 // Check local model statuses on extension install/update
 chrome.runtime.onInstalled.addListener((details) => {
@@ -860,11 +877,23 @@ chrome.runtime.onInstalled.addListener((details) => {
     //  - installPixelArmed persists across repeat 'install' events that keep
     //    storage (e.g. Chrome's extension Repair), so those never re-open
     //    the landing page.
+    // The welcome flags sit behind the same guards: synthetic embedded
+    // 'install' events would otherwise re-arm the banner after every dismissal.
     (async () => {
       if (isEmbeddedApp()) return;
       const { installPixelArmed } = await getStorage(['installPixelArmed']);
       if (installPixelArmed) return;
-      await setStorage({ installPixelArmed: true });
+      await setStorage({
+        installPixelArmed: true,
+        // First-run banner (shown once the user is past the sign-in gate), and
+        // suppress the "what's new" banner for this version — a fresh install
+        // has nothing to catch up on.
+        showWelcomeBanner: true,
+        // One-time "activate other platforms?" popup, shown on x.com ahead
+        // of (and independent of) the sign-in gate.
+        showPlatformOnboarding: true,
+        lastSeenVersion: chrome.runtime.getManifest().version,
+      });
       await chrome.tabs.create({ url: INSTALL_LANDING_URL ?? 'https://x.com' });
     })().catch(err => console.error('[Background] Failed to open tab on install:', err));
   }
