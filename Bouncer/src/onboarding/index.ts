@@ -79,24 +79,22 @@ async function init(): Promise<void> {
     }
   }
 
-  // Platforms already granted (e.g. via the toolbar request chip, or a
-  // pre-existing grant on this profile) still get a row — shown checked and
-  // frozen — so the list doesn't mysteriously shrink. Only when everything
-  // is already granted is there nothing to ask: conclude immediately.
+  // Platforms already granted (e.g. via the toolbar request chip, or a grant
+  // Chrome restored from a previous install of this extension) still get a
+  // row — shown checked and frozen — so the list doesn't mysteriously shrink.
+  // Even when everything is already granted the popup stays up until the user
+  // dismisses it: it must NEVER close itself. (It used to conclude
+  // immediately in that case, which on a reinstall with restored grants made
+  // the popup flash and vanish under the parent's backdrop.)
   const candidates = [...optionalPlatforms()];
   const grantedFlags = await Promise.all(candidates.map(isGranted));
-  if (candidates.length === 0 || grantedFlags.every(Boolean)) {
-    finish();
-    return;
-  }
 
   // Checking a platform's box fires the browser's permission prompt right
   // then — the change event is the user gesture, so the request must be the
   // handler's first await (same pattern as the settings toggles in
-  // popup/index.ts). Once every offered platform is granted the popup closes
-  // itself.
+  // popup/index.ts). Granting never closes the popup — only the Done button
+  // (or, in the iframe host, a backdrop click handled by the parent) does.
   const list = document.getElementById('platformList')!;
-  const remaining = new Set<PlatformDef>(candidates.filter((_, i) => !grantedFlags[i]));
   candidates.forEach((p, i) => {
     const alreadyGranted = grantedFlags[i];
     const row = document.createElement('label');
@@ -150,11 +148,6 @@ async function init(): Promise<void> {
         // navigates to the newly activated platform.
         await chrome.runtime.sendMessage({ type: 'syncOptionalPlatforms' })
           .catch(err => console.error('[Onboarding] Platform sync failed:', err));
-        remaining.delete(p);
-        if (remaining.size === 0) {
-          // Leave the checked state on screen for a beat before closing.
-          setTimeout(finish, 600);
-        }
       })().catch(err => console.error(`[Onboarding] Activating ${p.id} failed:`, err));
     });
   });
