@@ -418,8 +418,9 @@ let platformOnboardingBackdrop: HTMLElement | null = null;
 // content-script DOM: chrome.permissions.request() needs a user gesture in an
 // extension context, and a gesture doesn't survive a message hop to the
 // background — a click inside the iframe satisfies both (same trick as the
-// settings modal below). Any dismissal — activate, "Not now", or a backdrop
-// click — clears the flag so the popup never comes back.
+// settings modal below). The popup never closes itself — granting platforms
+// leaves it up. Only an explicit dismissal (the Done button or a backdrop
+// click) clears the flag so it never comes back.
 export async function maybeShowPlatformOnboarding(): Promise<void> {
   if (_deps.IS_IOS || chrome._polyfilled) return; // extension-only UI
   if (optionalPlatforms().length === 0) return;   // nothing to offer on this target
