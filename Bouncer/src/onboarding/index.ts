@@ -1,16 +1,40 @@
-// First-install "activate other platforms?" page. The content script overlays
-// this on x.com in an iframe right after install (see
-// maybeShowPlatformOnboarding in content/ui.ts). It must be an extension page
-// rather than content-script DOM: chrome.permissions.request() is unavailable
-// to content scripts, and a user gesture does not survive a message hop to
-// the service worker — but a click inside this iframe is a gesture in an
-// extension context, so the request can run directly (the same trick the
-// settings modal uses for the platform toggles in popup.html).
+// First-install "activate other platforms?" page. Runs in one of two hosts:
+//
+//  - Chrome: an extension iframe overlaid on x.com by the content script
+//    (see maybeShowPlatformOnboarding in content/ui.ts). It must be an
+//    extension page rather than content-script DOM: chrome.permissions
+//    .request() is unavailable to content scripts, and a user gesture does
+//    not survive a message hop to the service worker — but a click inside
+//    this iframe is a gesture in an extension context, so the request can
+//    run directly (the same trick the settings modal uses for the platform
+//    toggles in popup.html).
+//
+//  - Firefox: a top-level extension tab opened by onInstalled. Gecko gives
+//    extension pages inside web-page iframes only content-script privileges
+//    (no permissions API — Bugzilla 1443253) and a gesture doesn't survive
+//    messaging either (Bugzilla 1397658), so a top-level page is the only
+//    context where the checkbox click can fire the permission prompt. When
+//    the user is done, the tab navigates on to x.com (or the install
+//    landing page on builds that report install conversions).
 
 import { optionalPlatforms, enabledStorageKey } from '../shared/platforms';
 import type { PlatformDef } from '../shared/platforms';
 import { setStorage } from '../shared/storage';
 import type { StorageSchema } from '../types';
+
+// Top-level tab (Firefox install flow) vs. iframe on x.com (Chrome flow).
+const IS_TAB = window.top === window;
+
+// Where the Firefox tab goes when onboarding concludes. Mirrors
+// INSTALL_LANDING_URL in background/index.ts: production builds route
+// through the landing page so its install-conversion pixels still fire,
+// everything else heads straight to x.com.
+const TAB_DONE_URL =
+  process.env.HAS_IMBUE_BACKEND === 'true' &&
+  process.env.BOUNCER_ENV !== 'dev' &&
+  process.env.BOUNCER_NO_AD !== 'true'
+    ? 'https://imbue.com/product/bouncer/just_installed_redirect.html'
+    : 'https://x.com';
 
 type ParentMessage =
   | { type: 'bouncerOnboardingDone' }
@@ -22,6 +46,16 @@ function postToParent(msg: ParentMessage): void {
   window.parent.postMessage(msg, '*');
 }
 
+// Conclude the onboarding for the current host: hand control back to the
+// content script (iframe) or move the tab on to its destination (tab).
+function finish(): void {
+  if (IS_TAB) {
+    location.replace(TAB_DONE_URL);
+  } else {
+    postToParent({ type: 'bouncerOnboardingDone' });
+  }
+}
+
 async function isGranted(p: PlatformDef): Promise<boolean> {
   try {
     return await chrome.permissions.contains({ origins: [p.manifestHost] });
@@ -31,19 +65,28 @@ async function isGranted(p: PlatformDef): Promise<boolean> {
 }
 
 async function init(): Promise<void> {
-  const theme = new URLSearchParams(location.search).get('theme');
-  if (theme === 'light' || theme === 'dim' || theme === 'dark') {
-    document.body.classList.add(`${theme}-mode`);
+  if (IS_TAB) {
+    // Full-page layout with the content in a centered card; theme follows
+    // the OS since there's no host page to inherit from.
+    document.body.classList.add('tab-mode');
+    if (window.matchMedia('(prefers-color-scheme: light)').matches) {
+      document.body.classList.add('light-mode');
+    }
+  } else {
+    const theme = new URLSearchParams(location.search).get('theme');
+    if (theme === 'light' || theme === 'dim' || theme === 'dark') {
+      document.body.classList.add(`${theme}-mode`);
+    }
   }
 
   // Platforms already granted (e.g. via the toolbar request chip, or a
   // pre-existing grant on this profile) still get a row — shown checked and
   // frozen — so the list doesn't mysteriously shrink. Only when everything
-  // is already granted is there nothing to ask: tell the parent to close.
+  // is already granted is there nothing to ask: conclude immediately.
   const candidates = [...optionalPlatforms()];
   const grantedFlags = await Promise.all(candidates.map(isGranted));
   if (candidates.length === 0 || grantedFlags.every(Boolean)) {
-    postToParent({ type: 'bouncerOnboardingDone' });
+    finish();
     return;
   }
 
@@ -110,19 +153,19 @@ async function init(): Promise<void> {
         remaining.delete(p);
         if (remaining.size === 0) {
           // Leave the checked state on screen for a beat before closing.
-          setTimeout(() => postToParent({ type: 'bouncerOnboardingDone' }), 600);
+          setTimeout(finish, 600);
         }
       })().catch(err => console.error(`[Onboarding] Activating ${p.id} failed:`, err));
     });
   });
 
-  document.getElementById('doneBtn')!.addEventListener('click', () => {
-    postToParent({ type: 'bouncerOnboardingDone' });
-  });
+  document.getElementById('doneBtn')!.addEventListener('click', finish);
 
   // Rows are rendered — report the real content height so the parent can
-  // size the iframe.
-  postToParent({ type: 'bouncerOnboardingResize', height: document.body.scrollHeight });
+  // size the iframe (and, having heard from us, actually show it).
+  if (!IS_TAB) {
+    postToParent({ type: 'bouncerOnboardingResize', height: document.body.scrollHeight });
+  }
 }
 
 init().catch(err => console.error('[Onboarding] init failed:', err));

@@ -19,6 +19,7 @@ import { sendFeedback } from './providers';
 import { imbueWebSocket, type ForceLoginMessage } from './ws-manager';
 import { launchAuthFlow, signInAnon, isAnonymousUser, refreshAuthToken, getAuthToken, handleAppleSignIn, signOut, setOnIdentityChanged, IS_SAFARI } from './auth';
 import { initOptionalPlatforms, syncOptionalPlatformScripts } from './optional-platforms';
+import { CURRENT_TARGET, optionalPlatforms } from '../shared/platforms';
 
 // Register/unregister content scripts for user-granted optional platforms.
 // Runs at every service worker startup because dynamic registrations don't
@@ -197,6 +198,13 @@ async function migrateStaleLocalSelection(): Promise<void> {
   }
 })().catch(err => console.error('[Background] Startup error:', err));
 
+// Lifeline ports held open by content-script overlays (the platform
+// onboarding popup). No traffic flows over them — their only job is that
+// port.onDisconnect fires in the content script when this extension is
+// reloaded or removed, so the overlay can take its backdrop down instead of
+// lingering as an orphaned grey layer over the page.
+chrome.runtime.onConnect.addListener(() => { /* held open, nothing to do */ });
+
 // ==================== Message handler ====================
 
 // Async message handler — each case returns the response object.
@@ -299,6 +307,25 @@ async function handleMessage(
     case 'syncOptionalPlatforms': {
       await syncOptionalPlatformScripts();
       return { success: true };
+    }
+
+    // Should the sender's tab show the platform-onboarding popup? True only
+    // for the designated tab (set by onInstalled). If the designated tab no
+    // longer exists — closed before the popup was dismissed — the first tab
+    // to ask inherits the claim, so the onboarding isn't lost.
+    case 'claimPlatformOnboarding': {
+      if (tabId === undefined) return { show: false };
+      const { showPlatformOnboarding, platformOnboardingTabId } =
+        await getStorage(['showPlatformOnboarding', 'platformOnboardingTabId']);
+      if (showPlatformOnboarding !== true) return { show: false };
+      if (platformOnboardingTabId === tabId) return { show: true };
+      if (platformOnboardingTabId !== undefined) {
+        const designatedStillOpen = await chrome.tabs.get(platformOnboardingTabId)
+          .then(() => true).catch(() => false);
+        if (designatedStillOpen) return { show: false };
+      }
+      await setStorage({ platformOnboardingTabId: tabId });
+      return { show: true };
     }
 
     case 'clearSinglePost': {
@@ -885,6 +912,16 @@ chrome.runtime.onInstalled.addListener((details) => {
       if (isEmbeddedApp()) return;
       const { installPixelArmed } = await getStorage(['installPixelArmed']);
       if (installPixelArmed) return;
+      // On Gecko the "activate other platforms?" UI cannot run as an iframe
+      // overlaid on x.com: extension pages in web-page iframes only get
+      // content-script privileges there (no chrome.permissions — Bugzilla
+      // 1443253), and a user gesture doesn't survive a message hop to the
+      // background (Bugzilla 1397658). So Firefox opens onboarding.html as a
+      // top-level extension tab instead, where permissions.request() works
+      // directly from the checkbox click; the page forwards to x.com (or the
+      // install landing page) when done. Chrome keeps the x.com overlay.
+      const onboardingAsTab =
+        CURRENT_TARGET === 'firefox' && optionalPlatforms().length > 0;
       await setStorage({
         installPixelArmed: true,
         // First-run banner (shown once the user is past the sign-in gate), and
@@ -892,11 +929,23 @@ chrome.runtime.onInstalled.addListener((details) => {
         // has nothing to catch up on.
         showWelcomeBanner: true,
         // One-time "activate other platforms?" popup, shown on x.com ahead
-        // of (and independent of) the sign-in gate.
-        showPlatformOnboarding: true,
+        // of (and independent of) the sign-in gate — but only in the tab
+        // created below (see claimPlatformOnboarding). Never set when the
+        // onboarding runs as its own tab instead.
+        showPlatformOnboarding: !onboardingAsTab,
         lastSeenVersion: chrome.runtime.getManifest().version,
       });
-      await chrome.tabs.create({ url: INSTALL_LANDING_URL ?? 'https://x.com' });
+      const tab = await chrome.tabs.create({
+        url: onboardingAsTab
+          ? chrome.runtime.getURL('onboarding.html')
+          : INSTALL_LANDING_URL ?? 'https://x.com',
+      });
+      // Pin the popup to this tab. Pre-existing x.com tabs (whose overlays
+      // would outlive an extension reload as orphaned grey backdrops) must
+      // never show it.
+      if (!onboardingAsTab && tab.id !== undefined) {
+        await setStorage({ platformOnboardingTabId: tab.id });
+      }
     })().catch(err => console.error('[Background] Failed to open tab on install:', err));
   }
 
