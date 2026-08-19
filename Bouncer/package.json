@@ -7,10 +7,13 @@
   "scripts": {
     "build": "node build.js",
     "build:dev": "node build.js --dev",
+    "build:no-ad": "node build.js --no-ad",
     "build:safari": "node build.js --target=safari",
     "build:safari:dev": "node build.js --dev --target=safari",
+    "build:safari:no-ad": "node build.js --no-ad --target=safari",
     "build:firefox": "node build.js --target=firefox",
     "build:firefox:dev": "node build.js --dev --target=firefox",
+    "build:firefox:no-ad": "node build.js --no-ad --target=firefox",
     "gen-manifests": "node generate-manifests.mjs",
     "watch": "node build.js --watch",
     "watch:dev": "node build.js --watch --dev",

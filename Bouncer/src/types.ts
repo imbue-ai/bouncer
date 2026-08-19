@@ -345,6 +345,11 @@ export type ContentToBackgroundMessage =
   // Sent by the settings popup after the user grants an optional platform's
   // host permission; resolves once its content script is registered.
   | { type: 'syncOptionalPlatforms' }
+  // Content script asking whether THIS tab should show the one-time platform
+  // onboarding popup. The background answers true only for the tab opened by
+  // onInstalled (or, if that tab is gone, the first tab to ask afterwards),
+  // so pre-existing x.com tabs never grow a popup of their own.
+  | { type: 'claimPlatformOnboarding' }
   | { type: 'clearSinglePost'; post: string; imageUrls: string[]; postUrl?: string | null; siteId?: SiteId }
   | { type: 'getStats' }
   | { type: 'getReasoning'; post: string; imageUrls: string[]; postUrl?: string | null; siteId?: SiteId }
@@ -466,6 +471,10 @@ export type StorageSchema = SettingsBase & {
   // maybeShowPlatformOnboarding in content/ui.ts). Cleared when the popup
   // is dismissed, whichever way.
   showPlatformOnboarding: boolean;
+  // The one tab allowed to show the platform-onboarding popup (the tab that
+  // onInstalled opened). Claimed/reassigned via the claimPlatformOnboarding
+  // message; meaningless once showPlatformOnboarding is false.
+  platformOnboardingTabId: number;
   // Durable once-per-install latch for the install-conversion landing page:
   // set the first time onInstalled 'install' opens it and never cleared, so
   // repeat 'install' events that keep storage (Chrome Repair, synthetic
