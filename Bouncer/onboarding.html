@@ -74,12 +74,35 @@
       cursor: pointer;
     }
     .onboarding-done:hover { background: #1a8cd8; }
+    /* Top-level tab mode (Firefox install flow — see src/onboarding/index.ts):
+       the same content rendered as a centered card on a full-page background
+       instead of filling an iframe. The card element is intentionally
+       unstyled in iframe mode. */
+    body.tab-mode {
+      min-height: 100vh;
+      padding: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #000000;
+    }
+    body.tab-mode .onboarding-card {
+      width: min(360px, 100%);
+      padding: 26px 24px 22px;
+      border-radius: 16px;
+      background: #15202b;
+      box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+    }
+    body.tab-mode.light-mode { background: #e7e9ea; }
+    body.tab-mode.light-mode .onboarding-card { background: #ffffff; }
   </style>
 </head>
 <body>
-  <h1>Activate Bouncer on other platforms?</h1>
-  <div class="platform-list" id="platformList"></div>
-  <button class="onboarding-done" id="doneBtn">Done</button>
+  <main class="onboarding-card">
+    <h1>Activate Bouncer on other platforms?</h1>
+    <div class="platform-list" id="platformList"></div>
+    <button class="onboarding-done" id="doneBtn">Done</button>
+  </main>
 
   <!-- Brand icons, cloned into the platform rows by dist/onboarding.js.
        Kept as inert templates here so the script never builds SVG markup

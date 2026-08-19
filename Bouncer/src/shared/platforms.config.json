@@ -9,8 +9,8 @@
   },
   {
     "id": "linkedin",
-    "targets": ["chrome", "safari"],
-    "optionalTargets": ["chrome"],
+    "targets": ["chrome", "firefox", "safari"],
+    "optionalTargets": ["chrome", "firefox"],
     "manifestHost": "https://*.linkedin.com/*",
     "adapterScript": "dist/LinkedInAdapter.js",
     "cssPath": "adapters/linkedin/linkedin.css",
@@ -18,8 +18,8 @@
   },
   {
     "id": "youtube",
-    "targets": ["chrome"],
-    "optionalTargets": ["chrome"],
+    "targets": ["chrome", "firefox", "safari"],
+    "optionalTargets": ["chrome", "firefox"],
     "manifestHost": "https://*.youtube.com/*",
     "adapterScript": "dist/YouTubeAdapter.js",
     "cssPath": "adapters/youtube/youtube.css",
