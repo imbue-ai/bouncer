@@ -8,6 +8,10 @@ import { generateManifest } from './generate-manifests.mjs';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isWatch = process.argv.includes('--watch');
 const env = process.argv.includes('--dev') ? 'dev' : 'prod';
+// --no-ad: identical to a prod build except the install-conversion landing
+// page (and its X/Google pixels) is disabled — for installs that must not
+// count as ad conversions (internal testing, side-loads).
+const noAd = process.argv.includes('--no-ad');
 const targetArg = process.argv.find((a) => a.startsWith('--target='));
 const target = targetArg ? targetArg.split('=')[1] : 'chrome';
 const apigwArg = process.argv.find((a) => a.startsWith('--apigw='));
@@ -121,6 +125,7 @@ const define = {
   // to the platforms that ship on this build target (keeps the popup, the
   // pipeline, and storage keys in lockstep with the generated manifest).
   'process.env.BOUNCER_TARGET': JSON.stringify(target),
+  'process.env.BOUNCER_NO_AD': JSON.stringify(String(noAd)),
 };
 for (const [key, value] of Object.entries(config)) {
   define[`process.env.${key}`] = JSON.stringify(value);
@@ -175,9 +180,10 @@ function copyLitertlmAssets() {
 }
 
 async function build() {
+  const flavor = `env: ${env}${noAd ? ', no-ad' : ''}, target: ${target}`;
   console.log(hasImbue
-    ? `Building with Imbue backend (env: ${env}, target: ${target})`
-    : `Building without Imbue backend — auth & websocket stubbed (env: ${env}, target: ${target})`);
+    ? `Building with Imbue backend (${flavor})`
+    : `Building without Imbue backend — auth & websocket stubbed (${flavor})`);
 
   // 0. Regenerate manifest.json from manifest.base.json + manifest.<target>.json.
   generateManifest(target);

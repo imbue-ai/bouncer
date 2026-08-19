@@ -857,10 +857,12 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
 // forwards the user to x.com. The snippets can't run inside the extension
 // itself: the MV3 worker has no DOM and bans remote code, and content-script
 // fetches are subject to the host page's CSP. Open-source builds (no Imbue
-// backend) and dev builds skip straight to x.com — a dev install is never a
-// real conversion, so the X/Google pixels must not fire for it.
+// backend), dev builds, and --no-ad builds skip straight to x.com — those
+// installs are never real conversions, so the X/Google pixels must not fire.
 const INSTALL_LANDING_URL =
-  process.env.HAS_IMBUE_BACKEND === 'true' && process.env.BOUNCER_ENV !== 'dev'
+  process.env.HAS_IMBUE_BACKEND === 'true' &&
+  process.env.BOUNCER_ENV !== 'dev' &&
+  process.env.BOUNCER_NO_AD !== 'true'
     ? 'https://imbue.com/product/bouncer/just_installed_redirect.html'
     : null;
 
