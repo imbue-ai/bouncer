@@ -572,12 +572,24 @@ async function maybeRenderUpdateBanner(container: HTMLElement): Promise<void> {
 // ==================== Placeholder animation ====================
 
 const PLACEHOLDER_PHRASES = ['AI slop', 'politics', 'negativity', 'pessimism', 'political outrage', 'posts written by AI', 'ragebait', 'humblebragging', 'virtue signaling', 'idolizing elites', 'Elon Musk'];
+// Shown instead while LinkedIn's "Keep only" mode is active: things worth
+// keeping in a LinkedIn feed rather than things to remove. Must stay the
+// same length as PLACEHOLDER_PHRASES — the ff-placeholder-scroll keyframes
+// are generated once from that count and shared by both phrase sets.
+const KEEP_ONLY_PLACEHOLDER_PHRASES = ['job openings', 'AI research', 'startup news', 'engineering deep dives', 'career advice', 'product launches', 'industry analysis', 'open source projects', 'machine learning', 'founder stories', 'conference talks'];
 const PLACEHOLDER_DURATION = 10; // seconds for full cycle
 
-// Build placeholder HTML and inject dynamic keyframes once
-const placeholderItemsHTML = [...PLACEHOLDER_PHRASES, PLACEHOLDER_PHRASES[0]]
-  .map(p => `<span>${p}</span>`).join('');
-const placeholderHTML = `<span class="filter-input-wrapper"><input type="text" class="filter-phrases-input"><span class="filter-placeholder-cycle" aria-hidden="true"><span class="filter-placeholder-track">${placeholderItemsHTML}</span></span></span>`;
+// The cycling examples depend on the active mode, so the track contents are
+// built per render (and swapped in place by setKeepOnlyMode) instead of once
+// at module load.
+function placeholderTrackItemsHTML(): string {
+  const phrases = keepOnlyMode ? KEEP_ONLY_PLACEHOLDER_PHRASES : PLACEHOLDER_PHRASES;
+  return [...phrases, phrases[0]].map(p => `<span>${p}</span>`).join('');
+}
+
+function placeholderHTML(): string {
+  return `<span class="filter-input-wrapper"><input type="text" class="filter-phrases-input"><span class="filter-placeholder-cycle" aria-hidden="true"><span class="filter-placeholder-track">${placeholderTrackItemsHTML()}</span></span></span>`;
+}
 
 // AI-detection indicator, top-right of every authenticated filter box. It
 // reports the state AND toggles it — but only through the natural-language
@@ -683,6 +695,39 @@ export function setKeepOnlyMode(on: boolean) {
     sel.querySelector('.filter-mode-option--filter')?.classList.toggle('active', !on);
     sel.querySelector('.filter-mode-option--keep')?.classList.toggle('active', on);
   });
+  // The cycling placeholder examples are mode-specific (things to remove vs
+  // things to keep) — swap the track contents in place. Both phrase sets have
+  // the same count, so the shared keyframes keep lining up mid-animation.
+  document.querySelectorAll<HTMLElement>('.filter-placeholder-track').forEach(track => {
+    track.replaceChildren(parseHTML(placeholderTrackItemsHTML()));
+  });
+  // Mirrors the class buildFilterContainerHTML sets at render time; CSS in
+  // linkedin.css hides filter-out-only chrome (the "REMOVE AI SLOP?"
+  // indicator) while keep-only is active.
+  document.querySelectorAll<HTMLElement>('.filter-phrases-container').forEach(c => {
+    c.classList.toggle('ff-keep-only', on);
+  });
+  syncModeFanOverflow();
+}
+
+// The mode selector's expanded fan is a pure overlay — the inactive option is
+// absolutely positioned (linkedin.css) so hovering never widens the selector
+// and nudges the phrase input after it. CSS therefore can't size the shared
+// hover backdrop to an inactive label that's wider than the active one;
+// measure the overflow and hand it to the stylesheet as --ff-fan-extra.
+// Called on filter-box setup and from setKeepOnlyMode (swapping .active
+// changes which label overflows).
+function syncModeFanOverflow() {
+  document.querySelectorAll<HTMLElement>('.filter-mode-select').forEach(sel => {
+    const active = sel.querySelector<HTMLElement>('.filter-mode-option.active');
+    if (!active) return;
+    const activeWidth = active.getBoundingClientRect().width;
+    const extra = Math.max(0, ...Array.from(
+      sel.querySelectorAll<HTMLElement>('.filter-mode-option'),
+      o => o.getBoundingClientRect().width - activeWidth,
+    ));
+    sel.style.setProperty('--ff-fan-extra', `${extra}px`);
+  });
 }
 
 // LinkedIn (browser only) gets a mode selector where the static "Filter out"
@@ -704,7 +749,7 @@ function buildModeLabelHTML(): string {
 
 function buildFilterContainerHTML(showSignOut = false): string {
   return `
-    <div class="filter-phrases-container">
+    <div class="filter-phrases-container${keepOnlyMode ? ' ff-keep-only' : ''}">
       <div class="bouncer-update-banner-slot"></div>
       <div class="filter-phrases-title-row">
         <span class="filter-phrases-box-name">Bouncer</span>
@@ -715,7 +760,7 @@ function buildFilterContainerHTML(showSignOut = false): string {
         <span class="filter-phrases-list"></span>
         <span class="filter-phrases-and-input">
           <span class="filter-phrases-and">and</span>
-          ${placeholderHTML}
+          ${placeholderHTML()}
         </span>
       </div>
       ${guestTrialNoticeHTML()}
@@ -1024,13 +1069,36 @@ function setupFilterBoxEventHandlers(container: HTMLElement) {
   settingsBtn.addEventListener('click', () => showSettingsModal());
 
   // "Filter out" / "Keep only" mode selector — the buttons only exist on
-  // LinkedIn browser builds (see buildModeLabelHTML). Just write the mode;
-  // the storage-change listener in content/index.ts flips the labels and
-  // re-evaluates the feed under the new polarity.
+  // LinkedIn browser builds (see buildModeLabelHTML). Each mode keeps its own
+  // phrase list: the active one lives in descriptions_linkedin, the inactive
+  // one is stashed in linkedinInactiveModePhrases, and switching modes swaps
+  // them. All three keys go in one storage write so the change listener in
+  // content/index.ts (which flips the labels and re-evaluates the feed) sees
+  // the new mode and its list together, never a mixed state.
+  syncModeFanOverflow();
   container.querySelectorAll<HTMLButtonElement>('.filter-mode-option').forEach(btn => {
     btn.addEventListener('click', asyncHandler(async () => {
       const wantKeepOnly = btn.classList.contains('filter-mode-option--keep');
-      if (wantKeepOnly !== keepOnlyMode) await setStorage({ linkedinKeepOnly: wantKeepOnly });
+      if (wantKeepOnly === keepOnlyMode) return;
+      // Choice made — collapse the fan. It's pure :hover CSS, so without this
+      // it would stay open until the pointer wanders off. The class suppresses
+      // the hover rules (see linkedin.css) and mouseleave re-arms them.
+      const select = btn.closest<HTMLElement>('.filter-mode-select');
+      if (select) {
+        select.classList.add('filter-mode-select--collapsed');
+        select.addEventListener('mouseleave', () => {
+          select.classList.remove('filter-mode-select--collapsed');
+        }, { once: true });
+      }
+      const [currentPhrases, stash] = await Promise.all([
+        getDescriptions(_deps.descriptionsKey),
+        getStorage(['linkedinInactiveModePhrases']),
+      ]);
+      await setStorage({
+        linkedinKeepOnly: wantKeepOnly,
+        [_deps.descriptionsKey]: stash.linkedinInactiveModePhrases || [],
+        linkedinInactiveModePhrases: currentPhrases,
+      });
     }));
   });
 
