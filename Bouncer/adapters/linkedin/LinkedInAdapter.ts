@@ -710,3 +710,219 @@ const BouncerLinkedInAdapter = class LinkedInAdapter implements PlatformAdapter 
 if (/(^|\.)linkedin\.com$/i.test(location.hostname)) {
   window.BouncerAdapter = BouncerLinkedInAdapter;
 }
+
+// linkedin adaptation: neutralize the mobile-web "get the full app
+// experience" upsells (the .upsell-bottom banner and the
+// .blocking-upsell-bottom-sheet bottom sheet). linkedin.css hides both
+// instantly so the user never sees them — but hiding is not enough.
+//
+// Mechanism, reverse-engineered from LinkedIn's own bundle and confirmed by
+// live diagnosis on Android/desktop:
+//  - A dormant div.blocking-upsell wrapper mounts at page load
+//    (data-trigger-type="scrolling-counter"); after the user scrolls past
+//    data-counter-target-number feed items, LinkedIn opens the bottom sheet
+//    and adds the `overflow-hidden` utility CLASS to <body>. With <html>
+//    overflow visible, body's overflow:hidden propagates to the viewport:
+//    touch/wheel scrolling dies (programmatic scrollTo still works — no
+//    event listener, no inline style, which is why clearing inline styles
+//    and removing scrim nodes never unfroze anything). The class is only
+//    removed on proper dismissal — impossible on a CSS-hidden sheet — so
+//    the feed freezes forever.
+//  - The upsell controllers check sessionStorage at boot
+//    (readWithExpiry(storageKey, coolOff)): if it returns "DISMISSED",
+//    LinkedIn REMOVES the upsell element itself and never arms any of this.
+//    Storage format (av class in their bundle): JSON-encoded value under
+//    the data-storage-key, plus JSON-encoded Date.now() under
+//    `<key>_lastUpdatedAt`, valid for data-cool-off-time ms (7 days for the
+//    sheet). Their dismiss handlers ignore synthetic events (isTrusted
+//    check — verified: every dispatched event returns un-prevented).
+//
+// Defense in depth, in order:
+//  1. Pre-seed sessionStorage with "DISMISSED" records — LinkedIn's own
+//     boot check then removes the upsells before they can ever arm. This
+//     is the primary fix; the rest guards against races (our seed landing
+//     after their boot) and future storage-format drift.
+//  2. Click LinkedIn's dismiss control (attempts 1-2 per surface, spaced
+//     >=400ms; full pointerdown→click sequence). Structural selectors only:
+//     banner X = button.upsell-content__dismiss-icon, sheet close =
+//     button.btn-tertiary / data-tracking-control-name *close*/*dismiss* —
+//     searched in the enclosing wrapper because the sheet's close button
+//     sits outside the surface node. The app-store CTA is
+//     a.btn-primary.upsell-content__action, which nothing here matches.
+//  3. Remove the wrapper node (attempt 3+) — the strategy a dedicated iOS
+//     WKUserScript used successfully before this shared path replaced it.
+//  4. Strip a stale body `overflow-hidden` class whenever an upsell surface
+//     has been seen and no legitimate modal remains open (checked on every
+//     pass AND via a dedicated body class-attribute observer — the arming
+//     step is an attribute-only mutation that childList observers miss).
+//
+// This runs at top level, NOT inside the adapter class: the hiding CSS is
+// injected unconditionally by the manifest, so the dismisser must run even
+// when the content script later bails (e.g. filtering disabled). Same
+// upsell classes only exist on the mobile layout, so this is inert on
+// desktop SDUI.
+if (/(^|\.)linkedin\.com$/i.test(location.hostname)) {
+  // Shows in the Android app's logcat ("Web Content"/"Isolated Web Content"
+  // tags, consoleOutput enabled in BouncerGeckoView) and in desktop DevTools.
+  const traceUpsell = (msg: string) => console.log(`[bouncer-upsell] ${msg}`);
+
+  // 1. Pre-seed LinkedIn's own dismissal records (sessionStorage, JSON
+  // values, `_lastUpdatedAt` expiry companion — see header comment). Their
+  // boot check then removes the upsell nodes itself.
+  try {
+    const stamp = JSON.stringify(Date.now());
+    for (const key of ['blocking-upsell', 'non-blocking-upsell']) {
+      sessionStorage.setItem(key, '"DISMISSED"');
+      sessionStorage.setItem(`${key}_lastUpdatedAt`, stamp);
+    }
+    traceUpsell('pre-seeded sessionStorage dismissal records');
+  } catch (e) {
+    traceUpsell(`sessionStorage seeding failed (${(e as Error).message}) — DOM fallbacks still active`);
+  }
+
+  const upsellAttempts = new WeakMap<Element, { count: number; last: number }>();
+  let sawUpsellSurface = false;
+
+  // 4. The actual un-freezer: LinkedIn's scroll lock is the `overflow-hidden`
+  // utility class on <body>. Strip it only when an upsell surface has been
+  // seen on this page (so we never touch a lock we don't understand) and no
+  // legitimate modal could still own it.
+  const stripStaleScrollLock = () => {
+    const body = document.body;
+    if (!sawUpsellSurface || !body || !body.classList.contains('overflow-hidden')) return;
+    if (document.querySelector('.bottom-sheet-open')) return;
+    for (const container of document.querySelectorAll('.top-level-modal-container')) {
+      if (container.childElementCount > 0) return;
+    }
+    body.classList.remove('overflow-hidden');
+    traceUpsell('stripped stale overflow-hidden scroll lock from <body>');
+  };
+
+  // .click() only fires a `click` event; if LinkedIn's dismiss handler
+  // listens on pointer/mouse events instead, .click() is a silent no-op. So
+  // fire the whole activation sequence, and report each dispatchEvent result
+  // (`PREVENTED` = some handler called preventDefault = a listener really
+  // saw it).
+  const syntheticActivate = (el: HTMLElement): string => {
+    const init: MouseEventInit = { bubbles: true, cancelable: true, composed: true, view: window };
+    const results: string[] = [];
+    const fire = (ev: Event) => {
+      try {
+        results.push(`${ev.type}:${el.dispatchEvent(ev) ? 'ok' : 'PREVENTED'}`);
+      } catch (e) {
+        results.push(`${ev.type}:threw(${(e as Error).message})`);
+      }
+    };
+    fire(new PointerEvent('pointerdown', init));
+    fire(new MouseEvent('mousedown', init));
+    fire(new PointerEvent('pointerup', init));
+    fire(new MouseEvent('mouseup', init));
+    el.click();
+    results.push('click():done');
+    return results.join(' ');
+  };
+
+  const describeEl = (el: Element): string => {
+    const aria = el.getAttribute('aria-label');
+    const track = el.getAttribute('data-tracking-control-name');
+    return `<${el.tagName.toLowerCase()} cls="${String(el.className).replace(/\s+/g, ' ').slice(0, 90)}"`
+      + (aria ? ` aria="${aria}"` : '')
+      + (track ? ` track="${track}"` : '')
+      + `> text="${(el.textContent ?? '').trim().slice(0, 30)}"`;
+  };
+
+  const dismissUpsells = () => {
+    const surfaces = document.querySelectorAll('.upsell-bottom, .blocking-upsell-bottom-sheet');
+    // Runs even with zero surfaces: the lock class can outlive the surface
+    // nodes (we remove them; LinkedIn's arming code may still add the class).
+    stripStaleScrollLock();
+    for (const surface of surfaces) {
+      const state = upsellAttempts.get(surface) ?? { count: 0, last: 0 };
+      const now = Date.now();
+      if (state.count >= 5) {
+        if (state.count === 5) {
+          upsellAttempts.set(surface, { count: 6, last: now });
+          traceUpsell(`GIVING UP on ${String(surface.className).split(' ')[0]} after 5 attempts; still connected=${surface.isConnected}`);
+        }
+        continue;
+      }
+      if (now - state.last < 400) continue;
+      // The dismiss control can live in the sheet's chrome outside the
+      // surface node (the sheet's Close button does), so search the whole
+      // enclosing upsell/modal wrapper.
+      const scope = surface.closest('.top-level-modal-container, .blocking-upsell, .mweb-app-upsell') ?? surface;
+      if (state.count === 0) {
+        sawUpsellSurface = true;
+        traceUpsell(`surface mounted: ${describeEl(surface)} scope=${String(scope.className).replace(/\s+/g, ' ').slice(0, 90)} readyState=${document.readyState}`);
+        traceUpsell(`scope html: ${scope.outerHTML.slice(0, 1200)}`);
+        const clickables = scope.querySelectorAll('button, [role="button"], a, [class*="dismiss"], [class*="close"]');
+        traceUpsell(`clickables (${clickables.length}): ${[...clickables].map(describeEl).join(' | ')}`);
+        traceUpsell(`html style="${document.documentElement.getAttribute('style') ?? ''}" body style="${document.body?.getAttribute('style') ?? ''}" body cls="${document.body?.className ?? ''}"`);
+      }
+      upsellAttempts.set(surface, { count: state.count + 1, last: now });
+      // Attempts 1-2: LinkedIn's own dismiss control. If LinkedIn honors it
+      // (it sets the data-cool-off-time suppression in storage), this is the
+      // clean path. In practice its handler ignores synthetic events
+      // (isTrusted check — every dispatch returns un-prevented), so:
+      // Attempt 3: remove the wrapper node outright, the same strategy the
+      // iOS WKUserScript has used successfully all along. The wrapper's
+      // scrim is what eats touch input while the sheet sits parked
+      // off-screen (-bottom-full), so removing it restores scrolling even
+      // though we never got a "real" dismissal.
+      if (state.count >= 2) {
+        traceUpsell(`escalating (attempt ${state.count + 1}): removing wrapper ${String(scope.className).replace(/\s+/g, ' ').slice(0, 80)}`);
+        scope.remove();
+        for (const el of [document.documentElement, document.body]) {
+          if (el && el.style.overflow === 'hidden') {
+            traceUpsell(`clearing inline overflow lock on ${el.tagName}`);
+            el.style.overflow = '';
+          }
+        }
+      } else {
+        const dismiss = scope.querySelector<HTMLElement>(
+          'button.upsell-content__dismiss-icon, button[data-tracking-control-name*="dismiss"], button[data-tracking-control-name*="close"], button.btn-tertiary'
+        );
+        if (!dismiss) {
+          traceUpsell(`no dismiss control matched in ${String(surface.className).split(' ')[0]} (attempt ${state.count + 1})`);
+          continue;
+        }
+        traceUpsell(`activating dismiss (attempt ${state.count + 1}) ${describeEl(dismiss)}`);
+        const dispatchReport = syntheticActivate(dismiss);
+        traceUpsell(`dispatch results: ${dispatchReport}`);
+      }
+      // Mutation-driven passes stall when the page goes quiet, so guarantee a
+      // follow-up pass to verify the surface unmounted (and retry if not).
+      setTimeout(() => {
+        if (surface.isConnected) {
+          traceUpsell(`surface STILL CONNECTED 500ms after attempt ${state.count + 1}; cls now="${String(surface.className).replace(/\s+/g, ' ').slice(0, 120)}"`);
+          scheduleUpsellPass();
+        } else {
+          traceUpsell(`surface unmounted after attempt ${state.count + 1} — dismissed`);
+        }
+      }, 500);
+    }
+  };
+
+  // rAF-coalesced so heavy feed mutation bursts cost at most one
+  // querySelectorAll per frame.
+  let upsellPassScheduled = false;
+  const scheduleUpsellPass = () => {
+    if (upsellPassScheduled) return;
+    upsellPassScheduled = true;
+    requestAnimationFrame(() => {
+      upsellPassScheduled = false;
+      dismissUpsells();
+    });
+  };
+
+  new MutationObserver(scheduleUpsellPass)
+    .observe(document.documentElement, { childList: true, subtree: true });
+  // Arming the lock is an attribute-only mutation (class added to <body>)
+  // that the childList observer above never fires for — watch it directly.
+  if (document.body) {
+    new MutationObserver(scheduleUpsellPass)
+      .observe(document.body, { attributes: true, attributeFilter: ['class'] });
+  }
+  scheduleUpsellPass();
+  traceUpsell(`armed on ${location.hostname} readyState=${document.readyState}`);
+}

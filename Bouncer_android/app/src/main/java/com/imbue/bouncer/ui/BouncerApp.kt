@@ -301,7 +301,7 @@ fun BouncerApp(viewModel: BouncerViewModel = viewModel()) {
             }
         }
         NavBar(
-            currentUrl = state.currentUrl,
+            activePlatformId = state.activePlatformId,
             filteredCount = state.filteredCount,
             onReload = viewModel::reload,
             onSelectPlatform = { BouncerGeckoView.switchToPlatform(it) },

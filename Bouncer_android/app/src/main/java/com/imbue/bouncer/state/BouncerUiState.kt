@@ -1,6 +1,11 @@
 package com.imbue.bouncer.state
 
 data class BouncerUiState(
+    // Which platform's tab is displayed. This — not a parse of currentUrl —
+    // drives the NavBar's platform label: currentUrl can legitimately be a
+    // URL that maps to no platform (Google auth) or momentarily to the wrong
+    // one, and parsing it with a Twitter fallback left the label stuck on X.
+    val activePlatformId: String = "twitter",
     val phrases: List<String> = emptyList(),
     val filteredCount: Int = 0,
     val themeMode: String = "dark",
