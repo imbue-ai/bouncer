@@ -2273,58 +2273,42 @@ article {
   flex-shrink: 0;
 }
 
-/* Circular share button on the actions row, sitting just to the left of
-   Settings. Sized to match X's own icon-button affordances. */
+/* "Share filters" button on the actions row, to the right of "View filtered".
+   Same shape and typography as .filtered-toggle-btn, but with no background
+   or border so "View filtered" stays the row's primary action. */
 .filter-pack-share-btn {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
   flex-shrink: 0;
-  width: 28px;
-  height: 28px;
-  padding: 0;
+  padding: 6px 12px;
   background: transparent;
   border: none;
   border-radius: 9999px;
-  color: rgb(113, 118, 123);
-  line-height: 0;
+  color: rgb(231, 233, 234);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
   cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
+  appearance: none;
+  -webkit-appearance: none;
+  transition: background 0.2s;
 }
 
 .filter-pack-share-btn:hover {
-  background: rgba(29, 155, 240, 0.1);
-  color: rgb(29, 155, 240);
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .filter-pack-share-btn:active {
   opacity: 0.7;
 }
 
-.filter-pack-share-btn svg {
-  flex-shrink: 0;
-  width: 16px;
-  height: 16px;
-  fill: currentColor;
-}
-
 .light-mode .filter-pack-share-btn {
-  color: rgb(83, 100, 113);
+  color: rgb(15, 20, 25);
 }
 
 .light-mode .filter-pack-share-btn:hover {
-  background: rgba(29, 155, 240, 0.1);
-  color: rgb(29, 155, 240);
-}
-
-.filter-phrases-mobile .filter-pack-share-btn {
-  width: 24px;
-  height: 24px;
-}
-
-.filter-phrases-mobile .filter-pack-share-btn svg {
-  width: 14px;
-  height: 14px;
+  background: rgba(0, 0, 0, 0.05);
 }
 
 /* Settings button — circular icon button (horizontal ellipsis), matches the

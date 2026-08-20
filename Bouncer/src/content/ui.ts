@@ -630,9 +630,6 @@ function injectPlaceholderKeyframes() {
 // Inject keyframes on load
 injectPlaceholderKeyframes();
 
-// X-style share-up icon used by the circular share button on the actions row.
-const shareIconSVG = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><g><path d="M12 2.59l5.7 5.7-1.41 1.42L13 6.41V16h-2V6.41l-3.3 3.3-1.41-1.42L12 2.59zM21 15l-.02 3.51c0 1.38-1.12 2.49-2.5 2.49H5.5C4.11 21 3 19.88 3 18.5V15h2v3.5c0 .28.22.5.5.5h12.98c.28 0 .5-.22.5-.5L19 15h2z"></path></g></svg>';
-
 // X-style horizontal ellipsis icon used by the settings button on the actions row.
 const settingsIconSVG = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><g><path d="M3 12c0-1.1.9-2 2-2s2 .9 2 2-.9 2-2 2-2-.9-2-2zm9 2c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm7 0c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2z"></path></g></svg>';
 
@@ -776,9 +773,9 @@ function buildFilterContainerHTML(showSignOut = false): string {
             <span class="filtered-toggle-text">View filtered</span>
             <span class="filtered-toggle-count">(0)</span>
           </button>
+          <button class="filter-pack-share-btn" type="button" aria-label="Share your filters">Share filters</button>
         </div>
         <div class="filter-phrases-actions-right">
-          <button class="filter-pack-share-btn" type="button" aria-label="Share your filters">${shareIconSVG}</button>
           <button class="filter-settings-btn" type="button" aria-label="Settings">${settingsIconSVG}</button>
           ${showSignOut ? '<button class="filter-signout-btn" style="font-size:12px;color:#71767b;background:none;border:none;cursor:pointer;padding:2px 0;">Sign out</button>' : ''}
         </div>
