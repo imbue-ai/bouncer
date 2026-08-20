@@ -84,14 +84,47 @@
   cursor: default;
 }
 
+/* Only the active option may size the selector: both buttons share one grid
+ * cell, so a wider hidden option ("Keep only" behind an active "Filter out")
+ * would otherwise pad the collapsed label on the right. Absolute positioning
+ * takes the inactive option out of flow; left/top 0 plus the shared negative
+ * margins land its text exactly on the active label's spot, so the hover fan
+ * animates the same (display: none would make it pop in untransitioned). */
+.filter-mode-option:not(.active) {
+  position: absolute;
+  left: 0;
+  top: 0;
+}
+
+/* Removing AI slop is a filter-out concept — while "Keep only" is active the
+ * indicator would read backwards (clicking it plants a removal phrase into
+ * the keep list), so the whole thing hides. The ff-keep-only class is set at
+ * render time by buildFilterContainerHTML and kept current by
+ * setKeepOnlyMode (both in content/ui.ts). */
+.filter-phrases-container.ff-keep-only .filter-ai-indicator {
+  display: none;
+}
+
+/* The fan is a pure overlay: the inactive option never rejoins the flow, so
+ * hovering must not change the selector's width (that would nudge the phrase
+ * input sitting after it in the header row). But the shared ::before sheet is
+ * anchored to the container's edges and can't see the out-of-flow option, so
+ * when the inactive label is wider it would poke past the sheet's right
+ * padding. ui.ts measures that overflow (syncModeFanOverflow) into
+ * --ff-fan-extra, and the sheet + hover hit area extend right by it. */
+
+/* Every :hover rule below is suppressed by .filter-mode-select--collapsed:
+ * ui.ts sets it when an option is clicked (choice made — close the fan) and
+ * removes it on mouseleave so the next hover expands again. */
+
 /* While expanded, stretch the hover hit area past the fanned options so the
  * pointer can travel from the label to either option without leaving the
  * selector and collapsing it mid-move. Sits below the buttons (z-index 4). */
-.filter-mode-select:hover::after {
+.filter-mode-select:hover:not(.filter-mode-select--collapsed)::after {
   content: '';
   position: absolute;
   left: -12px;
-  right: -12px;
+  right: calc(-12px - var(--ff-fan-extra, 0px));
   top: -1.8em;
   bottom: -1.8em;
 }
@@ -104,7 +137,7 @@
   content: '';
   position: absolute;
   left: -10px;
-  right: -10px;
+  right: calc(-10px - var(--ff-fan-extra, 0px));
   top: -16px;
   bottom: -16px;
   border-radius: 10px;
@@ -122,32 +155,32 @@
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.14), 0 4px 12px rgba(0, 0, 0, 0.12);
 }
 
-.filter-mode-select:hover::before {
+.filter-mode-select:hover:not(.filter-mode-select--collapsed)::before {
   opacity: 1;
   transform: scaleY(1);
 }
 
-.filter-mode-select:hover .filter-mode-option {
+.filter-mode-select:hover:not(.filter-mode-select--collapsed) .filter-mode-option {
   opacity: 1;
   pointer-events: auto;
 }
 
 /* The fan: up for "Filter out", down for "Keep only", symmetric around the
  * collapsed center. 12px ≈ half an option's height plus a small gap. */
-.filter-mode-select:hover .filter-mode-option--filter {
+.filter-mode-select:hover:not(.filter-mode-select--collapsed) .filter-mode-option--filter {
   transform: translateY(-12px);
 }
 
-.filter-mode-select:hover .filter-mode-option--keep {
+.filter-mode-select:hover:not(.filter-mode-select--collapsed) .filter-mode-option--keep {
   transform: translateY(12px);
 }
 
 /* While expanded, the option you'd switch to reads dimmed until pointed at. */
-.filter-mode-select:hover .filter-mode-option:not(.active) {
+.filter-mode-select:hover:not(.filter-mode-select--collapsed) .filter-mode-option:not(.active) {
   opacity: 0.6;
 }
 
-.filter-mode-select:hover .filter-mode-option:not(.active):hover {
+.filter-mode-select:hover:not(.filter-mode-select--collapsed) .filter-mode-option:not(.active):hover {
   opacity: 1;
   color: rgb(var(--bouncer-brand-rgb));
 }
