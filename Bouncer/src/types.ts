@@ -488,6 +488,13 @@ export type StorageSchema = SettingsBase & {
   // moment so matching posts are the ones that STAY in the feed. Purely a
   // frontend flag — the background never reads it.
   linkedinKeepOnly: boolean;
+  // Phrase list for whichever LinkedIn mode (filter-out / keep-only) is NOT
+  // currently active. Each mode keeps its own list: the active one lives in
+  // descriptions_linkedin as usual; switching modes swaps the two (see the
+  // mode-selector click handler in content/ui.ts). Kept out of the
+  // descriptions_* namespace so the pipeline and AI-intent aggregation never
+  // see the inactive list.
+  linkedinInactiveModePhrases: string[];
 } & DescriptionKeys & PlatformEnabledKeys;
 
 // ==================== API Response Types ====================
