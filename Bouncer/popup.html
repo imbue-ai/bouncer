@@ -108,6 +108,16 @@
           <span class="toggle-switch-label">Also filter replies in threads</span>
         </span>
       </label>
+      <!-- Off swaps the in-feed filter box's accent outline for the
+           platform's native card border. Stored as `coloredBorder`
+           (absent = on); the content script applies it live. -->
+      <label class="toggle-switch colored-border-toggle">
+        <input type="checkbox" id="coloredBorderToggle" checked>
+        <span class="toggle-switch-slider" aria-hidden="true"></span>
+        <span class="toggle-switch-text">
+          <span class="toggle-switch-label">Colored border on Bouncer box</span>
+        </span>
+      </label>
     </section>
 
     <!-- Active Platforms: per-site master toggle + site-specific settings.

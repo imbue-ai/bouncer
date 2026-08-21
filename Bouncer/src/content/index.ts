@@ -80,7 +80,6 @@ import { formatPostForEvaluation, phraseAddNeedsReEvaluation } from '../shared/u
     // (--bouncer-brand-dark-rgb) — derive it from the same pick so both
     // themes retheme together.
     const darkChannels = typeof hex === 'string' ? hexToDarkRgbChannels(hex) : null;
-    console.log('[Bouncer] applyBrandColor: input =', JSON.stringify(hex), '→ channels =', JSON.stringify(channels), '| dark =', JSON.stringify(darkChannels));
     if (channels && darkChannels) {
       document.documentElement.style.setProperty('--bouncer-brand-rgb', channels);
       document.documentElement.style.setProperty('--bouncer-brand-dark-rgb', darkChannels);
@@ -92,35 +91,28 @@ import { formatPostForEvaluation, phraseAddNeedsReEvaluation } from '../shared/u
       document.documentElement.style.removeProperty('--bouncer-brand-dark-rgb');
       document.documentElement.style.removeProperty('--bouncer-brand-contrast');
     }
-    console.log(
-      '[Bouncer] applyBrandColor: inline vars now =',
-      JSON.stringify(document.documentElement.style.getPropertyValue('--bouncer-brand-rgb')),
-      '/',
-      JSON.stringify(document.documentElement.style.getPropertyValue('--bouncer-brand-dark-rgb')),
-      '| computed =',
-      JSON.stringify(getComputedStyle(document.documentElement).getPropertyValue('--bouncer-brand-rgb'))
-    );
   }
-  console.log('[Bouncer] Accent color: loading brandColor from storage…');
-  getStorage(['brandColor'])
+  // "Colored border on input box" popup toggle. Only `false` opts out —
+  // absent (default) keeps the brand-accent outline. The class makes
+  // content.css restyle the filter box to the platform's native card border.
+  function applyColoredBorder(value: unknown): void {
+    document.documentElement.classList.toggle('bouncer-plain-border', value === false);
+  }
+  getStorage(['brandColor', 'coloredBorder'])
     .then(data => {
-      console.log('[Bouncer] Accent color: stored value =', JSON.stringify(data.brandColor));
       applyBrandColor(data.brandColor);
+      applyColoredBorder(data.coloredBorder);
     })
     .catch(err => console.error('[Bouncer] Failed to load accent color:', err));
   chrome.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName !== 'local') return;
     if (changes.brandColor) {
-      console.log(
-        '[Bouncer] Accent color: storage change received, area =', areaName,
-        '| old =', JSON.stringify(changes.brandColor.oldValue),
-        '| new =', JSON.stringify(changes.brandColor.newValue)
-      );
-    }
-    if (areaName === 'local' && changes.brandColor) {
       applyBrandColor(changes.brandColor.newValue);
     }
+    if (changes.coloredBorder) {
+      applyColoredBorder(changes.coloredBorder.newValue);
+    }
   });
-  console.log('[Bouncer] Accent color: storage listener registered');
 
   // One-time migration: move descriptions from sync to local storage
   (async () => {

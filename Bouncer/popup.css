@@ -2820,6 +2820,13 @@ body.dim-mode .model-radio-sub { color: rgb(139, 152, 165); }
   padding: 12px;
 }
 
+/* Second toggle in the filter-replies section: force it onto its own line
+   (.toggle-switch is inline-flex) with the section's usual row spacing. */
+.colored-border-toggle {
+  display: flex;
+  margin-top: 12px;
+}
+
 .color-picker {
   display: flex;
   flex-direction: column;

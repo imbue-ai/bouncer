@@ -336,6 +336,11 @@ function setupStorageListener() {
       const el = document.getElementById('enableFilterReplies') as HTMLInputElement | null;
       if (el && el.checked !== checked) el.checked = checked;
     }
+    if (areaName === 'local' && changes.coloredBorder) {
+      const checked = changes.coloredBorder.newValue !== false;
+      const el = document.getElementById('coloredBorderToggle') as HTMLInputElement | null;
+      if (el && el.checked !== checked) el.checked = checked;
+    }
     // Per-platform master-toggle storage-change handlers — iterated. For
     // optional platforms the row only turns on if the host permission is
     // actually granted (a storage write alone can't enable them).
@@ -636,6 +641,7 @@ function setupEventListeners() {
 
   // Accent Color picker
   setupAccentColorPicker();
+  setupColoredBorderToggle();
 
   // Model dropdown
   setupModelDropdown();
@@ -988,6 +994,26 @@ function setupAccentColorPicker() {
   initAccentColorPicker({ chip, svArea, svThumb, hueInput, hexInput, rInput, gInput, bInput, swatchesEl, resetBtn, eyedropperBtn });
 }
 
+// "Colored border on input box" toggle (below the filter-replies toggle).
+// On (default)
+// keeps the brand-accent outline on the in-feed filter box; off swaps it for
+// the platform's native card border. The on state is stored as key-absence
+// (like brandColor's default) so untouched installs keep following any
+// future default change; the content script applies writes live.
+function setupColoredBorderToggle() {
+  const el = document.getElementById('coloredBorderToggle') as HTMLInputElement | null;
+  if (!el) return; // in-app (iOS) popup builds may omit this section
+  getStorage(['coloredBorder'])
+    .then(data => { el.checked = data.coloredBorder !== false; })
+    .catch(err => console.error('[Popup] Failed to load border toggle:', err));
+  el.addEventListener('change', () => {
+    const write = el.checked
+      ? removeStorage(['coloredBorder'])
+      : setStorage({ coloredBorder: false });
+    write.catch(err => console.error('[Popup] Failed to save border toggle:', err));
+  });
+}
+
 function initAccentColorPicker({ chip, svArea, svThumb, hueInput, hexInput, rInput, gInput, bInput, swatchesEl, resetBtn, eyedropperBtn }: {
   chip: HTMLElement;
   svArea: HTMLElement;
@@ -1019,18 +1045,13 @@ function initAccentColorPicker({ chip, svArea, svThumb, hueInput, hexInput, rInp
   function writeNow() {
     saveTimer = undefined;
     const hex = currentHex();
-    const isDefault = hex === DEFAULT_BRAND_COLOR;
-    console.log(`[Popup] Accent color: writing ${isDefault ? 'REMOVE (default)' : hex} to storage…`);
     // Storing the default would pin users to today's orange if the brand
     // color ever changes — an untouched/reset picker keeps the key absent
     // so content.css's fallback stays authoritative.
-    const write = isDefault
+    const write = hex === DEFAULT_BRAND_COLOR
       ? removeStorage(['brandColor'])
       : setStorage({ brandColor: hex });
-    write
-      .then(() => chrome.storage.local.get('brandColor'))
-      .then(data => console.log('[Popup] Accent color: write done, storage now =', JSON.stringify(data)))
-      .catch(err => console.error('[Popup] Failed to save accent color:', err));
+    write.catch(err => console.error('[Popup] Failed to save accent color:', err));
   }
   function save() {
     if (saveTimer !== undefined) return; // a write is already scheduled for this window
@@ -1188,7 +1209,6 @@ function initAccentColorPicker({ chip, svArea, svThumb, hueInput, hexInput, rInp
   getStorage(['brandColor'])
     .then(data => {
       const stored = typeof data.brandColor === 'string' ? normalizeHexColor(data.brandColor) : null;
-      console.log('[Popup] Accent color: seeding picker, stored =', JSON.stringify(data.brandColor), '→ using', stored || `${DEFAULT_BRAND_COLOR} (default)`);
       setFromHex(stored || DEFAULT_BRAND_COLOR);
     })
     .catch(err => console.error('[Popup] Failed to load accent color:', err));

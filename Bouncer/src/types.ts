@@ -494,6 +494,11 @@ export type StorageSchema = SettingsBase & {
   // --bouncer-brand-rgb CSS variable. Absent or invalid values fall back to
   // the default orange defined in content.css.
   brandColor: string;
+  // "Colored border on input box" popup toggle. Absent/true keeps the
+  // brand-accent outline on the in-feed filter box; false swaps it for the
+  // platform's native 1px card border (the content script toggles the
+  // `bouncer-plain-border` class on <html>, styled in content.css).
+  coloredBorder: boolean;
   // Phrase list for whichever LinkedIn mode (filter-out / keep-only) is NOT
   // currently active. Each mode keeps its own list: the active one lives in
   // descriptions_linkedin as usual; switching modes swaps the two (see the

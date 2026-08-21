@@ -163,6 +163,17 @@ html[dark] .filter-phrases-banner--youtube .filter-phrases-container {
   background-color: #0f0f0f !important;
 }
 
+/* "Colored border on input box" toggle off: neutral 1px outline in YT's
+   native divider colors. !important to match the accent rule above. */
+html.bouncer-plain-border .filter-phrases-banner--youtube .filter-phrases-container {
+  border-width: 1px !important;
+  border-color: rgba(0, 0, 0, 0.1) !important;
+}
+
+html[dark].bouncer-plain-border .filter-phrases-banner--youtube .filter-phrases-container {
+  border-color: rgba(255, 255, 255, 0.2) !important;
+}
+
 /* Title row: bold "Bouncer" header. No accent dot — the orange border
  * around the card already carries the brand. */
 .filter-phrases-banner--youtube .filter-phrases-title-row {

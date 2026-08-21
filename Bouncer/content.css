@@ -1300,6 +1300,38 @@ article {
   flex-direction: column
 }
 
+/* "Colored border on input box" toggle (popup, Accent Color section) turned
+   OFF: the content script adds .bouncer-plain-border to <html> and the
+   filter box swaps the brand-accent outline for the platform's native card
+   border — 1px solid, theme-matched color, 16px radius, overflow hidden.
+   Dim mode's color lives in adapters/twitter/twitter.css. */
+html.bouncer-plain-border .filter-phrases-container {
+  border-width: 1px;
+  border-color: rgb(47, 51, 54);
+  overflow: hidden;
+}
+
+html.bouncer-plain-border .light-mode .filter-phrases-container {
+  border-color: rgb(239, 243, 244);
+}
+
+/* The bottom pill draws the border itself (its inner container is
+   borderless); restore the inner container's own scrolling, which the
+   overflow: hidden above would otherwise clobber. */
+html.bouncer-plain-border .filter-phrases-bottom {
+  border-width: 1px;
+  border-color: rgb(47, 51, 54);
+}
+
+html.bouncer-plain-border .filter-phrases-bottom.light-mode {
+  border-color: rgb(239, 243, 244);
+}
+
+html.bouncer-plain-border .filter-phrases-bottom .filter-phrases-container {
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
 /* ==================== Sign-in prompt ==================== */
 
 .filter-signin-prompt {
