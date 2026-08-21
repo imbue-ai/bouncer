@@ -158,9 +158,16 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
         activePlatformId = platformId
         _state.update {
             it.copy(
+                activePlatformId = platformId,
                 phrases = phrasesByPlatform[platformId] ?: emptyList(),
                 filteredCount = countByPlatform[platformId] ?: 0,
-                currentUrl = urlByPlatform[platformId] ?: it.currentUrl,
+                // First visit: the slot has no URL yet, so use the feed URL the
+                // switch is about to load — falling back to the PREVIOUS
+                // platform's URL left stale state (and the old NavBar label)
+                // until the new tab's first onLocationChange.
+                currentUrl = urlByPlatform[platformId]
+                    ?: Platforms.byId(platformId)?.feedUrl
+                    ?: it.currentUrl,
             )
         }
         callJs("__ff_loadAiSettings")

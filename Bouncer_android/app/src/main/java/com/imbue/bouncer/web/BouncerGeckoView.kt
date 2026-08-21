@@ -63,6 +63,11 @@ object BouncerGeckoView {
     private fun isActiveSession(session: GeckoSession): Boolean =
         session === sessions[activePlatformId]
 
+    // Which platform slot owns this session, if any. Utility sessions (Google
+    // sign-in popup, off-screen push enable) aren't in the map and return null.
+    private fun platformIdOf(session: GeckoSession): String? =
+        sessions.entries.firstOrNull { it.value === session }?.key
+
     /** The warm runtime, if any — used by the FCM service to deliver push events. */
     fun runtimeOrNull(): GeckoRuntime? = runtime
 
@@ -162,6 +167,11 @@ object BouncerGeckoView {
             val settingsBuilder = GeckoRuntimeSettings.Builder()
                 .consoleOutput(true)
                 .debugLogging(true)
+                // Debug builds expose the Firefox DevTools socket
+                // (firefox-debugger-socket in the app dir) so a frozen page's
+                // live DOM can be inspected from a desktop:
+                //   adb forward tcp:6100 localfilesystem:/data/data/com.imbue.bouncer/firefox-debugger-socket
+                .remoteDebuggingEnabled(com.imbue.bouncer.BuildConfig.DEBUG)
                 .preferredColorScheme(colorSchemeFor(appCtx))
                 // Stock GeckoView blocks ad/analytic/social tracker content in
                 // all windows (Firefox-Strict level). x.com's login flow loads
@@ -304,8 +314,15 @@ object BouncerGeckoView {
         val view = GeckoView(ctx)
         viewRef = view
 
-        val initialUrl = vm.initialUrl()
-        activePlatformId = Platforms.fromUrl(initialUrl)?.id ?: "twitter"
+        // Re-derive the active platform from where the VM actually is, not from
+        // initialUrl() (always x.com): on an activity re-create the VM survives,
+        // and unconditionally resetting to twitter here desynced this copy (and
+        // the bridge's) from the VM's — LinkedIn pushes were dropped and native
+        // calls routed to the wrong tab. For URLs that map to no platform
+        // (Google auth), the VM's own platform is the truth.
+        val initialUrl = vm.currentUrlOrInitial()
+        activePlatformId = Platforms.fromUrl(initialUrl)?.id
+            ?: vm.state.value.activePlatformId
 
         // Reuse a warm session if one survived (e.g. process-level singleton
         // across an activity re-create); otherwise create the first tab.
@@ -347,7 +364,10 @@ object BouncerGeckoView {
     // and keeping it warm thereafter — so a later switch back is instant. The
     // heavy lifting (per-tab port routing, per-platform phrases/count) lives in
     // GeckoBridge and BouncerViewModel; this just manages the sessions.
-    fun switchToPlatform(platform: Platform) {
+    // [url] overrides the destination (a rerouted cross-platform link); null
+    // means the platform's feed for a new tab, or wherever the warm tab already
+    // is for a revisit.
+    fun switchToPlatform(platform: Platform, url: String? = null) {
         val view = viewRef ?: return
         val r = runtime ?: return
         val vm = vmRef ?: return
@@ -355,7 +375,7 @@ object BouncerGeckoView {
         if (activePlatformId == platform.id) {
             // Already showing this platform: treat as "go to feed" (e.g. back
             // to the home timeline from a profile).
-            sessions[platform.id]?.loadUri(platform.feedUrl)
+            sessions[platform.id]?.loadUri(url ?: platform.feedUrl)
             return
         }
         val warm = sessions[platform.id]?.takeIf { it.isOpen }
@@ -363,8 +383,8 @@ object BouncerGeckoView {
             wireDelegates(s, view, r, appCtx, vm)
             s.open(r)
             sessions[platform.id] = s
-            s.loadUri(platform.feedUrl)
         }
+        if (warm == null || url != null) target.loadUri(url ?: platform.feedUrl)
         sessions[activePlatformId]?.setActive(false)
         activePlatformId = platform.id
         bridge?.setActivePlatform(platform.id)
@@ -603,7 +623,31 @@ object BouncerGeckoView {
                 val uri = Uri.parse(request.uri)
                 val host = uri.host?.lowercase().orEmpty()
                 val allowed = ALLOWED_HOSTS.any { host == it || host.endsWith(".$it") }
-                if (allowed) return GeckoResult.allow()
+                if (allowed) {
+                    // ALLOWED_HOSTS is shared across tabs, so nothing else stops
+                    // a tab from navigating to the OTHER platform in place (e.g.
+                    // tapping a linkedin.com link in a tweet, or a notification
+                    // click loading x.com into the LinkedIn tab). That breaks the
+                    // one-platform-per-session invariant every activePlatformId
+                    // consumer relies on: phrase pushes get dropped, native calls
+                    // route to the wrong tab, and the per-platform slots corrupt.
+                    // Deny it and reroute the URL through a real platform switch.
+                    // The covered push-settings session legitimately shows x.com
+                    // while parked in another platform's slot — leave it alone.
+                    val target = Platforms.fromUrl(request.uri)
+                    val ownerId = platformIdOf(session)
+                    if (target != null && ownerId != null && target.id != ownerId &&
+                        session !== pushSettingsSession
+                    ) {
+                        Log.i(TAG, "cross-platform nav $ownerId → ${target.id}; rerouting")
+                        if (isActiveSession(session)) {
+                            val url = request.uri
+                            viewRef?.post { switchToPlatform(target, url) }
+                        }
+                        return GeckoResult.deny()
+                    }
+                    return GeckoResult.allow()
+                }
                 if (request.hasUserGesture) {
                     openExternal(appCtx, uri)
                     return GeckoResult.deny()

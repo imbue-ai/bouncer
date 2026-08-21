@@ -34,7 +34,16 @@
  * .top-level-modal-container along with its gray scrim, so the whole container
  * must go — but only while it holds the upsell (:has guard), since other
  * modals may mount into the same container. Class selectors only, no text
- * matching, so this holds across locales. */
+ * matching, so this holds across locales.
+ *
+ * Hiding alone is not enough: when the blocking sheet arms it adds the
+ * `overflow-hidden` utility class to <body>, freezing gesture scrolling,
+ * and it only unlocks on a proper dismissal — which a hidden sheet can
+ * never receive. The companion neutralizer at the bottom of
+ * LinkedInAdapter.ts (shared by the desktop extension, Android, and iOS)
+ * pre-seeds LinkedIn's own sessionStorage dismissal records so the upsells
+ * never arm, with click/removal/lock-strip fallbacks. This CSS just
+ * guarantees the upsells never flash before that kicks in. */
 .upsell-bottom,
 .top-level-modal-container:has(.blocking-upsell-bottom-sheet) {
   display: none !important;
