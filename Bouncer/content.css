@@ -8,6 +8,16 @@
    * literal. Update here to retheme the panel outline, CTA buttons, focus
    * rings, and per-card cancel icon together. */
   --bouncer-brand-rgb: 234, 133, 84;
+  /* Darkened companion shade used by light mode (outlines, active sparkle,
+   * badge backgrounds) where the full-brightness accent lacks contrast on
+   * white. When the user picks a custom accent, the content script derives
+   * this from it (hexToDarkRgbChannels in src/shared/brand-color.ts — keep
+   * this fallback in sync with that 0.85 scale of the default above). */
+  --bouncer-brand-dark-rgb: 200, 110, 65;
+  /* Text color for content ON the accent (badge pills, filled buttons).
+   * The content script flips it to #000 for very light custom accents
+   * (contrastTextColor in src/shared/brand-color.ts). */
+  --bouncer-brand-contrast: #fff;
 }
 
 /* Base font for all Bouncer UI — applies directly to every child element
@@ -881,7 +891,7 @@ article {
 .ff-annoying-chip:hover {
   background: rgb(var(--bouncer-brand-rgb));
   border-color: rgb(var(--bouncer-brand-rgb));
-  color: #fff;
+  color: var(--bouncer-brand-contrast);
 }
 
 .ff-annoying-chip.ff-chip-added {
@@ -962,7 +972,7 @@ article {
 .ff-annoying-send-btn svg {
   width: 11px;
   height: 11px;
-  fill: #fff;
+  fill: var(--bouncer-brand-contrast);
 }
 
 .ff-annoying-custom-wrapper.has-text .ff-annoying-send-btn {
@@ -1020,7 +1030,7 @@ article {
 }
 .twitter-light .ff-annoying-chip:hover {
   background: rgb(var(--bouncer-brand-rgb));
-  color: #fff;
+  color: var(--bouncer-brand-contrast);
   border-color: rgb(var(--bouncer-brand-rgb));
 }
 .twitter-light .ff-annoying-thinking {
@@ -1321,9 +1331,9 @@ article {
   align-items: center;
   gap: 10px;
   padding: 15px 20px;
-  border: 1.5px solid rgb(234, 133, 84);
+  border: 1.5px solid rgb(var(--bouncer-brand-rgb));
   border-radius: 10px;
-  background: rgba(234, 133, 84, 0.08);
+  background: rgba(var(--bouncer-brand-rgb), 0.08);
   color: inherit;
   font-size: 15px;
   font-weight: 700;
@@ -1334,7 +1344,7 @@ article {
 }
 
 .google-signin-btn:hover {
-  background: rgba(234, 133, 84, 0.18);
+  background: rgba(var(--bouncer-brand-rgb), 0.18);
 }
 
 /* Instant feedback on press: transition disabled so the color changes on the
@@ -1348,7 +1358,7 @@ article {
 .google-signin-btn:active,
 .light-mode .google-signin-btn:active {
   transition: none;
-  background: rgba(234, 133, 84, 0.32);
+  background: rgba(var(--bouncer-brand-rgb), 0.32);
 }
 
 .google-signin-btn .google-icon {
@@ -1421,8 +1431,8 @@ article {
   margin-top: 8px;
   padding: 5px 8px;
   border-radius: 10px;
-  background: rgba(234, 133, 84, 0.08);
-  border: 1px solid rgba(234, 133, 84, 0.35);
+  background: rgba(var(--bouncer-brand-rgb), 0.08);
+  border: 1px solid rgba(var(--bouncer-brand-rgb), 0.35);
   font-size: 12px;
   line-height: 1.3;
 }
@@ -1435,7 +1445,7 @@ article {
 .ff-local-model-cta {
   flex-shrink: 0;
   padding: 3px 8px;
-  border: 1.5px solid rgb(234, 133, 84);
+  border: 1.5px solid rgb(var(--bouncer-brand-rgb));
   border-radius: 8px;
   background: none;
   color: inherit;
@@ -1446,7 +1456,7 @@ article {
 }
 
 .ff-local-model-cta:hover {
-  background: rgba(234, 133, 84, 0.18);
+  background: rgba(var(--bouncer-brand-rgb), 0.18);
 }
 
 .light-mode .skip-signin-btn {
@@ -1827,7 +1837,7 @@ article {
 /* Light mode styles */
 .light-mode .filter-phrases-container {
   background-color: rgb(255, 255, 255);
-  border-color: rgb(200, 110, 65);
+  border-color: rgb(var(--bouncer-brand-dark-rgb));
 }
 
 .light-mode .filter-phrases-label,
@@ -2204,7 +2214,7 @@ article {
 /* Light mode darkens the box outline (see .light-mode
    .filter-phrases-container) — keep the badge identical to it. */
 .light-mode .filter-ai-indicator.on {
-  color: rgb(200, 110, 65);
+  color: rgb(var(--bouncer-brand-dark-rgb));
 }
 .filter-ai-indicator.on .filter-ai-indicator-icon {
   opacity: 1;
@@ -2236,7 +2246,7 @@ article {
   margin: -3px 0;
   border-radius: 8px;
   background: rgb(var(--bouncer-brand-rgb));
-  color: #fff;
+  color: var(--bouncer-brand-contrast);
 }
 
 .filter-ai-indicator.with-badge .filter-ai-indicator-label {
@@ -2258,11 +2268,11 @@ article {
 /* Light mode uses the darker brand orange everywhere else (box outline,
    `.on` sparkle) — keep the badge consistent with it. */
 .light-mode .filter-ai-indicator.with-badge {
-  background: rgb(200, 110, 65);
-  color: #fff;
+  background: rgb(var(--bouncer-brand-dark-rgb));
+  color: var(--bouncer-brand-contrast);
 }
 .light-mode .filter-ai-indicator.with-badge:hover {
-  background: rgba(200, 110, 65, 0.85);
+  background: rgba(var(--bouncer-brand-dark-rgb), 0.85);
 }
 
 /* Right side of the actions row: circular Share and Settings icon buttons. */

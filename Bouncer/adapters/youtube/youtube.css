@@ -124,8 +124,8 @@ html[dark] .bouncer-mini-guide-entry__label {
 }
 
 .bouncer-mini-guide-entry__count--nonzero {
-  background: rgb(200, 110, 65);
-  color: #fff;
+  background: rgb(var(--bouncer-brand-dark-rgb));
+  color: var(--bouncer-brand-contrast);
 }
 
 /* ===== Share button — hide on YT (Twitter-only feature) ===== */

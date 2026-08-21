@@ -121,6 +121,60 @@
       <div id="platformsContainer"></div>
     </section>
 
+    <!-- Accent color: retheme Bouncer's in-feed UI (panel outline, buttons,
+         focus rings, brand icons). Stored as the `brandColor` hex key; the
+         content script applies it via the --bouncer-brand-rgb CSS variable.
+         Collapsed accordion row reusing the api-provider chrome; the generic
+         .api-provider-header click handler wires expand/collapse. -->
+    <section class="accent-color-section">
+      <div class="api-provider" id="accentColorProvider">
+        <div class="api-provider-header" id="accentColorHeader">
+          <span class="api-provider-name">Accent Color</span>
+          <div class="api-provider-header-right">
+            <span class="accent-color-chip" id="accentColorChip" aria-hidden="true"></span>
+            <span class="api-provider-arrow">&#9662;</span>
+          </div>
+        </div>
+        <div class="api-provider-content accent-color-content">
+          <div class="color-picker" id="accentColorPicker">
+            <div class="cp-sv" id="cpSvArea" tabindex="0" role="application"
+                 aria-label="Saturation and brightness. Use arrow keys to adjust.">
+              <div class="cp-sv-thumb" id="cpSvThumb"></div>
+            </div>
+            <input type="range" class="cp-hue" id="cpHue" min="0" max="360" step="1" value="20" aria-label="Hue">
+            <div class="cp-fields">
+              <div class="cp-field cp-field-hex">
+                <input type="text" id="cpHex" maxlength="7" autocomplete="off" spellcheck="false" aria-label="Hex color">
+                <label for="cpHex">Hex</label>
+              </div>
+              <div class="cp-field">
+                <input type="number" id="cpR" min="0" max="255" aria-label="Red">
+                <label for="cpR">R</label>
+              </div>
+              <div class="cp-field">
+                <input type="number" id="cpG" min="0" max="255" aria-label="Green">
+                <label for="cpG">G</label>
+              </div>
+              <div class="cp-field">
+                <input type="number" id="cpB" min="0" max="255" aria-label="Blue">
+                <label for="cpB">B</label>
+              </div>
+              <!-- Shown only when the EyeDropper API exists (Chrome 95+). -->
+              <button type="button" class="cp-eyedropper" id="cpEyedropper" title="Pick a color from the screen" aria-label="Pick a color from the screen" style="display: none;">
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="m2 22 1-1h3l9-9"/>
+                  <path d="M3 21v-3l9-9"/>
+                  <path d="m15 6 3.4-3.4a2.1 2.1 0 1 1 3 3L18 9l.4.4a2.1 2.1 0 1 1-3 3l-3.8-3.8a2.1 2.1 0 1 1 3-3l.4.4Z"/>
+                </svg>
+              </button>
+            </div>
+            <div class="cp-swatches" id="cpSwatches" role="listbox" aria-label="Preset colors"></div>
+            <button type="button" class="cp-reset" id="cpReset">Reset to default</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <!-- Everything below is power-user surface: full model list, BYOK
          providers, AI-slop detection. Collapsed by default. -->
     <section>

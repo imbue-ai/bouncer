@@ -488,6 +488,12 @@ export type StorageSchema = SettingsBase & {
   // moment so matching posts are the ones that STAY in the feed. Purely a
   // frontend flag — the background never reads it.
   linkedinKeepOnly: boolean;
+  // Custom accent color for Bouncer's in-feed UI, as normalized "#rrggbb"
+  // hex (see src/shared/brand-color.ts). Written by the popup's "Accent
+  // Color" picker; the content script applies it by overriding the
+  // --bouncer-brand-rgb CSS variable. Absent or invalid values fall back to
+  // the default orange defined in content.css.
+  brandColor: string;
   // Phrase list for whichever LinkedIn mode (filter-out / keep-only) is NOT
   // currently active. Each mode keeps its own list: the active one lives in
   // descriptions_linkedin as usual; switching modes swaps the two (see the
