@@ -64,7 +64,7 @@ private val BOUNCER_BUTTON = DpSize(64.dp, 40.dp)
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun NavBar(
-    currentUrl: String,
+    activePlatformId: String,
     filteredCount: Int,
     onReload: () -> Unit,
     onSelectPlatform: (Platform) -> Unit,
@@ -98,7 +98,7 @@ fun NavBar(
                 }
 
                 PlatformSelector(
-                    currentUrl = currentUrl,
+                    activePlatformId = activePlatformId,
                     onSelectPlatform = onSelectPlatform,
                     modifier = Modifier.align(Alignment.Center),
                 )
@@ -125,12 +125,15 @@ fun NavBar(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun PlatformSelector(
-    currentUrl: String,
+    activePlatformId: String,
     onSelectPlatform: (Platform) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var expanded by remember { mutableStateOf(false) }
-    val current = Platforms.fromUrl(currentUrl) ?: Platforms.all.first()
+    // The displayed tab's platform is the truth here — deriving the label from
+    // currentUrl mislabeled it whenever the URL mapped to no platform (Google
+    // auth → the Twitter fallback) or hadn't caught up to a switch yet.
+    val current = Platforms.byId(activePlatformId) ?: Platforms.all.first()
     val density = LocalDensity.current
 
     Box(modifier) {

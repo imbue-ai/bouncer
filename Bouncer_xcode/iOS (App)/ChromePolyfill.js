@@ -259,6 +259,26 @@
       onSuspend: {
         addListener(cb) { /* no-op */ }
       },
+
+      // Lifeline ports (content overlays connect one so onDisconnect tells
+      // them the extension was reloaded/removed). In-app the extension can
+      // never be reloaded out from under the page, so a port that never
+      // disconnects is the semantically correct stub. Before these existed,
+      // background/index.ts's top-level onConnect.addListener threw and
+      // killed the whole background script (see the guard there).
+      onConnect: {
+        addListener(cb) { /* no-op: in-app ports never form cross-context */ }
+      },
+      connect(opts) {
+        return {
+          name: opts?.name ?? '',
+          onDisconnect: { addListener() {}, removeListener() {} },
+          onMessage: { addListener() {}, removeListener() {} },
+          postMessage() {},
+          disconnect() {}
+        };
+      },
+
       setUninstallURL() {
         // no-op in iOS
         return Promise.resolve();
