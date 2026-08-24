@@ -40,9 +40,12 @@
 //  rather than an enforcement mechanism. Every honest version of this feature
 //  has that shape.
 //
-//  It also cannot tell us WHICH app was tapped: the tokens are opaque, with no
-//  bundle id and no name. The shield knows it is shielding something, and can
-//  render Apple's label for it, and that is all.
+//  It tells us which app was tapped only grudgingly. The token is opaque and
+//  the bundle id is withheld, but the shield extension is handed an
+//  `Application` whose `localizedDisplayName` iOS usually fills in — so the
+//  shield can name the app it is covering, and `Gate.platformId(forAppNamed:)`
+//  can work out whether Bouncer has a feed for it. Usually, and by NAME, which
+//  is localized: every use of it has to survive the answer being nil.
 //
 
 import Foundation
@@ -102,6 +105,8 @@ public enum Gate {
         static let devCheckInSeconds = "gate.devCheckInSeconds"
         static let displayName = "gate.displayName"
         static let shieldTint = "gate.shieldTint"
+        static let lastShieldPlatform = "gate.lastShieldPlatform"
+        static let lastShieldPlatformAt = "gate.lastShieldPlatformAt"
         static let lastShieldRenderAt = "gate.lastShieldRenderAt"
         static let lastShieldActionAt = "gate.lastShieldActionAt"
     }
@@ -324,6 +329,54 @@ public enum Gate {
     }
 
     public static var isSessionOpen: Bool { sessionOpenedAt != nil }
+
+    // MARK: - Which app is behind the shield
+
+    /// The Bouncer platform an app belongs to, from the name iOS gives it, or
+    /// nil for an app Bouncer has no feed for.
+    ///
+    /// Matching on a display name is not something to be proud of. It is what
+    /// is available: the shield configuration extension is handed an
+    /// `Application` whose `bundleIdentifier` is withheld, and whose token is
+    /// opaque by design, but whose `localizedDisplayName` is usually filled in.
+    /// So the name is the only channel, and being localized it is a channel
+    /// that can go quiet — in which case this returns nil and every caller
+    /// falls back to saying nothing specific, which is the behaviour this had
+    /// before it could tell the apps apart at all.
+    public static func platformId(forAppNamed name: String?) -> String? {
+        guard let name else { return nil }
+        let n = name.lowercased().trimmingCharacters(in: .whitespaces)
+        if n == "x" || n.contains("twitter") { return "twitter" }
+        if n.contains("linkedin") { return "linkedin" }
+        return nil
+    }
+
+    /// Which platform the shield most recently drew itself over.
+    ///
+    /// A hand-off between two extensions that cannot call each other. The
+    /// configuration extension is the only process told which app is being
+    /// shielded; the action extension, which handles the button, is handed a
+    /// bare token and no name at all. Since configuration always runs
+    /// immediately before action for the same shield, it leaves the answer
+    /// here.
+    ///
+    /// Timestamped because the alternative is routing on a stale note. Reading
+    /// it returns nil once it is older than a shield's lifetime, so a button
+    /// press that somehow arrives without a fresh render sends the user to the
+    /// platform picker rather than confidently to the wrong feed.
+    public static var lastShieldPlatform: String? {
+        get {
+            guard let at = defaults.object(forKey: Key.lastShieldPlatformAt) as? Date,
+                  Date().timeIntervalSince(at) < 300 else { return nil }
+            return defaults.string(forKey: Key.lastShieldPlatform)
+        }
+        set {
+            defaults.set(newValue, forKey: Key.lastShieldPlatform)
+            defaults.set(Date(), forKey: Key.lastShieldPlatformAt)
+            // Same reason as the render stamps: this process is about to go.
+            defaults.synchronize()
+        }
+    }
 
     // MARK: - Diagnostics
 

@@ -25,6 +25,7 @@
 //
 
 import FamilyControls
+import ManagedSettings
 import SwiftUI
 
 struct GateSetupSections: View {
@@ -119,13 +120,34 @@ struct GateSetupSections: View {
                 }
             }
 
-            if gate.hasSelection {
-                // Apple's own labels. A token's name cannot be read — that is
-                // the whole point of the design — but the system will draw it.
-                ForEach(Array(gate.selection.applicationTokens), id: \.self) { token in
-                    Label(token)
-                        .labelStyle(.titleAndIcon)
-                }
+            // Apple's own labels. A token's name cannot be read — that is
+            // the whole point of the design — but the system will draw it.
+            //
+            // Swipe to remove, which is the only per-platform control this API
+            // can support. Apple's picker is all-or-nothing per visit and
+            // returns an opaque set; nothing in the app can construct a token
+            // for "the X app" or tell one token from another. What it CAN do is
+            // drop one the user no longer wants gated — which is the difference
+            // between "I gave Screen Time permission" and "shield everything I
+            // happened to tick".
+            //
+            // Keyed by token rather than by index: `Set` has no stable order,
+            // so an index-based delete removes whichever row the set felt like
+            // ordering there this time.
+            ForEach(Array(gate.selection.applicationTokens), id: \.self) { token in
+                Label(token)
+                    .labelStyle(.titleAndIcon)
+                    .swipeActions(edge: .trailing) {
+                        Button("Remove", role: .destructive) { remove(app: token) }
+                    }
+            }
+
+            ForEach(Array(gate.selection.categoryTokens), id: \.self) { token in
+                Label(token)
+                    .labelStyle(.titleAndIcon)
+                    .swipeActions(edge: .trailing) {
+                        Button("Remove", role: .destructive) { remove(category: token) }
+                    }
             }
         } header: {
             Text("What's gated")
@@ -134,7 +156,7 @@ struct GateSetupSections: View {
             // GateController.armIfReady — so this is the last decision, not a
             // step before one.
             Text(gate.hasSelection
-                 ? "Bouncer's gate is active."
+                 ? "Bouncer's gate is active. Swipe any app to stop gating it."
                  : "Select your social platforms.")
         }
     }
@@ -183,6 +205,23 @@ struct GateSetupSections: View {
         } footer: {
             Text("This is the screen you'll meet when you open a gated app.")
         }
+    }
+
+    /// Stop gating one app, leaving the rest of the selection alone.
+    ///
+    /// Goes through `gate.save` rather than mutating in place so the shield is
+    /// re-applied to the smaller set immediately — otherwise the removed app
+    /// stays shielded until something else happens to write the store.
+    private func remove(app token: ApplicationToken) {
+        var updated = gate.selection
+        updated.applicationTokens.remove(token)
+        gate.save(selection: updated)
+    }
+
+    private func remove(category token: ActivityCategoryToken) {
+        var updated = gate.selection
+        updated.categoryTokens.remove(token)
+        gate.save(selection: updated)
     }
 
     /// Write the name through to the App Group, where the shield extension

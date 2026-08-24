@@ -92,7 +92,11 @@ public enum GateNotifications {
     /// answer immediately — the whole reason the second button did nothing:
     /// the process was gone before the request landed, so the tap dismissed
     /// the shield and no notification ever arrived.
-    public static func postHandoff(completion: @escaping () -> Void) {
+    /// `platform` is the Bouncer feed to land on — whichever app's shield was
+    /// tapped, per `Gate.lastShieldPlatform`. Nil sends them to Bouncer with no
+    /// destination, which opens the platform picker: worse than arriving on the
+    /// right feed, better than arriving confidently on the wrong one.
+    public static func postHandoff(platform: String?, completion: @escaping () -> Void) {
         Gate.lastHandoffAt = Date()
         // Forced to disk for the same reason the shield stamps are: this
         // process is about to be killed, and a write still in memory dies here.
@@ -101,7 +105,7 @@ public enum GateNotifications {
             id: Gate.Notify.handoffID,
             title: "Open in Bouncer",
             body: "Tap to open your viewer.",
-            route: Gate.Notify.routeTwitter,
+            route: platform,
             after: nil,
             completion: completion
         )
@@ -118,7 +122,7 @@ public enum GateNotifications {
     ///
     /// Seconds rather than minutes so the DEBUG-only sub-minute step has
     /// something honest to say; whole minutes still read as minutes.
-    public static func postCheckIn(secondsUsed: Int) {
+    public static func postCheckIn(secondsUsed: Int, platform: String? = nil) {
         let elapsed = secondsUsed % 60 == 0
             ? "\(secondsUsed / 60) minute\(secondsUsed == 60 ? "" : "s")"
             : "\(secondsUsed) seconds"
@@ -126,7 +130,7 @@ public enum GateNotifications {
             id: "\(Gate.Notify.checkInID).\(secondsUsed)",
             title: "\(elapsed) in",
             body: "Still what you came for? Tap to switch to your Bouncer viewer.",
-            route: Gate.Notify.routeTwitter,
+            route: platform,
             after: nil
         )
     }

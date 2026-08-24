@@ -46,7 +46,8 @@ class DeviceActivityMonitorExtension: DeviceActivityMonitor {
             // just after the window closed by another route, and a check-in for
             // a session that has already ended is a notification about nothing.
             guard Gate.isSessionOpen else { return }
-            GateNotifications.postCheckIn(secondsUsed: second)
+            GateNotifications.postCheckIn(secondsUsed: second,
+                                          platform: Gate.lastShieldPlatform)
         }
     }
 

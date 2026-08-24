@@ -109,13 +109,23 @@ class ShieldConfigurationExtension: ShieldConfigurationDataSource {
         return "Hey \(name),\nwhat are you here for?"
     }
 
-    /// The one shield we show, whatever was tapped to get here.
+    /// The shield, for an app Bouncer may or may not have a feed for.
     ///
-    /// Deliberately identical for applications, categories and web domains. The
-    /// tokens are opaque — we cannot tell X from anything else the user
-    /// picked, and pretending otherwise by naming an app we are only guessing
-    /// at would be worse than staying general.
-    private func shield() -> ShieldConfiguration {
+    /// `appName` is `Application.localizedDisplayName`, which iOS usually fills
+    /// in even though the token itself is opaque and the bundle id is withheld.
+    /// Usually, not always — so every use of it is optional, and with nothing
+    /// to go on the shield says what it always said.
+    ///
+    /// The second button is the part that has to be right. "View in Bouncer"
+    /// on an app Bouncer has no feed for is a promise it cannot keep: the
+    /// notification would carry someone here to be shown a platform picker
+    /// they did not ask for. So it appears only for apps we can actually
+    /// answer with, and an Instagram shield is a door with one way through
+    /// rather than a door that lies.
+    private func shield(appName: String? = nil) -> ShieldConfiguration {
+        let platform = Gate.platformId(forAppNamed: appName)
+        // For the action extension, which is handed a token and no name.
+        Gate.lastShieldPlatform = platform
         // Proof of life, for the app to print later. If this stamp is NEVER
         // while a shield is demonstrably on screen, iOS drew its own — this
         // extension is not installed, not signed into the app group, or
@@ -150,14 +160,15 @@ class ShieldConfigurationExtension: ShieldConfigurationDataSource {
             // was carrying the dark colour as its BACKGROUND, which made the
             // one solid shape on the screen the one colour that isn't Bouncer's.
             primaryButtonLabel: ShieldConfiguration.Label(
-                text: "View in X",
+                // The app they were actually opening, when iOS says which.
+                text: appName.map { "View in \($0)" } ?? "Continue",
                 color: Self.ink
             ),
             primaryButtonBackgroundColor: Self.accent,
             // No background colour is available for the secondary button — iOS
             // draws it as plain text — so it carries the ink colour directly
             // and reads as the quieter of the two.
-            secondaryButtonLabel: ShieldConfiguration.Label(
+            secondaryButtonLabel: platform == nil ? nil : ShieldConfiguration.Label(
                 text: "View in Bouncer",
                 color: Self.accent
             )
@@ -165,14 +176,14 @@ class ShieldConfigurationExtension: ShieldConfigurationDataSource {
     }
 
     override func configuration(shielding application: Application) -> ShieldConfiguration {
-        shield()
+        shield(appName: application.localizedDisplayName)
     }
 
     override func configuration(
         shielding application: Application,
         in category: ActivityCategory
     ) -> ShieldConfiguration {
-        shield()
+        shield(appName: application.localizedDisplayName)
     }
 
     override func configuration(shielding webDomain: WebDomain) -> ShieldConfiguration {

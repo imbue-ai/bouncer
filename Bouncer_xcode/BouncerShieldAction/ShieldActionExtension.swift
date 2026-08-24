@@ -82,7 +82,13 @@ class ShieldActionExtension: ShieldActionDelegate {
             // extension may be killed — so answering first raced the request
             // against the teardown, and the request lost. That is the whole of
             // why this button appeared to do nothing.
-            GateNotifications.postHandoff { completionHandler(.close) }
+            //
+            // Which feed to land on comes from the configuration extension,
+            // which is the only process iOS tells which app is being shielded.
+            // See Gate.lastShieldPlatform.
+            GateNotifications.postHandoff(platform: Gate.lastShieldPlatform) {
+                completionHandler(.close)
+            }
 
         case .firstSecondarySubmenuItemPressed,
              .secondSecondarySubmenuItemPressed,
