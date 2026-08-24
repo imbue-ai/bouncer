@@ -8,6 +8,9 @@
 
 /* Begin PBXBuildFile section */
 		094070F42F90061302C804DA /* GateSchedule.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6DC81F7547F887FEC4646F94 /* GateSchedule.swift */; };
+		AA07WIDGETBUNDLEBF000001 /* BouncerWidgetsBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA07WIDGETBUNDLEREF00001 /* BouncerWidgetsBundle.swift */; };
+		AA07WIDGETTILESBF0000001 /* PlatformTilesWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA07WIDGETTILESREF000001 /* PlatformTilesWidget.swift */; };
+		AA07WIDGETEMBEDBF0000001 /* BouncerWidgets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = AA07WIDGETPRODUCT0000001 /* BouncerWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		0CF924156E4373FF3E3C347F /* ShieldConfigurationExtension.swift in Sources */ = {isa = PBXBuildFile; fileRef = 998030C04E9801832761A984 /* ShieldConfigurationExtension.swift */; };
 		143F0115AC0B1EF363C93B4D /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AD4636AF33AB76AFE014926F /* Foundation.framework */; };
 		1F0F32B91BC4429B8909E7BC /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AD4636AF33AB76AFE014926F /* Foundation.framework */; };
@@ -94,6 +97,13 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
+		AA07WIDGETPROXY000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 97BD3B6A2F3EB56C00F8BF65 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = AA07WIDGETTARGET00000001;
+			remoteInfo = BouncerWidgets;
+		};
 		1B5A54861BCEBDE5530853AA /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 97BD3B6A2F3EB56C00F8BF65 /* Project object */;
@@ -134,6 +144,7 @@
 				FA3DFF4237576297BA46CB30 /* BouncerShieldConfiguration.appex in Embed Foundation Extensions */,
 				7E7EF5578097B164683DF85D /* BouncerShieldAction.appex in Embed Foundation Extensions */,
 				2CA3287F955872471593DC16 /* BouncerActivityMonitor.appex in Embed Foundation Extensions */,
+				AA07WIDGETEMBEDBF0000001 /* BouncerWidgets.appex in Embed Foundation Extensions */,
 			);
 			name = "Embed Foundation Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -156,6 +167,10 @@
 		22B46A751A86AC84195EABAD /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		25EACE9DD44CFFDF36B30A6A /* GateController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GateController.swift; sourceTree = "<group>"; };
 		34C5CF4C271743418F6A3931 /* BouncerActivityMonitor.entitlements */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.entitlements; path = BouncerActivityMonitor.entitlements; sourceTree = "<group>"; };
+		AA07WIDGETPRODUCT0000001 /* BouncerWidgets.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = BouncerWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		AA07WIDGETBUNDLEREF00001 /* BouncerWidgetsBundle.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BouncerWidgetsBundle.swift; sourceTree = "<group>"; };
+		AA07WIDGETTILESREF000001 /* PlatformTilesWidget.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PlatformTilesWidget.swift; sourceTree = "<group>"; };
+		AA07WIDGETPLISTREF000001 /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		380BC79B5F62800292D313AD /* BouncerShieldConfiguration.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = BouncerShieldConfiguration.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		420E2C2E22B044008DD46C11 /* GateSettingsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GateSettingsView.swift; sourceTree = "<group>"; };
 		AA06GATEPERMSREF0000001 /* GatePermissions.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GatePermissions.swift; sourceTree = "<group>"; };
@@ -242,6 +257,13 @@
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		AA07WIDGETFRAMEWORK00001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		3535593026C297BADF86E649 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -303,6 +325,16 @@
 			);
 			name = ScreenTime;
 			path = "iOS (App)/ScreenTime";
+			sourceTree = SOURCE_ROOT;
+		};
+		AA07WIDGETGROUP000000001 /* BouncerWidgets */ = {
+			isa = PBXGroup;
+			children = (
+				AA07WIDGETBUNDLEREF00001 /* BouncerWidgetsBundle.swift */,
+				AA07WIDGETTILESREF000001 /* PlatformTilesWidget.swift */,
+				AA07WIDGETPLISTREF000001 /* Info.plist */,
+			);
+			path = BouncerWidgets;
 			sourceTree = SOURCE_ROOT;
 		};
 		1EABBB96142759A9D7B605E6 /* BouncerActivityMonitor */ = {
@@ -373,6 +405,7 @@
 				8D644066E6129452AF99838D /* BouncerShieldConfiguration */,
 				3CDAE174A3C684332BA7F5E4 /* BouncerShieldAction */,
 				1EABBB96142759A9D7B605E6 /* BouncerActivityMonitor */,
+				AA07WIDGETGROUP000000001 /* BouncerWidgets */,
 			);
 			sourceTree = "<group>";
 		};
@@ -385,6 +418,7 @@
 				380BC79B5F62800292D313AD /* BouncerShieldConfiguration.appex */,
 				A5DAFA83BC46A177BC909FDB /* BouncerShieldAction.appex */,
 				B836BBDED9DA98620F21D6DD /* BouncerActivityMonitor.appex */,
+				AA07WIDGETPRODUCT0000001 /* BouncerWidgets.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -543,11 +577,29 @@
 				897793F3ED9895D2AE8A7F84 /* PBXTargetDependency */,
 				302D69061F7032E9B8C1866A /* PBXTargetDependency */,
 				58B98566C762841157FF3314 /* PBXTargetDependency */,
+				AA07WIDGETDEP00000000001 /* PBXTargetDependency */,
 			);
 			name = "Bouncer (iOS)";
 			productName = "Twitter For You Filter (iOS)";
 			productReference = 97BD3B7D2F3EB56C00F8BF65 /* Bouncer.app */;
 			productType = "com.apple.product-type.application";
+		};
+		AA07WIDGETTARGET00000001 /* BouncerWidgets */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AA07WIDGETCFGLIST0000001 /* Build configuration list for PBXNativeTarget "BouncerWidgets" */;
+			buildPhases = (
+				AA07WIDGETSOURCES0000001 /* Sources */,
+				AA07WIDGETFRAMEWORK00001 /* Frameworks */,
+				AA07WIDGETRESOURCES00001 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = BouncerWidgets;
+			productName = BouncerWidgets;
+			productReference = AA07WIDGETPRODUCT0000001 /* BouncerWidgets.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 		9ABC5B9C5BBEAF2017296DC8 /* BouncerShieldAction */ = {
 			isa = PBXNativeTarget;
@@ -628,11 +680,19 @@
 				E6270FD93771F331ECD3D74A /* BouncerShieldConfiguration */,
 				9ABC5B9C5BBEAF2017296DC8 /* BouncerShieldAction */,
 				11B673A7AC399646E64BC1A8 /* BouncerActivityMonitor */,
+				AA07WIDGETTARGET00000001 /* BouncerWidgets */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		AA07WIDGETRESOURCES00001 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		182F7D6A48D7EF8A244D7A3A /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -802,6 +862,15 @@
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		AA07WIDGETSOURCES0000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AA07WIDGETBUNDLEBF000001 /* BouncerWidgetsBundle.swift in Sources */,
+				AA07WIDGETTILESBF0000001 /* PlatformTilesWidget.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		66D0749D68C636779CE9E2CC /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -879,6 +948,12 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		AA07WIDGETDEP00000000001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = BouncerWidgets;
+			target = AA07WIDGETTARGET00000001 /* BouncerWidgets */;
+			targetProxy = AA07WIDGETPROXY000000001 /* PBXContainerItemProxy */;
+		};
 		302D69061F7032E9B8C1866A /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			name = BouncerShieldAction;
@@ -1011,6 +1086,62 @@
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;
+		};
+		AA07WIDGETCFGDEBUG000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = LDDYAR29MP;
+				ENABLE_DEBUG_DYLIB = NO;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = BouncerWidgets/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 2.1.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.imbue.xbouncer.dev.Widgets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		AA07WIDGETCFGRELEASE0001 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = LDDYAR29MP;
+				ENABLE_DEBUG_DYLIB = NO;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = BouncerWidgets/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 2.1.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.imbue.xbouncer.Widgets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
 		};
 		6C0ABE4E2D887AC1D42DA886 /* Debug */ = {
 			isa = XCBuildConfiguration;
@@ -1536,6 +1667,15 @@
 			buildConfigurations = (
 				97BD3BC02F3EB56C00F8BF65 /* Debug */,
 				97BD3BC12F3EB56C00F8BF65 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		AA07WIDGETCFGLIST0000001 /* Build configuration list for PBXNativeTarget "BouncerWidgets" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AA07WIDGETCFGRELEASE0001 /* Release */,
+				AA07WIDGETCFGDEBUG000001 /* Debug */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
