@@ -79,6 +79,22 @@ class ShieldActionExtension: ShieldActionDelegate {
             GateNotifications.postHandoff()
             completionHandler(.close)
 
+        case .firstSecondarySubmenuItemPressed,
+             .secondSecondarySubmenuItemPressed,
+             .thirdSecondarySubmenuItemPressed:
+            // Submenu items, from a submenu this shield does not configure —
+            // the fork is two buttons and nothing else, deliberately (see the
+            // note in ShieldConfigurationExtension about "just this once").
+            // iOS 26.4 added them and iOS should never send one to us; they are
+            // named rather than left to `@unknown default` so that stays a
+            // statement about FUTURE cases, which is the only thing it can
+            // usefully warn about.
+            //
+            // Safe below the deployment target despite the cases being iOS
+            // 26.4+: an enum case pattern compiles to a raw-value comparison,
+            // with nothing to look up at runtime.
+            completionHandler(.none)
+
         @unknown default:
             completionHandler(.none)
         }
