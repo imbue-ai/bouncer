@@ -2035,12 +2035,6 @@ struct FilteredWebViewContainer: View {
     @StateObject private var gateRouter = GateRouter.shared
     @StateObject private var gate = GateController.shared
     @Environment(\.scenePhase) private var scenePhase
-    // Apple's app picker, offered right after the X feed is chosen. It is a
-    // sheet on the container rather than on the feed because the feed is a
-    // WebView and presenting over it fights the keyboard-avoidance dance it
-    // does.
-    @State private var showGatePicker = false
-    @State private var gateError: String?
     // @AppStorage so external UserDefaults writes (e.g. the DEBUG-only "reset
     // onboarding" button in the filter sheet toolbar) propagate reactively —
     // no explicit re-read required for the change to re-show OnboardingView.
@@ -2058,14 +2052,6 @@ struct FilteredWebViewContainer: View {
                 PlatformPickerView { platformId in
                     viewModel.selectPlatformAndNavigate(platformId)
                     navPath.append(platformId)
-                    // X only, for now. The gate itself is app-agnostic — the
-                    // apps it shields are whatever the person picks in Apple's
-                    // own picker — but the offer has to be attached to a
-                    // moment that justifies it, and opening the X feed is the
-                    // one we can currently make that argument for.
-                    if platformId == "twitter" {
-                        offerGateSetup()
-                    }
                 }
                 .toolbar(.hidden, for: .navigationBar)
                 .navigationDestination(for: String.self) { _ in
@@ -2107,44 +2093,6 @@ struct FilteredWebViewContainer: View {
         // launch. Whenever we are in a position to check, check.
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { gate.reconcile() }
-        }
-        .familyActivityPicker(isPresented: $showGatePicker, selection: Binding(
-            get: { gate.selection },
-            set: { gate.save(selection: $0) }
-        ))
-        .alert("Screen Time unavailable",
-               isPresented: Binding(get: { gateError != nil },
-                                    set: { if !$0 { gateError = nil } })) {
-            Button("OK", role: .cancel) { gateError = nil }
-        } message: {
-            Text(gateError ?? "")
-        }
-    }
-
-    /// Ask about gating at the moment someone opens the X feed.
-    ///
-    /// This is the whole permission flow, and it lives here rather than in
-    /// settings because a permission prompt needs a reason attached to it.
-    /// Opening X is the reason: the question "would you like this gated?" is
-    /// answerable then, and abstract anywhere else.
-    ///
-    /// Deliberately after the navigation, not before — the feed they asked for
-    /// loads either way, and a prompt that stands between a tap and its result
-    /// is a prompt people dismiss to get past.
-    private func offerGateSetup() {
-        guard isOnboarded else { return }
-        Task {
-            // Screen Time, then notifications, then the app picker — awaited in
-            // sequence, not started together. Two system alerts raised in the
-            // same runloop stack on top of each other, and the one underneath is
-            // dismissed blind if it is ever shown at all.
-            let shouldPick = await gate.offerSetup()
-            await gate.offerNotifications()
-            if shouldPick {
-                showGatePicker = true
-            } else if let error = gate.lastError {
-                gateError = error
-            }
         }
     }
 

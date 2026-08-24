@@ -446,13 +446,7 @@ private struct VideoOnboardingPage: View {
 
 private struct GateSetupPage: View {
     @StateObject private var gate = GateController.shared
-    @State private var notifications: NotificationPermission = .unknown
     @State private var showingPicker = false
-    // Mirrors of shared state. Written straight through on change so the
-    // extensions — separate processes, reading the App Group — see them
-    // without waiting for onboarding to be finished or the app to be relaunched.
-    @State private var tint: Gate.ShieldTint = Gate.shieldTint
-    @State private var name: String = Gate.displayName ?? ""
 
     var body: some View {
         VStack(spacing: 8) {
@@ -469,167 +463,18 @@ private struct GateSetupPage: View {
             }
             .padding(.top, 60)
 
+            // The same sections Settings shows, so skipping this slide costs
+            // nothing but a trip to Focused viewing. See GateSetupSections.
             List {
-                permissionsSection
-                if gate.authorization == .approved {
-                    gatedSection
-                    timingSection
-                }
-                shieldSection
+                GateSetupSections(gate: gate, showingPicker: $showingPicker)
             }
             .scrollContentBackground(.hidden)
             .scrollBounceBehavior(.basedOnSize)
-            .animation(.easeInOut(duration: 0.25), value: gate.authorization)
         }
         .familyActivityPicker(isPresented: $showingPicker, selection: Binding(
             get: { gate.selection },
             set: { gate.save(selection: $0) }
         ))
-        .task { notifications = await NotificationPermission.current() }
-        // A refusal is repaired in Settings, which means leaving and coming
-        // back. Re-reading on return is what makes "Fix in Settings" a repair
-        // rather than a suggestion.
-        .onReceive(NotificationCenter.default.publisher(
-            for: UIApplication.didBecomeActiveNotification)) { _ in
-            Task { notifications = await NotificationPermission.current() }
-        }
-    }
-
-    // MARK: Sections
-
-    @ViewBuilder
-    private var permissionsSection: some View {
-        Section {
-            permissionRow(
-                title: "Screen Time",
-                why: "Allows Bouncer to gate other apps.",
-                state: screenTimeState,
-                ask: { Task { await gate.requestAuthorization() } }
-            )
-
-            permissionRow(
-                title: "Notifications",
-                why: "Allows Bouncer to remind you to scroll intentionally.",
-                state: notifications.permissionState,
-                ask: {
-                    Task {
-                        _ = await GateNotifications.requestAuthorization()
-                        notifications = await NotificationPermission.current()
-                    }
-                }
-            )
-
-            if let error = gate.lastError {
-                Text(error)
-                    .font(.footnote)
-                    .foregroundStyle(.red)
-            }
-        } header: {
-            Text("Permissions")
-        }
-    }
-
-    private var gatedSection: some View {
-        Section {
-            Button {
-                showingPicker = true
-            } label: {
-                HStack {
-                    Label("Choose apps", systemImage: "square.grid.2x2")
-                    Spacer()
-                    Text(selectionSummary)
-                        .foregroundStyle(.secondary)
-                }
-            }
-        } header: {
-            Text("What's gated")
-        } footer: {
-            // The gate arms itself the moment it has both halves — see
-            // GateController.armIfReady — so this is the last decision, not a
-            // step before one.
-            Text(gate.hasSelection
-                 ? "Bouncer's gate is active."
-                 : "Select your social platforms.")
-        }
-    }
-
-    private var timingSection: some View {
-        Section {
-            Picker("Check in every", selection: Binding(
-                get: { gate.checkInStepSeconds },
-                set: { gate.checkInStepSeconds = $0 }
-            )) {
-                Text("Never").tag(0)
-                ForEach([2, 5, 10, 15], id: \.self) { Text("\($0) min").tag($0 * 60) }
-            }
-        } header: {
-            Text("Check-ins")
-        }
-    }
-
-    private var shieldSection: some View {
-        Section {
-            TextField("Your name (optional)", text: $name)
-                .textInputAutocapitalization(.words)
-                .autocorrectionDisabled()
-                .onChange(of: name) { _, newValue in gate.displayName = newValue }
-
-            ShieldTintPicker(selection: $tint, name: name)
-                .onChange(of: tint) { _, newValue in Gate.shieldTint = newValue }
-        } header: {
-            Text("Customize")
-        } footer: {
-            Text("This is the screen you'll meet when you open a gated app.")
-        }
-    }
-
-    // MARK: Bits
-
-    @ViewBuilder
-    private func permissionRow(title: String,
-                               why: String,
-                               state: PermissionState,
-                               ask: @escaping () -> Void) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Label(title, systemImage: state == .granted ? "checkmark.circle.fill" : "circle.dashed")
-                    .foregroundStyle(state == .granted ? .green : .secondary)
-                Spacer()
-                switch state {
-                case .granted:
-                    EmptyView()
-                case .notAsked:
-                    Button("Allow", action: ask).font(.subheadline.weight(.semibold))
-                case .denied:
-                    // iOS will not show a prompt twice; after a refusal this is
-                    // the only control that does anything.
-                    Button("Fix in Settings") { SystemSettings.open() }
-                        .font(.subheadline.weight(.semibold))
-                }
-            }
-            Text(why)
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-        }
-        .padding(.vertical, 2)
-    }
-
-    private var screenTimeState: PermissionState {
-        switch gate.authorization {
-        case .approved: return .granted
-        case .denied: return .denied
-        default: return .notAsked
-        }
-    }
-
-    private var selectionSummary: String {
-        let apps = gate.selection.applicationTokens.count
-        let categories = gate.selection.categoryTokens.count
-        if apps == 0 && categories == 0 { return "None" }
-        var parts: [String] = []
-        if apps > 0 { parts.append("\(apps) app\(apps == 1 ? "" : "s")") }
-        if categories > 0 { parts.append("\(categories) categor\(categories == 1 ? "y" : "ies")") }
-        return parts.joined(separator: ", ")
     }
 }
 

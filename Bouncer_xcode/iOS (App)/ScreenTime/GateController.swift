@@ -62,61 +62,20 @@ final class GateController: ObservableObject {
             || !selection.categoryTokens.isEmpty
     }
 
-    /// Offered at most once per launch. Cancelling the picker leaves the gate
-    /// unset, and asking again on the next tap of the same button is nagging.
-    private var offeredThisLaunch = false
-
-    /// Also at most once per launch. `UNUserNotificationCenter` only ever shows
-    /// its prompt once per install anyway, so this is about not re-entering the
-    /// flow rather than about not nagging.
-    private var askedNotificationsThisLaunch = false
-
-    /// Whether it is worth asking. Nothing to offer once it is set up, and
-    /// nothing to offer if they have said no by hand.
-    var needsSetup: Bool {
-        !Gate.userTurnedOff && !(authorization == .approved && hasSelection)
-    }
-
-    /// Ask for Screen Time access at the moment someone opens a feed, which is
-    /// the only moment the question makes sense.
-    ///
-    /// It used to live behind a button in settings, which is a fine place for a
-    /// setting and a terrible place for a permission: nobody goes looking for a
-    /// prompt they have not been given a reason to want. Choosing to open
-    /// X *is* the reason.
-    ///
-    /// Returns true when access is granted and the caller should go on to the
-    /// app picker — the second half of setup, and the half only Apple's own UI
-    /// can perform.
-    func offerSetup() async -> Bool {
-        guard needsSetup, !offeredThisLaunch else { return false }
-        offeredThisLaunch = true
-        if authorization != .approved {
-            await requestAuthorization()
-        }
-        return authorization == .approved && !hasSelection
-    }
-
-    /// Ask for notifications, on the same tap that asks for Screen Time.
-    ///
-    /// Not a nicety and not really a separate feature: the shield's "View in Bouncer"
-    /// button posts a notification and does nothing else, because an app
-    /// extension has no way to open an app. Without permission that button is
-    /// dead, and dead in the particular way that looks like our bug rather than
-    /// a missing permission — the shield dismisses, nothing arrives, and there
-    /// is nowhere for the user to find out why.
-    ///
-    /// Asked separately from `offerSetup` rather than inside it because the two
-    /// have different lifetimes: someone who granted Screen Time months ago and
-    /// has been declining notifications ever since still needs this one, and
-    /// `offerSetup` returns early for them.
-    @discardableResult
-    func offerNotifications() async -> Bool {
-        guard !askedNotificationsThisLaunch else { return true }
-        askedNotificationsThisLaunch = true
-        if await GateNotifications.isAuthorized() { return true }
-        return await GateNotifications.requestAuthorization()
-    }
+    // NOTHING HERE ASKS FOR A PERMISSION ON ITS OWN ANY MORE.
+    //
+    // There used to be `offerSetup` / `offerNotifications`, fired when someone
+    // opened a feed, on the reasoning that a permission prompt needs a reason
+    // attached to it and choosing to open X was that reason. The reasoning is
+    // still right; the placement was not. Somebody who has already been asked
+    // during onboarding and said no — or said nothing — was asked again by the
+    // first tap they made afterwards, which is the same question with the
+    // answer already given, and the one thing a permission prompt must never
+    // be is repeated.
+    //
+    // Both permissions are now asked for in exactly two places, and both are
+    // places the user chose to be: the Focused Viewing slide in onboarding,
+    // and Settings → Focused viewing. Opening a feed asks for nothing.
 
     // MARK: - Authorization
 

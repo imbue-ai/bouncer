@@ -68,6 +68,7 @@
 		AA01GATETOKENSBF00000002 /* GateTokens.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA01GATETOKENSREF0000001 /* GateTokens.swift */; };
 		AA01GATETOKENSBF00000003 /* GateTokens.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA01GATETOKENSREF0000001 /* GateTokens.swift */; };
 		B9E404716C8121FC958CA0FB /* GateSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 420E2C2E22B044008DD46C11 /* GateSettingsView.swift */; };
+		AA09SETUPSECTIONSBF00001 /* GateSetupSections.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA09SETUPSECTIONSREF0001 /* GateSetupSections.swift */; };
 		AA08TINTPICKERBF00000001 /* ShieldTintPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA08TINTPICKERREF0000001 /* ShieldTintPicker.swift */; };
 		AA06GATEPERMSBF00000001 /* GatePermissions.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA06GATEPERMSREF0000001 /* GatePermissions.swift */; };
 		C78C971BC28E48DBE328AFCA /* GateController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25EACE9DD44CFFDF36B30A6A /* GateController.swift */; };
@@ -174,6 +175,7 @@
 		AA07WIDGETPLISTREF000001 /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		380BC79B5F62800292D313AD /* BouncerShieldConfiguration.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = BouncerShieldConfiguration.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		420E2C2E22B044008DD46C11 /* GateSettingsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GateSettingsView.swift; sourceTree = "<group>"; };
+		AA09SETUPSECTIONSREF0001 /* GateSetupSections.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GateSetupSections.swift; sourceTree = "<group>"; };
 		AA08TINTPICKERREF0000001 /* ShieldTintPicker.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ShieldTintPicker.swift; sourceTree = "<group>"; };
 		AA06GATEPERMSREF0000001 /* GatePermissions.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GatePermissions.swift; sourceTree = "<group>"; };
 		4B8988E43528C8FDF0FB6B18 /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
@@ -325,6 +327,7 @@
 				420E2C2E22B044008DD46C11 /* GateSettingsView.swift */,
 				AA06GATEPERMSREF0000001 /* GatePermissions.swift */,
 				AA08TINTPICKERREF0000001 /* ShieldTintPicker.swift */,
+				AA09SETUPSECTIONSREF0001 /* GateSetupSections.swift */,
 			);
 			name = ScreenTime;
 			path = "iOS (App)/ScreenTime";
@@ -924,6 +927,7 @@
 				B9E404716C8121FC958CA0FB /* GateSettingsView.swift in Sources */,
 				AA06GATEPERMSBF00000001 /* GatePermissions.swift in Sources */,
 				AA08TINTPICKERBF00000001 /* ShieldTintPicker.swift in Sources */,
+				AA09SETUPSECTIONSBF00001 /* GateSetupSections.swift in Sources */,
 				AA01GATETOKENSBF00000001 /* GateTokens.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
