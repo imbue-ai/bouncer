@@ -2800,3 +2800,280 @@ body.dim-mode .model-radio-sub { color: rgb(139, 152, 165); }
 .advanced-settings > .api-provider-content {
   padding: 16px 12px;
 }
+
+/* ======================================
+   Accent Color picker
+   ====================================== */
+
+/* Round swatch in the accordion header showing the current choice. JS keeps
+   its background in sync with the stored brandColor. */
+.accent-color-chip {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+  background: #ea8554;
+  flex-shrink: 0;
+}
+
+.accent-color-content {
+  padding: 12px;
+}
+
+/* Second toggle in the filter-replies section: force it onto its own line
+   (.toggle-switch is inline-flex) with the section's usual row spacing. */
+.colored-border-toggle {
+  display: flex;
+  margin-top: 12px;
+}
+
+.color-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Saturation/brightness plane. JS sets --cp-hue-color to hsl(H, 100%, 50%);
+   the two overlaid gradients (white → hue, transparent → black) produce the
+   standard SV square. */
+.cp-sv {
+  position: relative;
+  width: 100%;
+  height: 120px;
+  border-radius: 8px;
+  background:
+    linear-gradient(to top, #000, transparent),
+    linear-gradient(to right, #fff, var(--cp-hue-color, hsl(20, 100%, 50%)));
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.cp-sv:focus-visible {
+  outline: 2px solid #1d9bf0;
+  outline-offset: 2px;
+}
+
+.cp-sv-thumb {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35), inset 0 0 0 1px rgba(0, 0, 0, 0.15);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+/* Hue slider — the track is the full hue wheel; the thumb is a neutral ring
+   so the track color reads through. */
+.cp-hue {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 12px;
+  border-radius: 6px;
+  background: linear-gradient(to right,
+    #f00 0%, #ff0 17%, #0f0 33%, #0ff 50%, #00f 67%, #f0f 83%, #f00 100%);
+  outline: none;
+  cursor: pointer;
+  margin: 0;
+}
+
+.cp-hue::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: transparent;
+  border: 3px solid #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35), inset 0 0 0 1px rgba(0, 0, 0, 0.15);
+}
+
+.cp-hue::-moz-range-thumb {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: transparent;
+  border: 3px solid #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35), inset 0 0 0 1px rgba(0, 0, 0, 0.15);
+}
+
+.cp-hue:focus-visible {
+  outline: 2px solid #1d9bf0;
+  outline-offset: 2px;
+}
+
+/* Hex + RGB inputs, label under each field like classic pickers. */
+.cp-fields {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.cp-field {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.cp-field-hex {
+  flex: 1.8;
+}
+
+.cp-field label {
+  font-size: 10px;
+  font-weight: 600;
+  color: #536471;
+  text-transform: uppercase;
+  margin: 0;
+}
+
+.cp-field input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 5px 4px;
+  border: 1px solid #cfd9de;
+  border-radius: 6px;
+  font-size: 12px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.cp-field input:focus {
+  outline: none;
+  border-color: #1d9bf0;
+}
+
+.cp-field input.invalid {
+  border-color: #f4212e;
+}
+
+/* Hide number-input spinners — the fields are too narrow for them. */
+.cp-field input[type="number"]::-webkit-inner-spin-button,
+.cp-field input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.cp-field input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.cp-eyedropper {
+  flex-shrink: 0;
+  width: 27px;
+  height: 27px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #cfd9de;
+  border-radius: 6px;
+  background: none;
+  color: #536471;
+  cursor: pointer;
+}
+
+.cp-eyedropper:hover {
+  background: #eff3f4;
+}
+
+.cp-swatches {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.cp-swatch {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+  cursor: pointer;
+  padding: 0;
+  transition: transform 0.1s;
+}
+
+.cp-swatch:hover {
+  transform: scale(1.15);
+}
+
+.cp-swatch.selected {
+  box-shadow: 0 0 0 2px #fff, 0 0 0 4px #1d9bf0;
+}
+
+.cp-reset {
+  align-self: flex-start;
+  padding: 5px 12px;
+  border: 1px solid #cfd9de;
+  border-radius: 15px;
+  background: none;
+  color: #536471;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.cp-reset:hover {
+  background: #eff3f4;
+}
+
+/* Dark / dim theme variants. */
+body.dark-mode .accent-color-chip,
+body.dim-mode .accent-color-chip {
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
+body.dark-mode .cp-field label { color: rgb(113, 118, 123); }
+body.dim-mode .cp-field label { color: rgb(139, 152, 165); }
+
+body.dark-mode .cp-field input {
+  background: rgb(0, 0, 0);
+  border-color: rgb(47, 51, 54);
+  color: rgb(231, 233, 234);
+}
+
+body.dim-mode .cp-field input {
+  background: rgb(21, 32, 43);
+  border-color: rgb(56, 68, 77);
+  color: rgb(247, 249, 249);
+}
+
+body.dark-mode .cp-field input:focus,
+body.dim-mode .cp-field input:focus {
+  border-color: #1d9bf0;
+}
+
+body.dark-mode .cp-eyedropper,
+body.dark-mode .cp-reset {
+  border-color: rgb(47, 51, 54);
+  color: rgb(113, 118, 123);
+}
+
+body.dim-mode .cp-eyedropper,
+body.dim-mode .cp-reset {
+  border-color: rgb(56, 68, 77);
+  color: rgb(139, 152, 165);
+}
+
+body.dark-mode .cp-eyedropper:hover,
+body.dark-mode .cp-reset:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+body.dim-mode .cp-eyedropper:hover,
+body.dim-mode .cp-reset:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+body.dark-mode .cp-swatch.selected {
+  box-shadow: 0 0 0 2px rgb(0, 0, 0), 0 0 0 4px #1d9bf0;
+}
+
+body.dim-mode .cp-swatch.selected {
+  box-shadow: 0 0 0 2px rgb(21, 32, 43), 0 0 0 4px #1d9bf0;
+}

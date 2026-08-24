@@ -4,6 +4,7 @@
 import type { PlatformAdapter, PostContent, PipelineResponse, BackgroundToContentMessage, DescriptionKey, AiFilterIntentState } from '../types';
 import { getStorage, removeStorage, getDescriptions, setDescriptions, phraseSetKey } from '../shared/storage';
 import { enabledStorageKey } from '../shared/platforms';
+import { hexToRgbChannels, hexToDarkRgbChannels, contrastTextColor } from '../shared/brand-color';
 import { FILTER_PACK_CODE_PREFIX } from '../shared/share-encoding';
 
 import {
@@ -68,6 +69,50 @@ import { formatPostForEvaluation, phraseAddNeedsReEvaluation } from '../shared/u
 
   // Site-specific storage key for filter phrases
   const descriptionsKey: DescriptionKey = `descriptions_${adapter.siteId}`;
+
+  // Custom accent color (popup "Accent Color" picker). Overriding
+  // --bouncer-brand-rgb inline on <html> outranks content.css's :root rule;
+  // clearing the inline value falls back to the default orange. Runs
+  // regardless of the platform toggle — it only recolors Bouncer's own UI.
+  function applyBrandColor(hex: unknown): void {
+    const channels = typeof hex === 'string' ? hexToRgbChannels(hex) : null;
+    // Light mode renders several accents in a darkened companion shade
+    // (--bouncer-brand-dark-rgb) — derive it from the same pick so both
+    // themes retheme together.
+    const darkChannels = typeof hex === 'string' ? hexToDarkRgbChannels(hex) : null;
+    if (channels && darkChannels) {
+      document.documentElement.style.setProperty('--bouncer-brand-rgb', channels);
+      document.documentElement.style.setProperty('--bouncer-brand-dark-rgb', darkChannels);
+      // Badge/button text on the accent: black when the accent is too light
+      // for white text to read.
+      document.documentElement.style.setProperty('--bouncer-brand-contrast', contrastTextColor(hex as string));
+    } else {
+      document.documentElement.style.removeProperty('--bouncer-brand-rgb');
+      document.documentElement.style.removeProperty('--bouncer-brand-dark-rgb');
+      document.documentElement.style.removeProperty('--bouncer-brand-contrast');
+    }
+  }
+  // "Colored border on input box" popup toggle. Only `false` opts out —
+  // absent (default) keeps the brand-accent outline. The class makes
+  // content.css restyle the filter box to the platform's native card border.
+  function applyColoredBorder(value: unknown): void {
+    document.documentElement.classList.toggle('bouncer-plain-border', value === false);
+  }
+  getStorage(['brandColor', 'coloredBorder'])
+    .then(data => {
+      applyBrandColor(data.brandColor);
+      applyColoredBorder(data.coloredBorder);
+    })
+    .catch(err => console.error('[Bouncer] Failed to load accent color:', err));
+  chrome.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName !== 'local') return;
+    if (changes.brandColor) {
+      applyBrandColor(changes.brandColor.newValue);
+    }
+    if (changes.coloredBorder) {
+      applyColoredBorder(changes.coloredBorder.newValue);
+    }
+  });
 
   // One-time migration: move descriptions from sync to local storage
   (async () => {
