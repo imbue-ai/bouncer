@@ -548,8 +548,8 @@ private struct GateSetupPage: View {
             // GateController.armIfReady — so this is the last decision, not a
             // step before one.
             Text(gate.hasSelection
-                 ? "The door is on. Opening one of these asks what you're here for."
-                 : "Pick the apps you want the door in front of.")
+                 ? "Bouncer's gate is active."
+                 : "Select your social platforms.")
         }
     }
 
@@ -564,8 +564,6 @@ private struct GateSetupPage: View {
             }
         } header: {
             Text("Check-ins")
-        } footer: {
-            Text("Counted in minutes of use, not wall clock. They arrive as notifications you can ignore — nothing closes the app on you.")
         }
     }
 
