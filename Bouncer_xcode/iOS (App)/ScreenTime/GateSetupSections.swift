@@ -36,6 +36,7 @@ struct GateSetupSections: View {
     /// List, not to a section inside it.
     @Binding var showingPicker: Bool
 
+    @FocusState private var nameFocused: Bool
     @State private var notifications: NotificationPermission = .unknown
     @State private var tint: Gate.ShieldTint = Gate.shieldTint
     @State private var name: String = Gate.displayName ?? ""
@@ -53,6 +54,15 @@ struct GateSetupSections: View {
             customizeSection
         }
         .animation(.easeInOut(duration: 0.25), value: gate.authorization)
+        // Onboarding has no navigation bar and its Next button sits at the
+        // bottom, under the keyboard — so without this there is no obvious way
+        // to put the keyboard away again.
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("Done") { nameFocused = false }
+            }
+        }
         .task { notifications = await NotificationPermission.current() }
         // A refusal is repaired in Settings, which means leaving the app and
         // coming back. Re-reading on return is what makes "Fix in Settings" a
@@ -167,7 +177,23 @@ struct GateSetupSections: View {
             TextField("Your name (optional)", text: $name)
                 .textInputAutocapitalization(.words)
                 .autocorrectionDisabled()
-                .onChange(of: name) { _, newValue in gate.displayName = newValue }
+                .focused($nameFocused)
+                .submitLabel(.done)
+                // Persisted when editing ENDS, not on every keystroke.
+                //
+                // `gate.displayName` is @Published on a singleton this whole
+                // view observes, so writing it per character re-rendered every
+                // section — the token list, the swatches, the preview — between
+                // one letter and the next. The typing stuttered and the cursor
+                // could jump. Nothing needs the stored value mid-word: the
+                // preview greeting reads the local `name`, so it still updates
+                // live, and the extensions only read the App Group when they
+                // draw a shield.
+                .onSubmit { commitName() }
+                .onChange(of: nameFocused) { _, focused in
+                    if !focused { commitName() }
+                }
+                .onDisappear { commitName() }
 
             ShieldTintPicker(selection: $tint, name: name)
                 .onChange(of: tint) { _, newValue in Gate.shieldTint = newValue }
@@ -176,6 +202,15 @@ struct GateSetupSections: View {
         } footer: {
             Text("This is the screen you'll meet when you open a gated app.")
         }
+    }
+
+    /// Write the name through to the App Group, where the shield extension
+    /// reads it. Idempotent — it is called from three places, because there
+    /// are three ways to stop editing: Done, tapping elsewhere, and leaving.
+    private func commitName() {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard gate.displayName != trimmed else { return }
+        gate.displayName = trimmed
     }
 
     // MARK: - Bits

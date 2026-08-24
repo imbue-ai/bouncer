@@ -36,6 +36,7 @@ struct GateSettingsView: View {
             armSection
         }
         .listStyle(.insetGrouped)
+        .scrollDismissesKeyboard(.interactively)
         .navigationTitle("Focused viewing")
         .familyActivityPicker(isPresented: $showingPicker, selection: Binding(
             get: { gate.selection },

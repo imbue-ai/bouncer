@@ -103,6 +103,17 @@ struct OnboardingView: View {
             .padding(.bottom, 50)
         }
         .background(Color(UIColor.systemBackground))
+        // The slideshow does not move for the keyboard.
+        //
+        // Everything here lives in one VStack — the paged TabView and, under
+        // it, the dots and the Next button — so SwiftUI's keyboard avoidance
+        // lifted the WHOLE thing when the name field on the last slide took
+        // focus. The title slid off the top and the pages squashed, which is
+        // the "glitch" of tapping a text field. The List inside the slide
+        // scrolls the focused field into view by itself, which is all that
+        // actually needed to happen; the Next button going under the keyboard
+        // is ordinary, and the field's Done accessory brings it back.
+        .ignoresSafeArea(.keyboard, edges: .bottom)
         // Local path: Get Started was pressed while the transfer was still
         // running, so onboarding finishes on its own once the file lands.
         .onChange(of: localService.modelStatus) { _, newStatus in
@@ -470,6 +481,7 @@ private struct GateSetupPage: View {
             }
             .scrollContentBackground(.hidden)
             .scrollBounceBehavior(.basedOnSize)
+            .scrollDismissesKeyboard(.interactively)
         }
         .familyActivityPicker(isPresented: $showingPicker, selection: Binding(
             get: { gate.selection },
