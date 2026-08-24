@@ -27,6 +27,8 @@ struct OnboardingView: View {
     @State private var isFinishing = false
     @ObservedObject private var localService = LocalInferenceService.shared
     private let pageCount = 6
+    /// The slide the looping video belongs to; it is paused on every other.
+    private let videoPage = 1
     /// Committing the filtering-mode choice hangs off leaving this slide, so
     /// its index has to be nameable.
     private let inferenceModePage = 4
@@ -116,6 +118,9 @@ struct OnboardingView: View {
         .ignoresSafeArea(.keyboard, edges: .bottom)
         // Local path: Get Started was pressed while the transfer was still
         // running, so onboarding finishes on its own once the file lands.
+        .onChange(of: currentPage) { _, page in
+            videoPlayer.setPlaying(page == videoPage)
+        }
         .onChange(of: localService.modelStatus) { _, newStatus in
             guard isFinishing else { return }
             if newStatus == .downloaded || newStatus == .ready {
@@ -361,6 +366,17 @@ private class PreloadedVideoPlayer {
         queuePlayer.play()
     }
 
+    /// Decode only while the slide that shows it is on screen.
+    ///
+    /// A TabView keeps every page alive, and an AVQueuePlayer does not care
+    /// whether its layer is visible — so this went on decoding video for the
+    /// whole of onboarding, four slides after anyone could see it. That is a
+    /// core busy behind every later slide, which is the difference between a
+    /// keyboard that appears and a keyboard that eventually appears.
+    func setPlaying(_ playing: Bool) {
+        if playing { player.play() } else { player.pause() }
+    }
+
     func stop() {
         player.pause()
         player.removeAllItems()
@@ -385,7 +401,13 @@ private struct LoopingVideoView: UIViewRepresentable {
 
     func updateUIView(_ uiView: UIView, context: Context) {
         DispatchQueue.main.async {
-            context.coordinator.playerLayer?.frame = uiView.bounds
+            // Only on a real change. Assigning a layer's frame opens an
+            // implicit CoreAnimation transaction whether or not the value
+            // differs, and this ran on every pass of the enclosing body — which
+            // a download's progress ticks alone are enough to drive.
+            guard let layer = context.coordinator.playerLayer,
+                  layer.frame != uiView.bounds else { return }
+            layer.frame = uiView.bounds
         }
     }
 
