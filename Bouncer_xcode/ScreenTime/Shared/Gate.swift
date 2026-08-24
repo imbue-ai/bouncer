@@ -101,6 +101,7 @@ public enum Gate {
         static let userTurnedOff = "gate.userTurnedOff"
         static let devCheckInSeconds = "gate.devCheckInSeconds"
         static let displayName = "gate.displayName"
+        static let shieldTint = "gate.shieldTint"
         static let lastShieldRenderAt = "gate.lastShieldRenderAt"
         static let lastShieldActionAt = "gate.lastShieldActionAt"
     }
@@ -176,6 +177,75 @@ public enum Gate {
                 defaults.removeObject(forKey: Key.displayName)
             }
         }
+    }
+
+    // MARK: - How the shield looks
+
+    /// The shield's colours, chosen by the user during onboarding.
+    ///
+    /// A PAIR, not a colour. The shield is a light title and a light button
+    /// fill on a dark ground, with the dark colour used again for the type
+    /// inside that button — so a single free-choice colour has two ways to go
+    /// wrong at once: pick something dark and the title vanishes into the
+    /// background, pick something light for the ground and the button's own
+    /// label does. Shipping coordinated pairs is what makes every choice on the
+    /// picker a legible shield, which a system colour well cannot promise.
+    ///
+    /// Raw components rather than a colour type because this file is compiled
+    /// into the shield configuration extension, which is Foundation-only on
+    /// purpose (see the note at the top). Each consumer builds its own
+    /// UIColor / SwiftUI Color from these.
+    public enum ShieldTint: String, CaseIterable, Sendable {
+        /// The original, sampled from the app icon: #E09898 on #482020.
+        case blush
+        case slate
+        case moss
+        case sand
+        case mono
+
+        public var displayName: String {
+            switch self {
+            case .blush: return "Blush"
+            case .slate: return "Slate"
+            case .moss: return "Moss"
+            case .sand: return "Sand"
+            case .mono: return "Mono"
+            }
+        }
+
+        /// The light half: the title, the icon, and the primary button's fill.
+        public var accent: (red: Double, green: Double, blue: Double) {
+            switch self {
+            case .blush: return (0.878, 0.596, 0.596)
+            case .slate: return (0.639, 0.741, 0.851)
+            case .moss:  return (0.659, 0.769, 0.627)
+            case .sand:  return (0.910, 0.816, 0.631)
+            case .mono:  return (0.906, 0.886, 0.871)
+            }
+        }
+
+        /// The dark half: the ground, and the type on the primary button.
+        public var ink: (red: Double, green: Double, blue: Double) {
+            switch self {
+            case .blush: return (0.282, 0.125, 0.125)
+            case .slate: return (0.106, 0.157, 0.212)
+            case .moss:  return (0.122, 0.180, 0.114)
+            case .sand:  return (0.227, 0.180, 0.098)
+            case .mono:  return (0.133, 0.122, 0.118)
+            }
+        }
+    }
+
+    /// Which pair the shield draws itself in.
+    ///
+    /// Read fresh on every render, like `displayName` — the extension is
+    /// relaunched for each shield, so a change here shows up on the very next
+    /// one with no rebuild. An unrecognised stored value falls back to the
+    /// original rather than to nothing: a shield is not the place to discover
+    /// that a setting was written by a newer build.
+    public static var shieldTint: ShieldTint {
+        get { ShieldTint(rawValue: defaults.string(forKey: Key.shieldTint) ?? "") ?? .blush }
+        set { defaults.set(newValue.rawValue, forKey: Key.shieldTint) }
     }
 
     /// DEV ONLY. A sub-minute check-in step, in seconds, overriding

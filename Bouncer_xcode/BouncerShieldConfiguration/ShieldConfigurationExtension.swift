@@ -36,22 +36,27 @@ import UIKit
 
 class ShieldConfigurationExtension: ShieldConfigurationDataSource {
 
-    /// Bouncer's own accent. The shield is the first Bouncer surface anyone
-    /// sees in a day and it should not look like a system error — a door in
-    /// the app's own colour reads as somewhere to go, where grey-on-black
-    /// reads as something gone wrong.
+    /// The pair the shield draws itself in, read fresh on every render.
     ///
-    /// Sampled from the app icon rather than guessed at: #E09898. Every icon
-    /// file in the project agrees on it to the byte.
-    private static let salmon = UIColor(red: 0.878, green: 0.596, blue: 0.596, alpha: 1.0)
+    /// The shield is the first Bouncer surface anyone sees in a day and it
+    /// should not look like a system error — a door in the app's own colour
+    /// reads as somewhere to go, where grey-on-black reads as something gone
+    /// wrong. Which colour that is, the user picks during onboarding; the
+    /// default is the pair sampled from the app icon, #E09898 on #482020.
+    ///
+    /// Read rather than cached in a `static let` because a static initialises
+    /// once per process and this process is relaunched for every shield: the
+    /// cost of reading is one UserDefaults hit, and the reward is that changing
+    /// the colour in Bouncer shows up on the next shield instead of the next
+    /// install. See Gate.ShieldTint for why it is a pair and not one colour.
+    private static var tint: Gate.ShieldTint { Gate.shieldTint }
 
-    /// The logo's other colour, #482020 — a warm dark red-brown, also sampled.
-    ///
-    /// The previous value was (0.20, 0.10, 0.14), which reads purple and was
-    /// the "weird purple button": its blue channel sits above its green, and on
-    /// a large flat fill that cast is unmistakable. Warm dark and cool dark are
-    /// nearly the same lightness and not remotely the same colour.
-    private static let ink = UIColor(red: 0.282, green: 0.125, blue: 0.125, alpha: 1.0)
+    private static var accent: UIColor { color(tint.accent) }
+    private static var ink: UIColor { color(tint.ink) }
+
+    private static func color(_ c: (red: Double, green: Double, blue: Double)) -> UIColor {
+        UIColor(red: c.red, green: c.green, blue: c.blue, alpha: 1.0)
+    }
 
     /// The glyph above the title, or nothing.
     ///
@@ -74,7 +79,7 @@ class ShieldConfigurationExtension: ShieldConfigurationDataSource {
     /// rather than beside it as a second, differently-coloured thing.
     private static func icon() -> UIImage? {
         UIImage(named: "GateShieldIcon")?.withRenderingMode(.alwaysTemplate)
-            .withTintColor(Self.salmon, renderingMode: .alwaysOriginal)
+            .withTintColor(Self.accent, renderingMode: .alwaysOriginal)
     }
 
     /// The name to greet, or nil when there isn't one.
@@ -119,16 +124,16 @@ class ShieldConfigurationExtension: ShieldConfigurationDataSource {
         Gate.stampShieldRender()
 
         return ShieldConfiguration(
-            // No blur: a blur composites the shielded app's own screen through
-            // the colour, so the pink would come out a different pink over
-            // X than over anything else. Flat is the only way this is
-            // the same colour every time.
+            // No blur: a blur composites the shielded app's own screen
+            // through the colour, so the chosen ground would come out a
+            // different shade over X than over anything else. Flat is the only
+            // way this is the same colour every time.
             backgroundBlurStyle: nil,
             backgroundColor: Self.ink,
             icon: Self.icon(),
             title: ShieldConfiguration.Label(
                 text: Self.titleText(),
-                color: Self.salmon
+                color: Self.accent
             ),
             // An EMPTY label, not nil.
             //
@@ -141,20 +146,20 @@ class ShieldConfigurationExtension: ShieldConfigurationDataSource {
             // A label with an empty string is the only way to say "nothing
             // here" and be believed.
             subtitle: ShieldConfiguration.Label(text: "", color: .clear),
-            // Salmon fill, dark type. This is the button that was purple: it
+            // Accent fill, ink type. This is the button that was purple: it
             // was carrying the dark colour as its BACKGROUND, which made the
             // one solid shape on the screen the one colour that isn't Bouncer's.
             primaryButtonLabel: ShieldConfiguration.Label(
                 text: "View in X",
                 color: Self.ink
             ),
-            primaryButtonBackgroundColor: Self.salmon,
+            primaryButtonBackgroundColor: Self.accent,
             // No background colour is available for the secondary button — iOS
             // draws it as plain text — so it carries the ink colour directly
             // and reads as the quieter of the two.
             secondaryButtonLabel: ShieldConfiguration.Label(
                 text: "View in Bouncer",
-                color: Self.salmon
+                color: Self.accent
             )
         )
     }

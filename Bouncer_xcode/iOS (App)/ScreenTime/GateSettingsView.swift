@@ -24,6 +24,7 @@ struct GateSettingsView: View {
     @StateObject private var gate = GateController.shared
     @State private var showingPicker = false
     @State private var notifications: NotificationPermission = .unknown
+    @State private var tint: Gate.ShieldTint = Gate.shieldTint
 
     var body: some View {
         List {
@@ -79,6 +80,12 @@ struct GateSettingsView: View {
             ))
             .textInputAutocapitalization(.words)
             .autocorrectionDisabled()
+
+            // Same control as the onboarding slide, deliberately. A colour
+            // chosen once during setup and never again is a colour nobody
+            // changes their mind about on purpose.
+            ShieldTintPicker(selection: $tint, name: gate.displayName)
+                .onChange(of: tint) { _, newValue in Gate.shieldTint = newValue }
         } header: {
             Text("On the shield")
         } footer: {
