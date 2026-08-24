@@ -461,7 +461,7 @@ private struct GateSetupPage: View {
                     .font(.system(size: 28, weight: .bold))
                     .multilineTextAlignment(.center)
 
-                Text("Put a door in front of the apps you'd rather open on purpose. Optional, and changeable in settings.")
+                Text("Optionally configure redirects from the original platforms.")
                     .font(.system(size: 17))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
