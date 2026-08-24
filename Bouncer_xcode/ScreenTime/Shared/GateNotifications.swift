@@ -52,7 +52,8 @@ public enum GateNotifications {
         title: String,
         body: String,
         route: String?,
-        after seconds: TimeInterval?
+        after seconds: TimeInterval?,
+        completion: (() -> Void)? = nil
     ) {
         let content = UNMutableNotificationContent()
         content.title = title
@@ -70,24 +71,50 @@ public enum GateNotifications {
             UNTimeIntervalNotificationTrigger(timeInterval: max(1, $0), repeats: false)
         }
         let request = UNNotificationRequest(identifier: id, content: content, trigger: trigger)
-        UNUserNotificationCenter.current().add(request)
+
+        // `add` is ASYNCHRONOUS — it hands the request to the notification
+        // daemon over XPC and returns immediately. In an app extension that is
+        // the difference between a notification and no notification: the caller
+        // signals it is finished, iOS tears the process down, and a request
+        // still in flight goes with it. Callers that have a completion handler
+        // to hold open must wait for this one.
+        UNUserNotificationCenter.current().add(request) { _ in
+            guard let completion else { return }
+            DispatchQueue.main.async(execute: completion)
+        }
     }
 
     /// The bridge from the shield to Bouncer. Text kept to a label: this is
     /// meant to be tapped on sight, and anything longer is read instead.
-    public static func postHandoff() {
+    /// `completion` fires once the request has actually been accepted.
+    ///
+    /// The shield action extension must not answer iOS until then. It used to
+    /// answer immediately — the whole reason the second button did nothing:
+    /// the process was gone before the request landed, so the tap dismissed
+    /// the shield and no notification ever arrived.
+    public static func postHandoff(completion: @escaping () -> Void) {
         Gate.lastHandoffAt = Date()
+        // Forced to disk for the same reason the shield stamps are: this
+        // process is about to be killed, and a write still in memory dies here.
+        Gate.defaults.synchronize()
         post(
             id: Gate.Notify.handoffID,
             title: "Open in Bouncer",
             body: "Tap to open your viewer.",
             route: Gate.Notify.routeTwitter,
-            after: nil
+            after: nil,
+            completion: completion
         )
     }
 
     /// The check-in. Phrased as a question with a real answer, because it has
     /// one: ignoring it is allowed and nothing follows from it.
+    ///
+    /// Fire-and-forget, unlike the handoff, because its caller has nothing to
+    /// hold open: `DeviceActivityMonitor.eventDidReachThreshold` is handed no
+    /// completion handler, so there is no supported way to keep that process
+    /// alive until the request lands. In practice the monitor is not torn down
+    /// as abruptly as a shield action, which answers iOS explicitly.
     ///
     /// Seconds rather than minutes so the DEBUG-only sub-minute step has
     /// something honest to say; whole minutes still read as minutes.

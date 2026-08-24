@@ -36,7 +36,6 @@ struct GateSetupSections: View {
     /// List, not to a section inside it.
     @Binding var showingPicker: Bool
 
-    @FocusState private var nameFocused: Bool
     @State private var notifications: NotificationPermission = .unknown
     @State private var tint: Gate.ShieldTint = Gate.shieldTint
     @State private var name: String = Gate.displayName ?? ""
@@ -174,36 +173,8 @@ struct GateSetupSections: View {
             // friendlier than one that does not, and the shield is a moment
             // where friendliness does real work — but being greeted by name is
             // a nicety some people find grating, so blank is the right default.
-            TextField("Your name (optional)", text: $name)
-                .textInputAutocapitalization(.words)
-                .autocorrectionDisabled()
-                .focused($nameFocused)
-                .submitLabel(.done)
-                // Persisted when editing ENDS, not on every keystroke.
-                //
-                // `gate.displayName` is @Published on a singleton this whole
-                // view observes, so writing it per character re-rendered every
-                // section — the token list, the swatches, the preview — between
-                // one letter and the next. The typing stuttered and the cursor
-                // could jump. Nothing needs the stored value mid-word: the
-                // preview greeting reads the local `name`, so it still updates
-                // live, and the extensions only read the App Group when they
-                // draw a shield.
-                .onSubmit { commitName() }
-                .onChange(of: nameFocused) { _, focused in
-                    if !focused { commitName() }
-                }
+            GateNameField(text: $name, onCommit: commitName)
                 .onDisappear { commitName() }
-                // On the field itself, so there is exactly one of these.
-                // Onboarding has no navigation bar and its Next button sits
-                // under the keyboard, so without an accessory there is no
-                // obvious way to put the keyboard away again.
-                .toolbar {
-                    ToolbarItemGroup(placement: .keyboard) {
-                        Spacer()
-                        Button("Done") { nameFocused = false }
-                    }
-                }
 
             ShieldTintPicker(selection: $tint, name: name)
                 .onChange(of: tint) { _, newValue in Gate.shieldTint = newValue }
@@ -272,3 +243,97 @@ struct GateSetupSections: View {
         return parts.joined(separator: ", ")
     }
 }
+
+#if os(iOS)
+// MARK: - The name field
+
+/// UIKit-backed, like the two other text inputs in this app
+/// (PersistentKeyboardTextField and URLBarTextField in FilterPhraseSheet).
+///
+/// A SwiftUI TextField here took seconds to raise a keyboard. Two things in
+/// that path are gone now:
+///
+/// `.toolbar(placement: .keyboard)` builds its accessory by standing up a
+/// UIHostingController, and the keyboard cannot present until that has been
+/// built and laid out. A UIToolbar assigned to `inputAccessoryView` is a plain
+/// view that already exists by the time the field is touched.
+///
+/// `@FocusState` re-evaluates the enclosing body on every focus change, and the
+/// body here is four List sections including the app-token rows, each of which
+/// asks the Screen Time daemon what to draw. Focus is now the text field's own
+/// business and nothing above it re-renders.
+struct GateNameField: UIViewRepresentable {
+    @Binding var text: String
+    var onCommit: () -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeUIView(context: Context) -> UITextField {
+        let field = UITextField()
+        field.delegate = context.coordinator
+        field.font = .preferredFont(forTextStyle: .body)
+        field.adjustsFontForContentSizeCategory = true
+        field.textColor = .label
+        field.attributedPlaceholder = NSAttributedString(
+            string: "Your name (optional)",
+            attributes: [.foregroundColor: UIColor.placeholderText]
+        )
+        field.autocapitalizationType = .words
+        field.autocorrectionType = .no
+        field.spellCheckingType = .no
+        field.returnKeyType = .done
+        field.clearButtonMode = .whileEditing
+        field.text = text
+        field.addTarget(context.coordinator,
+                        action: #selector(Coordinator.editingChanged(_:)),
+                        for: .editingChanged)
+
+        // Onboarding has no navigation bar and its Next button sits under the
+        // keyboard, so the way out has to travel with the keyboard itself.
+        let bar = UIToolbar()
+        bar.items = [
+            UIBarButtonItem(barButtonSystemItem: .flexibleSpace, target: nil, action: nil),
+            UIBarButtonItem(barButtonSystemItem: .done,
+                            target: context.coordinator,
+                            action: #selector(Coordinator.done)),
+        ]
+        bar.sizeToFit()
+        field.inputAccessoryView = bar
+
+        context.coordinator.field = field
+        return field
+    }
+
+    func updateUIView(_ uiView: UITextField, context: Context) {
+        // Keep the coordinator's closure current; it is captured, not looked up.
+        context.coordinator.parent = self
+        // Only when it actually differs — assigning while editing would move
+        // the caret to the end mid-word.
+        if uiView.text != text { uiView.text = text }
+    }
+
+    final class Coordinator: NSObject, UITextFieldDelegate {
+        var parent: GateNameField
+        weak var field: UITextField?
+
+        init(_ parent: GateNameField) { self.parent = parent }
+
+        @objc func editingChanged(_ field: UITextField) {
+            parent.text = field.text ?? ""
+        }
+
+        @objc func done() { field?.resignFirstResponder() }
+
+        func textFieldShouldReturn(_ field: UITextField) -> Bool {
+            field.resignFirstResponder()
+            return false
+        }
+
+        /// The one place the name is persisted — see GateSetupSections.commitName.
+        func textFieldDidEndEditing(_ field: UITextField) {
+            parent.text = field.text ?? ""
+            parent.onCommit()
+        }
+    }
+}
+#endif

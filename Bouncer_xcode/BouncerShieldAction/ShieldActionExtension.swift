@@ -76,8 +76,13 @@ class ShieldActionExtension: ShieldActionDelegate {
         case .secondaryButtonPressed:
             // "View in Bouncer" — leave the app entirely; the notification carries
             // them to Bouncer, since an extension cannot open one itself.
-            GateNotifications.postHandoff()
-            completionHandler(.close)
+            //
+            // Answering only once the request has been accepted. `add` is
+            // asynchronous, and this completion handler is what tells iOS the
+            // extension may be killed — so answering first raced the request
+            // against the teardown, and the request lost. That is the whole of
+            // why this button appeared to do nothing.
+            GateNotifications.postHandoff { completionHandler(.close) }
 
         case .firstSecondarySubmenuItemPressed,
              .secondSecondarySubmenuItemPressed,
