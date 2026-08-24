@@ -502,14 +502,14 @@ private struct GateSetupPage: View {
         Section {
             permissionRow(
                 title: "Screen Time",
-                why: "Lets Bouncer put the door in front of an app.",
+                why: "Allows Bouncer to gate other apps.",
                 state: screenTimeState,
                 ask: { Task { await gate.requestAuthorization() } }
             )
 
             permissionRow(
                 title: "Notifications",
-                why: "Carries you back to Bouncer from the shield, and the check-ins in between.",
+                why: "Allows Bouncer to remind you to scroll intentionally.",
                 state: notifications.permissionState,
                 ask: {
                     Task {
