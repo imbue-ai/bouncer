@@ -41,6 +41,16 @@ struct GateSetupSections: View {
     @State private var tint: Gate.ShieldTint = Gate.shieldTint
     @State private var name: String = Gate.displayName ?? ""
 
+    // NOTHING MAY BE ATTACHED TO THE `Group` BELOW.
+    //
+    // A modifier on a Group is applied to each of its children separately, not
+    // once around the set — so a `.toolbar` here became one toolbar per
+    // section, and the keyboard grew a row of four identical Done buttons. The
+    // same mistake made `.task` and `.onReceive` fire once per section too.
+    //
+    // Modifiers therefore go on exactly one thing: the single section that
+    // needs them, or the view that owns them. `.animation` for the sections
+    // appearing belongs to the enclosing List, so the hosts apply that.
     var body: some View {
         Group {
             permissionsSection
@@ -52,24 +62,6 @@ struct GateSetupSections: View {
                 timingSection
             }
             customizeSection
-        }
-        .animation(.easeInOut(duration: 0.25), value: gate.authorization)
-        // Onboarding has no navigation bar and its Next button sits at the
-        // bottom, under the keyboard — so without this there is no obvious way
-        // to put the keyboard away again.
-        .toolbar {
-            ToolbarItemGroup(placement: .keyboard) {
-                Spacer()
-                Button("Done") { nameFocused = false }
-            }
-        }
-        .task { notifications = await NotificationPermission.current() }
-        // A refusal is repaired in Settings, which means leaving the app and
-        // coming back. Re-reading on return is what makes "Fix in Settings" a
-        // repair rather than a suggestion.
-        .onReceive(NotificationCenter.default.publisher(
-            for: UIApplication.didBecomeActiveNotification)) { _ in
-            Task { notifications = await NotificationPermission.current() }
         }
     }
 
@@ -104,6 +96,14 @@ struct GateSetupSections: View {
             }
         } header: {
             Text("Permissions")
+        }
+        .task { notifications = await NotificationPermission.current() }
+        // A refusal is repaired in Settings, which means leaving the app and
+        // coming back. Re-reading on return is what makes "Fix in Settings" a
+        // repair rather than a suggestion.
+        .onReceive(NotificationCenter.default.publisher(
+            for: UIApplication.didBecomeActiveNotification)) { _ in
+            Task { notifications = await NotificationPermission.current() }
         }
     }
 
@@ -194,6 +194,16 @@ struct GateSetupSections: View {
                     if !focused { commitName() }
                 }
                 .onDisappear { commitName() }
+                // On the field itself, so there is exactly one of these.
+                // Onboarding has no navigation bar and its Next button sits
+                // under the keyboard, so without an accessory there is no
+                // obvious way to put the keyboard away again.
+                .toolbar {
+                    ToolbarItemGroup(placement: .keyboard) {
+                        Spacer()
+                        Button("Done") { nameFocused = false }
+                    }
+                }
 
             ShieldTintPicker(selection: $tint, name: name)
                 .onChange(of: tint) { _, newValue in Gate.shieldTint = newValue }

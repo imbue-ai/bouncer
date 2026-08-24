@@ -37,6 +37,7 @@ struct GateSettingsView: View {
         }
         .listStyle(.insetGrouped)
         .scrollDismissesKeyboard(.interactively)
+        .animation(.easeInOut(duration: 0.25), value: gate.authorization)
         .navigationTitle("Focused viewing")
         .familyActivityPicker(isPresented: $showingPicker, selection: Binding(
             get: { gate.selection },

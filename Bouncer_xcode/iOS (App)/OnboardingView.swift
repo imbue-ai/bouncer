@@ -482,6 +482,7 @@ private struct GateSetupPage: View {
             .scrollContentBackground(.hidden)
             .scrollBounceBehavior(.basedOnSize)
             .scrollDismissesKeyboard(.interactively)
+            .animation(.easeInOut(duration: 0.25), value: gate.authorization)
         }
         .familyActivityPicker(isPresented: $showingPicker, selection: Binding(
             get: { gate.selection },
