@@ -361,6 +361,77 @@ async function fetchClip(audioUrl: string): Promise<{ base64: string; truncated:
   return { base64: await bytesToBase64(bytes), truncated: buf.byteLength > RAW_FALLBACK_BYTES, mimeType: 'audio/mp4' };
 }
 
+/** A short clip of a reel's soundtrack, for the describer.
+ *
+ *  The same extraction the filter uses — fetch, transcode to a small Opus/ogg,
+ *  base64 — exposed for the OTHER caller now that reel descriptions are
+ *  generated from image + caption + audio in one call rather than from the
+ *  frame alone. What is said in a reel is very often the only place its subject
+ *  appears at all: a talking head over a static frame with no caption is
+ *  otherwise indescribable, and the whole thing came back as "a person
+ *  talking".
+ *
+ *  Returns null rather than throwing, on every path. A description with no
+ *  audio is the previous behaviour and perfectly serviceable; a description
+ *  that never arrives because the soundtrack 404'd is not. The backend takes
+ *  the field as optional for exactly this reason.
+ *
+ *  Cached by reel: the filter and the describer both want the same clip, and a
+ *  reel scrolled past twice should not be fetched twice.
+ */
+const clipCache = new Map<string, { base64: string; format: string } | null>();
+
+export async function clipForDescribe(
+  thumbnailUrl: string,
+  timeoutMs: number,
+): Promise<{ base64: string; format: string } | null> {
+  const filename = fileNameOf(thumbnailUrl);
+  if (!filename) return null;
+  if (clipCache.has(filename)) return clipCache.get(filename) ?? null;
+
+  const audioUrl = audioUrls.get(filename);
+  // The hook has not announced this reel's soundtrack yet, or it has none.
+  // Not worth waiting for — the caller is describing a reel now.
+  if (!audioUrl) return null;
+
+  try {
+    // Raced rather than awaited. Extraction is a network fetch and a WebCodecs
+    // transcode, and the describer is on the critical path for what the user
+    // reads next; the backend's own advice is to send without audio rather
+    // than delay. A clip that misses this window still lands in the cache and
+    // is used the next time the reel comes round.
+    const clip = await Promise.race([
+      fetchClip(audioUrl).then(({ base64, truncated, mimeType }) => {
+        // A TRUNCATED clip is worse than no clip, and this is the one caller
+        // where that matters. The filter route has always tolerated a cut-off
+        // fmp4 because it only needs a few seconds of recognisable sound; the
+        // describe route hands the same bytes to a model that has to decode
+        // the whole container, and a byte-truncated one frequently will not
+        // decode at all — the backend contract says so in as many words.
+        //
+        // This is not hypothetical. On device the WebCodecs transcode fails
+        // ("Decoding failed") on every reel, so every clip was the raw fallback
+        // cut at the byte budget, and every describe request carrying one came
+        // back "Processing failed after multiple attempts".
+        if (truncated) {
+          console.warn(
+            '[Bouncer IG audio] clip truncated — describing without audio rather '
+            + 'than sending a container that may not decode');
+          return null;
+        }
+        return { base64, format: mimeType === 'audio/ogg' ? 'ogg' : 'mp4' };
+      }),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), timeoutMs)),
+    ]);
+    if (clip) clipCache.set(filename, clip);
+    return clip;
+  } catch {
+    // Cached as "no audio" so a broken URL is not retried on every scroll-by.
+    clipCache.set(filename, null);
+    return null;
+  }
+}
+
 async function analyze(reel: TrackedReel, audioUrl: string): Promise<void> {
   try {
     const { base64, truncated, mimeType } = await fetchClip(audioUrl);

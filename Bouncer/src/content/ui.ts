@@ -240,6 +240,9 @@ async function launchSignIn(btn?: HTMLButtonElement) {
 // can use Bouncer without a Google/Apple account. While the request is in
 // flight, the button's arrow becomes a spinner; on success the surrounding UI
 // is torn down anyway, so the arrow is only restored on failure.
+/** How long to wait for the background before handing the button back. */
+const SKIP_AUTH_TIMEOUT_MS = 10_000;
+
 async function skipSignIn(btn?: HTMLButtonElement) {
   const arrow = btn?.querySelector<HTMLElement>('.skip-signin-arrow');
   if (btn) btn.disabled = true;
@@ -256,18 +259,32 @@ async function skipSignIn(btn?: HTMLButtonElement) {
   };
   try {
     console.log('[Bouncer] Skipping sign-in (anonymous auth)...');
-    const response: { success?: boolean } = await chrome.runtime.sendMessage({ type: 'skipAuth' });
+    // Raced against a timeout. On iOS this message crosses the native bridge,
+    // and a request that is never answered used to leave the arrow spinning
+    // forever with the button disabled underneath it — a dead control that
+    // looks like a working one. Ten seconds is far longer than the round trip
+    // and far shorter than a user's patience.
+    const sent: Promise<{ success?: boolean }> = chrome.runtime.sendMessage({ type: 'skipAuth' });
+    const timedOut = new Promise<null>((resolve) => setTimeout(() => resolve(null), SKIP_AUTH_TIMEOUT_MS));
+    const response = await Promise.race([sent, timedOut]);
+    if (response === null) {
+      console.warn('[Bouncer] Anonymous sign-in timed out; leaving the button usable.');
+      return;
+    }
     if (response?.success) {
       isAuthenticated = true;
       isAnonymous = true;
       dismissGuestLimitPopup();
       refreshAllFilterBoxes();
-    } else {
-      restoreArrow();
     }
   } catch (err) {
-    restoreArrow();
     console.error('[Bouncer] Anonymous sign-in failed:', err);
+  } finally {
+    // Always. On the success path the button is usually torn down by
+    // `refreshAllFilterBoxes` a moment later and this is a no-op on a detached
+    // node — but "usually" is doing too much work to be the only thing standing
+    // between the user and a permanently spinning button.
+    restoreArrow();
   }
 }
 
@@ -307,6 +324,7 @@ function getSignInHTML() {
     <div class="filter-phrases-container">
       <span class="filter-phrases-box-name">Bouncer</span>
       <div class="filter-signin-prompt">
+        <p class="ff-signin-heading">Sign in to start</p>
         ${signinButtonHTML(isSafari ? 'Continue with Apple' : 'Continue with Google')}
         <button class="skip-signin-btn">Skip sign-in<span class="skip-signin-arrow" aria-hidden="true">→</span></button>
         <p class="ff-signin-explanation">Signing in helps prevent abuse. We don't collect any identifying data. On-device mode doesn't require sign-in.</p>
@@ -322,6 +340,7 @@ function getGuestLimitHTML() {
     <div class="filter-phrases-container">
       <span class="filter-phrases-box-name">Bouncer</span>
       <div class="filter-signin-prompt">
+        <p class="ff-signin-heading">Sign in to continue</p>
         ${signinButtonHTML(isSafari ? 'Sign in with Apple' : 'Sign in with Google')}
         <p class="ff-signin-explanation ff-guest-limit-msg">${escapeHtml(GUEST_LIMIT_MESSAGE)}</p>
       </div>

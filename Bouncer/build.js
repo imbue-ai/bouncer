@@ -14,7 +14,13 @@ const apigwArg = process.argv.find((a) => a.startsWith('--apigw='));
 // A bare positional arg is shorthand for --apigw=<tag>:
 //   npm run build:dev mytag  →  node build.js --dev mytag
 const positionalTag = process.argv.slice(2).find((a) => !a.startsWith('-'));
-const apigwTag = apigwArg ? apigwArg.split('=')[1] : (positionalTag || process.env.APIGW_TAG || '');
+// Lowest precedence is the .env file's own APIGW_TAG, resolved after it loads.
+// That file is the only one of these the Xcode build can set: the iOS target
+// runs `npm run build:safari:dev` itself, with no arguments, so a tag passed on
+// the command line is overwritten by the next Build — which is exactly how a
+// hand-built dist pointing at a personal gateway silently reverted to the
+// shared one.
+const cliApigwTag = apigwArg ? apigwArg.split('=')[1] : (positionalTag || process.env.APIGW_TAG || '');
 
 const ENV_KEYS = [
   'BOUNCER_ENV', 'FIREBASE_API_KEY', 'FIREBASE_AUTH_DOMAIN',
@@ -79,12 +85,26 @@ function loadEnvFile(envName) {
 // Usage: `npm run build:dev -- --apigw=MYTAG` (or APIGW_TAG=MYTAG).
 // Reads bouncer/generated/APIGW_DOMAIN_<TAG>, which stores a bare domain
 // (e.g. abc123xyz.execute-api.us-west-2.amazonaws.com).
-function fetchVaultWsUrl(tag) {
+// `required` is false when the tag came from the .env file rather than from the
+// command line. The difference matters because of WHERE the build runs: Xcode's
+// "Build Extension JS" phase invokes this with none of a login shell's
+// environment — no VAULT_ADDR, no VAULT_NAMESPACE, often no vault on PATH — so
+// the CLI dials 127.0.0.1:8200, is refused, and a hard exit turns every Xcode
+// build into PhaseScriptExecution failed. An explicit `--apigw=` on the command
+// line still fails loudly: you asked for that gateway specifically, so quietly
+// building against a different one would be worse than not building.
+function fetchVaultWsUrl(tag, required) {
   if (!/^[A-Za-z0-9_-]+$/.test(tag)) {
     console.error(`Invalid apigw tag: ${tag}`);
     process.exit(1);
   }
   const vaultPath = `bouncer/generated/APIGW_DOMAIN_${tag.toUpperCase()}`;
+  const giveUp = (message) => {
+    console.error(message);
+    if (required) process.exit(1);
+    console.warn(`warning: falling back to IMBUE_WS_URL from .env — check it is the gateway you want`);
+    return null;
+  };
   let domain;
   try {
     domain = execFileSync(
@@ -93,13 +113,11 @@ function fetchVaultWsUrl(tag) {
       { encoding: 'utf8' }
     ).trim();
   } catch (err) {
-    console.error(`Failed to read ${vaultPath} from Vault (is the vault CLI installed and logged in?)`);
-    console.error(err.stderr?.toString() || err.message);
-    process.exit(1);
+    return giveUp(`Failed to read ${vaultPath} from Vault (is the vault CLI installed and logged in?)\n`
+      + (err.stderr?.toString() || err.message));
   }
   if (!domain) {
-    console.error(`Vault returned an empty value for ${vaultPath}`);
-    process.exit(1);
+    return giveUp(`Vault returned an empty value for ${vaultPath}`);
   }
   // Bare execute-api domains need the API Gateway stage path appended.
   // Full ws(s):// URLs are used as-is (assumed to already include a stage).
@@ -107,9 +125,16 @@ function fetchVaultWsUrl(tag) {
 }
 
 const config = loadEnvFile(env);
-if (apigwTag) {
-  config.IMBUE_WS_URL = fetchVaultWsUrl(apigwTag);
+const apigwTag = cliApigwTag || config.APIGW_TAG || '';
+const resolved = apigwTag ? fetchVaultWsUrl(apigwTag, Boolean(cliApigwTag)) : null;
+if (resolved) {
+  config.IMBUE_WS_URL = resolved;
   console.log(`Using Imbue WS URL from Vault (${apigwTag}): ${config.IMBUE_WS_URL}`);
+} else {
+  // Printed on every build, tag or no tag. Which gateway a bundle talks to was
+  // invisible until it was baked in and shipped to a phone, and a whole day
+  // went into a timeout that was only ever the wrong endpoint.
+  console.log(`Using Imbue WS URL from .env.${env}: ${config.IMBUE_WS_URL}`);
 }
 const hasImbue = IMBUE_KEYS.every((k) => config[k] && config[k].length > 0);
 

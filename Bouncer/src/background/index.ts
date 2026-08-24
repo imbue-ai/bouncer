@@ -295,7 +295,8 @@ async function handleMessage(
       // content script could grab one, else the cover thumbnail.
       try {
         const result = await callImbueInstagramAnalyze(
-          message.caption || '', message.thumbnailUrl || '', message.frameBase64);
+          message.caption || '', message.thumbnailUrl || '', message.frameBase64,
+          message.audioBase64, message.audioFormat);
         return { description: result.description || '' };
       } catch (err) {
         console.error('[Bouncer] analyzeReel error:', err);

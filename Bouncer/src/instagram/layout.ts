@@ -66,12 +66,17 @@ export function railAnchoredBox(
 }
 
 /** Same clamp for a fixed-width surface (one that must not be resized to fit,
- *  like the collapsed panel's icon button). Width is taken as given. */
+ *  like the collapsed panel's icon button). Width is taken as given.
+ *
+ *  `margin` is how much edge to keep. It defaults to the inset the panels use,
+ *  but a small glyph placed on a centre line wants far less: the clamp exists to
+ *  keep a surface on screen, and for anything narrow enough to already be on
+ *  screen it should not be moving it at all. */
 export function clampLeft(
   anchorLeft: number,
   width: number,
   viewportWidth: number = window.innerWidth,
+  margin: number = VIEWPORT_MARGIN_PX,
 ): number {
-  const margin = VIEWPORT_MARGIN_PX;
   return Math.max(margin, Math.min(anchorLeft, viewportWidth - width - margin));
 }

@@ -20,14 +20,23 @@
 // stopped matching.
 
 import type { ContentToBackgroundMessage } from '../types';
-import { installAudioFilter, type AudioFilterController } from './audiofilter';
+import {
+  clipForDescribe, installAudioFilter, type AudioFilterController,
+} from './audiofilter';
 import { showIntro } from './intro';
 import { showBouncePopup, showDemoBouncePopup, dismissBouncePopup } from './bounce';
 import { captureMidFrame, installFrameSources } from './frame';
 import { playSwipe, playTap, addDemoPhrase, removeDemoPhrase, clearDemoArtifacts } from './demo';
 import { railAnchoredBox, clampLeft, isNarrowViewport } from './layout';
-import { installDurationSource } from './durations';
-import { installReelGate, type ReelGate } from './gate';
+import { fitReels, installFitWatcher, unfitAll, fitReport, visibleHeight } from './fit';
+import { installPromoDismisser } from './promo';
+import { installTopBarHider } from './topbar';
+import {
+  durationFor, noteDuration, probeDuration, onDurationResolved, durationReport,
+  installDurationSource, requestHookReplay,
+} from './durations';
+import { buildRecords, creatorReport, forgetAll, remember, type ReelRecord } from './library';
+import { installSuggestions, type Suggestions } from './suggest';
 import { makeSettingsIcon } from '../shared/utils';
 import { enabledStorageKey } from '../shared/platforms';
 
@@ -66,6 +75,19 @@ const DESCRIBER_EVENT = 'bouncer-ig-describer';
 // to re-enable; nothing else needs changing, and frame.ts stays intact.
 const USE_MID_REEL_FRAME = false;
 
+// DEMO SWITCH. Set back to false to return to AI descriptions everywhere.
+//
+// While it is on, every surface that would show an inferred phrase shows the
+// poster's own caption instead, and no reel is sent for description at all —
+// so there is no backend spend, no audio clip fetched per reel, and nothing to
+// wait for. A row is right the first time it is painted.
+//
+// The one thing it costs is what the descriptions were FOR: a caption is what
+// the poster wanted to say, not what the reel is, and a reel posted with no
+// caption has nothing to show. Both are fine for a demo and neither is fine
+// as the product, which is why this is a switch rather than a deletion.
+const SHOW_CAPTIONS_NOT_DESCRIPTIONS = true;
+
 // Scripted phrases for the welcome tour — five, matching the panel's one
 // current + UPCOMING_COUNT upcoming rows. Concrete and varied on purpose: the
 // point of the panel is "you can tell what's coming", which a row of lorem
@@ -94,10 +116,10 @@ const SCAN_DEBOUNCE_MS = 250;
 // Defensive cap on caption length sent (server truncates at 2000 too).
 const MAX_CAPTION_CHARS = 2200;
 
-// A reel cover thumbnail: empty alt + served from Instagram's media CDN. That
-// pair is what separates a cover from everything else on the page — profile
-// pictures carry the account name in `alt`, audio covers carry "Audio image",
-// and home-feed photos carry a description.
+// A reel cover thumbnail: empty alt + served from Instagram's media CDN, and
+// not the audio chip. The first two separate a cover from most of the page —
+// profile pictures carry the account name in `alt` and home-feed photos carry a
+// description.
 //
 // It USED to also require aria-hidden="true", and that one condition switched
 // the whole feature off in the iOS app: Instagram's mobile web sets aria-hidden
@@ -105,14 +127,49 @@ const MAX_CAPTION_CHARS = 2200;
 // every surface downstream went quiet at once. Measured on device — of 19
 // images on a reels page, 19 were on the CDN and 0 were aria-hidden.
 //
-// The empty-alt test is the load-bearing one; aria-hidden was only ever
-// corroborating it on desktop. cardFromCover() is the second filter — an image
-// with no single-<video> ancestor isn't a reel however it's labelled.
+// The audio clause is the newer scar, and a subtler one. The little disc in the
+// "original audio" pill at the foot of every reel is also an unlabelled CDN
+// image — the comment here used to claim it carries alt="Audio image", and on
+// mobile web it does not; that text is the LINK's, not the image's. So it
+// passed, and being earlier in document order than the cover on some cards, it
+// became the reel's thumbnail.
+//
+// Nothing looked wrong: for original audio the disc is the reel's own artwork,
+// so the rows showed the right picture. But it is a different ASSET with a
+// different id, and every id in this pipeline is derived from that filename —
+// so the reel's length, which Instagram had already told us and which is keyed
+// by the real cover, could never be found. The report read "9 lengths known, 0
+// of 6 reels have one" with two unrelated filenames side by side.
+//
+// The audio disc is handled by RANKING rather than by exclusion — see
+// coverRank. A card that somehow has nothing else is still better discovered
+// with the wrong thumbnail than not discovered at all.
+//
+// cardFromCover() is the second filter — an image with no single-<video>
+// ancestor isn't a reel however it's labelled — and coverRank is the third.
 function isCoverImg(img: HTMLImageElement): boolean {
   return (
     (img.getAttribute('alt') ?? '') === '' &&
     /cdninstagram\.com/.test(img.src)
   );
+}
+
+/** How much this image looks like the reel's own cover rather than a chip on
+ *  top of it. Higher wins; compared only against other candidates on the same
+ *  card.
+ *
+ *  Two signals, in order. The audio pill's disc is disqualifying on its own —
+ *  it is structurally identifiable, sitting inside a link to the sound. Size
+ *  settles everything else: the cover fills the card and every other image on a
+ *  reel is a chip. Rendered size where there is one, the file's own dimensions
+ *  where there isn't, because a reel below the fold may not be laid out yet. */
+function coverRank(img: HTMLImageElement): number {
+  const chip = img.closest('a[href*="/reels/audio/"], a[href*="/explore/tags/"]') !== null;
+  const rect = img.getBoundingClientRect();
+  const area = rect.width * rect.height > 1
+    ? rect.width * rect.height
+    : img.naturalWidth * img.naturalHeight;
+  return (chip ? 0 : 1e9) + area;
 }
 
 // ==================== Panel UI ====================
@@ -162,8 +219,13 @@ const UPCOMING_GAP_PX = 8;
 const UPCOMING_LIST_H_PX =
   UPCOMING_COUNT * UPCOMING_ROW_H_PX + (UPCOMING_COUNT - 1) * UPCOMING_GAP_PX;
 
-// Collapsed form: a 40px round-square button wearing the extension icon.
-const COLLAPSED_SIZE_PX = 40;
+// Collapsed form: a round-square button wearing the extension icon. Sized to sit
+// in the action rail's column without out-weighing the like/comment/share glyphs
+// it stacks on top of — at 40px it read as a badge stuck over the reel rather
+// than as one more control in Instagram's own column.
+const COLLAPSED_SIZE_PX = 28;
+/** How close to the edge the collapsed icon may sit. See positionPanel. */
+const ICON_MARGIN_PX = 4;
 
 let currentTextEl: HTMLElement | null = null;
 let upcomingListEl: HTMLElement | null = null;
@@ -172,6 +234,10 @@ let shownUpcomingIds = new Set<string>();
 // Whether content.js has asked us to stay hidden (the filtered-posts view is
 // up). Sticky across remounts so navigating within reels keeps it.
 let describerHidden = false;
+// Whether the chooser's glass is up. The settings icon is pinned above
+// everything else we mount, which includes the glass — and the glass is meant to
+// carry nothing but the three rows.
+let chooserOpen = false;
 // "Intentional scrolling" (settings toggle, on by default). Off collapses the
 // panel to the floating icon and stops describing reels altogether — with no
 // currentTextEl/upcomingListEl mounted, refreshPanel() returns before it can
@@ -183,11 +249,10 @@ let tourRunning = false;
 // ==================== Phone-width flow ====================
 //
 // On a viewport too narrow to stand the panel beside the reel (the iOS app),
-// arriving at a reel doesn't start it. The reel is held at a still frame under a
-// card carrying its description and length, and it plays only once you hold on
-// it for a second — see ./gate.ts for the gestures and why they're split that
-// way. The card carries the settings gear too, so nothing has to sit over the
-// video between reels.
+// scrolling doesn't hand you the next reel — it raises a sheet of what's next
+// to choose from, over the reel you're watching. See ./suggest.ts. The panel
+// isn't mounted at that width; its collapsed icon holds the top-right corner so
+// settings stay reachable, and the "Up next" pill sits at the bottom.
 //
 // Above that width nothing here runs and the panel is byte-for-byte what it was.
 
@@ -196,7 +261,142 @@ let tourRunning = false;
 // "is #bouncer-ig-frame in the DOM" can no longer answer it on its own.
 let describerActive = false;
 
-let gate: ReelGate | null = null;
+let suggestions: Suggestions | null = null;
+
+/** How long a description may wait on its soundtrack before going without one.
+ *
+ *  Short on purpose. Reel categorization moved onto the audio queue, which is
+ *  one worker on one GPU also carrying the filter-terms traffic — so queue wait
+ *  is now the dominant cost and anything we add in front of it is felt twice.
+ *  Extraction that misses this deadline is not wasted: it finishes into the
+ *  cache and the next describe of that reel picks it up. */
+const AUDIO_CLIP_DEADLINE_MS = 1_200;
+
+// How much caption to keep. The row line-clamps to three lines and does the
+// real fitting, so this only has to be comfortably more than can show — enough
+// that CSS decides where to stop, without holding a 2,200-character caption in
+// a text node to display sixty characters of it.
+const CAPTION_SNIPPET_MAX = 160;
+
+/** The caption, tidied enough to stand in as a row's description.
+ *
+ *  A caption is not a description — it's what the poster wanted to say, not
+ *  what the reel is — but it is written about this reel by someone who watched
+ *  it, and a row carrying the poster's own first sentence is a far better
+ *  answer to "what is this" than a row that says it's still thinking. */
+function captionSnippet(card: HTMLElement): string | null {
+  const raw = captionFromCard(card);
+  if (!raw) return null;
+
+  // Captions are written with hard line breaks, and each one would eat one of
+  // the three lines the row has.
+  let text = raw.replace(/\s+/g, ' ').trim();
+  // Instagram's own "… more" expander sits INSIDE the caption block, so it
+  // arrives as part of its text — and on a row it reads as though the poster
+  // had typed it. Measured on the live feed: five of seven captions ended
+  // "… more". The ellipsis is kept, because at that point the caption really
+  // is cut short; only the word that was a button goes.
+  text = text.replace(/\s*(?:…|\.\.\.)\s*more\s*$/i, '…').trim();
+  // The trailing hashtag pile says less about the reel than the words in front
+  // of it, and those are what there's room for. Only stripped from the END —
+  // a hashtag mid-sentence is part of the sentence.
+  text = text.replace(/(?:\s*#[^\s#]+)+$/u, '').trim();
+  if (!text) return null;
+  if (text.length <= CAPTION_SNIPPET_MAX) return text;
+
+  // Cut on a word boundary so the clamp doesn't land mid-word.
+  const cut = text.slice(0, CAPTION_SNIPPET_MAX);
+  const lastSpace = cut.lastIndexOf(' ');
+  return `${(lastSpace > CAPTION_SNIPPET_MAX / 2 ? cut.slice(0, lastSpace) : cut).trimEnd()}…`;
+}
+
+// Captions, kept once read. Same reason ./library.ts keeps creators: Instagram
+// recycles a card as you move away from it, and a caption read late describes
+// a different reel or nothing at all. Filled lazily rather than on a sweep —
+// the first surface that asks for a reel it can still see is the cheapest
+// possible moment, and costs nothing for reels nobody looks at.
+const captions = new Map<string, string>();
+
+/** The poster's own words for this reel, from the card while it is still there
+ *  and from memory once it isn't. */
+function captionFor(reel: Reel): string | null {
+  const kept = captions.get(reel.reelId);
+  if (kept !== undefined) return kept;
+  const fresh = reel.card.isConnected ? captionSnippet(reel.card) : null;
+  if (fresh !== null) captions.set(reel.reelId, fresh);
+  return fresh;
+}
+
+/** What a chooser row says this reel is.
+ *
+ *  Which of the two comes first is SHOW_CAPTIONS_NOT_DESCRIPTIONS's whole job;
+ *  either way the other is the fallback, so a reel with no caption still shows
+ *  a phrase if one happens to be cached, and vice versa. */
+function describeOrCaption(reel: Reel): string | null {
+  if (!SHOW_CAPTIONS_NOT_DESCRIPTIONS) return descriptionFor(reel) ?? captionFor(reel);
+  // Never null in captions mode. A row given nothing falls back to
+  // "Describing…" (see ./library.ts), which with inference switched off would
+  // be a row promising something that is never coming — and plenty of reels
+  // are posted with no caption at all.
+  return captionFor(reel) ?? descriptionFor(reel) ?? 'No caption';
+}
+
+/** The same choice for the floating panel, which shows one phrase per row and
+ *  no fallback: with the switch on it is the caption, off it is the inferred
+ *  phrase and a row stays blank until that arrives. */
+function panelPhrase(reel: Reel): string | null {
+  return SHOW_CAPTIONS_NOT_DESCRIPTIONS ? captionFor(reel) : descriptionFor(reel);
+}
+
+/** The reels the chooser can offer, resolved into rows it can render.
+ *
+ *  From the one you're watching onward, and no further back. The chooser used to
+ *  be a window you could slide back through your own history, which is why every
+ *  reel ever seen was kept renderable; it isn't any more, and a row for a reel
+ *  behind you is a row nothing will ever show. Reels Instagram has recycled out
+ *  of the DOM are still listed — they're ahead of you, they just can't be
+ *  navigated to — and are marked unreachable. */
+function suggestionRecords(): ReelRecord[] {
+  // Lengths first. A row's length can only come from a source that has answered
+  // by the time it renders, and the cheapest of them — a mounted <video>'s own
+  // `duration` — becomes readable at an arbitrary moment with no event we are
+  // guaranteed to see. Re-reading here costs a property access per known reel
+  // and means a row shows a length the first render after one exists.
+  harvestDurations();
+  // Anything still missing was already asked for at discovery — see
+  // warmDurations — so there is nothing to kick off here.
+  //
+  // Sliced at the reel on screen: everything behind it is history the chooser
+  // has no way to show, and building a row for it means scraping a byline off a
+  // card Instagram recycled long ago.
+  return buildRecords(orderedReels.slice(Math.max(0, activeIndex())), describeOrCaption);
+}
+
+/** Where the reel on screen sits in the feed, or -1 before one is known. */
+function activeIndex(): number {
+  return activeReelId === null
+    ? -1
+    : orderedReels.findIndex((r) => r.reelId === activeReelId);
+}
+
+function mountSuggestions(): void {
+  suggestions = installSuggestions({
+    records: suggestionRecords,
+    // Instant, not smooth: a smooth scroll would be a journey through reels the
+    // user didn't choose — each one becoming active in turn on the way past —
+    // and the chooser's own flight animation is what covers the jump.
+    goTo: (record) => {
+      suppressBounceDismissOnce = true;
+      record.card.scrollIntoView({ behavior: 'auto', block: 'center' });
+    },
+    setChromeHidden: (hidden) => {
+      chooserOpen = hidden;
+      applyPanelVisibility();
+    },
+  });
+  suggestions.refresh();
+  describerActive = true;
+}
 
 /** Whether the phone-width flow — held reels wearing a description card — is
  *  what's driving. Requires the describer to be on: turning intentional
@@ -266,7 +466,7 @@ function buildGear(): HTMLElement {
 // it — so this is driven only by content.js's overlays.
 function applyPanelVisibility(): void {
   const panel = document.getElementById(FRAME_ID);
-  if (panel) panel.style.display = describerHidden ? 'none' : '';
+  if (panel) panel.style.display = describerHidden || chooserOpen ? 'none' : '';
 }
 
 // content.js drives the describer's visibility: hidden while the settings popup
@@ -275,17 +475,10 @@ window.addEventListener(DESCRIBER_EVENT, (e) => {
   const show = (e as CustomEvent<{ show?: boolean }>).detail?.show ?? true;
   describerHidden = !show;
   applyPanelVisibility();
-  // The card has no persistent element for applyPanelVisibility to toggle —
-  // it's raised per arrival — so it's pulled down and put back explicitly. The
-  // reel stays held throughout: closing settings shouldn't drop you into a reel
-  // that started playing behind the modal.
-  if (!fullscreenFlow()) return;
-  if (describerHidden) {
-    gate?.hideCard();
-    return;
-  }
-  const reel = activeReel();
-  if (reel) showPausedCard(reel);
+  // The chooser's sheet has no persistent element for applyPanelVisibility to
+  // toggle, so it's pulled down explicitly rather than left floating over
+  // content.js's own overlay.
+  if (fullscreenFlow() && describerHidden) suggestions?.close();
 });
 
 // First-run tour, armed by the popup's Instagram toggle. Consume the flag
@@ -332,10 +525,35 @@ async function maybeShowIntro(): Promise<void> {
   });
 }
 
+/** Whether Bouncer's own chrome is already on screen, native and below the page.
+ *
+ *  In the iOS app the reel is a WebView with a real toolbar under it, carrying
+ *  the Bouncer button that opens the filter sheet. A second Bouncer button
+ *  floating over the reel is then the same door twice — and the floating one is
+ *  the worse of the two: it sits on top of the video, it duplicates a control
+ *  the platform already gave us, and the settings page it opens is a web
+ *  rendering of a sheet the app draws properly.
+ *
+ *  On the desktop extension there is no toolbar and no sheet, so the icon is the
+ *  only way in and it stays. The message handler is the iOS bridge (see
+ *  ChromePolyfill.js) — its presence IS the native app. */
+function hasNativeChrome(): boolean {
+  const bridge = (window as unknown as {
+    webkit?: { messageHandlers?: Record<string, unknown> };
+  }).webkit?.messageHandlers;
+  return typeof bridge?.feedfilterLog !== 'undefined';
+}
+
 // Collapsed panel: just the extension icon, same corner, click opens settings.
 // This is what "intentional scrolling off" looks like — Bouncer is still
 // filtering the feed, it just isn't narrating what's coming.
 function mountCollapsed(parent: HTMLElement): void {
+  // Not in the app: the toolbar under the page already has this button, wired
+  // to the native filter sheet. See hasNativeChrome.
+  if (hasNativeChrome()) {
+    describerActive = true;
+    return;
+  }
   const button = document.createElement('button');
   button.id = FRAME_ID;
   button.title = 'Open Bouncer settings';
@@ -348,10 +566,10 @@ function mountCollapsed(parent: HTMLElement): void {
     `height: ${COLLAPSED_SIZE_PX}px`,
     'padding: 0',
     'border: none',
-    'border-radius: 12px',
+    'border-radius: 8px',
     'overflow: hidden',
     'background: transparent',
-    'box-shadow: 0 4px 14px rgba(0,0,0,0.18)',
+    'box-shadow: 0 2px 8px rgba(0,0,0,0.18)',
     'cursor: pointer',
     'z-index: 2147483647',
     'display: block',
@@ -382,16 +600,52 @@ function mountCollapsed(parent: HTMLElement): void {
 // past the first reel, its rail — now far above the viewport — kept being used,
 // and the panel was positioned off the top of the screen. That's why the panel
 // only ever appeared on the first reel.
-function actionRailRect(): DOMRect | null {
+interface RailAnchor {
+  /** The like button's box — what the panel is placed against. */
+  rect: DOMRect;
+  /** The centre line of the like GLYPH itself.
+   *
+   *  Not the same as the button's centre, and that difference is the whole
+   *  reason this is measured separately: the tappable box around the heart is
+   *  padded, and not always evenly — it is a flex child with its own margins in
+   *  a column that also holds a count. Centring on the box put the icon a few
+   *  pixels off the line every other glyph in the rail sits on, which is exactly
+   *  the kind of miss that reads as sloppy rather than as a bug. The <svg> is
+   *  the drawn thing, so the <svg> is what to line up with. */
+  glyphCenterX: number;
+}
+
+/** The like glyph, however Instagram has labelled it this week.
+ *
+ *  Was an exact match on `aria-label="Like"`. That label is localised — and
+ *  changes to "Unlike" the moment you tap it, and to other wordings on other
+ *  surfaces — so on any account not running in English the rail was simply never
+ *  found. See `positionPanel` for what that looked like. */
+const LIKE_LABEL = /^(un)?like$/i;
+
+function likeGlyphs(): Element[] {
+  const found: Element[] = [];
+  for (const svg of document.querySelectorAll('svg[aria-label]')) {
+    const label = svg.getAttribute('aria-label')?.trim() ?? '';
+    if (LIKE_LABEL.test(label)) found.push(svg);
+  }
+  return found;
+}
+
+function actionRailRect(): RailAnchor | null {
   const middle = window.innerHeight / 2;
-  let best: DOMRect | null = null;
-  for (const icon of document.querySelectorAll('svg[aria-label="Like"], svg[aria-label="Unlike"]')) {
+  let best: RailAnchor | null = null;
+  for (const icon of likeGlyphs()) {
     const rect = icon.closest('div[role="button"], button, span')?.getBoundingClientRect();
     if (!rect || rect.width === 0) continue;
     // Must actually be on screen — an off-screen rail is a reel we've left.
     if (rect.bottom < 0 || rect.top > window.innerHeight) continue;
+    const glyph = icon.getBoundingClientRect();
+    const glyphCenterX = glyph.width > 0 ? glyph.left + glyph.width / 2 : rect.left + rect.width / 2;
     // Of those, the one nearest the middle belongs to the reel being watched.
-    if (!best || Math.abs(rect.top - middle) < Math.abs(best.top - middle)) best = rect;
+    if (!best || Math.abs(rect.top - middle) < Math.abs(best.rect.top - middle)) {
+      best = { rect, glyphCenterX };
+    }
   }
   return best;
 }
@@ -400,37 +654,74 @@ function actionRailRect(): DOMRect | null {
  *  as part of the page's own layout rather than something bolted to the corner.
  *  Falls back to the top-right inset when the rail can't be found (a non-reels
  *  route, or markup that's moved on). */
+/** Whether the panel has ever been placed against a real rail.
+ *
+ *  Instagram recycles the action rail constantly — on every scroll, every route
+ *  change, every re-render — so `actionRailRect` returns null for a frame or two
+ *  at a time in the ordinary course of things. Jumping to the corner on each of
+ *  those and back again is what made the icon look like it was wandering around
+ *  the screen under its own power. A momentary loss of the anchor is not news;
+ *  the last good position is still the best guess, and staying put is what the
+ *  page itself appears to do. */
+let hasBeenAnchored = false;
+
 function positionPanel(): void {
   const panel = document.getElementById(FRAME_ID);
   if (!panel) return;
-  const rail = actionRailRect();
-  if (!rail) {
+  const anchor = actionRailRect();
+  if (!anchor) {
+    // Only fall back to the corner if we have never had anywhere better. After
+    // that, hold the last placement and wait for the rail to come back.
+    if (hasBeenAnchored) return;
     panel.style.left = 'auto';
     panel.style.right = '20px';
     panel.style.top = '20px';
     panel.style.bottom = 'auto';
     return;
   }
+  hasBeenAnchored = true;
   // Only the expanded panel is text-width; the collapsed form is a fixed-size
   // button and must not be stretched by a resize or a scroll — so it is clamped
   // at its own width instead of being measured for one.
+  const rail = anchor.rect;
   let left: number;
   if (panel.tagName !== 'BUTTON') {
     const box = railAnchoredBox(rail.left, PANEL_WIDTH_PX);
     panel.style.width = `${box.width}px`;
     left = box.left;
   } else {
-    left = clampLeft(rail.left, panel.offsetWidth || COLLAPSED_SIZE_PX);
+    // Centred on the like GLYPH rather than sharing the button's left edge. The
+    // panel is text and wants the column's left margin; the icon is a glyph
+    // among glyphs, and one that doesn't share their centre line reads as
+    // misaligned however close it is.
+    //
+    // Clamped to a hairline margin rather than the viewport inset the panel
+    // uses. On a phone the rail is overlaid on the reel's right edge, so the
+    // like glyph sits within the 20px inset — and the clamp, meant to keep a
+    // wide panel on screen, was quietly pushing the icon left off the centre
+    // line it had just been placed on. The only thing that matters for a 28px
+    // button is that it is all on screen.
+    const width = panel.offsetWidth || COLLAPSED_SIZE_PX;
+    left = clampLeft(anchor.glyphCenterX - width / 2, width, window.innerWidth, ICON_MARGIN_PX);
   }
   panel.style.left = `${left}px`;
   panel.style.right = 'auto';
   panel.style.top = 'auto';
-  // Clamped at BOTH ends. The lower bound keeps it off the bottom edge; the
-  // upper bound is the safety net that stops a stale or oddly-placed rail from
-  // parking the panel above the viewport where it silently vanishes.
+  // Sat just above the like button, and clamped at BOTH ends. The upper bound
+  // is the safety net that stops a stale or oddly-placed rail from parking the
+  // panel above the viewport where it silently vanishes.
+  //
+  // The lower bound is measured against what you can SEE, not against
+  // `innerHeight`. `bottom` resolves against the layout viewport, which on iOS
+  // runs behind Safari's chrome and behind Bouncer's own bottom bar — so a flat
+  // 20px lower bound was a promise about a strip of screen that is covered up.
+  // Anything clamped to it landed underneath the bar, which looks exactly like
+  // the icon having wandered off on its own.
+  const hidden = Math.max(0, window.innerHeight - visibleHeight());
+  const minBottom = hidden + 20;
   const desired = window.innerHeight - rail.top + 16;
-  const maxBottom = Math.max(20, window.innerHeight - (panel.offsetHeight || 120) - 20);
-  panel.style.bottom = `${Math.min(maxBottom, Math.max(20, desired))}px`;
+  const maxBottom = Math.max(minBottom, window.innerHeight - (panel.offsetHeight || 120) - 20);
+  panel.style.bottom = `${Math.min(maxBottom, Math.max(minBottom, desired))}px`;
 }
 
 function mountPanel(): void {
@@ -444,18 +735,12 @@ function mountPanel(): void {
     return;
   }
 
-  // Phone width: nothing is pinned over the reel at all. The description card
-  // is raised per arrival by onArrive() and carries its own gear, so settings
-  // stay one tap away without a permanent overlay — which is the whole
-  // complaint this flow exists to answer.
+  // Phone width: the panel gives way to the collapsed icon (settings, top-right)
+  // and the "Up next" pill (navigation, bottom-centre). Between them nothing
+  // sits over the reel until you ask for it.
   if (isNarrowViewport()) {
-    gate = installReelGate({
-      onSettings: () => window.dispatchEvent(new CustomEvent(OPEN_SETTINGS_EVENT)),
-      ownsVideo: (video) => cardForVideo(video) !== null,
-      // No second surface on this branch — the card is the only one.
-      otherSurfaceUp: () => false,
-    });
-    describerActive = true;
+    mountCollapsed(parent);
+    mountSuggestions();
     return;
   }
 
@@ -790,15 +1075,14 @@ function refreshPanel(): void {
 
   // Kicked off before the panel renders, and deliberately outside the guard
   // below: the slice is what gets described ahead of scroll whether or not
-  // there is a panel mounted to show the result in. Skipped entirely while the
-  // phone-width flow is on placeholders — no request is made, so working on the
-  // interaction costs nothing.
-  if (describingReels()) {
+  // there is a panel mounted to show the result in. Skipped entirely at phone
+  // width: the chooser's rows are fed by the prefetch the IntersectionObserver
+  // already does, so pushing the slice again would only duplicate it.
+  if (!fullscreenFlow()) {
     for (const reel of [current, ...upcoming]) {
       if (reel) void describeReel(reel);
     }
   }
-  refreshHeldReel(current);
 
   if (!currentTextEl || !upcomingListEl) return;
   // Before the memo guard below: the panel's *position* has to track the page
@@ -813,14 +1097,14 @@ function refreshPanel(): void {
   // the inference kicked off above keeps filling the cache behind it.
   const currentDesc = demoDescriptions
     ? demoDescriptions[0] ?? null
-    : current ? descriptionFor(current) : null;
+    : current ? panelPhrase(current) : null;
   const upcomingResolved: PanelEntry[] = demoDescriptions
     ? demoDescriptions
         .map((desc, i) => ({ key: `demo-${i}`, desc, reel: null, i }))
         .filter(x => x.i > 0 && x.i !== demoSwipedIndex)
         .slice(0, UPCOMING_COUNT)
     : upcoming.flatMap((r): PanelEntry[] => {
-        const desc = descriptionFor(r);
+        const desc = panelPhrase(r);
         return desc === null ? [] : [{ key: r.reelId, desc, reel: r }];
       });
 
@@ -913,61 +1197,6 @@ function refreshPanel(): void {
   positionPanel();
 }
 
-// ==================== Held reels ====================
-
-// Placeholder labels while the description pipeline is being sorted out.
-//
-// Waiting on inference makes the card impossible to judge: it either resolves
-// or it doesn't, and what you're looking at is latency rather than layout. With
-// this on, no inference is requested at all and the card is labelled by
-// position, so nothing is spent while the interaction is being worked out.
-//
-// Flip to false to put real descriptions back; nothing else changes. The
-// desktop panel is unaffected either way — it has been on real inference
-// throughout, and this only ever applies to the phone-width flow.
-const PLACEHOLDER_DESCRIPTIONS = true;
-
-/** What the card labels a reel with: its description, or — while
- *  PLACEHOLDER_DESCRIPTIONS is on — a stand-in. */
-function displayDescription(reel: Reel): string | null {
-  return PLACEHOLDER_DESCRIPTIONS ? 'This reel' : descriptionFor(reel);
-}
-
-/** Whether reels should actually be sent for description right now. */
-function describingReels(): boolean {
-  return !(fullscreenFlow() && PLACEHOLDER_DESCRIPTIONS);
-}
-
-function activeReel(): Reel | null {
-  if (activeReelId === null) return null;
-  return orderedReels.find((r) => r.reelId === activeReelId) ?? null;
-}
-
-/** Land on a reel: held at a still frame, wearing its description and length,
- *  playing only once held. */
-function showPausedCard(reel: Reel): void {
-  // content.js has the screen (settings, or the filtered-posts list) — the reel
-  // stays held either way, we just don't stack a card over their overlay.
-  if (describerHidden) return;
-  gate?.showCard(reel.card, {
-    thumbnailUrl: reel.thumbnailUrl,
-    description: displayDescription(reel),
-  });
-}
-
-/** Fold a newly-resolved description into the card. Driven from refreshPanel,
- *  so it runs on every arrival and again as each phrase returns. */
-function refreshHeldReel(current: Reel | null): void {
-  if (!fullscreenFlow() || !current) return;
-  gate?.setDescription(current.card, displayDescription(current));
-}
-
-/** The active reel changed while the phone-width flow is driving. */
-function onArrive(reel: Reel): void {
-  gate?.hold(reel.card);
-  showPausedCard(reel);
-}
-
 // ==================== Reel scraping ====================
 
 interface Reel {
@@ -1035,6 +1264,12 @@ type CacheEntry = { description: string } | { pending: Promise<string> };
 const cache = new Map<string, CacheEntry>();
 
 async function describeReel(reel: Reel): Promise<string> {
+  // Nothing to ask for while captions are what's on screen. This is the line
+  // that makes the switch free rather than merely invisible: no request per
+  // reel, no audio clip fetched and transcoded to go with it, and no queue to
+  // wait behind. Every caller already treats an empty answer as "no phrase".
+  if (SHOW_CAPTIONS_NOT_DESCRIPTIONS) return '';
+
   const existing = cache.get(reel.reelId);
   if (existing) return 'description' in existing ? existing.description : existing.pending;
 
@@ -1064,11 +1299,24 @@ async function describeReel(reel: Reel): Promise<string> {
           `[Bouncer IG] NO mid-reel frame (${frame.reason}) — describing `
           + `${reel.reelId} from the cover thumbnail instead`);
       }
+      // The third modality. Raced against a short deadline rather than
+      // awaited: the backend's own guidance is to send without audio rather
+      // than delay, and a description the user is waiting to read is the wrong
+      // place to block on a CDN fetch. A clip that misses this window is still
+      // cached, so the same reel described again gets it.
+      const clip = await clipForDescribe(reel.thumbnailUrl, AUDIO_CLIP_DEADLINE_MS);
+      if (clip) {
+        console.debug(
+          `[Bouncer IG] audio: ${clip.base64.length} b64 chars (${clip.format})`,
+          reel.reelId);
+      }
+
       const message: ContentToBackgroundMessage = {
         type: 'analyzeReel',
         caption,
         thumbnailUrl: reel.thumbnailUrl,
         ...(frame?.ok ? { frameBase64: frame.base64 } : {}),
+        ...(clip ? { audioBase64: clip.base64, audioFormat: clip.format } : {}),
       };
       const res: { description?: string; error?: string } | undefined = await chrome.runtime.sendMessage(message);
       const description = (res?.description ?? '').trim();
@@ -1084,8 +1332,12 @@ async function describeReel(reel: Reel): Promise<string> {
         return '';
       }
       cache.set(reel.reelId, { description });
-      // A visible slot may have been waiting on this phrase.
+      // A visible slot may have been waiting on this phrase. Both surfaces:
+      // refreshPanel returns early in the phone-width flow (no panel is
+      // mounted there), so without the second call a chooser row that opened
+      // saying "Describing…" would still say it once the phrase had arrived.
       refreshPanel();
+      suggestions?.refresh();
       return description;
     } catch (err) {
       cache.delete(reel.reelId);
@@ -1110,6 +1362,61 @@ let activeReelId: string | null = null;
 // virtualized out of the DOM are skipped at read time via card.isConnected.
 const orderedReels: Reel[] = [];
 
+// ==================== Which feed these reels belong to ====================
+//
+// The element the tracked cards hang from — and the answer to "the preview
+// pulls from the wrong page".
+//
+// Instagram's own bottom navigation (Home, Reels, Search, Profile) is a
+// client-side route change: leaving Reels UNMOUNTS the whole reels list and
+// coming back builds a new one. Every card discovered before that belongs to
+// the list we left, and nothing was dropping them — so the chooser went on
+// offering reels from a feed that no longer existed, with lengths and bylines
+// scraped from it. Seen on device: "2 reels tracked, active=none, 0 <video> on
+// page" while the byline scraper was reading a home-feed post out of the
+// leftovers ("24 minutes ago", "Boston, Massachusetts").
+//
+// The URL cannot answer this. On the reels feed the path changes on EVERY
+// swipe — each reel has its own permalink — so resetting on a route change
+// would forget the feed continuously as you watched it. The container does
+// answer it: it is stable for the life of one feed and a different object for
+// the next one.
+let feedRoot: HTMLElement | null = null;
+
+/** Drop everything known about the feed, leaving the surfaces mounted.
+ *
+ *  Lighter than removePanel(): the panel, the chooser and the listeners all
+ *  survive, because the feature is not going away — only the list it is
+ *  describing is. */
+function forgetReels(reason: string): void {
+  console.warn(`[Bouncer IG] feed reset (${reason}): dropping ${orderedReels.length} tracked reel(s)`);
+  observer.disconnect();
+  for (const reel of orderedReels) cards.delete(reel.card);
+  ratios.clear();
+  orderedReels.length = 0;
+  activeReelId = null;
+  forgetAll();
+  captions.clear();
+  lastRenderKey = '';
+  lastCurrentDesc = null;
+  shownUpcomingIds = new Set();
+}
+
+/** Let go of reels whose card Instagram has taken out of the document, when
+ *  the feed they belonged to has gone with them.
+ *
+ *  Deliberately NOT every disconnected card: Instagram recycles cards
+ *  constantly within a live feed, and a reel a few places ahead is usually
+ *  unmounted while still being a perfectly good thing to offer — the chooser
+ *  can reach it by swiping without ever touching its card. Only when the
+ *  container itself is gone is the reel unreachable rather than merely
+ *  unmounted. */
+function pruneDeadReels(): void {
+  if (feedRoot?.isConnected !== false) return;
+  forgetReels('the feed container left the document');
+  feedRoot = null;
+}
+
 function insertOrdered(reel: Reel): void {
   let i = orderedReels.length;
   while (
@@ -1119,19 +1426,6 @@ function insertOrdered(reel: Reel): void {
     i--;
   }
   orderedReels.splice(i, 0, reel);
-}
-
-/** The discovered reel card a <video> sits inside, if any. The gate asks this
- *  before holding anything: a video the scraper never claimed (a DM preview, an
- *  ad, a surface whose markup we don't recognise) is none of our business and
- *  must keep playing normally. */
-function cardForVideo(video: HTMLVideoElement): HTMLElement | null {
-  let el: HTMLElement | null = video.parentElement;
-  for (let i = 0; i < 25 && el; i++) {
-    if (cards.has(el)) return el;
-    el = el.parentElement;
-  }
-  return null;
 }
 
 const observer = new IntersectionObserver(
@@ -1154,18 +1448,69 @@ const observer = new IntersectionObserver(
   { threshold: [0, 0.25, 0.5, 0.75, 1], rootMargin: `0px 0px ${PREFETCH_MARGIN_PX}px 0px` },
 );
 
+/** The reel card actually painted at the middle of the screen, or null when
+ *  the page will not say.
+ *
+ *  The IntersectionObserver cannot answer this on the layout the device
+ *  actually uses, and its own logs are what showed it: every reel card reports
+ *  the same 660h@0 box, so all nine of them are fully intersecting the viewport
+ *  at once, every ratio is 1, and "the most visible card" quietly degrades to
+ *  whichever the Map happens to yield last — a constant, unrelated to what is
+ *  on screen.
+ *
+ *  That is what anchored the chooser to a reel the user was not watching. Five
+ *  picks in a row reported the same anchor while the feed had plainly moved on,
+ *  so the three rows it offered were not what came next, and picking one
+ *  travelled somewhere nobody had asked to go — including backwards, which is
+ *  what "it goes back to the original reel" was.
+ *
+ *  Hit-testing is the only thing that knows which of a stack is in front. Same
+ *  primitive the chooser steers by (visibleRecord in ./suggest.ts), asked here
+ *  about the feed rather than about a journey. */
+function paintedCard(): HTMLElement | null {
+  const stack = document.elementsFromPoint?.(
+    Math.round(window.innerWidth / 2),
+    Math.round(window.innerHeight / 2),
+  ) ?? [];
+  for (const el of stack) {
+    for (const reel of orderedReels) {
+      if (reel.card.isConnected && reel.card.contains(el)) return reel.card;
+    }
+  }
+  return null;
+}
+
 // Pick the most-visible card as the active reel and re-render the panel around
 // it. refreshPanel kicks off inference for the active reel and the next
 // UPCOMING_COUNT, and re-runs itself as each phrase resolves.
 function updateActive(): void {
+  // Nothing that happens while the chooser is up changes which reel you are on.
+  //
+  // It can't: the feed is pinned, and the only thing moving it is the chooser
+  // itself, walking to the end of the list to make Instagram load more. But the
+  // observer doesn't know that — it sees the last reel in the feed fill the
+  // screen and reports it as the one being watched, and since the chooser offers
+  // what comes AFTER the reel you're on, "the last one" leaves nothing to offer.
+  // The glass said "Nothing else loaded yet" within a second of every opening.
+  //
+  // You change reels by picking one, which closes the chooser first.
+  if (chooserOpen) return;
+
   let bestCard: HTMLElement | null = null;
   let bestRatio = ACTIVE_RATIO;
+  let claiming = 0;
   for (const [card, ratio] of ratios) {
+    if (ratio < ACTIVE_RATIO) continue;
+    claiming++;
     if (ratio >= bestRatio) {
       bestRatio = ratio;
       bestCard = card;
     }
   }
+  // More than one card claiming the screen means the ratios cannot tell them
+  // apart, and on the layout the device actually uses that is every card at
+  // once — so ask what is PAINTED instead. See paintedCard.
+  if (claiming > 1) bestCard = paintedCard() ?? bestCard;
   if (!bestCard) return;
 
   const reel = cardToReel.get(bestCard);
@@ -1177,10 +1522,7 @@ function updateActive(): void {
   // advances the feed, and that must not dismiss the offer it just raised.
   if (suppressBounceDismissOnce) suppressBounceDismissOnce = false;
   else dismissBouncePopup();
-  // Before refreshPanel: the card is raised here, and refreshHeldReel (called
-  // from refreshPanel) is what then keeps it in step with a description still
-  // on its way.
-  if (fullscreenFlow()) onArrive(reel);
+  if (fullscreenFlow()) suggestions?.onActiveReelChanged();
   refreshPanel();
 }
 
@@ -1188,11 +1530,38 @@ function updateActive(): void {
 
 function scan(): void {
   if (!onReelsPage()) return;   // debounced scans can fire just after nav away
+
+  // Before anything is read: is the feed we are describing still there? See
+  // feedRoot — Instagram's own navigation unmounts it wholesale.
+  pruneDeadReels();
+
+  // The BIGGEST qualifying image on each card, not the first one in document
+  // order. A card can carry more than one unlabelled CDN image and the reel's
+  // cover is the one that fills it — everything else on a reel is a chip. Taking
+  // whichever came first is how the audio disc got to be a reel's thumbnail (see
+  // isCoverImg); size is the property that can't be confused.
+  const best = new Map<HTMLElement, HTMLImageElement>();
   for (const img of Array.from(document.images)) {
     if (!isCoverImg(img)) continue;
     const card = cardFromCover(img);
     if (!card || cards.has(card)) continue;
+    const rival = best.get(card);
+    if (!rival || coverRank(img) > coverRank(rival)) best.set(card, img);
+  }
 
+  // Whose feed are these? A new card in a subtree unrelated to the one we have
+  // been tracking is Instagram having rebuilt the list under us — the tab
+  // switch again, caught on the way back in rather than on the way out.
+  // Relatedness rather than equality, so a wrapper appearing or disappearing
+  // between the card and the list is not mistaken for a new feed.
+  const container = best.size > 0 ? [...best.keys()][0].parentElement : null;
+  if (container && feedRoot && container !== feedRoot
+      && !feedRoot.contains(container) && !container.contains(feedRoot)) {
+    forgetReels('Instagram rebuilt the reels list');
+  }
+  if (container) feedRoot = container;
+
+  for (const [card, img] of best) {
     const reel: Reel = { reelId: reelIdFromUrl(img.src), card, thumbnailUrl: img.src };
     cards.add(card);
     cardToReel.set(card, reel);
@@ -1201,9 +1570,91 @@ function scan(): void {
     // Feed the same discovery to the audio filter (it prefetches + hides on a
     // match before the reel is reached).
     audioController?.onReelDiscovered(reel.reelId, reel.card, reel.thumbnailUrl);
+    // Read the creator off the card NOW: Instagram recycles cards as you move,
+    // so a later read may be describing a different reel, or nothing at all.
+    remember(reel);
   }
+  // Bring any reel that stands taller than the screen back inside it. Done
+  // here because a reel is laid out when Instagram mounts it, which is the same
+  // beat that makes it discoverable. See ./fit.ts.
+  fitReels(orderedReels.map((r) => r.card));
+  harvestDurations();
+  warmDurations();
+  // Which reel is on screen, re-asked on every scan.
+  //
+  // The IntersectionObserver is the only other thing that asks, and it fires
+  // on threshold CROSSINGS — which on a stacked pager never happen: every card
+  // sits in the same box, so moving between slides changes nobody's ratio and
+  // the callback is simply never called again. The active reel would then be
+  // whatever it was when the cards were first observed, for the rest of the
+  // session. Instagram mutates the DOM heavily when it changes slide (it mounts
+  // and recycles videos), so the scan loop is exactly the beat that notices.
+  updateActive();
+  suggestions?.refresh();
   // Newly discovered reels may fill empty "up next" slots.
   refreshPanel();
+}
+
+// ==================== Reel lengths, from the DOM ====================
+//
+// ./durations.ts documents two sources for a reel's length: Instagram's API
+// payloads via the MAIN-world hook, and a mounted <video>'s own `duration`.
+// Only the first was ever wired up — `noteDuration` had no caller outside the
+// tests — so on a feed whose payloads carry no `video_duration` (which is what
+// the on-device report showed: 0 of 2 reels had a length) there was nowhere
+// else for a length to come from, and the chooser rendered every row without
+// one.
+//
+// This is the missing half. It's a sweep rather than a per-video listener
+// because Instagram mounts and recycles <video> elements constantly: a listener
+// per element would have to be tracked and torn down, whereas re-reading the
+// reels we already know about costs a property read each and is idempotent.
+// `durationFor` is checked first so a reel is only read until it has an answer.
+
+/** Go and get the lengths we don't have yet, before anything asks for them.
+ *
+ *  The chooser's rows are always reels you have NOT reached, which is exactly
+ *  the set with no mounted <video> to measure — so asking at render time meant
+ *  the first time you opened it there was nothing to show, and the lengths
+ *  turned up only once you had moved on and come back. That was the report:
+ *  "the times only appear after I've clicked another reel".
+ *
+ *  So the asking moves to discovery. Each reel is probed once, ever, the moment
+ *  we learn it exists — which is many seconds before the glass can show it —
+ *  and by the time it does the number is already in hand. */
+function warmDurations(): void {
+  for (const reel of orderedReels) {
+    if (durationFor(reel.thumbnailUrl) !== null) continue;
+    void probeDuration(reel.thumbnailUrl).then((found: boolean) => {
+      if (found) suggestions?.refresh();
+    });
+  }
+}
+
+/** Read `duration` off any mounted reel <video> we don't have a length for. */
+function harvestDurations(): void {
+  for (const reel of orderedReels) {
+    if (durationFor(reel.thumbnailUrl) !== null) continue;
+    if (!reel.card.isConnected) continue;
+    const video = reel.card.querySelector('video');
+    if (!(video instanceof HTMLVideoElement)) continue;
+    // NaN until metadata lands, Infinity for a live stream — both are "not yet".
+    if (!Number.isFinite(video.duration) || video.duration <= 0) continue;
+    noteDuration(reel.thumbnailUrl, video.duration);
+  }
+}
+
+/** A reel's metadata arriving is the moment its length becomes readable, and it
+ *  may land without any DOM mutation to trigger the scan loop. Capture-phase on
+ *  document because media events do not bubble. */
+function watchForDurations(): void {
+  const onReadable = (): void => {
+    harvestDurations();
+    suggestions?.refresh();
+    refreshPanel();
+  };
+  document.addEventListener('loadedmetadata', onReadable, true);
+  document.addEventListener('durationchange', onReadable, true);
 }
 
 // ==================== Diagnostics ====================
@@ -1219,27 +1670,49 @@ function scan(): void {
 // Xcode console (see the bridge in ChromePolyfill.js), which is the only place
 // this is readable on device.
 const DISCOVERY_REPORT_MS = 5000;
+/** When to print the lengths timing line, in ms after boot. */
+const LENGTH_REPORT_MS = [8_000, 20_000, 45_000] as const;
 let reportedDiscovery = false;
+
+/** Just the lengths, repeatedly. `durationReport` carries the wait statistics:
+ *  how many rows rendered with a blank where the time goes, how long they
+ *  stayed that way, and which source eventually answered. */
+function reportLengths(): void {
+  if (!onReelsPage()) return;
+  const withLength = orderedReels.filter((r) => durationFor(r.thumbnailUrl) !== null).length;
+  console.warn(
+    `[Bouncer IG] lengths: ${withLength}/${orderedReels.length} reels have one. `
+    + durationReport(orderedReels.map((r) => r.thumbnailUrl)));
+}
 
 function reportDiscovery(): void {
   if (reportedDiscovery || !onReelsPage()) return;
   reportedDiscovery = true;
 
   const images = Array.from(document.images);
-  let decorative = 0;
+  let unlabelled = 0;
   let onCdn = 0;
   let covers = 0;
   let carded = 0;
+  // Unlabelled CDN images inside the audio pill: they pass the cover test and
+  // are never the cover. See coverRank.
+  let audioChips = 0;
   const samples: string[] = [];
   for (const img of images) {
-    const isDecorative = img.getAttribute('aria-hidden') === 'true'
-      && (img.getAttribute('alt') ?? '') === '';
+    // Both halves reported separately, but the verdict is isCoverImg ITSELF.
+    // This used to re-implement the test with an extra `aria-hidden="true"`
+    // clause that isCoverImg dropped long ago, so the report announced "0
+    // passed the cover test" on a page where discovery was in fact working —
+    // sending us after a discovery bug that did not exist. A diagnostic that
+    // paraphrases the thing it measures is worse than no diagnostic.
+    const isUnlabelled = (img.getAttribute('alt') ?? '') === '';
     const isCdn = /cdninstagram\.com/.test(img.src);
-    if (isDecorative) decorative++;
+    if (isUnlabelled) unlabelled++;
     if (isCdn) onCdn++;
-    if (isDecorative && isCdn) {
+    if (isCoverImg(img)) {
       covers++;
       if (cardFromCover(img)) carded++;
+      if (img.closest('a[href*="/reels/audio/"]')) audioChips++;
     }
     // Enough of a fingerprint to tell which half of the test each image failed.
     if (samples.length < 8 && img.src) {
@@ -1251,12 +1724,37 @@ function reportDiscovery(): void {
     }
   }
 
+  // Lengths have two independent sources — Instagram's API payloads via the
+  // hook, and mounted <video> elements — so when one is missing, which of them
+  // came up short is the whole question.
+  const withLength = orderedReels.filter((r) => durationFor(r.thumbnailUrl) !== null).length;
+  const active = activeReelId === null
+    ? null
+    : orderedReels.find((r) => r.reelId === activeReelId) ?? null;
+  const activeVideo = active?.card.querySelector('video');
+  const activeState = activeVideo instanceof HTMLVideoElement
+    ? `duration=${activeVideo.duration} readyState=${activeVideo.readyState}`
+    : 'no <video> mounted';
+
+  console.warn(
+    `[Bouncer IG] lengths: ${withLength}/${orderedReels.length} reels have one. `
+    + `${durationReport(orderedReels.map((r) => r.thumbnailUrl))}. `
+    + `Active reel's <video>: ${activeState}`);
+
+  console.warn(`[Bouncer IG] fit: ${fitReport(active?.card ?? orderedReels[0]?.card ?? null)}`);
+
+  // The byline, with its working out shown — see creatorReport.
+  const bylineCard = active?.card ?? orderedReels[0]?.card ?? null;
+  console.warn(
+    `[Bouncer IG] byline: ${bylineCard ? creatorReport(bylineCard) : 'no reel card to read'}`);
+
   console.warn(
     `[Bouncer IG] discovery: ${orderedReels.length} reels tracked, `
     + `active=${activeReelId ?? 'none'}, `
     + `${document.querySelectorAll('video').length} <video> on page. `
-    + `Of ${images.length} images — ${decorative} decorative, ${onCdn} on the IG CDN, `
-    + `${covers} passed the cover test, ${carded} of those resolved to a card. `
+    + `Of ${images.length} images — ${unlabelled} with no alt, ${onCdn} on the IG CDN, `
+    + `${covers} passed the cover test (${audioChips} were audio chips), `
+    + `${carded} resolved to a card. `
     + `Flow: width=${window.innerWidth} narrow=${isNarrowViewport()} `
     + `intentional=${intentionalScrolling} active=${describerActive} `
     + `hidden=${describerHidden} path=${location.pathname}`);
@@ -1288,22 +1786,27 @@ function onReelsPage(): boolean {
 // Remove the panel and drop all reel tracking, so a later return to reels
 // starts clean (Instagram virtualizes cards away on route change anyway).
 function removePanel(): void {
+  // The remembered placement belongs to the page being torn down.
+  hasBeenAnchored = false;
   document.getElementById(FRAME_ID)?.remove();
   currentTextEl = null;
   upcomingListEl = null;
   lastRenderKey = '';
   lastCurrentDesc = null;
   shownUpcomingIds = new Set();
-  // The gate especially: leaving it installed would keep pausing video on
-  // whatever Instagram page comes next.
-  gate?.teardown();
-  gate = null;
+  suggestions?.teardown();
+  suggestions = null;
+  unfitAll();
+  forgetAll();
+  captions.clear();
   describerActive = false;
   observer.disconnect();
   ratios.clear();
   orderedReels.length = 0;
   cards = new WeakSet<HTMLElement>();
   activeReelId = null;
+  // The feed this was describing is not the one we will come back to.
+  feedRoot = null;
 }
 
 // Which side of the threshold the describer last built itself for. A rotation,
@@ -1364,8 +1867,8 @@ async function boot(): Promise<void> {
     intentionalScrolling = next;
     // describerActive rather than the element: at phone width the describer
     // mounts nothing persistent, so switching it off there has to tear down the
-    // gate and the fullscreen surfaces via this path too — otherwise reels stay
-    // held with no card left to release them.
+    // back-nav surfaces via this path too — otherwise the arrow outlives the
+    // feature that owns it.
     if (describerActive) removePanel();
     syncForLocation();
   });
@@ -1382,11 +1885,18 @@ async function boot(): Promise<void> {
   // actually being sent, so a disabled feature costs nothing.
   if (USE_MID_REEL_FRAME) installFrameSources();
 
-  // Reel lengths, for the chooser's rows and the paused card. Installed
-  // unconditionally: it's one passive listener, and collecting lengths from the
-  // first response on means a rotation into the fullscreen flow finds them
-  // already there rather than starting blank.
+  // Reel lengths, for the paused card. Installed unconditionally: it's one
+  // passive listener, and collecting lengths from the first response on means a
+  // rotation into the phone-width flow finds them already there rather than
+  // starting blank.
   installDurationSource();
+  // A length arriving is a reason to re-render whatever is showing: the chooser
+  // asks for these before it needs them, and the answers land on their own.
+  onDurationResolved(() => {
+    suggestions?.refresh();
+    refreshPanel();
+  });
+  watchForDurations();
 
   // Install the audio filter once (its hook listener is harmless when idle) and
   // seed it with any persisted terms; scan() then feeds it discovered reels.
@@ -1408,10 +1918,37 @@ async function boot(): Promise<void> {
     applyAudioTerms(changes[AUDIO_TERMS_KEY].newValue);
   });
 
+  // Every consumer of the MAIN-world hook is listening by now, so ask it for
+  // what it harvested before we booted — the server-rendered first screenful,
+  // which is exactly the reel the user is looking at.
+  requestHookReplay();
+
+  // Instagram's "use the app" bar, closed the way you would close it. Installed
+  // outside the reels flow: it turns up on other routes too, and it is a
+  // standing job rather than something the feed triggers. See ./promo.ts.
+  // Instagram's own bar across the top of the Reels viewer. Removed here rather
+  // than in CSS because its class names are hashed — see ./topbar.ts — and
+  // scoped to the reels routes, where it is the strip of screen the reel most
+  // needs and carries nothing the describer does not already offer. Elsewhere
+  // that bar is the navigation, so it is put straight back.
+  installTopBarHider(onReelsPage);
+
+  // A rotation, or iOS's own chrome sliding in and out, changes how much room a
+  // reel has — and the reel was sized for the old number.
+  installFitWatcher(() => {
+    fitReels(orderedReels.map((r) => r.card));
+    positionPanel();
+  });
+
   syncForLocation();
   // Long enough for Instagram to have mounted its first screenful, short enough
   // that it's still on screen when the report lands.
   setTimeout(reportDiscovery, DISCOVERY_REPORT_MS);
+  // Lengths keep arriving long after the discovery report has printed — that is
+  // the entire subject of the complaint — so the timing line repeats. Three
+  // samples: one with the first screenful, one after a batch or two has landed,
+  // one late enough to include anything that had to be fetched or probed.
+  for (const at of LENGTH_REPORT_MS) setTimeout(reportLengths, at);
   window.addEventListener('resize', onViewportResize);
   // The rail scrolls with the reel it belongs to.
   window.addEventListener('scroll', positionPanel, { passive: true, capture: true });
@@ -1445,5 +1982,19 @@ async function boot(): Promise<void> {
 // would run on X and LinkedIn too.
 // Regex mirrors src/shared/platforms.ts PLATFORM_RUNTIME.instagram.hostPattern.
 if (/(^|\.)instagram\.com$/i.test(location.hostname)) {
+  // Started here rather than inside boot(), and this placement is the whole
+  // fix for "the open-in-app banner is still there when I arrive".
+  //
+  // `boot` is async and awaits a `chrome.storage.local.get` before it reaches
+  // anything — a round trip that on iOS crosses the native bridge — so the
+  // banner had several hundred milliseconds of clear air on every cold open.
+  // Worse, boot returns early when Instagram's platform toggle is off, and the
+  // dismisser then never installed at all.
+  //
+  // Nothing about closing that banner depends on the toggle, the storage read,
+  // or the reels route: it is a nuisance on every Instagram page, and the
+  // earliest possible moment is the right one to start watching for it.
+  installPromoDismisser();
+
   void boot().catch(err => console.error('[Bouncer IG] boot failed:', err));
 }

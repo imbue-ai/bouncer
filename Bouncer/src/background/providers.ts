@@ -279,17 +279,34 @@ export async function callImbueDetectAiIntent(
 // the server needs no new field; the frame module keeps it inside the 32 KB WS
 // frame cap that binds every message on this socket. Falls back to the
 // thumbnail URL whenever no frame could be captured.
+// `audioBase64` is the third modality, added when the reel's soundtrack could
+// be extracted in time. The route now runs on the audio queue and reads frame,
+// caption and speech together, so a reel whose subject is only ever spoken
+// aloud finally describes as itself. Optional on the wire: omitted, null or
+// empty all mean "no audio" and the server falls back to frame + caption.
+//
+// Sending audio does NOT relax the frame budget. The binding limit here is
+// still AWS's 32 KB WS frame — well under the server's own 120,000-char cap on
+// audioData — and the extractor's 30,000-char budget is sized for it.
 export async function callImbueInstagramAnalyze(
   caption: string,
   thumbnailUrl: string,
   frameBase64?: string,
+  audioBase64?: string,
+  audioFormat?: string,
 ): Promise<ImbueInstagramResponse> {
   const image = frameBase64
     ? `data:image/jpeg;base64,${frameBase64}`
     : thumbnailUrl;
   const message: Record<string, unknown> = {
     action: 'instagramAnalyze',
-    tweetData: { text: caption, imageUrls: image ? [image] : [] },
+    tweetData: {
+      text: caption,
+      imageUrls: image ? [image] : [],
+      // Only when there is one. An empty string is a documented "no audio" too,
+      // but sending a key we have nothing for invites a truncated clip later.
+      ...(audioBase64 ? { audioData: audioBase64, audioFormat: audioFormat ?? 'mp4' } : {}),
+    },
     version: chrome.runtime.getManifest().version,
   };
   return imbueWebSocket.send(message) as unknown as Promise<ImbueInstagramResponse>;

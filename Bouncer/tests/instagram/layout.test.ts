@@ -94,4 +94,14 @@ describe('clampLeft', () => {
   it('never goes past the left margin', () => {
     expect(clampLeft(0, 400, 200)).toBe(M);
   });
+
+  // The collapsed icon is placed on the like glyph's centre line, and on a phone
+  // that line sits inside the panel-sized inset — so the default clamp moved it
+  // straight back off centre. A small element that is already on screen should
+  // not be moved at all.
+  it('respects a smaller margin, so a centred glyph stays centred', () => {
+    const centred = PHONE.width - 26 - 14;             // a 28px icon on the rail
+    expect(clampLeft(centred, 28, PHONE.width)).toBeLessThan(centred);
+    expect(clampLeft(centred, 28, PHONE.width, 4)).toBe(centred);
+  });
 });

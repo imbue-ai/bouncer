@@ -379,7 +379,18 @@ export type ContentToBackgroundMessage =
        *  the reel than the cover thumbnail, which is often a title card.
        *  Absent when the reel isn't buffered yet — `thumbnailUrl` is the
        *  fallback and is always sent. */
-      frameBase64?: string }
+      frameBase64?: string;
+      /** A few seconds of the reel's soundtrack, base64, when one could be
+       *  extracted in time (src/instagram/audiofilter.ts). The description
+       *  route takes image + caption + audio in one call now — what is SAID in
+       *  a reel is frequently the only place its subject appears, and a talking
+       *  head over a static frame came back as "a person talking" without it.
+       *  Optional by design: the backend degrades to frame + caption, and the
+       *  client is told not to delay a request waiting for audio. */
+      audioBase64?: string;
+      /** Container for the above: 'ogg' when the transcode worked, 'mp4' for
+       *  the raw fallback. Unknown values fall back to mp4 server-side. */
+      audioFormat?: string }
   | { type: 'analyzeReelAudio'; audioBase64: string; mimeType: string; categories: string[] };
 
 export type BackgroundToContentMessage =
