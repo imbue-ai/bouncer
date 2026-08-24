@@ -214,24 +214,35 @@ public enum Gate {
         }
 
         /// The light half: the title, the icon, and the primary button's fill.
+        ///
+        /// Every accent sits high in lightness and moderate in saturation. High
+        /// because it has to carry small text on a dark ground; moderate because
+        /// a fully saturated fill at this size vibrates against its own ground.
         public var accent: (red: Double, green: Double, blue: Double) {
             switch self {
-            case .blush: return (0.878, 0.596, 0.596)
-            case .slate: return (0.639, 0.741, 0.851)
-            case .moss:  return (0.659, 0.769, 0.627)
-            case .sand:  return (0.910, 0.816, 0.631)
-            case .mono:  return (0.906, 0.886, 0.871)
+            case .blush: return (0.878, 0.596, 0.596)  // #E09898
+            case .slate: return (0.651, 0.784, 0.941)  // #A6C8F0
+            case .moss:  return (0.647, 0.847, 0.706)  // #A5D8B4
+            case .sand:  return (0.941, 0.804, 0.576)  // #F0CD93
+            case .mono:  return (0.929, 0.906, 0.878)  // #EDE7E0
             }
         }
 
         /// The dark half: the ground, and the type on the primary button.
+        ///
+        /// Chromatic, not neutral-plus-a-tint. The first pass mixed these
+        /// toward grey and brown, which reads as a dimmed screen rather than a
+        /// colour — the ground is most of the shield by area, so it is where
+        /// the choice either shows or does not. Each is a deep version of its
+        /// accent's hue family, nudged in hue rather than merely darkened, so
+        /// the pair looks chosen instead of computed.
         public var ink: (red: Double, green: Double, blue: Double) {
             switch self {
-            case .blush: return (0.282, 0.125, 0.125)
-            case .slate: return (0.106, 0.157, 0.212)
-            case .moss:  return (0.122, 0.180, 0.114)
-            case .sand:  return (0.227, 0.180, 0.098)
-            case .mono:  return (0.133, 0.122, 0.118)
+            case .blush: return (0.282, 0.125, 0.125)  // #482020
+            case .slate: return (0.086, 0.141, 0.247)  // #16243F
+            case .moss:  return (0.078, 0.188, 0.122)  // #14301F
+            case .sand:  return (0.231, 0.141, 0.075)  // #3B2413
+            case .mono:  return (0.110, 0.102, 0.098)  // #1C1A19
             }
         }
     }
