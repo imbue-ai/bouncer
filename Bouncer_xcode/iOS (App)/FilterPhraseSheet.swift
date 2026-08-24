@@ -8,6 +8,7 @@
 import SwiftUI
 import WebKit
 import TipKit
+import FamilyControls
 internal import Combine
 
 // MARK: - Bouncer Tip
@@ -266,6 +267,32 @@ class FilterSheetViewModel: ObservableObject {
             cache.showPlatform(platform)
             loadPhrases()
         }
+    }
+
+    // As above, but also guarantees the platform's own feed URL is what ends up
+    // on screen — for X, `https://x.com/home`.
+    //
+    // `selectPlatformAndNavigate` alone does not promise this. A webview built
+    // for the first time loads `feedURL` from the factory, but one that already
+    // exists is only made visible again, still showing whatever the user left it
+    // on — a profile, a search, a permalink they opened yesterday. That is right
+    // for the platform switcher, where the point is to pick up where you left
+    // off, and wrong for the gate's handoff, where somebody just answered
+    // "View in Bouncer" on a shield and the answer has a specific destination.
+    //
+    // Only the already-cached case loads: a fresh webview has a navigation to
+    // `feedURL` in flight and issuing a second one would cancel the first.
+    func selectPlatformAndLoadFeed(_ platform: String) {
+        let cached = cache.webView(for: platform, create: false)
+        selectPlatformAndNavigate(platform)
+
+        guard let webView = cached,
+              let def = Platforms.byId(platform),
+              let url = URL(string: def.feedURL) else { return }
+        // Already there — reloading would only throw away scroll position and
+        // whatever the pipeline has running.
+        guard webView.url?.absoluteString != def.feedURL else { return }
+        webView.load(URLRequest(url: url))
     }
 
     // Load the selected platform's phrases from the (shared, native-backed)
@@ -1130,6 +1157,33 @@ struct BouncerSettingsView: View {
                 }
             }
 
+            // The gate is the first thing here, not the last. It is the only
+            // setting in the app that changes what happens OUTSIDE Bouncer —
+            // and a feature nobody can find is off by default in the way that
+            // matters. Three taps deep, behind Advanced Settings, is where
+            // features go to be never turned on.
+            Section {
+                NavigationLink {
+                    GateSettingsView()
+                } label: {
+                    HStack {
+                        Image(systemName: "lock.shield")
+                            .foregroundStyle(.tint)
+                            .frame(width: 24)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Focused viewing")
+                            Text(Gate.isArmed
+                                 ? "On — gated apps ask what you're here for"
+                                 : "Off — tap to gate X")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            } header: {
+                Text("Screen Time")
+            }
+
             // Everything below Advanced Settings is power-user surface:
             // full model list, BYOK providers, AI-detection thresholds.
             Section {
@@ -1975,6 +2029,18 @@ struct ProvidersSettingsView: View {
 
 struct FilteredWebViewContainer: View {
     @StateObject var viewModel = FilterSheetViewModel()
+    // The gate's handoff: someone chose "View in Bouncer" on a shield, in
+    // another process, possibly before this one existed. Landing them on the
+    // platform picker would ask a question they have already answered.
+    @StateObject private var gateRouter = GateRouter.shared
+    @StateObject private var gate = GateController.shared
+    @Environment(\.scenePhase) private var scenePhase
+    // Apple's app picker, offered right after the X feed is chosen. It is a
+    // sheet on the container rather than on the feed because the feed is a
+    // WebView and presenting over it fights the keyboard-avoidance dance it
+    // does.
+    @State private var showGatePicker = false
+    @State private var gateError: String?
     // @AppStorage so external UserDefaults writes (e.g. the DEBUG-only "reset
     // onboarding" button in the filter sheet toolbar) propagate reactively —
     // no explicit re-read required for the change to re-show OnboardingView.
@@ -1992,6 +2058,14 @@ struct FilteredWebViewContainer: View {
                 PlatformPickerView { platformId in
                     viewModel.selectPlatformAndNavigate(platformId)
                     navPath.append(platformId)
+                    // X only, for now. The gate itself is app-agnostic — the
+                    // apps it shields are whatever the person picks in Apple's
+                    // own picker — but the offer has to be attached to a
+                    // moment that justifies it, and opening the X feed is the
+                    // one we can currently make that argument for.
+                    if platformId == "twitter" {
+                        offerGateSetup()
+                    }
                 }
                 .toolbar(.hidden, for: .navigationBar)
                 .navigationDestination(for: String.self) { _ in
@@ -2023,6 +2097,70 @@ struct FilteredWebViewContainer: View {
             if !newValue {
                 navPath.removeAll()
             }
+        }
+        // A route can be waiting before this view exists (the tap that launched
+        // us) or arrive while it is on screen (a check-in tapped mid-session),
+        // so both the arrival and the initial value are handled.
+        .onChange(of: gateRouter.pendingPlatform) { _, _ in followGateRoute() }
+        .onAppear { followGateRoute() }
+        // The engage window is closed by an extension iOS may decline to
+        // launch. Whenever we are in a position to check, check.
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { gate.reconcile() }
+        }
+        .familyActivityPicker(isPresented: $showGatePicker, selection: Binding(
+            get: { gate.selection },
+            set: { gate.save(selection: $0) }
+        ))
+        .alert("Screen Time unavailable",
+               isPresented: Binding(get: { gateError != nil },
+                                    set: { if !$0 { gateError = nil } })) {
+            Button("OK", role: .cancel) { gateError = nil }
+        } message: {
+            Text(gateError ?? "")
+        }
+    }
+
+    /// Ask about gating at the moment someone opens the X feed.
+    ///
+    /// This is the whole permission flow, and it lives here rather than in
+    /// settings because a permission prompt needs a reason attached to it.
+    /// Opening X is the reason: the question "would you like this gated?" is
+    /// answerable then, and abstract anywhere else.
+    ///
+    /// Deliberately after the navigation, not before — the feed they asked for
+    /// loads either way, and a prompt that stands between a tap and its result
+    /// is a prompt people dismiss to get past.
+    private func offerGateSetup() {
+        guard isOnboarded else { return }
+        Task {
+            // Screen Time, then notifications, then the app picker — awaited in
+            // sequence, not started together. Two system alerts raised in the
+            // same runloop stack on top of each other, and the one underneath is
+            // dismissed blind if it is ever shown at all.
+            let shouldPick = await gate.offerSetup()
+            await gate.offerNotifications()
+            if shouldPick {
+                showGatePicker = true
+            } else if let error = gate.lastError {
+                gateError = error
+            }
+        }
+    }
+
+    /// Go where the notification said, once, and only if we are not already
+    /// there — a second append would push a duplicate feed onto the stack.
+    ///
+    /// `loadFeed` rather than plain navigation: someone arriving here chose
+    /// "View in Bouncer" on a shield, and the destination they were promised is
+    /// the feed specifically. A cached X webview sitting on a profile from an
+    /// hour ago would otherwise just be made visible again.
+    private func followGateRoute() {
+        guard let platform = gateRouter.consume() else { return }
+        guard isOnboarded else { return }
+        viewModel.selectPlatformAndLoadFeed(platform)
+        if navPath.last != platform {
+            navPath.append(platform)
         }
     }
 }
