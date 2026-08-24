@@ -577,7 +577,7 @@ private struct GateSetupPage: View {
             ShieldTintPicker(selection: $tint, name: name)
                 .onChange(of: tint) { _, newValue in Gate.shieldTint = newValue }
         } header: {
-            Text("The shield")
+            Text("Customize")
         } footer: {
             Text("This is the screen you'll meet when you open a gated app.")
         }
