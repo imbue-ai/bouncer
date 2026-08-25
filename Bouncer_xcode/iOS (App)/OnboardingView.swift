@@ -488,7 +488,7 @@ private struct GateSetupPage: View {
                     .font(.system(size: 28, weight: .bold))
                     .multilineTextAlignment(.center)
 
-                Text("Optionally configure redirects from the original platforms.")
+                Text("Optionally configure redirects.")
                     .font(.system(size: 17))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)

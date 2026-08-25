@@ -72,14 +72,12 @@ struct GateSetupSections: View {
         Section {
             permissionRow(
                 title: "Screen Time",
-                why: "Allows Bouncer to gate other apps.",
                 state: screenTimeState,
                 ask: { Task { await gate.requestAuthorization() } }
             )
 
             permissionRow(
                 title: "Notifications",
-                why: "Allows Bouncer to remind you to scroll intentionally.",
                 state: notifications.permissionState,
                 ask: {
                     Task {
@@ -200,10 +198,6 @@ struct GateSetupSections: View {
 
             ShieldTintPicker(selection: $tint, name: name)
                 .onChange(of: tint) { _, newValue in Gate.shieldTint = newValue }
-        } header: {
-            Text("Customize")
-        } footer: {
-            Text("This is the screen you'll meet when you open a gated app.")
         }
     }
 
@@ -237,31 +231,24 @@ struct GateSetupSections: View {
 
     @ViewBuilder
     private func permissionRow(title: String,
-                               why: String,
                                state: PermissionState,
                                ask: @escaping () -> Void) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Label(title, systemImage: state == .granted ? "checkmark.circle.fill" : "circle.dashed")
-                    .foregroundStyle(state == .granted ? .green : .secondary)
-                Spacer()
-                switch state {
-                case .granted:
-                    EmptyView()
-                case .notAsked:
-                    Button("Allow", action: ask).font(.subheadline.weight(.semibold))
-                case .denied:
-                    // iOS will not show a prompt twice; after a refusal this is
-                    // the only control that does anything.
-                    Button("Fix in Settings") { SystemSettings.open() }
-                        .font(.subheadline.weight(.semibold))
-                }
+        HStack {
+            Label(title, systemImage: state == .granted ? "checkmark.circle.fill" : "circle.dashed")
+                .foregroundStyle(state == .granted ? .green : .secondary)
+            Spacer()
+            switch state {
+            case .granted:
+                EmptyView()
+            case .notAsked:
+                Button("Allow", action: ask).font(.subheadline.weight(.semibold))
+            case .denied:
+                // iOS will not show a prompt twice; after a refusal this is
+                // the only control that does anything.
+                Button("Fix in Settings") { SystemSettings.open() }
+                    .font(.subheadline.weight(.semibold))
             }
-            Text(why)
-                .font(.footnote)
-                .foregroundStyle(.secondary)
         }
-        .padding(.vertical, 2)
     }
 
     private var screenTimeState: PermissionState {
@@ -314,7 +301,7 @@ struct GateNameField: UIViewRepresentable {
         field.adjustsFontForContentSizeCategory = true
         field.textColor = .label
         field.attributedPlaceholder = NSAttributedString(
-            string: "Your name (optional)",
+            string: "What should Bouncer call you?",
             attributes: [.foregroundColor: UIColor.placeholderText]
         )
         field.autocapitalizationType = .words
