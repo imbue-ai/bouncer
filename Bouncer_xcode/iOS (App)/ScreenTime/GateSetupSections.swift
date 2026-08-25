@@ -33,6 +33,13 @@ struct GateSetupSections: View {
 
     @ObservedObject var gate: GateController
 
+    /// The heading over the app list. The two hosts word it differently —
+    /// onboarding is instructing ("Select your Social Platforms"), settings is
+    /// labelling something that already exists ("Focused social platforms") —
+    /// and that is the whole of their disagreement, so it is a parameter rather
+    /// than a reason to fork the view again.
+    var gatedHeader: String
+
     /// Raised when the user asks for Apple's app picker. Owned by the host
     /// because `.familyActivityPicker` has to be attached to the enclosing
     /// List, not to a section inside it.
@@ -93,8 +100,6 @@ struct GateSetupSections: View {
                     .font(.footnote)
                     .foregroundStyle(.red)
             }
-        } header: {
-            Text("Permissions")
         }
         .task { notifications = await NotificationPermission.current() }
         // A refusal is repaired in Settings, which means leaving the app and
@@ -149,14 +154,16 @@ struct GateSetupSections: View {
                     }
             }
         } header: {
-            Text("What's gated")
+            Text(gatedHeader)
         } footer: {
             // The gate arms itself the moment it has both halves — see
             // GateController.armIfReady — so this is the last decision, not a
-            // step before one.
-            Text(gate.hasSelection
-                 ? "Bouncer's gate is active. Swipe any app to stop gating it."
-                 : "Select your social platforms.")
+            // step before one. Nothing is said before that: the heading is
+            // already an instruction, and repeating it underneath the button
+            // it describes is the kind of copy people learn to skip.
+            if gate.hasSelection {
+                Text("Bouncer's gate is active. Swipe any app to stop gating it.")
+            }
         }
     }
 
@@ -164,27 +171,16 @@ struct GateSetupSections: View {
         Section {
             // Tagged in seconds — see GateController.checkInStepSeconds. The
             // real options are all whole minutes; only the DEBUG ones are not.
+            // Tagged in seconds — see GateController.checkInStepSeconds,
+            // which keeps the unit only because `Gate` stores a sub-minute
+            // developer override that the UI no longer offers.
             Picker("Check in every", selection: Binding(
                 get: { gate.checkInStepSeconds },
                 set: { gate.checkInStepSeconds = $0 }
             )) {
                 Text("Never").tag(0)
-#if DEBUG
-                Text("10 sec (dev)").tag(10)
-                Text("30 sec (dev)").tag(30)
-#endif
                 ForEach([2, 5, 10, 15], id: \.self) { Text("\($0) min").tag($0 * 60) }
             }
-        } header: {
-            Text("Check-ins")
-        } footer: {
-#if DEBUG
-            Text("Dev builds can check in every 10 or 30 seconds. iOS samples "
-                 + "usage about once a minute, so those fire approximately and "
-                 + "late — enough to see the mechanism work, not a stopwatch. "
-                 + "Only the first \(Gate.maxCheckIns) fit in one window.")
-                .foregroundStyle(.orange)
-#endif
         }
     }
 
@@ -309,7 +305,7 @@ struct GateNameField: UIViewRepresentable {
         field.adjustsFontForContentSizeCategory = true
         field.textColor = .label
         field.attributedPlaceholder = NSAttributedString(
-            string: "What should Bouncer call you?",
+            string: "Your name",
             attributes: [.foregroundColor: UIColor.placeholderText]
         )
         field.autocapitalizationType = .words

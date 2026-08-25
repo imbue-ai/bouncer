@@ -29,10 +29,11 @@ struct GateSettingsView: View {
 
     var body: some View {
         List {
-            explainer
             // The same sections as the last slide of onboarding — one
             // definition, two hosts. See GateSetupSections.
-            GateSetupSections(gate: gate, showingPicker: $showingPicker)
+            GateSetupSections(gate: gate,
+                              gatedHeader: "Focused social platforms",
+                              showingPicker: $showingPicker)
             armSection
         }
         .listStyle(.insetGrouped)
@@ -53,42 +54,23 @@ struct GateSettingsView: View {
         }
     }
 
-    private var explainer: some View {
-        Section {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("A door, not a wall")
-                    .font(.headline)
-                Text("Opening a gated app asks where you'd like to view it. "
-                     + "**View in X** opens the real app, so nobody waits "
-                     + "on your screen-time settings. **View in Bouncer** opens "
-                     + "the same timeline in your own viewer.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                Text("Nothing shuts the app on you. The door is simply back the "
-                     + "next time you open it, and check-ins in between are "
-                     + "notifications you can ignore.")
-                    .font(.footnote)
-                    .foregroundStyle(.tertiary)
-            }
-            .padding(.vertical, 4)
-        }
-    }
-
+    /// Present only when there is something to switch.
+    ///
+    /// It used to narrate the states in between — waiting on Screen Time,
+    /// waiting on an app — under a heading of its own. Both are already
+    /// legible from the sections above, where the permission row says it has
+    /// not been granted and the app list says it is empty; saying it a second
+    /// time in a section that otherwise holds a switch just makes an empty
+    /// panel to scroll past.
     @ViewBuilder
     private var armSection: some View {
-        Section {
-            if gate.authorization != .approved {
-                Label("Waiting on Screen Time access", systemImage: "hourglass")
-                    .foregroundStyle(.secondary)
-            } else if !gate.hasSelection {
-                Label("Waiting on an app to gate", systemImage: "square.dashed")
-                    .foregroundStyle(.secondary)
-            } else {
-                // A toggle, not a "Turn on" button: by the time both of the
-                // above are done the decision has been made twice, and the
-                // gate has already armed itself. This is how it gets turned
-                // OFF — which has to stay one tap, or the whole thing reads as
-                // a trap rather than a door.
+        if gate.authorization == .approved, gate.hasSelection {
+            Section {
+                // A toggle, not a "Turn on" button: by the time the permission
+                // and the app list are done the decision has been made twice,
+                // and the gate has already armed itself. This is how it gets
+                // turned OFF — which has to stay one tap, or the whole thing
+                // reads as a trap rather than a door.
                 Toggle("Gate is on", isOn: Binding(
                     get: { gate.isArmed },
                     set: { $0 ? gate.arm() : gate.disarm() }
@@ -99,12 +81,10 @@ struct GateSettingsView: View {
                         .foregroundStyle(.orange)
                     Button("Close it now") { gate.closeSession() }
                 }
-            }
-        } footer: {
-            if gate.authorization == .approved && !gate.hasSelection {
-                Text("It switches on by itself as soon as you choose one.")
-            } else if gate.isArmed {
-                Text("Opening a gated app now asks what you're here for.")
+            } footer: {
+                if gate.isArmed {
+                    Text("Opening a gated app now asks what you're here for.")
+                }
             }
         }
     }

@@ -499,7 +499,9 @@ private struct GateSetupPage: View {
             // The same sections Settings shows, so skipping this slide costs
             // nothing but a trip to Focused viewing. See GateSetupSections.
             List {
-                GateSetupSections(gate: gate, showingPicker: $showingPicker)
+                GateSetupSections(gate: gate,
+                                  gatedHeader: "Select your Social Platforms",
+                                  showingPicker: $showingPicker)
             }
             .scrollContentBackground(.hidden)
             .scrollBounceBehavior(.basedOnSize)

@@ -1063,6 +1063,7 @@ struct FilterPhraseSheet: View {
 struct BouncerSettingsView: View {
     @ObservedObject var viewModel: FilterSheetViewModel
     @ObservedObject private var localService = LocalInferenceService.shared
+    @State private var showingWidgetTutorial = false
 
     // The Imbue-hosted "Cloud" option requires Firebase App Check. On builds
     // shipped without a GoogleService-Info plist it is unusable, so hide it.
@@ -1174,14 +1175,28 @@ struct BouncerSettingsView: View {
                             Text("Focused viewing")
                             Text(Gate.isArmed
                                  ? "On — gated apps ask what you're here for"
-                                 : "Off — tap to gate X")
+                                 : "Off")
                                 .font(.footnote)
                                 .foregroundStyle(.secondary)
                         }
                     }
                 }
-            } header: {
-                Text("Screen Time")
+
+                // The same walkthrough the picker's pill opens. It belongs
+                // here too: the pill is dismissible and dismissed for good, so
+                // without this the only route to it is one the user may have
+                // closed months ago.
+                Button {
+                    showingWidgetTutorial = true
+                } label: {
+                    HStack {
+                        Image(systemName: "square.grid.2x2")
+                            .foregroundStyle(.tint)
+                            .frame(width: 24)
+                        Text("Add Apps to Home Screen")
+                            .foregroundStyle(.primary)
+                    }
+                }
             }
 
             // Everything below Advanced Settings is power-user surface:
@@ -1223,6 +1238,9 @@ struct BouncerSettingsView: View {
         }
         .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: $showingWidgetTutorial) {
+            WidgetTutorialView()
+        }
         .onAppear {
             viewModel.loadFilterReplies()
             viewModel.loadSelectedModel()
