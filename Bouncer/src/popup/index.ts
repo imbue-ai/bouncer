@@ -4,6 +4,10 @@ import type { ModelDef, LocalModelStatus, StorageSchema, SiteId } from '../types
 import { PREDEFINED_MODELS, DEFAULT_MODEL } from '../shared/models';
 import { escapeHtml, parseHTML } from '../shared/utils';
 import { getStorage, setStorage, removeStorage, clampThreshold, clampImageThreshold, clampReplyThreshold, aiIntentAutoActive } from '../shared/storage';
+import {
+  DEFAULT_BRAND_COLOR, BRAND_COLOR_PRESETS,
+  normalizeHexColor, hexToRgb, rgbToHex, rgbToHsv, hsvToRgb,
+} from '../shared/brand-color';
 import { asyncHandler } from '../shared/async';
 import type { PlatformDef } from '../shared/platforms';
 import { PLATFORMS, PLATFORMS_FOR_TARGET, enabledStorageKey, isOptionalPlatform } from '../shared/platforms';
@@ -332,6 +336,11 @@ function setupStorageListener() {
       const el = document.getElementById('enableFilterReplies') as HTMLInputElement | null;
       if (el && el.checked !== checked) el.checked = checked;
     }
+    if (areaName === 'local' && changes.coloredBorder) {
+      const checked = changes.coloredBorder.newValue !== false;
+      const el = document.getElementById('coloredBorderToggle') as HTMLInputElement | null;
+      if (el && el.checked !== checked) el.checked = checked;
+    }
     // Per-platform master-toggle storage-change handlers — iterated. For
     // optional platforms the row only turns on if the host permission is
     // actually granted (a storage write alone can't enable them).
@@ -629,6 +638,10 @@ function setupEventListeners() {
 
   // Headline model radios (Imbue vs Local E2B)
   setupModelRadios();
+
+  // Accent Color picker
+  setupAccentColorPicker();
+  setupColoredBorderToggle();
 
   // Model dropdown
   setupModelDropdown();
@@ -952,6 +965,255 @@ function localRadioModelDownloaded(): boolean {
 // (which re-syncs the radios via updateModelRadioUI), clears the
 // classification cache, and shows the download section when a not-yet-
 // downloaded local model is picked — no radio-specific follow-up needed.
+// ==================== Accent Color picker ====================
+
+// Full HSV picker for the in-feed accent color (`brandColor` storage key):
+// saturation/brightness plane, hue slider, hex + RGB fields, preset
+// swatches, screen eyedropper (where the API exists), and reset. The content
+// script applies writes live via its brandColor storage listener, so drags
+// preview in any open feed tab.
+function setupAccentColorPicker() {
+  // Element lookup + guard live here; the picker logic gets non-null
+  // parameters (narrowing on the nullable consts wouldn't survive into the
+  // nested closures below).
+  const chip = document.getElementById('accentColorChip');
+  const svArea = document.getElementById('cpSvArea');
+  const svThumb = document.getElementById('cpSvThumb');
+  const hueInput = document.getElementById('cpHue') as HTMLInputElement | null;
+  const hexInput = document.getElementById('cpHex') as HTMLInputElement | null;
+  const rInput = document.getElementById('cpR') as HTMLInputElement | null;
+  const gInput = document.getElementById('cpG') as HTMLInputElement | null;
+  const bInput = document.getElementById('cpB') as HTMLInputElement | null;
+  const swatchesEl = document.getElementById('cpSwatches');
+  const resetBtn = document.getElementById('cpReset');
+  const eyedropperBtn = document.getElementById('cpEyedropper');
+  if (!chip || !svArea || !svThumb || !hueInput || !hexInput || !rInput || !gInput || !bInput
+      || !swatchesEl || !resetBtn || !eyedropperBtn) {
+    return; // in-app (iOS) popup builds may omit this section
+  }
+  initAccentColorPicker({ chip, svArea, svThumb, hueInput, hexInput, rInput, gInput, bInput, swatchesEl, resetBtn, eyedropperBtn });
+}
+
+// "Colored border on input box" toggle (below the filter-replies toggle).
+// On (default)
+// keeps the brand-accent outline on the in-feed filter box; off swaps it for
+// the platform's native card border. The on state is stored as key-absence
+// (like brandColor's default) so untouched installs keep following any
+// future default change; the content script applies writes live.
+function setupColoredBorderToggle() {
+  const el = document.getElementById('coloredBorderToggle') as HTMLInputElement | null;
+  if (!el) return; // in-app (iOS) popup builds may omit this section
+  getStorage(['coloredBorder'])
+    .then(data => { el.checked = data.coloredBorder !== false; })
+    .catch(err => console.error('[Popup] Failed to load border toggle:', err));
+  el.addEventListener('change', () => {
+    const write = el.checked
+      ? removeStorage(['coloredBorder'])
+      : setStorage({ coloredBorder: false });
+    write.catch(err => console.error('[Popup] Failed to save border toggle:', err));
+  });
+}
+
+function initAccentColorPicker({ chip, svArea, svThumb, hueInput, hexInput, rInput, gInput, bInput, swatchesEl, resetBtn, eyedropperBtn }: {
+  chip: HTMLElement;
+  svArea: HTMLElement;
+  svThumb: HTMLElement;
+  hueInput: HTMLInputElement;
+  hexInput: HTMLInputElement;
+  rInput: HTMLInputElement;
+  gInput: HTMLInputElement;
+  bInput: HTMLInputElement;
+  swatchesEl: HTMLElement;
+  resetBtn: HTMLElement;
+  eyedropperBtn: HTMLElement;
+}) {
+  // HSV is the working state rather than RGB/hex: greys and blacks collapse
+  // hue/saturation in RGB, so round-tripping through hex on every drag would
+  // snap the hue slider and SV thumb to red the moment the color desaturates.
+  let h = 20, s = 0.7, v = 0.92; // placeholder until the stored color loads
+
+  const currentHex = () => rgbToHex(...hsvToRgb(h, s, v));
+
+  // Trailing THROTTLE (not debounce) on storage writes: a debounce would
+  // keep resetting during a continuous drag and nothing would reach the
+  // page until pointerup. Throttling writes every ~80ms mid-drag so open
+  // feed tabs recolor live while still capping storage.onChanged fan-out;
+  // writeNow reads the CURRENT color when the timer fires, so the last
+  // position in each window is what lands.
+  const SAVE_THROTTLE_MS = 80;
+  let saveTimer: ReturnType<typeof setTimeout> | undefined;
+  function writeNow() {
+    saveTimer = undefined;
+    const hex = currentHex();
+    // Storing the default would pin users to today's orange if the brand
+    // color ever changes — an untouched/reset picker keeps the key absent
+    // so content.css's fallback stays authoritative.
+    const write = hex === DEFAULT_BRAND_COLOR
+      ? removeStorage(['brandColor'])
+      : setStorage({ brandColor: hex });
+    write.catch(err => console.error('[Popup] Failed to save accent color:', err));
+  }
+  function save() {
+    if (saveTimer !== undefined) return; // a write is already scheduled for this window
+    saveTimer = setTimeout(writeNow, SAVE_THROTTLE_MS);
+  }
+  // Closing the popup kills its JS instantly, dropping any pending throttled
+  // write — flush when a drag ends or the popup loses focus.
+  function flushSave() {
+    if (saveTimer !== undefined) {
+      clearTimeout(saveTimer);
+      writeNow();
+    }
+  }
+  window.addEventListener('blur', flushSave);
+
+  interface RenderOpts { skipHex?: boolean; skipRgb?: boolean }
+  function render(opts: RenderOpts = {}) {
+    const [r, g, b] = hsvToRgb(h, s, v);
+    const hex = rgbToHex(r, g, b);
+    svArea.style.setProperty('--cp-hue-color', `hsl(${Math.round(h)}, 100%, 50%)`);
+    const thumb = svThumb.style;
+    thumb.left = `${s * 100}%`;
+    thumb.top = `${(1 - v) * 100}%`;
+    thumb.background = hex;
+    hueInput.value = String(Math.round(h));
+    // Skip rewriting whichever field the user is typing in — normalizing
+    // "e8" to "#0000e8" mid-keystroke would fight the input.
+    if (!opts.skipHex) {
+      hexInput.value = hex;
+      hexInput.classList.remove('invalid');
+    }
+    if (!opts.skipRgb) {
+      rInput.value = String(r);
+      gInput.value = String(g);
+      bInput.value = String(b);
+    }
+    chip.style.background = hex;
+    swatchesEl.querySelectorAll<HTMLElement>('.cp-swatch').forEach(el => {
+      el.classList.toggle('selected', el.dataset.color === hex);
+    });
+  }
+
+  function setFromRgb(r: number, g: number, b: number, opts: RenderOpts = {}) {
+    const [hh, ss, vv] = rgbToHsv(r, g, b);
+    // Achromatic colors carry no hue (and black no saturation) — keep the
+    // previous values so the hue slider / SV thumb don't jump to the origin.
+    if (ss > 0) h = hh;
+    if (vv > 0) s = ss;
+    v = vv;
+    render(opts);
+  }
+
+  function setFromHex(hex: string, opts: RenderOpts = {}): boolean {
+    const rgb = hexToRgb(hex);
+    if (!rgb) return false;
+    setFromRgb(...rgb, opts);
+    return true;
+  }
+
+  // Saturation/brightness plane: pointer capture so drags keep tracking
+  // outside the square, plus arrow-key nudging for keyboard users.
+  const clamp01 = (n: number) => Math.max(0, Math.min(1, n));
+  function svPick(e: PointerEvent) {
+    const rect = svArea.getBoundingClientRect();
+    s = clamp01((e.clientX - rect.left) / rect.width);
+    v = clamp01(1 - (e.clientY - rect.top) / rect.height);
+    render();
+    save();
+  }
+  svArea.addEventListener('pointerdown', (e) => {
+    svArea.setPointerCapture(e.pointerId);
+    svArea.focus();
+    svPick(e);
+  });
+  svArea.addEventListener('pointermove', (e) => {
+    if (e.buttons & 1) svPick(e);
+  });
+  svArea.addEventListener('pointerup', flushSave);
+  svArea.addEventListener('keydown', (e) => {
+    const step = e.shiftKey ? 0.1 : 0.02;
+    let handled = true;
+    switch (e.key) {
+      case 'ArrowLeft': s = clamp01(s - step); break;
+      case 'ArrowRight': s = clamp01(s + step); break;
+      case 'ArrowUp': v = clamp01(v + step); break;
+      case 'ArrowDown': v = clamp01(v - step); break;
+      default: handled = false;
+    }
+    if (handled) {
+      e.preventDefault();
+      render();
+      save();
+    }
+  });
+
+  hueInput.addEventListener('input', () => {
+    h = Number(hueInput.value);
+    render();
+    save();
+  });
+
+  hexInput.addEventListener('input', () => {
+    const normalized = normalizeHexColor(hexInput.value);
+    hexInput.classList.toggle('invalid', !normalized);
+    if (normalized) {
+      setFromHex(normalized, { skipHex: true });
+      save();
+    }
+  });
+  // On commit, snap the field to canonical form (or back to a valid value).
+  hexInput.addEventListener('change', () => render());
+
+  for (const input of [rInput, gInput, bInput]) {
+    input.addEventListener('input', () => {
+      const channels = [rInput, gInput, bInput].map(el => {
+        const n = Number(el.value);
+        return el.value.trim() !== '' && Number.isFinite(n) ? Math.max(0, Math.min(255, Math.round(n))) : null;
+      });
+      if (channels.every(c => c !== null)) {
+        setFromRgb(channels[0], channels[1], channels[2], { skipRgb: true });
+        save();
+      }
+    });
+    input.addEventListener('change', () => render());
+  }
+
+  // Preset swatches
+  const swatchesHtml = BRAND_COLOR_PRESETS.map(color =>
+    `<button type="button" class="cp-swatch" role="option" data-color="${color}"
+      style="background: ${color}" title="${color}" aria-label="${color}"></button>`
+  ).join('');
+  swatchesEl.replaceChildren(parseHTML(swatchesHtml));
+  swatchesEl.querySelectorAll<HTMLElement>('.cp-swatch').forEach(el => {
+    el.addEventListener('click', () => {
+      setFromHex(el.dataset.color || DEFAULT_BRAND_COLOR);
+      save();
+    });
+  });
+
+  // Screen eyedropper — Chrome 95+ only; the button stays hidden elsewhere.
+  if (window.EyeDropper) {
+    eyedropperBtn.style.display = '';
+    eyedropperBtn.addEventListener('click', () => { (async () => {
+      const result = await new window.EyeDropper!().open();
+      if (setFromHex(result.sRGBHex)) save();
+    })().catch(() => { /* user dismissed the eyedropper */ }); });
+  }
+
+  resetBtn.addEventListener('click', () => {
+    setFromHex(DEFAULT_BRAND_COLOR);
+    save();
+  });
+
+  // Seed from storage (async; the default placeholder shows until this lands).
+  getStorage(['brandColor'])
+    .then(data => {
+      const stored = typeof data.brandColor === 'string' ? normalizeHexColor(data.brandColor) : null;
+      setFromHex(stored || DEFAULT_BRAND_COLOR);
+    })
+    .catch(err => console.error('[Popup] Failed to load accent color:', err));
+}
+
 function setupModelRadios() {
   document.getElementById('modelRadioImbue')?.addEventListener('change', asyncHandler(() => selectModel('imbue')));
   document.getElementById('modelRadioLocal')?.addEventListener('change', asyncHandler(async () => {
