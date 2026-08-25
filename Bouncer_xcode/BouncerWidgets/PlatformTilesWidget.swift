@@ -2,8 +2,8 @@
 //  PlatformTilesWidget.swift
 //  BouncerWidgets
 //
-//  A row of tiles — X, Instagram, LinkedIn by default — meant to sit on the
-//  home screen where those apps' own icons would be.
+//  A row of tiles — X and LinkedIn — meant to sit on the home screen where
+//  those apps' own icons would be.
 //
 //  WHY A WIDGET AND NOT A SHORTCUT
 //
@@ -101,7 +101,7 @@ private struct Provider: AppIntentTimelineProvider {
     }
 
     private static let defaultTiles: [Tile] =
-        [WidgetSlot.x, .instagram, .linkedin].compactMap(\.tile)
+        [WidgetSlot.x, .linkedin].compactMap(\.tile)
 }
 
 // MARK: - The widget
@@ -119,8 +119,8 @@ struct PlatformTilesWidget: Widget {
                 // designed against is not it.
                 .containerBackground(entry.tint.inkColor, for: .widget)
         }
-        .configurationDisplayName("Your feeds")
-        .description("Your platforms, opened in Bouncer. Long-press the widget to choose which ones.")
+        .configurationDisplayName("Your Platforms")
+        .description("Opens your platforms within Bouncer. Long-press the widget to configure.")
         .supportedFamilies([.systemMedium])
     }
 }
@@ -164,9 +164,9 @@ private struct TileView: View {
                         // shape it is centred in.
                         .font(.system(size: 26, weight: .bold, design: .rounded))
                         .foregroundStyle(tint.inkColor)
-                        // "Instagram" is two letters where the others are one
-                        // and a bit; let the wide one shrink rather than making
-                        // every mark small enough for the worst case.
+                        // Marks are short today, but a longer one should
+                        // shrink rather than force every mark down to the size
+                        // of the worst case.
                         .minimumScaleFactor(0.7)
                         .lineLimit(1)
                 }

@@ -6,15 +6,20 @@
 //  Intent so iOS can build the editor itself: long-press the widget, Edit
 //  Widget, and these parameters appear as pickers.
 //
-//  THREE SLOTS RATHER THAN A COUNT AND A LIST
+//  SLOTS RATHER THAN A COUNT AND A LIST
 //
 //  "How many" and "which ones" sound like two settings and are really one. A
 //  count parameter would have to be kept in step with a list whose length it
 //  claims to describe — and AppIntents has no way to show or hide a picker
-//  based on another parameter's value, so a widget set to show two would still
-//  offer a third platform picker underneath, doing nothing. Three slots, each
-//  of which may be None, expresses both facts once: the widget shows as many
-//  tiles as are filled.
+//  based on another parameter's value, so a widget set to show one would still
+//  offer a second platform picker underneath, doing nothing. A slot per
+//  possible tile, each of which may be None, expresses both facts once: the
+//  widget shows as many tiles as are filled.
+//
+//  There are two slots because there are two platforms. Instagram is not one
+//  of them yet — Bouncer has no Instagram feed on this branch, so offering it
+//  here would be offering a tile that opens somebody else's app. When it
+//  ships, it is a case and a slot.
 //
 
 import AppIntents
@@ -26,7 +31,6 @@ import WidgetKit
 /// deliberate choice where an empty optional reads as unfinished setup.
 enum WidgetSlot: String, AppEnum {
     case x
-    case instagram
     case linkedin
     case none
 
@@ -37,7 +41,6 @@ enum WidgetSlot: String, AppEnum {
     static var caseDisplayRepresentations: [WidgetSlot: DisplayRepresentation] {
         [
             .x: DisplayRepresentation(title: "X"),
-            .instagram: DisplayRepresentation(title: "Instagram"),
             .linkedin: DisplayRepresentation(title: "LinkedIn"),
             .none: DisplayRepresentation(title: "None"),
         ]
@@ -47,11 +50,6 @@ enum WidgetSlot: String, AppEnum {
     var tile: Tile? {
         switch self {
         case .x: return Tile(route: "twitter", mark: "X", name: "X")
-        // Not a Bouncer platform on this branch — there is no Instagram entry
-        // in platforms.config.json and no feed to open. The app answers this
-        // route by opening the real Instagram app, which is where the gate's
-        // shield is waiting. See SceneDelegate.openRealApp(for:).
-        case .instagram: return Tile(route: "instagram", mark: "IG", name: "Instagram")
         case .linkedin: return Tile(route: "linkedin", mark: "in", name: "LinkedIn")
         case .none: return nil
         }
@@ -77,16 +75,13 @@ struct TilesConfigurationIntent: WidgetConfigurationIntent {
     @Parameter(title: "First", default: .x)
     var first: WidgetSlot
 
-    @Parameter(title: "Second", default: .instagram)
+    @Parameter(title: "Second", default: .linkedin)
     var second: WidgetSlot
 
-    @Parameter(title: "Third", default: .linkedin)
-    var third: WidgetSlot
-
     /// The row, left to right, with empty slots closed up rather than left as
-    /// gaps — three tiles set to None, X, None should read as one tile, not as
-    /// one tile marooned in the middle.
+    /// gaps — None then X should read as one tile at the left, not as one tile
+    /// pushed to the right of a hole.
     var tiles: [Tile] {
-        [first, second, third].compactMap(\.tile)
+        [first, second].compactMap(\.tile)
     }
 }

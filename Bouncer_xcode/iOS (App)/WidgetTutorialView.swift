@@ -24,24 +24,19 @@ struct WidgetTutorialView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var step = 0
 
-    /// Auto-advancing, and looping. Nobody taps Next through a tutorial they
-    /// opened out of curiosity — and the loop means arriving mid-way costs
-    /// nothing, because it comes round again.
-    private let steps: [Step] = [
-        Step(caption: "Touch and hold an empty spot on your home screen.",
-             detail: "The icons start to wiggle."),
-        Step(caption: "Tap **Edit** at the top left, then **Add Widget**.",
-             detail: "That opens the widget gallery."),
-        Step(caption: "Search for **Bouncer** and pick **Your feeds**.",
-             detail: "It comes in one size, the wide one."),
-        Step(caption: "Tap **Add Widget**, then **Done**.",
-             detail: "Long-press it later to choose which platforms it shows."),
+    /// Tapped through, not timed.
+    ///
+    /// A timer decides how long a step is worth looking at on behalf of someone
+    /// who can see it and you cannot — too slow for a reader, too fast for
+    /// anyone matching the drawing against their own screen. A tap is the
+    /// reader's own pace, and it wants no label: the dots say there is more,
+    /// and tapping the thing in front of you is the first thing anyone tries.
+    private let steps: [String] = [
+        "Touch and hold an empty spot on your home screen.",
+        "Tap **Edit** at the top left, then **Add Widget**.",
+        "Search for **Bouncer** and pick **Your Platforms**.",
+        "Tap **Add Widget**, then **Done**.",
     ]
-
-    struct Step {
-        let caption: String
-        let detail: String
-    }
 
     var body: some View {
         NavigationStack {
@@ -54,21 +49,13 @@ struct WidgetTutorialView: View {
 
                 Spacer(minLength: 8)
 
-                VStack(spacing: 8) {
-                    Text(.init(steps[step].caption))
-                        .font(.system(size: 18, weight: .semibold))
-                        .multilineTextAlignment(.center)
-                        .fixedSize(horizontal: false, vertical: true)
-
-                    Text(steps[step].detail)
-                        .font(.system(size: 15))
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                // A fixed height so the phone above does not shuffle up and
-                // down as captions of different lengths come and go.
-                .frame(height: 76, alignment: .top)
+                Text(.init(steps[step]))
+                    .font(.system(size: 18, weight: .semibold))
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                    // A fixed height so the phone above does not shuffle up and
+                    // down as captions of different lengths come and go.
+                    .frame(height: 52, alignment: .top)
                 .padding(.horizontal, 28)
                 .id(step)
                 .transition(.opacity)
@@ -94,17 +81,11 @@ struct WidgetTutorialView: View {
                     Button("Done") { dismiss() }
                 }
             }
-            // Tap anywhere to move on, for anyone who reads faster than the
-            // timer runs.
+            // The whole sheet is the control. Wrapping rather than stopping
+            // at the end: a fourth tap that does nothing reads as broken, and
+            // Done is right there in the bar for leaving.
             .contentShape(Rectangle())
             .onTapGesture { advance() }
-            .task {
-                while !Task.isCancelled {
-                    try? await Task.sleep(nanoseconds: 2_600_000_000)
-                    if Task.isCancelled { return }
-                    advance()
-                }
-            }
         }
     }
 
@@ -253,7 +234,7 @@ private struct GalleryMock: View {
 
             WidgetMock()
 
-            Text("Your feeds")
+            Text("Your Platforms")
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.85))
 
@@ -274,7 +255,7 @@ private struct WidgetMock: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            ForEach(["X", "IG", "in"], id: \.self) { mark in
+            ForEach(["X", "in"], id: \.self) { mark in
                 VStack(spacing: 4) {
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
                         .fill(tint.accentColor)
