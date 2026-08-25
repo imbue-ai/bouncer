@@ -107,6 +107,7 @@ public enum Gate {
         static let shieldTint = "gate.shieldTint"
         static let lastShieldPlatform = "gate.lastShieldPlatform"
         static let lastShieldPlatformAt = "gate.lastShieldPlatformAt"
+        static let lastHandoffResult = "gate.lastHandoffResult"
         static let lastShieldRenderAt = "gate.lastShieldRenderAt"
         static let lastShieldActionAt = "gate.lastShieldActionAt"
     }
@@ -329,6 +330,23 @@ public enum Gate {
     }
 
     public static var isSessionOpen: Bool { sessionOpenedAt != nil }
+
+    /// What the notification daemon said about the last hand-off we posted,
+    /// or nil if we have never posted one.
+    ///
+    /// The hand-off is posted by an extension, moments before iOS kills it.
+    /// When nothing arrives there are three quite different explanations — the
+    /// button never ran, the request was refused, or the request was accepted
+    /// and the system chose not to show it — and from inside the app they are
+    /// indistinguishable. This is the extension writing down which one it was
+    /// on its way out.
+    public static var lastHandoffResult: String? {
+        get { defaults.string(forKey: Key.lastHandoffResult) }
+        set {
+            defaults.set(newValue, forKey: Key.lastHandoffResult)
+            defaults.synchronize()
+        }
+    }
 
     // MARK: - Which app is behind the shield
 

@@ -52,6 +52,12 @@ extension Gate {
         }
         parts.append("shieldDrawn=\(ago(lastShieldRenderAt))")
         parts.append("shieldTapped=\(ago(lastShieldActionAt))")
+        // The three explanations for a hand-off that never arrived, separated:
+        // NEVER (the button did not run), REFUSED (the daemon rejected it), or
+        // accepted (it was posted, and something downstream — a Focus mode,
+        // notifications off for the app — chose not to show it).
+        parts.append("handoff=\(lastHandoffAt == nil ? "NEVER" : (lastHandoffResult ?? "posted"))")
+        if let at = lastHandoffAt { parts.append("handoffAt=\(ago(at))") }
         let step = checkInStepSeconds
         let checkIn = step == 0 ? "off"
             : step % 60 == 0 ? "\(step / 60)m"

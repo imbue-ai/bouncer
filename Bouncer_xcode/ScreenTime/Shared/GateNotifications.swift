@@ -53,6 +53,7 @@ public enum GateNotifications {
         body: String,
         route: String?,
         after seconds: TimeInterval?,
+        isHandoff: Bool = false,
         completion: (() -> Void)? = nil
     ) {
         let content = UNMutableNotificationContent()
@@ -60,6 +61,18 @@ public enum GateNotifications {
         content.body = body
         content.sound = .default
         content.categoryIdentifier = Gate.Notify.category
+        // The hand-off is the one notification here that is useless if it is
+        // held back: it exists to be tapped in the next few seconds, and a
+        // Focus mode silencing it is a shield button that appears to do
+        // nothing. Time Sensitive is the classification for exactly that, and
+        // it is the honest one — this is not an announcement, it is the second
+        // half of a tap the user already made.
+        //
+        // Requires the Time Sensitive Notifications capability on the app and
+        // on the extension that posts. Without it iOS quietly downgrades this
+        // to .active, which is the behaviour we already had, so setting it is
+        // safe either way — it just does nothing until the capability is on.
+        if isHandoff { content.interruptionLevel = .timeSensitive }
         if let route {
             content.userInfo = [Gate.Notify.routeKey: route]
         }
@@ -78,7 +91,13 @@ public enum GateNotifications {
         // signals it is finished, iOS tears the process down, and a request
         // still in flight goes with it. Callers that have a completion handler
         // to hold open must wait for this one.
-        UNUserNotificationCenter.current().add(request) { _ in
+        UNUserNotificationCenter.current().add(request) { error in
+            if isHandoff {
+                // Written before the completion fires, so it is on disk before
+                // the caller lets iOS kill this process.
+                Gate.lastHandoffResult = error.map { "REFUSED: \($0.localizedDescription)" }
+                    ?? "accepted"
+            }
             guard let completion else { return }
             DispatchQueue.main.async(execute: completion)
         }
@@ -107,6 +126,7 @@ public enum GateNotifications {
             body: "Tap to open your viewer.",
             route: platform,
             after: nil,
+            isHandoff: true,
             completion: completion
         )
     }

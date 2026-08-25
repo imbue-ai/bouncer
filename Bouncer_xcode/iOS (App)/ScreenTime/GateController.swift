@@ -18,6 +18,7 @@ internal import Combine
 import FamilyControls
 import ManagedSettings
 import DeviceActivity
+import UserNotifications
 
 @MainActor
 final class GateController: ObservableObject {
@@ -218,6 +219,40 @@ final class GateController: ObservableObject {
         @unknown default: status = "unknown"
         }
         print("\(Gate.report(authorization: status)) \(pluginReport()) at=\(context)")
+        logNotificationState(context)
+    }
+
+    /// What iOS will actually do with a notification we post.
+    ///
+    /// Separate from the line above because it can only be read
+    /// asynchronously, and separate from `authorizationStatus` because
+    /// "allowed" is not one fact. A Focus mode, alerts switched off, or
+    /// delivery set to the scheduled summary each mean the hand-off is
+    /// accepted and never seen — which from the shield looks exactly like a
+    /// button that does nothing.
+    private func logNotificationState(_ context: String) {
+        Task {
+            let s = await UNUserNotificationCenter.current().notificationSettings()
+            func on(_ v: UNNotificationSetting) -> String {
+                switch v {
+                case .enabled: return "on"
+                case .disabled: return "OFF"
+                default: return "n/a"
+                }
+            }
+            let auth: String
+            switch s.authorizationStatus {
+            case .authorized: auth = "authorized"
+            case .provisional: auth = "provisional(QUIET)"
+            case .denied: auth = "DENIED"
+            case .notDetermined: auth = "NOT ASKED"
+            default: auth = "unknown"
+            }
+            print("[Bouncer Gate] notifications=\(auth) alerts=\(on(s.alertSetting)) "
+                + "banners=\(s.alertStyle == .none ? "NONE" : "yes") "
+                + "lockScreen=\(on(s.lockScreenSetting)) centre=\(on(s.notificationCenterSetting)) "
+                + "timeSensitive=\(on(s.timeSensitiveSetting)) at=\(context)")
+        }
     }
 
     /// What is actually installed alongside us, and when it was built.
