@@ -1173,19 +1173,21 @@ struct BouncerSettingsView: View {
                             .frame(width: 24)
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Focused viewing")
-                            Text(Gate.isArmed
-                                 ? "On — gated apps ask what you're here for"
-                                 : "Off")
+                            Text(Gate.isArmed ? "On" : "Off")
                                 .font(.footnote)
                                 .foregroundStyle(.secondary)
                         }
                     }
                 }
+            }
 
-                // The same walkthrough the picker's pill opens. It belongs
-                // here too: the pill is dismissible and dismissed for good, so
-                // without this the only route to it is one the user may have
-                // closed months ago.
+            // Its own section, not a second row under Focused viewing: the
+            // walkthrough is about the home screen and has nothing to do with
+            // the gate, and sharing a panel implied it was part of setting one
+            // up. The same one the picker's pill opens — that pill is
+            // dismissible and dismissed for good, so without this the only
+            // route to it is one the user may have closed months ago.
+            Section {
                 Button {
                     showingWidgetTutorial = true
                 } label: {

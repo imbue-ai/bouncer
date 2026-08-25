@@ -71,7 +71,7 @@ struct GateSettingsView: View {
                 // and the gate has already armed itself. This is how it gets
                 // turned OFF — which has to stay one tap, or the whole thing
                 // reads as a trap rather than a door.
-                Toggle("Gate is on", isOn: Binding(
+                Toggle("Toggle Focused Viewing", isOn: Binding(
                     get: { gate.isArmed },
                     set: { $0 ? gate.arm() : gate.disarm() }
                 ))
@@ -80,10 +80,6 @@ struct GateSettingsView: View {
                     Label("X is open to you right now", systemImage: "door.left.hand.open")
                         .foregroundStyle(.orange)
                     Button("Close it now") { gate.closeSession() }
-                }
-            } footer: {
-                if gate.isArmed {
-                    Text("Opening a gated app now asks what you're here for.")
                 }
             }
         }

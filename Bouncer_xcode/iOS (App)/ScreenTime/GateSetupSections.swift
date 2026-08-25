@@ -155,15 +155,6 @@ struct GateSetupSections: View {
             }
         } header: {
             Text(gatedHeader)
-        } footer: {
-            // The gate arms itself the moment it has both halves — see
-            // GateController.armIfReady — so this is the last decision, not a
-            // step before one. Nothing is said before that: the heading is
-            // already an instruction, and repeating it underneath the button
-            // it describes is the kind of copy people learn to skip.
-            if gate.hasSelection {
-                Text("Bouncer's gate is active. Swipe any app to stop gating it.")
-            }
         }
     }
 
