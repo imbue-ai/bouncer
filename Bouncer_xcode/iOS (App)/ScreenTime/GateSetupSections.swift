@@ -27,6 +27,7 @@
 import FamilyControls
 import ManagedSettings
 import SwiftUI
+import WidgetKit
 
 struct GateSetupSections: View {
 
@@ -197,7 +198,14 @@ struct GateSetupSections: View {
                 .onDisappear { commitName() }
 
             ShieldTintPicker(selection: $tint, name: name)
-                .onChange(of: tint) { _, newValue in Gate.shieldTint = newValue }
+                .onChange(of: tint) { _, newValue in
+                    Gate.shieldTint = newValue
+                    // The home-screen tiles read the same pair. Widget
+                    // timelines are cached until something asks otherwise, so
+                    // without this the row keeps yesterday's colour until iOS
+                    // happens to refresh it.
+                    WidgetCenter.shared.reloadAllTimelines()
+                }
         }
     }
 

@@ -8,6 +8,8 @@
 
 /* Begin PBXBuildFile section */
 		094070F42F90061302C804DA /* GateSchedule.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6DC81F7547F887FEC4646F94 /* GateSchedule.swift */; };
+		AA10WIDGETINTENTBF000001 /* TilesConfigurationIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA10WIDGETINTENTREF00001 /* TilesConfigurationIntent.swift */; };
+		AA10WIDGETGATEBF00000001 /* Gate.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD018D5469B4CB14060D2DC0 /* Gate.swift */; };
 		AA07WIDGETBUNDLEBF000001 /* BouncerWidgetsBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA07WIDGETBUNDLEREF00001 /* BouncerWidgetsBundle.swift */; };
 		AA07WIDGETTILESBF0000001 /* PlatformTilesWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA07WIDGETTILESREF000001 /* PlatformTilesWidget.swift */; };
 		AA07WIDGETEMBEDBF0000001 /* BouncerWidgets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = AA07WIDGETPRODUCT0000001 /* BouncerWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
@@ -170,6 +172,8 @@
 		25EACE9DD44CFFDF36B30A6A /* GateController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GateController.swift; sourceTree = "<group>"; };
 		34C5CF4C271743418F6A3931 /* BouncerActivityMonitor.entitlements */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.entitlements; path = BouncerActivityMonitor.entitlements; sourceTree = "<group>"; };
 		AA07WIDGETPRODUCT0000001 /* BouncerWidgets.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = BouncerWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		AA10WIDGETINTENTREF00001 /* TilesConfigurationIntent.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TilesConfigurationIntent.swift; sourceTree = "<group>"; };
+		AA10WIDGETENTREF00000001 /* BouncerWidgets.entitlements */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.entitlements; path = BouncerWidgets.entitlements; sourceTree = "<group>"; };
 		AA07WIDGETBUNDLEREF00001 /* BouncerWidgetsBundle.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BouncerWidgetsBundle.swift; sourceTree = "<group>"; };
 		AA07WIDGETTILESREF000001 /* PlatformTilesWidget.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PlatformTilesWidget.swift; sourceTree = "<group>"; };
 		AA07WIDGETPLISTREF000001 /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
@@ -338,7 +342,9 @@
 			children = (
 				AA07WIDGETBUNDLEREF00001 /* BouncerWidgetsBundle.swift */,
 				AA07WIDGETTILESREF000001 /* PlatformTilesWidget.swift */,
+				AA10WIDGETINTENTREF00001 /* TilesConfigurationIntent.swift */,
 				AA07WIDGETPLISTREF000001 /* Info.plist */,
+				AA10WIDGETENTREF00000001 /* BouncerWidgets.entitlements */,
 			);
 			path = BouncerWidgets;
 			sourceTree = SOURCE_ROOT;
@@ -874,6 +880,8 @@
 			files = (
 				AA07WIDGETBUNDLEBF000001 /* BouncerWidgetsBundle.swift in Sources */,
 				AA07WIDGETTILESBF0000001 /* PlatformTilesWidget.swift in Sources */,
+				AA10WIDGETINTENTBF000001 /* TilesConfigurationIntent.swift in Sources */,
+				AA10WIDGETGATEBF00000001 /* Gate.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1099,6 +1107,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_ENTITLEMENTS = BouncerWidgets/BouncerWidgets.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = LDDYAR29MP;
@@ -1127,6 +1136,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_ENTITLEMENTS = BouncerWidgets/BouncerWidgets.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = LDDYAR29MP;
