@@ -2761,6 +2761,22 @@ function buildTwitterCard(post: FilteredPost): HTMLElement {
   const postRow = document.createElement('div');
   postRow.className = 'slop-post';
 
+  // Repost header — mirrors the "<name> reposted" socialContext line above
+  // the tweet, since the card below shows the ORIGINAL author's name/avatar.
+  if (postContent.isRepost) {
+    const repostRow = document.createElement('div');
+    repostRow.className = 'slop-repost-header';
+    repostRow.replaceChildren(parseHTML(
+      '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">' +
+      '<path fill="currentColor" d="M4.75 3.79l4.603 4.3-1.706 1.82L6 8.38v7.37c0 .97.784 1.75 1.75 1.75H13V20H7.75c-2.347 0-4.25-1.9-4.25-4.25V8.38L1.853 9.91.147 8.09l4.603-4.3zm11.5 2.71H11V4h5.25c2.347 0 4.25 1.9 4.25 4.25v7.37l1.647-1.53 1.706 1.82-4.603 4.3-4.603-4.3 1.706-1.82L18 15.62V8.25c0-.97-.784-1.75-1.75-1.75z"/>' +
+      '</svg>'
+    ));
+    const label = document.createElement('span');
+    label.textContent = postContent.repostHeader || 'Reposted';
+    repostRow.appendChild(label);
+    wrapper.appendChild(repostRow);
+  }
+
   // Avatar — show image if available, otherwise show initial as fallback
   const avatar = document.createElement('div');
   avatar.className = 'slop-post-avatar';
@@ -3236,9 +3252,21 @@ export function showReasoningPopup(article: HTMLElement, x: number, y: number) {
     bodyHtml = `<div class="reasoning-text">${escapeHtml(cleanReasoning(reasoning) ?? '')}</div>`;
   }
 
+  // Surface the adapter's structural detection (what the deterministic
+  // repost/quote/video filters key on) so it can be eyeballed per tweet.
+  const flags = [
+    ...(content.isRepost ? ['Repost'] : []),
+    ...(content.quote ? ['Quote'] : []),
+    ...(content.hasVideo ? ['Video'] : []),
+  ];
+  const flagsHtml = flags.map(f => `<span class="reasoning-flag">${f}</span>`).join('');
+
   popup.replaceChildren(parseHTML(`
     <div class="reasoning-header">
-      <span class="reasoning-status ${statusClass}">${statusText}</span>
+      <span class="reasoning-header-left">
+        <span class="reasoning-status ${statusClass}">${statusText}</span>
+        ${flagsHtml}
+      </span>
       <button class="reasoning-close">&times;</button>
     </div>
     ${bodyHtml}

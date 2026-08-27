@@ -50,6 +50,9 @@ export function phraseAddNeedsReEvaluation(
 
 // Format a post's content into the string sent to the AI for evaluation.
 // This is also the basis for cache keys and feedback payloads.
+// Structural attributes (repost/quote/video) are deliberately NOT injected
+// here — they're handled deterministically (see shared/structural-filters.ts)
+// so the model can't overzealously match posts merely *about* those things.
 export function formatPostForEvaluation(post: PostContent): string {
   return `${post.author}: ${post.text}`;
 }

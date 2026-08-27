@@ -39,6 +39,13 @@ import {
 } from './ui';
 
 import { formatPostForEvaluation, phraseAddNeedsReEvaluation } from '../shared/utils';
+import {
+  findStructuralMatch,
+  structuralFilterKind,
+  STRUCTURAL_FILTER_SITES,
+  STRUCTURAL_KIND_LABELS,
+  type StructuralKind,
+} from '../shared/structural-filters';
 
 (function() {
   'use strict';
@@ -273,8 +280,11 @@ import { formatPostForEvaluation, phraseAddNeedsReEvaluation } from '../shared/u
   // watch cards), rather than the desktop retry-via-observer dance.
   const isInApp = typeof chrome !== 'undefined' && chrome._polyfilled;
 
-  // Evaluate a post using the background script
-  async function evaluatePost(article: HTMLElement) {
+  // Evaluate a post using the background script. With structuralOnly, only
+  // the deterministic structural filters run: a matching post hides, a
+  // non-matching post keeps its existing verdict untouched (no model call,
+  // no pending UI) — used when a phrase-add changed nothing the model sees.
+  async function evaluatePost(article: HTMLElement, structuralOnly = false) {
     console.log('[Bouncer] evaluatePost called, isInApp:', isInApp);
     // Guest trial exhausted — stop filtering until the user signs in.
     if (isGuestLimitReached()) return;
@@ -328,10 +338,33 @@ import { formatPostForEvaluation, phraseAddNeedsReEvaluation } from '../shared/u
       return;
     }
 
+    // Structural filter phrases ("no retweets", "quote tweets", "videos")
+    // resolve deterministically from adapter-extracted post attributes — no
+    // model call, zero false positives. getSettings() mirrors this by
+    // excluding them from the category list the model sees.
+    let structuralMatch: { phrase: string; kind: StructuralKind } | null = null;
+    if (STRUCTURAL_FILTER_SITES.has(adapter.siteId)) {
+      try {
+        structuralMatch = findStructuralMatch(await getDescriptions(descriptionsKey), content);
+      } catch { /* storage unavailable — fall through to the model */ }
+    }
+    if (structuralOnly && !structuralMatch) return;
+
     const evaluationId = crypto.randomUUID();
     registerEvaluation(evaluationId, article);
     try {
-      const evaluatePromise = chrome.runtime.sendMessage({
+      let response: PipelineResponse;
+      if (structuralMatch) {
+        response = {
+          shouldHide: true,
+          reasoning: `This post is ${STRUCTURAL_KIND_LABELS[structuralMatch.kind]}, matching your "${structuralMatch.phrase}" filter (detected from the post's structure, not by AI).`,
+          category: structuralMatch.phrase,
+          // Deterministic verdicts hide instantly, like cache hits — the
+          // verdict was knowable before the post rendered.
+          cached: true,
+        };
+      } else {
+        response = await chrome.runtime.sendMessage({
           type: 'evaluatePost',
           evaluationId,
           post: formatPostForEvaluation(content),
@@ -344,7 +377,7 @@ import { formatPostForEvaluation, phraseAddNeedsReEvaluation } from '../shared/u
           // AI-text threshold to these.
           isReply: adapter.isPermalinkView()
         });
-      const response = await evaluatePromise as PipelineResponse;
+      }
       releaseEvaluation(evaluationId);
 
       // Clear processing tracker when this post's evaluation completes
@@ -549,6 +582,23 @@ import { formatPostForEvaluation, phraseAddNeedsReEvaluation } from '../shared/u
       evaluatePost(article)
         .catch(err => console.error('[Bouncer] evaluatePost failed:', err))
         .finally(() => clearTimeout(pendingTimer));
+    });
+  }
+
+  // Apply only the deterministic structural filters to the visible feed —
+  // no model calls, no pending UI. Used when a phrase-add consists solely of
+  // structural phrases: the model's category set didn't change (the backend
+  // keeps its verdict cache for the same reason), so a full re-evaluation
+  // sweep would grey out the feed for nothing.
+  function applyStructuralFilters() {
+    const posts = findPosts();
+    const skipReplies = !filterReplies && adapter.isPermalinkView();
+    posts.forEach(article => {
+      if (adapter.getPostContainer(article).dataset.filteredByExtension) return;
+      if (adapter.isMainPost(article)) return;
+      if (skipReplies) return;
+      evaluatePost(article, true)
+        .catch(err => console.error('[Bouncer] structural filter sweep failed:', err));
     });
   }
 
@@ -806,11 +856,23 @@ import { formatPostForEvaluation, phraseAddNeedsReEvaluation } from '../shared/u
         // races that write; losing the race sweeps redundantly (the old
         // behavior), never skips a needed sweep.
         if (newDescs.length > oldDescs.length) {
-          getStorage(['aiFilterIntent']).then(data => {
-            if (phraseAddNeedsReEvaluation(oldDescs, newDescs, data.aiFilterIntent?.aiPhrases)) {
-              reEvaluateAllPosts();
-            }
-          }).catch(err => console.error('[Bouncer] phrase-add re-evaluation check failed:', err));
+          // Adds that are purely structural ("no retweets", "videos") change
+          // nothing the model sees — skip the full pending-UI sweep and just
+          // apply the deterministic filters to the visible feed.
+          const oldSet = new Set(oldDescs);
+          const added = newDescs.filter(p => !oldSet.has(p));
+          const onlyStructuralAdded = STRUCTURAL_FILTER_SITES.has(adapter.siteId)
+            && added.length > 0
+            && added.every(p => structuralFilterKind(p) !== null);
+          if (onlyStructuralAdded) {
+            applyStructuralFilters();
+          } else {
+            getStorage(['aiFilterIntent']).then(data => {
+              if (phraseAddNeedsReEvaluation(oldDescs, newDescs, data.aiFilterIntent?.aiPhrases)) {
+                reEvaluateAllPosts();
+              }
+            }).catch(err => console.error('[Bouncer] phrase-add re-evaluation check failed:', err));
+          }
         } else if (newDescs.length < oldDescs.length) {
           // Phrase removed via an out-of-band editor (iOS native sheet,
           // desktop popup) — mirror removeFilterPhrase's in-feed behavior

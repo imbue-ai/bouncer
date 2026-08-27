@@ -5,6 +5,7 @@ import { cacheKeyFor, GUEST_FILTER_LIMIT, isEmbeddedApp } from '../shared/utils'
 import { getStorage, setStorage, removeStorage, phraseSetKey } from '../shared/storage';
 import type { AiFilterIntentState, ContentToBackgroundMessage, LocalModelStatus } from '../types';
 import { refreshAiFilterIntent, pruneAiFilterPhrases, canJudgeAiIntent } from './ai-intent';
+import { STRUCTURAL_FILTER_SITES, structuralFilterKind } from '../shared/structural-filters';
 import { localEngine } from './local-model';
 import {
   initPipeline, loadCache, saveCache,
@@ -828,11 +829,31 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
       }
     }
 
-    const filtersChanged = Object.keys(changes).some(
+    const changedDescriptionKeys = Object.keys(changes).filter(
       key => key.startsWith('descriptions_')
     );
-    if (filtersChanged) {
+    const filtersChanged = changedDescriptionKeys.length > 0;
+    // Structural phrases ("no retweets", "videos") never reach the model —
+    // getSettings excludes them from its category list and the content
+    // script resolves them deterministically. An edit that only touches
+    // structural phrases leaves the model-visible set identical, so wiping
+    // the verdict cache (and flushing in-flight batches) would just force a
+    // pointless re-classification of the whole feed.
+    const modelVisibleFiltersChanged = changedDescriptionKeys.some(key => {
+      const siteId = key.slice('descriptions_'.length);
+      const modelVisible = (v: unknown): string[] => {
+        const arr = Array.isArray(v) ? (v as string[]) : [];
+        return STRUCTURAL_FILTER_SITES.has(siteId)
+          ? arr.filter(p => structuralFilterKind(p) === null)
+          : arr;
+      };
+      return phraseSetKey(modelVisible(changes[key].oldValue))
+        !== phraseSetKey(modelVisible(changes[key].newValue));
+    });
+    if (modelVisibleFiltersChanged) {
       handleFilterPackChange();
+    }
+    if (filtersChanged) {
       // Deletions resolve locally and immediately: dropping the last AI
       // phrase turns AI detection off right now, not after the debounce.
       pruneAiFilterPhrases().catch(err =>
