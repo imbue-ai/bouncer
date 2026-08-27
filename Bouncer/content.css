@@ -92,6 +92,26 @@
   letter-spacing: 0.5px;
 }
 
+.reasoning-header-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Repost/video detection badges — mirror .reasoning-status sizing but muted,
+   so they read as metadata rather than a verdict. */
+.reasoning-flag {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 4px 8px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  background: #2a3843;
+  color: #8899a6;
+  border: 1px solid #38444d;
+}
+
 .status-show {
   background: #00ba7c;
   color: #fff;
@@ -361,6 +381,24 @@
   display: flex;
   gap: 12px;
   padding: 14px 16px 0;
+}
+
+/* "<name> reposted" line above a reposted tweet's card. Indented so the icon
+   sits in the avatar gutter and the text lands near the name column, like
+   Twitter's own socialContext header. */
+.slop-repost-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 16px 0 44px;
+  margin-bottom: -6px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #71767b;
+}
+
+.slop-repost-header svg {
+  flex-shrink: 0;
 }
 
 .slop-post-avatar {
@@ -1961,6 +1999,9 @@ html.bouncer-plain-border .filter-phrases-bottom .filter-phrases-container {
 }
 .filtered-view-container.light-mode .slop-post-avatar {
   background: #cfd9de;
+}
+.filtered-view-container.light-mode .slop-repost-header {
+  color: rgb(83, 100, 113);
 }
 
 /* Dark mode for filtered modal */

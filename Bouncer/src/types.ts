@@ -104,6 +104,19 @@ export interface PostContent {
   hasMediaContainer: boolean;
   fromStore?: boolean;
   mediaBlurred?: boolean;
+  /** True when the post is a repost/retweet (resurfaced by someone other than
+   *  its author). Drives the deterministic structural filters
+   *  (shared/structural-filters.ts) so phrases like "no retweets" resolve
+   *  without a model call. */
+  isRepost?: boolean;
+  /** Display text for the repost header, e.g. "Alice reposted". Taken verbatim
+   *  from the DOM's socialContext header when available (locale-correct), or
+   *  synthesized from the reposter's name in the store path. Rendered above
+   *  the card in the filtered-posts panel. */
+  repostHeader?: string | null;
+  /** True when the post contains a video. Same structural-filter mechanism as
+   *  `isRepost`. */
+  hasVideo?: boolean;
   /** LinkedIn-only: connection degree ("1st", "2nd", "3rd+", or null when
    *  not surfaced by the post). Other adapters leave this undefined. */
   degree?: string | null;
