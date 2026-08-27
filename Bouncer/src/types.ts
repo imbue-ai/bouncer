@@ -29,6 +29,11 @@ export interface DetectorSnapshot {
   shouldHide?: boolean;
   reasoning?: string;
   category?: string | null;
+  /** Categories this detector matched. Null/undefined means "incomplete"
+   *  (e.g. API filter only returned its best match) — the filter-removal
+   *  flow can't shortcut re-evaluation when any contributing detector is
+   *  incomplete. */
+  matches?: string[] | null;
   error?: string;
   /** Either pre-run skip reason or post-race "aborted because other detector
    *  hid first" — both render the same way in the popup. */
@@ -41,6 +46,11 @@ export interface EvaluationResult {
   reasoning: string;
   category?: string | null;
   rawResponse?: string | null;
+  /** Full list of categories the classifier matched on this post, when the
+   *  classifier evaluated every category in one shot (local table_yesno). Null
+   *  when the classifier only surfaced its best match (API path) — in that
+   *  case we can't shortcut filter-removal re-evaluation. */
+  matches?: string[] | null;
   timestamp?: number;
   /** Which model produced this evaluation. */
   model?: string;
@@ -131,6 +141,10 @@ export interface FilteredPost {
   reasoning: string;
   rawResponse: string;
   category: string | null;
+  /** Full match list from a complete classifier (local table_yesno). Lets the
+   *  filter-removal flow update or restore without re-running the model. Null
+   *  when the classifier didn't enumerate every category (API path). */
+  matches: string[] | null;
   timestamp: number;
 }
 
@@ -450,6 +464,11 @@ type PlatformEnabledKeys = { [K in SiteId as `${K}Enabled`]: boolean };
 /** Valid storage keys for site-specific descriptions. */
 export type DescriptionKey = `descriptions_${SiteId}`;
 
+/** Per-site flag for whether phrase filtering is paused. */
+type FilteringPausedKeys = { [K in SiteId as `filteringPaused_${K}`]: boolean };
+
+export type FilteringPausedKey = `filteringPaused_${SiteId}`;
+
 /** Typed schema for chrome.storage.local keys. */
 export type StorageSchema = SettingsBase & {
   authErrorApis: Record<string, boolean>;
@@ -476,6 +495,9 @@ export type StorageSchema = SettingsBase & {
   googleAuthToken: string;
   openrouterCodeVerifier: string;
   lastSeenVersion: string;
+  // "Quote tweet" toggle in the why-annoying tooltip (bounce-quote flow).
+  // Default true; persisted so the choice sticks across posts and sessions.
+  bounceQuoteEnabled: boolean;
   // Set by onInstalled on a fresh install; drives the one-time "Welcome to
   // Bouncer" banner and is cleared when that banner is dismissed.
   showWelcomeBanner: boolean;
@@ -519,7 +541,7 @@ export type StorageSchema = SettingsBase & {
   // descriptions_* namespace so the pipeline and AI-intent aggregation never
   // see the inactive list.
   linkedinInactiveModePhrases: string[];
-} & DescriptionKeys & PlatformEnabledKeys;
+} & DescriptionKeys & PlatformEnabledKeys & FilteringPausedKeys;
 
 // ==================== API Response Types ====================
 
