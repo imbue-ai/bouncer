@@ -839,7 +839,7 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
     // structural phrases leaves the model-visible set identical, so wiping
     // the verdict cache (and flushing in-flight batches) would just force a
     // pointless re-classification of the whole feed.
-    const modelVisibleFiltersChanged = changedDescriptionKeys.some(key => {
+    const modelVisibleChangedKey = changedDescriptionKeys.find(key => {
       const siteId = key.slice('descriptions_'.length);
       const modelVisible = (v: unknown): string[] => {
         const arr = Array.isArray(v) ? (v as string[]) : [];
@@ -850,8 +850,8 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
       return phraseSetKey(modelVisible(changes[key].oldValue))
         !== phraseSetKey(modelVisible(changes[key].newValue));
     });
-    if (modelVisibleFiltersChanged) {
-      handleFilterPackChange();
+    if (modelVisibleChangedKey !== undefined) {
+      handleFilterPackChange(changes[modelVisibleChangedKey]);
     }
     if (filtersChanged) {
       // Deletions resolve locally and immediately: dropping the last AI
