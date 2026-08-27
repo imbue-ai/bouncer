@@ -1771,7 +1771,7 @@ async function openComposerOnMobile(file: File, shareCode: string, packName?: st
 // Update a React-controlled textarea's value via its prototype's native
 // setter so React's value tracker registers the change. Direct assignment
 // to .value is silently overwritten on the next render.
-function setReactTextareaValue(el: HTMLTextAreaElement, value: string): void {
+export function setReactTextareaValue(el: HTMLTextAreaElement, value: string): void {
   const desc = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value');
   if (desc?.set) {
     desc.set.call(el, value);
@@ -1783,7 +1783,7 @@ function setReactTextareaValue(el: HTMLTextAreaElement, value: string): void {
 // Mobile X exposes a hidden <input type="file"> that the media button proxies
 // through. Setting `.files` via DataTransfer + dispatching change is the same
 // path that native picker → upload flow takes.
-async function attachImageToMobileComposer(file: File): Promise<void> {
+export async function attachImageToMobileComposer(file: File): Promise<void> {
   const fileInput = await waitForElement<HTMLInputElement>(
     'input[type="file"][data-testid="fileInput"], input[type="file"][accept*="image"]',
     3000

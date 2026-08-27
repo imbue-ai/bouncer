@@ -14,8 +14,10 @@ import { encodeFilterPackCode, buildFilterPackShareUrl } from '../shared/share-e
 import type { ContentUIDeps, PostContent } from '../types';
 import {
   addFilterPhrase,
+  attachImageToMobileComposer,
   hidePost,
   screenshotFilterCardOffscreen,
+  setReactTextareaValue,
   storeFilteredPost,
   waitForElement,
 } from './ui';
@@ -114,9 +116,16 @@ export async function openBounceQuoteComposer(
   quoteLink.click();
   console.log('[Bouncer/bounce-quote] quote link clicked');
 
-  // Scope to the dialog so we don't grab the inline /home composer's
-  // tweetTextarea_0 by mistake (same testid earlier in the DOM).
-  const textarea = await waitForElement<HTMLElement>('[role="dialog"] [data-testid="tweetTextarea_0"]', 3000);
+  // Desktop renders the quote composer as a DraftJS contenteditable inside a
+  // [role="dialog"]; mobile X (touch UA — the iOS/Android app WebViews)
+  // renders a bare <textarea> with the same testid and no dialog wrapper.
+  // The dialog-scoped selector also keeps us off the inline /home composer's
+  // tweetTextarea_0 on desktop (same testid earlier in the DOM); the textarea
+  // form can stay unscoped because desktop never renders one.
+  const textarea = await waitForElement<HTMLElement>(
+    '[role="dialog"] [data-testid="tweetTextarea_0"], textarea[data-testid="tweetTextarea_0"]',
+    3000,
+  );
   console.log('[Bouncer/bounce-quote] textarea lookup', {
     found: !!textarea,
     tag: textarea?.tagName,
@@ -125,6 +134,25 @@ export async function openBounceQuoteComposer(
   });
   if (!textarea) {
     console.warn('[Bouncer/bounce-quote] textarea did not appear — abort');
+    return;
+  }
+
+  if (textarea instanceof HTMLTextAreaElement) {
+    // Mobile: synthetic ClipboardEvents neither update the React-tracked
+    // textarea value nor attach images, so reuse the share flow's mobile
+    // techniques — hidden file input for the image, native value setter +
+    // input event for the text (see openComposerOnMobile).
+    if (file) {
+      try {
+        await attachImageToMobileComposer(file);
+      } catch (err) {
+        console.error('[Bouncer/bounce-quote] mobile image attach failed:', err);
+      }
+    }
+    textarea.focus();
+    setReactTextareaValue(textarea, text);
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    console.log('[Bouncer/bounce-quote] mobile composer filled');
     return;
   }
 
