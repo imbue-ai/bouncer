@@ -169,6 +169,59 @@ describe('extractPostContent', () => {
     const result = adapter.extractPostContent(articles[1]);
     expect(result.hasMediaContainer).toBe(false);
   });
+
+  it('sets hasVideo for tweets with a videoPlayer and not for others', () => {
+    // Articles 0, 2, 3 contain videoPlayer; 1 and 4 do not
+    for (const idx of [0, 2, 3]) {
+      expect(adapter.extractPostContent(articles[idx]).hasVideo).toBe(true);
+    }
+    for (const idx of [1, 4]) {
+      expect(adapter.extractPostContent(articles[idx]).hasVideo).toBe(false);
+    }
+  });
+
+
+  it('sets isRepost and repostHeader when a linked socialContext header is present', () => {
+    // No fixture article is a repost
+    for (const article of articles) {
+      const result = adapter.extractPostContent(article);
+      expect(result.isRepost).toBe(false);
+      expect(result.repostHeader).toBe(null);
+    }
+    // Synthesize the repost header X renders: socialContext inside a profile link
+    const article = articles[4];
+    const link = document.createElement('a');
+    link.setAttribute('href', '/somereposter');
+    const ctx = document.createElement('span');
+    ctx.setAttribute('data-testid', 'socialContext');
+    ctx.textContent = 'Some Reposter reposted';
+    link.appendChild(ctx);
+    article.prepend(link);
+    const result = adapter.extractPostContent(article);
+    expect(result.isRepost).toBe(true);
+    expect(result.repostHeader).toBe('Some Reposter reposted');
+  });
+
+  it('does not treat a non-linked socialContext (Pinned) as a repost', () => {
+    const article = articles[4];
+    const ctx = document.createElement('div');
+    ctx.setAttribute('data-testid', 'socialContext');
+    ctx.textContent = 'Pinned';
+    article.prepend(ctx);
+    expect(adapter.extractPostContent(article).isRepost).toBe(false);
+  });
+
+  it('does not treat a community socialContext (/i/ link) as a repost', () => {
+    const article = articles[4];
+    const link = document.createElement('a');
+    link.setAttribute('href', '/i/communities/12345');
+    const ctx = document.createElement('span');
+    ctx.setAttribute('data-testid', 'socialContext');
+    ctx.textContent = 'Posted in Some Community';
+    link.appendChild(ctx);
+    article.prepend(link);
+    expect(adapter.extractPostContent(article).isRepost).toBe(false);
+  });
 });
 
 // ==================== shouldProcessCurrentPage ====================

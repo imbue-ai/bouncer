@@ -14,6 +14,7 @@ import { callLocalInference, localEngine } from './local-model';
 import { iosLocalClassify, iosLocalGenerate, iosLocalAiTextDetect } from './ios-local-bridge';
 import { getStorage, setStorage, removeStorage, getDescriptions, clampThreshold, clampImageThreshold, clampReplyThreshold, aiIntentActiveForSite, DEFAULT_AI_TEXT_DETECTION_THRESHOLD, DEFAULT_AI_IMAGE_DETECTION_THRESHOLD } from '../shared/storage';
 import { canJudgeAiIntent } from './ai-intent';
+import { STRUCTURAL_FILTER_SITES, structuralFilterKind } from '../shared/structural-filters';
 import { PLATFORMS, enabledStorageKey } from '../shared/platforms';
 export { DEFAULT_AI_TEXT_DETECTION_THRESHOLD, DEFAULT_AI_IMAGE_DETECTION_THRESHOLD };
 import type {
@@ -531,6 +532,13 @@ export async function getSettings(siteId?: SiteId): Promise<Settings> {
   if (canJudgeAiIntent(selectedModel)) {
     const aiKeys = new Set([...aiPhrases, AI_DETECTION_SEED_PHRASE].map(p => p.trim().toLowerCase()));
     effectiveDescriptions = descriptions.filter(d => !aiKeys.has(d.trim().toLowerCase()));
+  }
+  // Structural phrases ("reposts", "quote tweets", "videos") are resolved
+  // deterministically in the content script from adapter-extracted post
+  // attributes — exclude them from the model's category list so it can't
+  // overzealously hide posts merely *about* videos or reposts.
+  if (siteId && STRUCTURAL_FILTER_SITES.has(siteId)) {
+    effectiveDescriptions = effectiveDescriptions.filter(d => structuralFilterKind(d) === null);
   }
 
   return {

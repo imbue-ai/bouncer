@@ -42,8 +42,25 @@
   }
 
   function extractTweetData(tweetId, state, includeQuoted = true) {
-    const tweetEntity = state.entities?.tweets?.entities?.[tweetId];
+    let tweetEntity = state.entities?.tweets?.entities?.[tweetId];
     if (!tweetEntity) return null;
+
+    // A retweet resolves to a wrapper entity whose user is the REPOSTER and
+    // whose full_text is a truncated "RT @..." copy. Follow the pointer so
+    // text/media/author come from the original tweet (matching what the DOM
+    // renders), and keep the reposter's name for the repost header.
+    let repostHeader = null;
+    const retweetedId = tweetEntity.retweeted_status_id_str || tweetEntity.retweeted_status;
+    if (retweetedId) {
+      const reposterId = tweetEntity.user_id_str || tweetEntity.user;
+      const reposter = reposterId ? state.entities?.users?.entities?.[reposterId] : null;
+      repostHeader = reposter?.name ? reposter.name + ' reposted' : 'Reposted';
+      const originalEntity = state.entities?.tweets?.entities?.[retweetedId];
+      if (originalEntity) {
+        tweetEntity = originalEntity;
+        tweetId = retweetedId;
+      }
+    }
 
     // Text: prefer Grok translation (non-English), then note_tweet (long tweets), then full_text
     // Strip t.co URLs from text — they're just media/link references, not useful for classification
@@ -153,6 +170,8 @@
       postUrl,
       quotedTweet,
       mediaBlurred,
+      isRepost: !!retweetedId,
+      repostHeader,
     };
   }
 

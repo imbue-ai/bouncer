@@ -11,8 +11,36 @@ import {
   convertSystemToUserMessages,
   cleanReasoning,
   phraseAddNeedsReEvaluation,
+  formatPostForEvaluation,
   AI_DETECTION_SEED_PHRASE,
 } from '../../src/shared/utils.js';
+import type { PostContent } from '../../src/types';
+
+// ==================== formatPostForEvaluation ====================
+
+describe('formatPostForEvaluation', () => {
+  const basePost: PostContent = {
+    text: 'Hello world',
+    author: 'Alice',
+    handle: '@alice',
+    avatarUrl: null,
+    timeText: null,
+    textHtml: '',
+    quote: null,
+    postUrl: null,
+    imageUrls: [],
+    hasMediaContainer: false,
+  };
+
+  it('formats a post as "author: text"', () => {
+    expect(formatPostForEvaluation(basePost)).toBe('Alice: Hello world');
+  });
+
+  it('ignores structural flags — they are handled deterministically, not via markers', () => {
+    expect(formatPostForEvaluation({ ...basePost, isRepost: true, hasVideo: true }))
+      .toBe('Alice: Hello world');
+  });
+});
 
 // ==================== parseAPIResponse ====================
 
