@@ -2,7 +2,7 @@
 // Entry point: post processing, observers, init, storage/message listeners
 
 import type { PlatformAdapter, PostContent, PipelineResponse, BackgroundToContentMessage, DescriptionKey, AiFilterIntentState } from '../types';
-import { getStorage, removeStorage, getDescriptions, setDescriptions, phraseSetKey } from '../shared/storage';
+import { getStorage, removeStorage, getDescriptions, setDescriptions, phraseSetKey, filteringPausedKeyFor } from '../shared/storage';
 import { enabledStorageKey } from '../shared/platforms';
 import { hexToRgbChannels, hexToDarkRgbChannels, contrastTextColor } from '../shared/brand-color';
 import { FILTER_PACK_CODE_PREFIX } from '../shared/share-encoding';
@@ -21,6 +21,7 @@ import {
   injectFilterPhrasesInput, injectBottomFilterBox, injectMobileFilterBox,
   injectBannerFilterBox,
   syncFilterPhrases, addFilterPhrase, removeFilterPhrase, clearFilteredPosts,
+  restoreOrRefreshFilteredPosts,
   showSettingsModal, renderFilteredPostsView,
   initModelLoadingListener,
   markPostPending, markPostVerified, getVerificationBar,
@@ -468,7 +469,7 @@ import {
         };
 
         // Store in filtered posts list
-        storeFilteredPost(article, mergedContent, response.reasoning, response.rawResponse || '', response.category || null);
+        storeFilteredPost(article, mergedContent, response.reasoning, response.rawResponse || '', response.category || null, response.matches ?? null);
 
         const bar = article.querySelector('.post-verification-bar');
         const wasVerified = bar && bar.classList.contains('verified');
@@ -838,7 +839,7 @@ import {
         isLocalModelActive = newModel.startsWith('local:') || false;
       }
       if (changes[descriptionsKey]) {
-        syncFilterPhrases();
+        void syncFilterPhrases();
         // The AI-detection state is per-platform (this platform's phrases ∩
         // the judged aiPhrases — see aiIntentActiveForSite), so editing this
         // platform's list can flip the sparkle even when the global
@@ -874,10 +875,19 @@ import {
             }).catch(err => console.error('[Bouncer] phrase-add re-evaluation check failed:', err));
           }
         } else if (newDescs.length < oldDescs.length) {
-          // Phrase removed via an out-of-band editor (iOS native sheet,
-          // desktop popup) — mirror removeFilterPhrase's in-feed behavior
-          // so the filtered-posts count resets.
-          clearFilteredPosts();
+          // Phrase(s) removed — via the in-feed chip, the iOS native sheet,
+          // the desktop popup, or another tab. Restore the posts that were
+          // hidden solely under the removed rules and refresh the rest. This
+          // listener is the single restore point: removeFilterPhrase
+          // deliberately does NOT run the restore itself (an earlier version
+          // did, but this listener fired first and cleared the filtered list
+          // out from under it), so every edit source behaves identically.
+          const newSet = new Set(newDescs);
+          const removed = oldDescs.filter(p => !newSet.has(p));
+          if (removed.length > 0) {
+            restoreOrRefreshFilteredPosts(removed, 'Filter rule removed; post no longer matches.')
+              .catch(err => console.error('[Bouncer] restore after phrase removal failed:', err));
+          }
         }
       }
       if (changes.aiFilterIntent) {
@@ -946,6 +956,28 @@ import {
             delete cell.dataset.filteredByExtension;
             processedPosts.delete(article);
           });
+        }
+      }
+      const pausedKey = filteringPausedKeyFor(adapter.siteId);
+      if (changes[pausedKey]) {
+        // Apply the .paused class to every filter card (sidebar, bottom,
+        // mobile) so a second tab — or this tab after a settings-side toggle
+        // — reflects the new state immediately.
+        const isPaused = changes[pausedKey].newValue === true;
+        document.querySelectorAll('.filter-phrases-header').forEach(el => {
+          (el as HTMLElement).classList.toggle('paused', isPaused);
+        });
+        // Unpausing should behave like re-adding all phrase filters. Pausing
+        // is paired with restoreOrRefreshFilteredPosts on the originating tab,
+        // so we only need to re-evaluate on the false transition here. Skip
+        // the re-eval if no phrases are configured — pause only zeros out
+        // descriptions in the pipeline, so unpausing an empty list is a no-op
+        // and would otherwise flash every visible post grey for nothing.
+        if (!isPaused) {
+          void (async () => {
+            const descs = await getDescriptions(descriptionsKey);
+            if (descs.length > 0) reEvaluateAllPosts();
+          })();
         }
       }
     });

@@ -12,7 +12,7 @@ import { callDirectAPI, callAnthropicAPI, callImbueAPI, callImbueAiTextDetection
 import { runDetectors, type Detector, type DetectorResult } from './detectors';
 import { callLocalInference, localEngine } from './local-model';
 import { iosLocalClassify, iosLocalGenerate, iosLocalAiTextDetect } from './ios-local-bridge';
-import { getStorage, setStorage, removeStorage, getDescriptions, clampThreshold, clampImageThreshold, clampReplyThreshold, aiIntentActiveForSite, DEFAULT_AI_TEXT_DETECTION_THRESHOLD, DEFAULT_AI_IMAGE_DETECTION_THRESHOLD } from '../shared/storage';
+import { getStorage, setStorage, removeStorage, getDescriptions, getFilteringPaused, clampThreshold, clampImageThreshold, clampReplyThreshold, aiIntentActiveForSite, DEFAULT_AI_TEXT_DETECTION_THRESHOLD, DEFAULT_AI_IMAGE_DETECTION_THRESHOLD } from '../shared/storage';
 import { canJudgeAiIntent } from './ai-intent';
 import { STRUCTURAL_FILTER_SITES, structuralFilterKind } from '../shared/structural-filters';
 import { PLATFORMS, enabledStorageKey } from '../shared/platforms';
@@ -181,6 +181,7 @@ async function runDetectorsAndCaptureSnapshots(
           shouldHide: value.shouldHide,
           reasoning: value.reasoning,
           category: value.category ?? null,
+          matches: value.matches ?? null,
         });
       } else if (error) {
         snapshots.set(detName, { status: 'error', error: error.message });
@@ -257,6 +258,7 @@ function buildLiveDetectors(args: {
             ? `Text looks like AI (${detail})`
             : `Text doesn't look like AI (${detail})`,
           category: isAi ? 'Looks like AI text' : null,
+          matches: isAi ? ['Looks like AI text'] : null,
           rawResponse: null,
         };
       })(),
@@ -277,12 +279,30 @@ function buildLiveDetectors(args: {
             ? `Image looks like AI${detail}`
             : `Images don't look like AI${detail}`,
           category: isAi ? 'Looks like AI image' : null,
+          matches: isAi ? ['Looks like AI image'] : null,
           rawResponse: null,
         };
       })(),
     });
   }
   return detectors;
+}
+
+// Union matches across every hide-asserting detector. Null when any
+// contributor was "incomplete" (matches == null), e.g. an API filter that
+// only surfaced its single best category — there's no way to know which
+// other rules would have fired, so we can't shortcut filter-removal
+// re-evaluation later. Otherwise returns a de-duped array (empty → null).
+export function aggregateMatches(snapshots: Map<string, DetectorSnapshot>): string[] | null {
+  const out: string[] = [];
+  for (const snap of snapshots.values()) {
+    if (snap.status !== 'success' || !snap.shouldHide) continue;
+    if (snap.matches == null) return null;
+    for (const m of snap.matches) {
+      if (!out.includes(m)) out.push(m);
+    }
+  }
+  return out.length > 0 ? out : null;
 }
 
 // Build a stable detectorStates blob from a tab plan + accumulated snapshots,
@@ -506,9 +526,10 @@ export async function getSettings(siteId?: SiteId): Promise<Settings> {
     'filterReplies', 'youtubeShowPlaceholder',
     ...platformEnabledKeys,
   ] as const;
-  const [data, descriptions] = await Promise.all([
+  const [data, descriptions, paused] = await Promise.all([
     getStorage([...settingsKeys]),
-    descriptionsKey ? getDescriptions(descriptionsKey) : Promise.resolve([] as string[])
+    descriptionsKey ? getDescriptions(descriptionsKey) : Promise.resolve([] as string[]),
+    siteId ? getFilteringPaused(siteId) : Promise.resolve(false)
   ]);
   const platformEnabled: Partial<Record<SiteId, boolean>> = {};
   for (const p of PLATFORMS) {
@@ -549,8 +570,11 @@ export async function getSettings(siteId?: SiteId): Promise<Settings> {
     geminiApiKey: data.geminiApiKey || '',
     anthropicApiKey: data.anthropicApiKey || '',
     enabled: data.enabled !== false,
-    descriptions,
-    effectiveDescriptions,
+    // When the user pauses phrase filtering, present empty description
+    // lists to the pipeline so the filterEnabled gate short-circuits.
+    // Storage still holds the real list — only the runtime view is masked.
+    descriptions: paused ? [] : descriptions,
+    effectiveDescriptions: paused ? [] : effectiveDescriptions,
     useEmbeddings: data.useEmbeddings || false,
     selectedModel,
     customModels: data.customModels || [],
@@ -995,16 +1019,19 @@ async function processBatch(): Promise<void> {
           shouldHide: imbueResponse.shouldHide,
           reasoning: imbueResponse.reasoning || 'No reasoning provided',
           category: imbueResponse.category || null,
+          // API only surfaces its best match — flag as incomplete so phrase
+          // removal still triggers a full re-evaluation for these posts.
+          matches: null,
           rawResponse: imbueResponse.rawResponse || null,
         };
       } else if (apiConfig.apiName === 'anthropic') {
         const messages = buildAPIMessages(postData, settings.effectiveDescriptions);
         const rawContent = await callAnthropicAPI(messages, apiConfig);
-        return { ...parseAPIResponse(rawContent), rawResponse: rawContent };
+        return { ...parseAPIResponse(rawContent), matches: null, rawResponse: rawContent };
       } else {
         const messages = buildAPIMessages(postData, settings.effectiveDescriptions);
         const rawContent = await callDirectAPI(messages, apiConfig);
-        return { ...parseAPIResponse(rawContent), rawResponse: rawContent };
+        return { ...parseAPIResponse(rawContent), matches: null, rawResponse: rawContent };
       }
     };
 
@@ -1057,10 +1084,18 @@ async function processBatch(): Promise<void> {
     const inferPart = result.inferenceTime != null ? ` infer=${result.inferenceTime.toFixed(2)}s` : '';
     console.log(`[Eval] shouldHide=${result.shouldHide}, category="${result.category}", wall=${evalSec}s${inferPart}, reasoning="${result.reasoning?.substring(0, 80)}"`);
 
+    // Union the matches from every hide-asserting detector. If any of them is
+    // "incomplete" (matches == null — e.g. API filter that only returned its
+    // top match) the union is also incomplete, since we don't know what other
+    // rules would have fired. The content-side filter-removal flow uses
+    // matches to skip re-evaluation when the answer is already determined.
+    const aggregatedMatches = aggregateMatches(snapshots);
+
     const evalResult: EvaluationResult = {
       shouldHide: result.shouldHide,
       reasoning: result.reasoning,
       category: result.category || null,
+      matches: aggregatedMatches,
       rawResponse: result.rawResponse || null,
       model: settings.selectedModel || 'unknown',
       timestamp: Date.now(),
@@ -1278,12 +1313,29 @@ export async function handleSettingsChange(changes: Record<string, chrome.storag
   }
 }
 
-// Called when the filter phrase list changed. Clears the cache and flushes in-flight
-// batches so they re-run against the updated phrase set.
-export function handleFilterPackChange(): void {
-  evaluationCache.clear();
-  removeStorage('evaluationCache').catch(err => console.error('[Cache] clear failed:', err));
+// Called when the filter phrase list changed. Always flushes in-flight batches
+// so they re-run against the updated phrase set.
+//
+// Cache policy:
+//  - Additions present → cached "shouldHide=false" verdicts may now be stale
+//    (the new phrase could match), so we wipe the cache.
+//  - Removal-only → cached verdicts are still valid for non-affected posts.
+//    The content script's removeFilterPhrase() handles affected posts (those
+//    whose category matches a removed phrase) by clearSinglePost-ing them and
+//    re-evaluating, then restoring if they no longer match. So we deliberately
+//    leave the cache alone here.
+export function handleFilterPackChange(change?: chrome.storage.StorageChange): void {
+  const oldDescs = Array.isArray(change?.oldValue) ? (change.oldValue as string[]) : [];
+  const newDescs = Array.isArray(change?.newValue) ? (change.newValue as string[]) : [];
+  const oldSet = new Set(oldDescs);
+  const hasAdditions = newDescs.some(d => !oldSet.has(d));
+
   flushPipelineQueues('Filter phrases changed, re-evaluating...');
+
+  if (hasAdditions) {
+    evaluationCache.clear();
+    removeStorage('evaluationCache').catch(err => console.error('[Cache] clear failed:', err));
+  }
 }
 
 // Handle page load: clear pending evaluations for a specific tab

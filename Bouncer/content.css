@@ -551,6 +551,7 @@
   font-style: italic;
   background: rgba(255, 255, 255, 0.04);
   border-radius: 8px;
+  display: none; /* MILLAN: turn this back on if wanted */
 }
 
 .slop-post-actions {
@@ -1035,6 +1036,36 @@ article {
 
 .twitter-light .ff-missed-link {
   border-top-color: #cfd9de;
+}
+
+.ff-bounce-quote-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: #8899a6;
+  cursor: pointer;
+  user-select: none;
+}
+
+.ff-bounce-quote-row:hover {
+  color: #d6d9db;
+}
+
+.ff-bounce-quote-toggle {
+  margin: 0;
+  cursor: pointer;
+  accent-color: #1d9bf0;
+}
+
+.twitter-light .ff-bounce-quote-row {
+  color: #536471;
+}
+
+.twitter-light .ff-bounce-quote-row:hover {
+  color: #0f1419;
 }
 
 .ff-annoying-empty {
@@ -1662,6 +1693,125 @@ html.bouncer-plain-border .filter-phrases-bottom .filter-phrases-container {
   align-items: baseline;
   flex-wrap: wrap;
   column-gap: 4px;
+  position: relative;
+}
+
+/* Paused state: grey out the whole "Filter out [phrases] and [input]" sentence
+   plus the inline pause button, and show the centered play overlay on top.
+   The overlay itself is excluded from the dim so the play button stays vivid. */
+.filter-phrases-header.paused > :not(.filter-paused-overlay),
+.filter-phrases-header.paused > .filter-phrases-list > * {
+  opacity: 0.15;
+  pointer-events: none;
+  filter: grayscale(1);
+}
+
+.filter-paused-overlay {
+  display: none;
+  position: absolute;
+  inset: 0;
+  align-items: center;
+  justify-content: center;
+  z-index: 2;
+}
+
+.filter-phrases-header.paused .filter-paused-overlay {
+  display: flex;
+}
+
+/* Inline pause button, sized to sit comfortably next to the input. The
+   parent header uses align-items: baseline, which would otherwise place the
+   button's bottom at the text baseline — making a 24px square extend ~24px
+   above the baseline and inflating the line height upward. align-self: center
+   keeps the button centered within whatever line height the surrounding
+   phrases/input establish, so it stops pushing the row up. */
+.filter-pause-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: center;
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  /* Cancel the height the 24px circle adds beyond the ~20px text line so the
+     button doesn't stretch its row — phrase-line spacing stays what it was
+     before the button existed. The full 24px stays clickable. */
+  margin-top: -2px;
+  margin-bottom: -2px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 9999px;
+  color: rgb(113, 118, 123);
+  line-height: 0;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.filter-pause-btn:hover {
+  background: rgba(29, 155, 240, 0.1);
+  color: rgb(29, 155, 240);
+}
+
+.filter-pause-btn:active {
+  opacity: 0.7;
+}
+
+.filter-pause-btn svg {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
+}
+
+.light-mode .filter-pause-btn {
+  color: rgb(83, 100, 113);
+}
+
+.light-mode .filter-pause-btn:hover {
+  background: rgba(29, 155, 240, 0.1);
+  color: rgb(29, 155, 240);
+}
+
+/* Larger circular play button centered over the greyed-out sentence. */
+.filter-paused-play-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  background: rgba(113, 118, 123, 0.9);
+  border: none;
+  border-radius: 9999px;
+  color: #fff;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  transition: background 0.15s ease, transform 0.1s ease;
+}
+
+.filter-paused-play-btn:hover {
+  background: rgb(113, 118, 123);
+}
+
+.light-mode .filter-paused-play-btn {
+  background: rgba(83, 100, 113, 0.9);
+}
+
+.light-mode .filter-paused-play-btn:hover {
+  background: rgb(83, 100, 113);
+}
+
+.filter-paused-play-btn:active {
+  transform: scale(0.96);
+}
+
+.filter-paused-play-btn svg {
+  width: 22px;
+  height: 22px;
+  fill: currentColor;
+  /* Optical centering for a right-pointing triangle. */
+  margin-left: 2px;
 }
 
 .filter-phrases-label {
@@ -1677,6 +1827,15 @@ html.bouncer-plain-border .filter-phrases-bottom .filter-phrases-container {
   flex: 1;
   min-width: 80px;
   gap: 4px;
+}
+
+/* When the input wraps internally, the header gets .input-wraps and the
+   and-input element claims the whole row so the textarea has the full
+   container width to extend into — typing a long phrase then reads as one
+   line until it genuinely needs more, instead of wrapping many times at
+   whatever narrow space was left next to the phrases. */
+.filter-phrases-header.input-wraps .filter-phrases-and-input {
+  flex-basis: 100%;
 }
 
 .filter-phrases-and {
@@ -1695,6 +1854,9 @@ html.bouncer-plain-border .filter-phrases-bottom .filter-phrases-container {
   position: relative;
   flex: 1;
   min-width: 0;
+  /* Stop just short of the row's right edge so the pause button after the
+     input sits a bit left of the box border instead of hugging it. */
+  max-width: calc(100% - 61px);
 }
 
 .filter-phrases-container .filter-phrases-input {
@@ -1705,13 +1867,22 @@ html.bouncer-plain-border .filter-phrases-bottom .filter-phrases-container {
   border-bottom: 2px solid rgb(113, 118, 123) !important;
   border-radius: 0 !important;
   color: rgb(231, 233, 234);
+  font-family: inherit;
   font-size: 15px;
   font-weight: 600;
+  line-height: 1.2em;
   outline: none !important;
   appearance: none;
   -webkit-appearance: none;
   box-shadow: none !important;
   transition: border-color 0.2s;
+  display: block;
+  box-sizing: border-box;
+  resize: none;
+  overflow: hidden;
+  min-height: 1.2em;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .filter-phrases-container .filter-phrases-input:focus {

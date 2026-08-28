@@ -27,6 +27,10 @@ export interface DetectorResult {
   shouldHide: boolean;
   reasoning: string;
   category?: string | null;
+  /** All categories matched, when the detector evaluates every category in one
+   *  call (local table_yesno). Null/undefined when the detector only surfaces
+   *  its single best match. */
+  matches?: string[] | null;
   rawResponse?: string | null;
   inferenceTime?: number;
 }

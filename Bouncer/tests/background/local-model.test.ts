@@ -60,6 +60,48 @@ import type { Mock } from 'vitest';
 import type { LocalBackend } from '../../src/background/backends/types.js';
 import type { LocalModelDef } from '../../src/types.js';
 
+// ==================== parseTableYesnoResponse ====================
+
+describe('parseTableYesnoResponse', () => {
+  const cats = ['a', 'b', 'c', 'd', 'e', 'f'];
+
+  it('parses pipe-leading row', () => {
+    const r = parseTableYesnoResponse('| no | no | no | no | no | yes', cats);
+    expect(r.matches).toEqual(['f']);
+    expect(r.shouldHide).toBe(true);
+  });
+
+  it('parses row with no leading pipe', () => {
+    const r = parseTableYesnoResponse('no|no|no|no|no|yes', cats);
+    expect(r.matches).toEqual(['f']);
+    expect(r.shouldHide).toBe(true);
+  });
+
+  it('parses row with leading and trailing pipes', () => {
+    const r = parseTableYesnoResponse('|yes|no|yes|no|no|yes|', cats);
+    expect(r.matches).toEqual(['a', 'c', 'f']);
+  });
+
+  it('flags wrong verdict count', () => {
+    const r = parseTableYesnoResponse('no|no|no|no|no', cats);
+    expect(r.shouldHide).toBe(false);
+    expect(r.reasoning).toMatch(/expected 6 verdicts, got 5/);
+  });
+
+  it('flags non yes/no verdict', () => {
+    const r = parseTableYesnoResponse('yes|no|maybe|no|no|yes', cats);
+    expect(r.shouldHide).toBe(false);
+    expect(r.reasoning).toMatch(/verdict 2/);
+  });
+
+  it('flags row with no pipe', () => {
+    const r = parseTableYesnoResponse('yes no yes', cats);
+    expect(r.shouldHide).toBe(false);
+    expect(r.malformed).toBe(true);
+    expect(r.reasoning).toMatch(/Malformed verdict row/);
+  });
+});
+
 // ==================== InferenceQueue ====================
 
 // Each test gets a fresh queue instance — no shared mutable state.
