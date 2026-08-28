@@ -131,6 +131,13 @@ describe('applyAiIntentVerdict', () => {
     expect(r.judgedSetKey).toBe(phraseSetKey(union));
   });
 
+  it('the bare "AI" keyword survives any verdict, in any capitalization or spacing', () => {
+    const r = applyAiIntentVerdict(['ai', 'politics'], [], 99);
+    expect(r.aiPhrases).toEqual(['ai']);
+    const r2 = applyAiIntentVerdict([' A I ', 'politics'], [], 99);
+    expect(r2.aiPhrases).toEqual([' A I ']);
+  });
+
   it('defensively drops returned phrases outside the judged set', () => {
     const r = applyAiIntentVerdict(union, ['AI slop', 'not a real phrase'], 99);
     expect(r.aiPhrases).toEqual(['AI slop']);
@@ -264,6 +271,35 @@ describe('refreshAiFilterIntent', () => {
 
     expect(mockDetectAiIntent).not.toHaveBeenCalled();
     expect(state()?.judgedSetKey ?? null).toBeNull();
+  });
+
+  it('engages detection for the bare "AI" keyword deterministically, whatever the judge says', async () => {
+    store.descriptions_twitter = ['AI', 'politics'];
+    store.selectedModel = 'imbue';
+    mockDetectAiIntent.mockResolvedValue(intentResponse([])); // judge: nothing is AI intent
+
+    await refreshAiFilterIntent();
+
+    expect(state().aiPhrases).toEqual(['AI']);
+    expect(aiIntentActiveForSite({ aiFilterIntent: state() }, ['AI', 'politics'])).toBe(true);
+  });
+
+  it('activates for existing users whose already-judged list contains "AI", without a phrase edit or re-probe', async () => {
+    // Simulates a user from before the "AI" rule: their set was judged, the
+    // judge did not flag "AI", and the state persisted that way. The startup
+    // refresh alone must flip detection on — no phrase-list change required.
+    store.descriptions_twitter = ['AI', 'politics'];
+    store.selectedModel = 'imbue';
+    store.aiFilterIntent = {
+      aiPhrases: [], judgedSetKey: phraseSetKey(['AI', 'politics']), updatedAt: 1,
+    };
+
+    await refreshAiFilterIntent();
+
+    expect(mockDetectAiIntent).not.toHaveBeenCalled(); // set already judged
+    expect(state().aiPhrases).toEqual(['AI']);
+    expect(state().judgedSetKey).toBe(phraseSetKey(['AI', 'politics']));
+    expect(aiIntentActiveForSite({ aiFilterIntent: state() }, ['AI', 'politics'])).toBe(true);
   });
 
   it('never re-probes a set that was already judged', async () => {
