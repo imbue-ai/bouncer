@@ -25,27 +25,41 @@ export function isEmbeddedApp(): boolean {
 // LLM intent judgment.
 export const AI_DETECTION_SEED_PHRASE = 'AI slop';
 
+// Whether a filter phrase engages AI detection deterministically — without
+// (and regardless of) the LLM intent judgment: the seed phrase above, or the
+// bare keyword "AI" in any capitalization or spacing ("AI", " ai ", "A I").
+// Everything that special-cases the seed phrase keys off this predicate, so
+// both spellings get identical treatment (instant activation, verdict-proof,
+// excluded from the filter categories by construction).
+export function isAiDetectionPhrase(phrase: string): boolean {
+  const key = phrase.trim().toLowerCase();
+  return key === AI_DETECTION_SEED_PHRASE.toLowerCase()
+    || key.replace(/\s+/g, '') === 'ai';
+}
+
 // Whether a phrase-list grow warrants the "phrase added" re-evaluation sweep.
-// The seed phrase is not a filter category (getSettings excludes it by
-// construction), so planting it must not sweep: the aiFilterIntent write it
-// provokes triggers the sweep that engages the detectors. Two exceptions keep
-// the sweep:
-//   - a real filter phrase was added alongside (or instead of) the seed;
-//   - the seed is already in the judged aiPhrases (it lives on another
-//     platform's list), so no aiFilterIntent write is coming — this platform's
-//     detectors still flip on and the sweep here is what re-runs them.
+// Deterministic AI-detection phrases (isAiDetectionPhrase) are not filter
+// categories (getSettings excludes them by construction), so adding one must
+// not sweep: the aiFilterIntent write it provokes triggers the sweep that
+// engages the detectors. Two exceptions keep the sweep:
+//   - a real filter phrase was added alongside (or instead of) them;
+//   - every added phrase is already in the judged aiPhrases (it lives on
+//     another platform's list), so no aiFilterIntent write is coming — this
+//     platform's detectors still flip on and the sweep here is what re-runs
+//     them.
 export function phraseAddNeedsReEvaluation(
   oldDescs: string[],
   newDescs: string[],
   judgedAiPhrases: string[] | undefined,
 ): boolean {
   const norm = (p: string) => p.trim().toLowerCase();
-  const seedKey = norm(AI_DETECTION_SEED_PHRASE);
   const oldKeys = new Set(oldDescs.map(norm));
   const added = newDescs.filter(p => !oldKeys.has(norm(p)));
-  const onlySeedAdded = added.length > 0 && added.every(p => norm(p) === seedKey);
-  if (!onlySeedAdded) return true;
-  return Array.isArray(judgedAiPhrases) && judgedAiPhrases.some(p => norm(p) === seedKey);
+  const onlyAiDetectionAdded = added.length > 0 && added.every(isAiDetectionPhrase);
+  if (!onlyAiDetectionAdded) return true;
+  if (!Array.isArray(judgedAiPhrases)) return false;
+  const judgedKeys = new Set(judgedAiPhrases.map(norm));
+  return added.every(p => judgedKeys.has(norm(p)));
 }
 
 // Format a post's content into the string sent to the AI for evaluation.
