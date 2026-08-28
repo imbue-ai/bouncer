@@ -3,7 +3,7 @@
 import {
   parseAPIResponse, checkRateLimitError, checkApiError, checkAuthenticationError,
   RATE_LIMIT_TYPE_CONFIG, API_ERROR_TYPE_CONFIG, GUEST_FILTER_LIMIT,
-  AI_DETECTION_SEED_PHRASE,
+  isAiDetectionPhrase,
 } from '../shared/utils';
 import { isAnonymousUser } from './auth';
 import { PREDEFINED_MODELS, API_DISPLAY_NAMES, DEFAULT_MODEL } from '../shared/models';
@@ -542,17 +542,18 @@ export async function getSettings(siteId?: SiteId): Promise<Settings> {
   // from the filter categories there so they don't also hide human posts
   // *about* AI. On BYOK models the AI detector never engages, so the
   // phrases keep acting as ordinary filters. Old-shape state (no aiPhrases
-  // array) yields no exclusion. The seed phrase is excluded by construction,
-  // not by verdict — clicking the sparkle indicator plants it, and it must
-  // never act as a filter category, not even during the instant before
-  // refreshAiFilterIntent records it in aiPhrases.
+  // array) yields no exclusion. Deterministic AI-detection phrases (the seed
+  // phrase, bare "AI" — isAiDetectionPhrase) are excluded by construction,
+  // not by verdict — they must never act as filter categories, not even
+  // during the instant before refreshAiFilterIntent records them in aiPhrases.
   const selectedModel = data.selectedModel || DEFAULT_MODEL;
   const aiPhrases = Array.isArray(data.aiFilterIntent?.aiPhrases)
     ? data.aiFilterIntent.aiPhrases : [];
   let effectiveDescriptions = descriptions;
   if (canJudgeAiIntent(selectedModel)) {
-    const aiKeys = new Set([...aiPhrases, AI_DETECTION_SEED_PHRASE].map(p => p.trim().toLowerCase()));
-    effectiveDescriptions = descriptions.filter(d => !aiKeys.has(d.trim().toLowerCase()));
+    const aiKeys = new Set(aiPhrases.map(p => p.trim().toLowerCase()));
+    effectiveDescriptions = descriptions.filter(d =>
+      !aiKeys.has(d.trim().toLowerCase()) && !isAiDetectionPhrase(d));
   }
   // Structural phrases ("reposts", "quote tweets", "videos") are resolved
   // deterministically in the content script from adapter-extracted post
