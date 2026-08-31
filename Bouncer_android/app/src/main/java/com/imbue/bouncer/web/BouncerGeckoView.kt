@@ -268,7 +268,25 @@ object BouncerGeckoView {
     // (in which case we just fall back to the normal prompt-gated permission).
     private fun writeGeckoConfig(appCtx: Context): String? = runCatching {
         val cfg = java.io.File(appCtx.filesDir, "geckoview-config.yaml")
-        cfg.writeText("prefs:\n  permissions.default.desktop-notification: 1\n")
+        cfg.writeText(
+            """
+            prefs:
+              permissions.default.desktop-notification: 1
+              # Gecko goes "frugal" with media on cellular connections (bug
+              # 1540573): preload defaults to NONE (so a video fetches nothing
+              # until played), the cache/readahead shrink, and the download is
+              # throttled once it's 30s ahead of the playhead even when
+              # bandwidth is plentiful. On x.com that shows up as feed videos
+              # that never buffer, or stall mid-playback. Pin the .cellular
+              # variants to the wifi defaults instead.
+              media.throttle-cellular-regardless-of-download-rate: false
+              media.preload.default.cellular: 2
+              media.preload.auto.cellular: 3
+              media.cache_readahead_limit.cellular: 60
+              media.cache_resume_threshold.cellular: 30
+              media.cache_size.cellular: 512000
+            """.trimIndent() + "\n",
+        )
         cfg.absolutePath
     }.getOrNull()
 
