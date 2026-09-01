@@ -101,8 +101,10 @@ import {
     }
   }
   // "Colored border on input box" popup toggle. Only `false` opts out —
-  // absent (default) keeps the brand-accent outline. The class makes
-  // content.css restyle the filter box to the platform's native card border.
+  // absent keeps the brand-accent outline. New installs are seeded to false
+  // at install time (see background/index.ts), so absence in practice means
+  // a pre-seed install or an explicit opt-in. The class makes content.css
+  // restyle the filter box to the platform's native card border.
   function applyColoredBorder(value: unknown): void {
     document.documentElement.classList.toggle('bouncer-plain-border', value === false);
   }

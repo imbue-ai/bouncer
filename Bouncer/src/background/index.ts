@@ -18,7 +18,7 @@ import {
 } from './pipeline';
 import { sendFeedback } from './providers';
 import { imbueWebSocket, type ForceLoginMessage } from './ws-manager';
-import { launchAuthFlow, signInAnon, isAnonymousUser, refreshAuthToken, getAuthToken, handleAppleSignIn, signOut, setOnIdentityChanged, IS_SAFARI } from './auth';
+import { launchAuthFlow, signInAnon, isAnonymousUser, refreshAuthToken, getAuthToken, handleAppleSignIn, signOut, setOnIdentityChanged, getCurrentUid, IS_SAFARI } from './auth';
 import { initOptionalPlatforms, syncOptionalPlatformScripts } from './optional-platforms';
 import { CURRENT_TARGET, optionalPlatforms } from '../shared/platforms';
 
@@ -110,6 +110,9 @@ imbueWebSocket.onForceLogin = (_msg: ForceLoginMessage) => {
 // re-run $connect with the new token and register the real identity server-side.
 setOnIdentityChanged(() => {
   void imbueWebSocket.reconnect();
+  // Keep the uninstall URL's UID in sync with the new identity (e.g.
+  // anonymous -> Google sign-in), so uninstall logs attribute to the right user.
+  updateUninstallUrl();
 });
 
 // ==================== Startup ====================
@@ -135,11 +138,29 @@ if (IS_SAFARI && chrome.cookies) {
   }
 }
 
-// Open uninstall survey when the extension is removed (not supported in Safari)
-if (chrome.runtime.setUninstallURL) {
-  chrome.runtime.setUninstallURL("https://forms.gle/41CSXsBcRMnjofVw8")
+// Open the uninstall page when the extension is removed (not supported in
+// Safari). Imbue builds point at a redirect page on imbue.com that logs the
+// uninstall (with the Firebase UID, for cohort-level uninstall analytics) to
+// the backend before forwarding to the survey form; BYOK builds go straight
+// to the survey. Called at startup (before auth restores, as a fallback),
+// once auth is ready, and on every identity change so the UID stays current.
+const UNINSTALL_SURVEY_URL = 'https://forms.gle/41CSXsBcRMnjofVw8';
+const UNINSTALL_PAGE_URL = 'https://imbue.com/product/bouncer/uninstall.html';
+
+function updateUninstallUrl(): void {
+  if (!chrome.runtime.setUninstallURL) return;
+  let url = UNINSTALL_SURVEY_URL;
+  if (process.env.HAS_IMBUE_BACKEND === 'true') {
+    const params = new URLSearchParams({ v: chrome.runtime.getManifest().version });
+    const uid = getCurrentUid();
+    if (uid) params.set('uid', uid);
+    if (process.env.BOUNCER_ENV === 'dev') params.set('env', 'dev');
+    url = `${UNINSTALL_PAGE_URL}?${params}`;
+  }
+  chrome.runtime.setUninstallURL(url)
     .catch(err => console.error('[Startup] setUninstallURL failed:', err));
 }
+updateUninstallUrl();
 
 // One-shot migration: clear any stored selection that points at a local model
 // we no longer ship (e.g. an old Qwen ID from before LiteRT-LM was the sole
@@ -167,6 +188,8 @@ async function migrateStaleLocalSelection(): Promise<void> {
       console.warn('[AiIntent] startup refresh failed:', (err as Error).message));
 
     await refreshAuthToken();
+    // Auth has restored by now, so the uninstall URL can carry the real UID.
+    updateUninstallUrl();
     // Wire up pipeline with shared state
     initPipeline(activeContentTabs);
     await localEngine.syncAllStatuses();
@@ -952,6 +975,13 @@ chrome.runtime.onInstalled.addListener((details) => {
         CURRENT_TARGET === 'firefox' && optionalPlatforms().length > 0;
       await setStorage({
         installPixelArmed: true,
+        // New installs get the plain border ("Colored border on Bouncer box"
+        // toggle off). Seeded here rather than flipping what key-absence
+        // means: pre-existing installs store "on" as key-absence, so they
+        // keep their colored border with no migration. The guards above
+        // matter — a repeat 'install' that kept storage (Chrome Repair)
+        // must not overwrite an existing user's on-by-absence state.
+        coloredBorder: false,
         // First-run banner (shown once the user is past the sign-in gate), and
         // suppress the "what's new" banner for this version — a fresh install
         // has nothing to catch up on.

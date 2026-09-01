@@ -174,7 +174,15 @@ class FilterSheetViewModel: ObservableObject {
     // Which platform's filter phrases the sheet is currently viewing/editing.
     // Also drives which cached webview is visible / audible — the
     // FilteredWebViewContainer's ForEach reads this to pick the active mount.
-    @Published var selectedPlatform: String = "twitter"
+    // Persisted so a cold launch (iOS killed the process) can skip the
+    // platform picker and restore the last-viewed platform — see
+    // FilteredWebViewContainer's restore-on-launch logic.
+    @Published var selectedPlatform: String = "twitter" {
+        didSet {
+            UserDefaults.standard.set(selectedPlatform, forKey: Self.lastSelectedPlatformKey)
+        }
+    }
+    static let lastSelectedPlatformKey = "lastSelectedPlatform"
 
     // Per-platform WKWebView cache. Lazy so we can pass `self` into the
     // Coordinator's init without a chicken-and-egg problem. Held strongly by
@@ -1985,6 +1993,28 @@ struct FilteredWebViewContainer: View {
     // the path is append-once — the iOS-native push transition (slide + parallax
     // + Reduce-Motion cross-fade) fires exactly once on that first append.
     @State private var navPath: [String] = []
+    @State private var didAttemptRestore = false
+
+    // On a cold launch, jump straight to the last-viewed platform instead of
+    // re-showing the picker. Only fires when onboarding is complete and the
+    // persisted id still names an enabled platform (a platform removed from
+    // platforms.config.json falls back to the picker). Runs once, from
+    // onAppear — inside a no-animation transaction so the feed appears as the
+    // root content rather than sliding in.
+    private func restoreLastPlatformIfNeeded() {
+        guard !didAttemptRestore else { return }
+        didAttemptRestore = true
+        guard isOnboarded, navPath.isEmpty,
+              let saved = UserDefaults.standard.string(
+                  forKey: FilterSheetViewModel.lastSelectedPlatformKey),
+              Platforms.byId(saved) != nil else { return }
+        viewModel.selectPlatformAndNavigate(saved)
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            navPath.append(saved)
+        }
+    }
 
     var body: some View {
         ZStack {
@@ -2013,6 +2043,7 @@ struct FilteredWebViewContainer: View {
                     ))
             }
         }
+        .onAppear(perform: restoreLastPlatformIfNeeded)
         .animation(.easeOut(duration: 0.35), value: isOnboarded)
         // If onboarding is re-triggered (DEBUG-only via the ladybug button),
         // pop the NavigationStack back to its root so the platform picker

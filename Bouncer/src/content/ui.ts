@@ -2237,26 +2237,29 @@ async function confirmAndImportPack(phrases: string[]): Promise<void> {
 function renderPhrasesInContainer(container: Element, descriptions: string[]) {
   container.replaceChildren();
   const len = descriptions.length;
-  descriptions.forEach((desc, index) => {
+  descriptions.forEach(desc => {
+    // Phrase + trailing comma share one wrapper so they land in the header's
+    // flex layout as a single item — a bare comma span would be its own flex
+    // item and could wrap onto a new line by itself.
+    const item = document.createElement('span');
+    item.className = 'filter-phrase-item';
+
     const phrase = document.createElement('span');
     phrase.className = 'filter-phrase-inline';
     phrase.textContent = desc;
     phrase.title = 'Click to remove';
     phrase.addEventListener('click', asyncHandler(() => removeFilterPhrase(desc)));
-    container.appendChild(phrase);
+    item.appendChild(phrase);
 
-    if (index < len - 1) {
+    // Comma after every phrase, including an Oxford comma on the last one
+    // before "and" (which lives in the wrapper element).
+    if (len > 1) {
       const separator = document.createElement('span');
       separator.className = 'filter-phrase-separator';
       separator.textContent = ', ';
-      container.appendChild(separator);
-    } else if (len > 1) {
-      // Oxford comma before "and" (which lives in the wrapper element)
-      const separator = document.createElement('span');
-      separator.className = 'filter-phrase-separator';
-      separator.textContent = ', ';
-      container.appendChild(separator);
+      item.appendChild(separator);
     }
+    container.appendChild(item);
   });
 
   // Hide placeholder when there are any phrases

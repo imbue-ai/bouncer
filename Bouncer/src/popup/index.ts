@@ -995,11 +995,12 @@ function setupAccentColorPicker() {
 }
 
 // "Colored border on input box" toggle (below the filter-replies toggle).
-// On (default)
-// keeps the brand-accent outline on the in-feed filter box; off swaps it for
-// the platform's native card border. The on state is stored as key-absence
-// (like brandColor's default) so untouched installs keep following any
-// future default change; the content script applies writes live.
+// On keeps the brand-accent outline on the in-feed filter box; off swaps it
+// for the platform's native card border. On is stored as key-absence, which
+// is how installs predating the default flip keep their colored border with
+// no migration; new installs are seeded coloredBorder: false by onInstalled
+// (background/index.ts), so they start off. The content script applies
+// writes live.
 function setupColoredBorderToggle() {
   const el = document.getElementById('coloredBorderToggle') as HTMLInputElement | null;
   if (!el) return; // in-app (iOS) popup builds may omit this section
