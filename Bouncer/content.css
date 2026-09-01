@@ -1952,17 +1952,12 @@ html.bouncer-plain-border .filter-phrases-bottom .filter-phrases-container {
   font-size: 15px;
   font-weight: 400;
   color: rgb(231, 233, 234);
-  margin-left: -4px;
 }
 
-/* Wrapper that keeps the last phrase + oxford comma as a single flex item so
-   the comma never wraps onto a new line by itself. */
-.filter-phrase-with-oxford {
+/* Wrapper that keeps each phrase + its trailing comma as a single flex item
+   so a comma never wraps onto a new line by itself. */
+.filter-phrase-item {
   display: inline;
-}
-
-.filter-phrase-with-oxford .filter-phrase-separator {
-  margin-left: 0;
 }
 
 /* Model loading progress display */

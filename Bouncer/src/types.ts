@@ -532,7 +532,10 @@ export type StorageSchema = SettingsBase & {
   // "Colored border on input box" popup toggle. Absent/true keeps the
   // brand-accent outline on the in-feed filter box; false swaps it for the
   // platform's native 1px card border (the content script toggles the
-  // `bouncer-plain-border` class on <html>, styled in content.css).
+  // `bouncer-plain-border` class on <html>, styled in content.css). Fresh
+  // installs are seeded to false by onInstalled (background/index.ts), so
+  // new users default to the plain border while pre-existing installs (key
+  // absent) keep the outline.
   coloredBorder: boolean;
   // Phrase list for whichever LinkedIn mode (filter-out / keep-only) is NOT
   // currently active. Each mode keeps its own list: the active one lives in
