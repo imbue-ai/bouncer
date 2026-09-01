@@ -96,6 +96,11 @@ export function isAnonymousUser(): boolean {
   return currentUser?.isAnonymous ?? false;
 }
 
+// Current Firebase UID, or null before auth restores / when signed out.
+export function getCurrentUid(): string | null {
+  return currentUser?.uid ?? null;
+}
+
 // ==================== Interactive sign-in ====================
 
 // Sign out

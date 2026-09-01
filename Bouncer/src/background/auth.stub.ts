@@ -25,6 +25,10 @@ export function isAnonymousUser(): boolean {
   return false;
 }
 
+export function getCurrentUid(): string | null {
+  return null;
+}
+
 export function setOnIdentityChanged(_cb: () => void): void {}
 
 export function handleAppleSignIn(
