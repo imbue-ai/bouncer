@@ -122,6 +122,23 @@ function dragGlass(dy: number): void {
   target.dispatchEvent(new PointerEvent('pointerup', { clientY: 300 + dy, button: 0, bubbles: true }));
 }
 
+/** A touch tap on part of the glass, with the drift of a real finger. No click
+ *  follows: the browser only synthesizes one for a finger that barely moved,
+ *  which is exactly why the glass reads the tap off the touch stream itself. */
+function touchTapGlass(el: HTMLElement, drift = 0, end: 'touchend' | 'touchcancel' = 'touchend'): void {
+  const point = (type: string, clientY: number): void => {
+    const e = new Event(type, { bubbles: true, cancelable: true });
+    const list = [{ clientX: 200, clientY }];
+    const ended = type === 'touchend' || type === 'touchcancel';
+    Object.defineProperty(e, 'touches', { value: ended ? [] : list });
+    Object.defineProperty(e, 'changedTouches', { value: list });
+    el.dispatchEvent(e);
+  };
+  point('touchstart', 300);
+  if (drift !== 0) point('touchmove', 300 + drift);
+  point(end, 300 + drift);
+}
+
 beforeEach(() => {
   document.body.replaceChildren();
   goTo = vi.fn();
@@ -458,6 +475,13 @@ describe('putting the glass away', () => {
     expect(glass()).toBeNull();
   });
 
+  // The same "no thanks", read off the touch stream — a touch tap on the pane
+  // must not depend on a click the browser may decline to synthesize.
+  it('goes away when you touch-tap the pane itself', () => {
+    touchTapGlass(glass()!);
+    expect(glass()).toBeNull();
+  });
+
   // Momentum keeps arriving after the finger is up, and reopening the sheet the
   // user just dismissed is the one thing it must not do.
   it('does not come straight back on the tail of the gesture that closed it', () => {
@@ -548,6 +572,69 @@ describe('picking a reel', () => {
     row.click();
     await vi.advanceTimersByTimeAsync(4000);
     expect(goTo).not.toHaveBeenCalled();
+  });
+
+  // THE ROW THAT TOOK SEVERAL TAPS. A row used to be picked only by its click
+  // handler, and the click after a touch is synthesized — the browser only
+  // produces one for a finger that barely moved. So the tap is read off the
+  // touch stream itself, and no click need ever arrive.
+  it('picks from the touch itself, without waiting for a click', async () => {
+    current = 2;
+    swipeReel(-80);
+    touchTapGlass(rows()[1]);
+    await vi.advanceTimersByTimeAsync(4000);
+
+    expect(goTo).toHaveBeenCalledTimes(1);
+    expect((goTo.mock.calls[0][0] as ReelRecord).reelId).toBe('reel_4');
+    expect(glass()).toBeNull();
+  });
+
+  // A thumb drifts 10–20px on an ordinary tap. Holding touches to the mouse's
+  // 8px standard is what made rows take several tries to hit.
+  it('still picks under the drift of a real finger', async () => {
+    current = 2;
+    swipeReel(-80);
+    touchTapGlass(rows()[1], 18);
+    await vi.advanceTimersByTimeAsync(4000);
+
+    expect(goTo).toHaveBeenCalledTimes(1);
+    expect((goTo.mock.calls[0][0] as ReelRecord).reelId).toBe('reel_4');
+  });
+
+  // Past the tap slop it is a drag, and an uncommitted drag springs back.
+  it('does not pick past the tap slop', async () => {
+    current = 2;
+    swipeReel(-80);
+    touchTapGlass(rows()[1], 40);
+    await vi.advanceTimersByTimeAsync(4000);
+
+    expect(goTo).not.toHaveBeenCalled();
+    expect(glass()).not.toBeNull();
+  });
+
+  // When the browser does synthesize a click for the tap, it is the same tap —
+  // acting on both would pick twice.
+  it('does not double-pick off the click that trails the tap', async () => {
+    current = 2;
+    swipeReel(-80);
+    const row = rows()[1];
+    touchTapGlass(row);
+    row.click();
+    await vi.advanceTimersByTimeAsync(4000);
+
+    expect(goTo).toHaveBeenCalledTimes(1);
+  });
+
+  // A cancelled gesture is one the system took for itself; reading a pick out
+  // of it would choose a row the user never meant to touch.
+  it('does not pick from a cancelled touch', async () => {
+    current = 2;
+    swipeReel(-80);
+    touchTapGlass(rows()[1], 0, 'touchcancel');
+    await vi.advanceTimersByTimeAsync(4000);
+
+    expect(goTo).not.toHaveBeenCalled();
+    expect(glass()).not.toBeNull();
   });
 
   /** Give every card real geometry, laid out as slides of a pager that
@@ -1088,6 +1175,30 @@ describe('the scroll lock', () => {
 
       // Instagram settles its pager, late, the way the signed-in one does.
       box.scrollTop = 2400;
+      box.dispatchEvent(new Event('scroll'));
+
+      expect(box.scrollTop).toBe(2400);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // The touch-stream pick runs INSIDE the tap's own touchend, so the gesture
+  // bookkeeping that follows it must not re-arm the tail the pick just
+  // disarmed — or the pin undoes the arrival, which is the same bug with the
+  // order of events reversed.
+  it('lets the feed stay where a touch-tap pick put it', async () => {
+    vi.useFakeTimers();
+    try {
+      const box = scroller(10);
+      nav!.refresh();
+      box.scrollTop = 800;
+
+      swipeReel(-80);
+      touchTapGlass(rows()[0]);             // pick, from the touch itself
+      await vi.advanceTimersByTimeAsync(1000);
+
+      box.scrollTop = 2400;                 // the pager settling, late
       box.dispatchEvent(new Event('scroll'));
 
       expect(box.scrollTop).toBe(2400);

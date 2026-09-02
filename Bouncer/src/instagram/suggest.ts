@@ -117,6 +117,18 @@ const REOPEN_BLOCK_MS = 450;
 const SWIPE_COMMIT_PX = 56;
 /** Movement past this is a drag, so the click that trails it isn't a pick. */
 const DRAG_SLOP_PX = 8;
+/** How far a finger may land from where it went down and still be lifting a
+ *  tap. Wider than DRAG_SLOP_PX, which is a mouse's number: a thumb tapping a
+ *  phone drifts 10–20px as a matter of course, and holding touches to the
+ *  mouse standard is why the rows took several taps to hit. Safe at this
+ *  width, because everything between here and SWIPE_COMMIT_PX did nothing but
+ *  spring back anyway. */
+const TAP_SLOP_PX = 24;
+/** How long after a touch tap the glass acted on to keep eating clicks. The
+ *  browser synthesizes one for the same tap a beat later — and the glass a
+ *  pick removes is no longer there to receive it, so it would land on whatever
+ *  Instagram has underneath. */
+const TAP_CLICK_SWALLOW_MS = 400;
 
 // ==================== State ====================
 
@@ -164,7 +176,11 @@ let overlayGesture = false;
 /** Where a drag on the glass began, and until when the click that trails one is
  *  that drag's rather than a tap of its own. */
 let glassDragStartY: number | null = null;
+let glassDragStartX: number | null = null;
 let tapDeadUntil = 0;
+/** Until when clicks are eaten wholesale — see glassTap, which acts on the tap
+ *  itself and leaves the synthesized click with nothing to do but harm. */
+let swallowClicksUntil = 0;
 let wheelAccum = 0;
 let wheelBackAccum = 0;
 let reopenAfter = 0;
@@ -457,6 +473,14 @@ function touchY(e: Event): number | null {
   return first ? first.clientY : null;
 }
 
+/** Its horizontal partner, for telling a tap from a sideways wipe. */
+function touchX(e: Event): number | null {
+  const touch = e as TouchEvent;
+  const list = touch.touches?.length ? touch.touches : touch.changedTouches;
+  const first = list?.[0];
+  return typeof first?.clientX === 'number' ? first.clientX : null;
+}
+
 /** Every touch arms the pin, including one that lands on our own surfaces.
  *
  *  Those were exempt at first, on the reasoning that a drag on the glass is not
@@ -479,6 +503,7 @@ function onTouchStart(e: Event): void {
   overlayGesture = !mine && !isOpen() && overlayFrom(e.target) !== null;
   swipeStartY = mine || overlayGesture ? null : gestureStartY;
   glassDragStartY = mine && isOpen() ? gestureStartY : null;
+  glassDragStartX = glassDragStartY === null ? null : touchX(e);
 }
 
 /** The glass following a finger, and leaving when one commits.
@@ -497,17 +522,64 @@ function dragGlassBy(dy: number): void {
   glass.style.opacity = `${Math.max(0.3, 1 - Math.abs(dy) / 460)}`;
 }
 
-function endGlassDrag(dy: number): void {
+/** The end of a touch gesture on the glass: commit past SWIPE_COMMIT_PX, act on
+ *  a tap, spring back from everything in between. Returns whether a row was
+ *  picked — the pin must not be re-armed over a pick (see onTouchEnd).
+ *
+ *  Acting on the tap HERE, off the touch stream, is the fix for rows that took
+ *  several taps to hit. A row used to be picked only by its click handler, and
+ *  the click after a touch is synthesized: WebKit only produces one for a
+ *  finger that barely moved, and our own DRAG_SLOP_PX killed the ones it did
+ *  produce past 8px of drift — with a 300ms dead window that then ate the
+ *  retry tap behind it. A thumb drifts more than 8px on most ordinary taps.
+ *  The touch stream is the account of the gesture this file already trusts
+ *  everywhere else, so the tap is read off it directly and the click that may
+ *  or may not follow is surplus. */
+function endGlassDrag(
+  dx: number, dy: number, target: EventTarget | null, canceled: boolean,
+): boolean {
   const glass = document.getElementById(GLASS_ID);
-  if (!glass) return;
+  if (!glass) return false;
   if (Math.abs(dy) > DRAG_SLOP_PX) tapDeadUntil = performance.now() + 300;
   if (Math.abs(dy) >= SWIPE_COMMIT_PX) {
     close(dy > 0 ? 'down' : 'up');
-    return;
+    return false;
+  }
+  // A cancelled gesture is one the system took for itself; a commit is still
+  // honoured (the finger plainly travelled), but a "tap" read out of a cancel
+  // could pick a row the user never meant to touch.
+  if (!canceled && Math.hypot(dx, dy) <= TAP_SLOP_PX) {
+    const picked = glassTap(target);
+    // Whatever the tap did — picked a row, dismissed the pane — the glass is
+    // gone and there is nothing left to spring back.
+    if (!isOpen()) return picked;
   }
   glass.style.transition = `transform ${EXIT_MS}ms ${EASE}, opacity ${EXIT_MS}ms ease`;
   glass.style.transform = 'translateY(0)';
   glass.style.opacity = '1';
+  return false;
+}
+
+/** A tap on the open glass: a row is a pick, anywhere else is "no thanks".
+ *  Returns whether it picked. */
+function glassTap(target: EventTarget | null): boolean {
+  if (!isOpen()) return false;
+  const row = target instanceof Element ? target.closest('.bouncer-ig-opt') : null;
+  if (row instanceof HTMLElement) {
+    const record = rowRecords.get(row);
+    if (!record) return false;
+    // The click synthesized for this tap arrives after the glass is gone, on
+    // whatever Instagram has underneath — eaten at the window (see
+    // onClickCapture) — and, should it be delivered to the detached row
+    // anyway, the row's own handler honours tapDeadUntil.
+    const until = performance.now() + TAP_CLICK_SWALLOW_MS;
+    swallowClicksUntil = until;
+    tapDeadUntil = until;
+    pick(record, row.getBoundingClientRect());
+    return true;
+  }
+  close();
+  return false;
 }
 
 /** Take the swipe, and read it. Both, in one listener: the gesture we are
@@ -639,12 +711,23 @@ function onTouchEnd(e: Event): void {
 
   const upY = touchY(e);
   if (glassDragStartY !== null) {
-    if (upY !== null) endGlassDrag(upY - glassDragStartY);
+    let picked = false;
+    if (upY !== null) {
+      const upX = touchX(e);
+      const dx = upX !== null && glassDragStartX !== null ? upX - glassDragStartX : 0;
+      picked = endGlassDrag(
+        dx, upY - glassDragStartY, e.target, e.type === 'touchcancel',
+      );
+    }
     glassDragStartY = null;
+    glassDragStartX = null;
     swallowedGesture = false;
     touching = false;
     gestureStartY = null;
-    gestureUntil = performance.now() + GESTURE_TAIL_MS;
+    // A tap that picked has already disarmed the pin (see pick) so the arrival
+    // isn't read as a drift and yanked back; arming the tail here would undo
+    // that, since this now runs AFTER the pick rather than before the click.
+    gestureUntil = picked ? 0 : performance.now() + GESTURE_TAIL_MS;
     return;
   }
 
@@ -687,6 +770,16 @@ function onPointerMove(e: PointerEvent): void {
 
 function onPointerUp(): void {
   pointerStartY = null;
+}
+
+/** Eat the click the browser synthesizes for a touch tap the glass has already
+ *  acted on (see glassTap). The glass a pick removes isn't there to receive
+ *  it, so left alone it lands on whatever Instagram has underneath. */
+function onClickCapture(e: MouseEvent): void {
+  if (performance.now() >= swallowClicksUntil) return;
+  if (e.cancelable) e.preventDefault();
+  e.stopPropagation();
+  e.stopImmediatePropagation();
 }
 
 function onWheel(e: WheelEvent): void {
@@ -1575,6 +1668,11 @@ function stepsTo(record: ReelRecord): number {
   return slot >= 0 ? slot + 1 : 1;
 }
 
+/** The reel each mounted row stands for — what a touch tap picks by. The click
+ *  path closes over its record; the touch path meets the row as an event
+ *  target and has to look it up. */
+const rowRecords = new WeakMap<HTMLElement, ReelRecord>();
+
 function buildRow(
   record: ReelRecord,
   thumbSize: { width: number; height: number },
@@ -1682,6 +1780,7 @@ function buildRow(
 
   row.appendChild(thumb);
   row.appendChild(body);
+  rowRecords.set(row, record);
 
   row.addEventListener('click', () => {
     // A drag on the glass ends in an up the browser also reports as a click on
@@ -2080,6 +2179,7 @@ export function installSuggestions(next: SuggestHost): Suggestions {
   window.addEventListener('pointerup', onPointerUp, { capture: true, passive: true });
   window.addEventListener('pointercancel', onPointerUp, { capture: true, passive: true });
   window.addEventListener('wheel', onWheel, { capture: true, passive: false });
+  window.addEventListener('click', onClickCapture, { capture: true });
   // Capture, because a scroll event from an element does not bubble.
   document.addEventListener('scroll', onFeedScroll, { capture: true, passive: true });
 
@@ -2106,9 +2206,11 @@ export function installSuggestions(next: SuggestHost): Suggestions {
       swipeStartY = null;
       gestureStartY = null;
       glassDragStartY = null;
+      glassDragStartX = null;
       pointerStartY = null;
       overlayGesture = false;
       tapDeadUntil = 0;
+      swallowClicksUntil = 0;
       swallowedGesture = false;
       wheelAccum = 0;
       wheelBackAccum = 0;
@@ -2128,6 +2230,7 @@ export function installSuggestions(next: SuggestHost): Suggestions {
       window.removeEventListener('pointerup', onPointerUp, true);
       window.removeEventListener('pointercancel', onPointerUp, true);
       window.removeEventListener('wheel', onWheel, true);
+      window.removeEventListener('click', onClickCapture, true);
       document.removeEventListener('scroll', onFeedScroll, true);
       touching = false;
       gestureUntil = 0;
