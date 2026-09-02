@@ -28,6 +28,10 @@ struct PlatformPickerView: View {
     let onSelect: (String) -> Void
 
     @State private var showingDebug = false
+    @State private var showingWidgetTutorial = false
+    // Dismissed for good, not for this launch. A promo that comes back after
+    // being closed is an advert, and this is a suggestion.
+    @AppStorage("hasDismissedWidgetPill") private var pillDismissed = false
 
     var body: some View {
         GeometryReader { geo in
@@ -51,6 +55,17 @@ struct PlatformPickerView: View {
 
                 Spacer()
 
+                // Sits above the debug row and below the fold, because it is an
+                // offer rather than a step: the picker's own job is done
+                // without it, and anyone who never notices this has lost
+                // nothing.
+                if !pillDismissed {
+                    widgetPill
+                        .padding(.horizontal, 24)
+                        .padding(.bottom, 4)
+                        .transition(.opacity.combined(with: .move(edge: .bottom)))
+                }
+
                 // Developer entry point: load downloaded on-device models and
                 // benchmark them against ad-hoc prompts. Dev (Debug) builds
                 // only — compiled out of Release/Prod entirely.
@@ -62,11 +77,63 @@ struct PlatformPickerView: View {
             .frame(maxWidth: .infinity)
         }
         .background(Color(UIColor.systemBackground))
+        .animation(.easeInOut(duration: 0.25), value: pillDismissed)
+        .sheet(isPresented: $showingWidgetTutorial) {
+            WidgetTutorialView()
+        }
         #if DEBUG
         .fullScreenCover(isPresented: $showingDebug) {
             DebugView()
         }
         #endif
+    }
+
+    /// The offer, and the way to be rid of it.
+    ///
+    /// The × is part of the pill rather than a swipe or a long press, because
+    /// an undismissable suggestion is the thing that makes people stop reading
+    /// suggestions — and a gesture nobody discovers is undismissable in
+    /// practice.
+    private var widgetPill: some View {
+        HStack(spacing: 10) {
+            Button {
+                showingWidgetTutorial = true
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "square.grid.2x2.fill")
+                        .font(.system(size: 13))
+                    Text("Add platforms to your home screen")
+                        .font(.system(size: 14, weight: .medium))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
+                    Spacer(minLength: 0)
+                }
+                .foregroundStyle(Color.accentColor)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                pillDismissed = true
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(.secondary)
+                    // A 44pt target on an 11pt glyph — the tap area is the
+                    // padding, which is invisible and has to be there anyway.
+                    .frame(width: 28, height: 28)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Dismiss")
+        }
+        .padding(.vertical, 8)
+        .padding(.leading, 14)
+        .padding(.trailing, 4)
+        .background(Color.accentColor.opacity(0.10), in: Capsule())
+        .overlay {
+            Capsule().strokeBorder(Color.accentColor.opacity(0.22), lineWidth: 1)
+        }
     }
 
     private var platformCard: some View {

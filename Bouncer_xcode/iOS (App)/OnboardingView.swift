@@ -7,6 +7,7 @@
 
 import SwiftUI
 import AVFoundation
+import FamilyControls
 
 struct OnboardingView: View {
     @Binding var isOnboarded: Bool
@@ -17,8 +18,20 @@ struct OnboardingView: View {
     // True once the user commits to Local and the model transfer starts;
     // onboarding then blocks on the download and auto-finishes when it lands.
     @State private var isDownloadingModel = false
+    // Set only by the Get Started tap, and only when a transfer is still
+    // running. Onboarding used to end the moment the model landed, which was
+    // right while the filtering-mode slide was last — the user was sitting on
+    // it with a disabled button, waiting. Now the gate slide is last and the
+    // download runs underneath it, so "the file arrived" must not finish
+    // onboarding out from under somebody mid-way through choosing apps.
+    @State private var isFinishing = false
     @ObservedObject private var localService = LocalInferenceService.shared
-    private let pageCount = 5
+    private let pageCount = 6
+    /// The slide the looping video belongs to; it is paused on every other.
+    private let videoPage = 1
+    /// Committing the filtering-mode choice hangs off leaving this slide, so
+    /// its index has to be nameable.
+    private let inferenceModePage = 4
 
     var body: some View {
         VStack(spacing: 0) {
@@ -56,6 +69,9 @@ struct OnboardingView: View {
                     localService: localService
                 )
                 .tag(4)
+
+                GateSetupPage()
+                    .tag(5)
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
             .animation(.easeInOut(duration: 0.3), value: currentPage)
@@ -89,10 +105,24 @@ struct OnboardingView: View {
             .padding(.bottom, 50)
         }
         .background(Color(UIColor.systemBackground))
-        // Local path: the Get Started tap only starts the model download;
-        // onboarding completes on its own once the file lands.
+        // The slideshow does not move for the keyboard.
+        //
+        // Everything here lives in one VStack — the paged TabView and, under
+        // it, the dots and the Next button — so SwiftUI's keyboard avoidance
+        // lifted the WHOLE thing when the name field on the last slide took
+        // focus. The title slid off the top and the pages squashed, which is
+        // the "glitch" of tapping a text field. The List inside the slide
+        // scrolls the focused field into view by itself, which is all that
+        // actually needed to happen; the Next button going under the keyboard
+        // is ordinary, and the field's Done accessory brings it back.
+        .ignoresSafeArea(.keyboard, edges: .bottom)
+        // Local path: Get Started was pressed while the transfer was still
+        // running, so onboarding finishes on its own once the file lands.
+        .onChange(of: currentPage) { _, page in
+            videoPlayer.setPlaying(page == videoPage)
+        }
         .onChange(of: localService.modelStatus) { _, newStatus in
-            guard isDownloadingModel else { return }
+            guard isFinishing else { return }
             if newStatus == .downloaded || newStatus == .ready {
                 completeOnboarding()
             }
@@ -103,7 +133,7 @@ struct OnboardingView: View {
 
     private var primaryButtonLabel: String {
         guard isLastPage else { return "Next" }
-        guard isDownloadingModel else { return "Get Started" }
+        guard isFinishing else { return "Get Started" }
         switch localService.modelStatus {
         case .downloading: return "Downloading…"
         case .paused: return "Resume"
@@ -113,32 +143,66 @@ struct OnboardingView: View {
     }
 
     private var isPrimaryButtonDisabled: Bool {
-        if isLastPage, isDownloadingModel,
+        if isLastPage, isFinishing,
            case .downloading = localService.modelStatus { return true }
         return false
     }
 
     private func handlePrimaryTap() {
+        // Leaving the filtering-mode slide is what commits the choice. It used
+        // to be the last tap of onboarding, which made "choose" and "commit"
+        // the same event; with a slide after it they have to come apart, and
+        // the earlier of the two is the better place for it — an on-device
+        // transfer now runs while the gate is being set up rather than after,
+        // and the wait at the end is shorter by exactly that much.
+        // `>=`, not `==`. The slideshow is a TabView and its pages can be
+        // swiped, so the filtering-mode slide can be passed without its Next
+        // ever being tapped — and before there was a slide after it, that was
+        // impossible, because the tap that committed the choice was the tap
+        // that ended onboarding. Running this on every tap from that slide
+        // onward means the last one always commits, whatever route got there.
+        // Idempotent by construction: the write is the same write, and the
+        // guard inside stops a running transfer being restarted.
+        if currentPage >= inferenceModePage { commitInferenceMode() }
+
         guard isLastPage else {
             currentPage += 1
             return
         }
 
-        if isDownloadingModel {
-            switch localService.modelStatus {
-            case .downloaded, .loading, .ready:
-                completeOnboarding()
-            default:
-                // Paused or failed — resume/restart the transfer.
-                localService.startDownload(LocalInferenceService.models[0])
-            }
+        // Cloud, or a model already on disk: nothing to wait for.
+        guard isDownloadingModel else {
+            completeOnboarding()
             return
         }
+
+        switch localService.modelStatus {
+        case .downloaded, .loading, .ready:
+            completeOnboarding()
+        case .downloading:
+            // Hold here and let the status change finish it. The button is
+            // disabled in this state, so this is the one tap that reaches it.
+            isFinishing = true
+        case .paused, .notDownloaded, .error:
+            isFinishing = true
+            localService.startDownload(LocalInferenceService.models[0])
+        }
+    }
+
+    /// Write the chosen mode through to the storage bridge, and start the
+    /// transfer if that mode needs one.
+    ///
+    /// Guarded on a transfer already being in flight: the slideshow is a
+    /// TabView, so somebody can swipe back to the filtering-mode slide and tap
+    /// Next again, and re-entering this would restart a download that is
+    /// already running. Cancelling from that slide clears the flag and makes
+    /// the choice live again.
+    private func commitInferenceMode() {
+        guard !isDownloadingModel else { return }
 
         switch inferenceMode {
         case .cloud:
             writeSelectedModel(imbueModelKey)
-            completeOnboarding()
         case .onDevice:
             // Unreachable via UI (unsupported devices never see the On-Device
             // option), but keep the RAM invariant local to the write.
@@ -147,7 +211,7 @@ struct OnboardingView: View {
             switch localService.downloadStatus(for: LocalInferenceService.models[0]) {
             case .downloaded, .loading, .ready:
                 // Already on disk (e.g. onboarding re-run) — nothing to fetch.
-                completeOnboarding()
+                break
             default:
                 isDownloadingModel = true
                 localService.startDownload(LocalInferenceService.models[0])
@@ -302,6 +366,17 @@ private class PreloadedVideoPlayer {
         queuePlayer.play()
     }
 
+    /// Decode only while the slide that shows it is on screen.
+    ///
+    /// A TabView keeps every page alive, and an AVQueuePlayer does not care
+    /// whether its layer is visible — so this went on decoding video for the
+    /// whole of onboarding, four slides after anyone could see it. That is a
+    /// core busy behind every later slide, which is the difference between a
+    /// keyboard that appears and a keyboard that eventually appears.
+    func setPlaying(_ playing: Bool) {
+        if playing { player.play() } else { player.pause() }
+    }
+
     func stop() {
         player.pause()
         player.removeAllItems()
@@ -326,7 +401,13 @@ private struct LoopingVideoView: UIViewRepresentable {
 
     func updateUIView(_ uiView: UIView, context: Context) {
         DispatchQueue.main.async {
-            context.coordinator.playerLayer?.frame = uiView.bounds
+            // Only on a real change. Assigning a layer's frame opens an
+            // implicit CoreAnimation transaction whether or not the value
+            // differs, and this ran on every pass of the enclosing body — which
+            // a download's progress ticks alone are enough to drive.
+            guard let layer = context.coordinator.playerLayer,
+                  layer.frame != uiView.bounds else { return }
+            layer.frame = uiView.bounds
         }
     }
 
@@ -375,6 +456,62 @@ private struct VideoOnboardingPage: View {
             }
             .frame(maxWidth: .infinity)
         }
+    }
+}
+
+// MARK: - Focused Viewing Page (Screen Time + notifications + the shield)
+//
+// Last, and the only slide that asks for a permission. Everything before it
+// is Bouncer describing itself or asking for a preference; this is the point
+// where it needs something from the system and cannot proceed without it.
+//
+// It is a slide rather than a prompt fired at launch because a permission
+// sheet with no explanation behind it is a sheet people dismiss — and both of
+// these fail silently and invisibly when refused. Screen Time refused means no
+// shield ever appears; notifications refused means the shield's second button
+// does nothing at all, in the particular way that looks like our bug rather
+// than a missing permission.
+//
+// Nothing here is required to finish onboarding. Skipping every control on
+// this slide leaves the gate off, which is a legitimate answer, and the same
+// controls live in Settings under Focused viewing for anyone who arrives at
+// the question later.
+
+private struct GateSetupPage: View {
+    @StateObject private var gate = GateController.shared
+    @State private var showingPicker = false
+
+    var body: some View {
+        VStack(spacing: 8) {
+            VStack(spacing: 12) {
+                Text("Focused Viewing")
+                    .font(.system(size: 28, weight: .bold))
+                    .multilineTextAlignment(.center)
+
+                Text("Optionally configure redirects.")
+                    .font(.system(size: 17))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 32)
+            }
+            .padding(.top, 60)
+
+            // The same sections Settings shows, so skipping this slide costs
+            // nothing but a trip to Focused viewing. See GateSetupSections.
+            List {
+                GateSetupSections(gate: gate,
+                                  gatedHeader: "Select your Social Platforms",
+                                  showingPicker: $showingPicker)
+            }
+            .scrollContentBackground(.hidden)
+            .scrollBounceBehavior(.basedOnSize)
+            .scrollDismissesKeyboard(.interactively)
+            .animation(.easeInOut(duration: 0.25), value: gate.authorization)
+        }
+        .familyActivityPicker(isPresented: $showingPicker, selection: Binding(
+            get: { gate.selection },
+            set: { gate.save(selection: $0) }
+        ))
     }
 }
 

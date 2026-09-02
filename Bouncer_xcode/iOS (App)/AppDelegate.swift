@@ -20,6 +20,15 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         // URLSession is bound to the delegate before iOS tries to
         // deliver any pending events for our session identifier.
         _ = ModelDownloader.shared
+        // The gate's handoff arrives as a notification tap — an app extension
+        // cannot open us directly — so the delegate has to be in place before
+        // one can land. Installed at launch rather than when the feature is
+        // switched on, because the tap that launches us IS the first event.
+        GateNotificationDelegate.shared.install()
+        // Say what the gate believes, once, at launch. Four processes and three
+        // permissions stand between tapping X and seeing a shield; when none of
+        // it happens, this is the line that says which one is missing.
+        Task { @MainActor in GateController.shared.logState("launch") }
         return true
     }
 

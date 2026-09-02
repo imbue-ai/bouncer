@@ -7,6 +7,18 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		094070F42F90061302C804DA /* GateSchedule.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6DC81F7547F887FEC4646F94 /* GateSchedule.swift */; };
+		AA10WIDGETINTENTBF000001 /* TilesConfigurationIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA10WIDGETINTENTREF00001 /* TilesConfigurationIntent.swift */; };
+		AA10WIDGETGATEBF00000001 /* Gate.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD018D5469B4CB14060D2DC0 /* Gate.swift */; };
+		AA07WIDGETBUNDLEBF000001 /* BouncerWidgetsBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA07WIDGETBUNDLEREF00001 /* BouncerWidgetsBundle.swift */; };
+		AA07WIDGETTILESBF0000001 /* PlatformTilesWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA07WIDGETTILESREF000001 /* PlatformTilesWidget.swift */; };
+		AA07WIDGETEMBEDBF0000001 /* BouncerWidgets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = AA07WIDGETPRODUCT0000001 /* BouncerWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		0CF924156E4373FF3E3C347F /* ShieldConfigurationExtension.swift in Sources */ = {isa = PBXBuildFile; fileRef = 998030C04E9801832761A984 /* ShieldConfigurationExtension.swift */; };
+		143F0115AC0B1EF363C93B4D /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AD4636AF33AB76AFE014926F /* Foundation.framework */; };
+		1F0F32B91BC4429B8909E7BC /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AD4636AF33AB76AFE014926F /* Foundation.framework */; };
+		24C454FEF25158E2612EDC44 /* Gate.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD018D5469B4CB14060D2DC0 /* Gate.swift */; };
+		2CA3287F955872471593DC16 /* BouncerActivityMonitor.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = B836BBDED9DA98620F21D6DD /* BouncerActivityMonitor.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		3F8ABB71F5AD4AB0119B1B50 /* GateRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = B586C5C322369E38F6825809 /* GateRouter.swift */; };
 		4E38A4CE2F72199A00496A14 /* AppCheckBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E38A4CC2F72199A00496A14 /* AppCheckBridge.swift */; };
 		4E38A4CF2F72199A00496A14 /* AppCheckProviderFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E38A4CD2F72199A00496A14 /* AppCheckProviderFactory.swift */; };
 		4E38A4D32F721C2500496A14 /* FirebaseAppCheck in Frameworks */ = {isa = PBXBuildFile; productRef = 4E38A4D22F721C2500496A14 /* FirebaseAppCheck */; };
@@ -14,6 +26,14 @@
 		4EC0EC652FEB068700F3FCDE /* GoogleService-Info-Dev.plist in Resources */ = {isa = PBXBuildFile; fileRef = 4EC0EC642FEB068700F3FCDE /* GoogleService-Info-Dev.plist */; };
 		4EC0EC812FEB06DD00F3FCDE /* GoogleService-Info.plist in Resources */ = {isa = PBXBuildFile; fileRef = 4EC0EC802FEB06DD00F3FCDE /* GoogleService-Info.plist */; };
 		4EC0EDD330059DE400F3FCDE /* new_ios_icon_composed.icon in Resources */ = {isa = PBXBuildFile; fileRef = 4EC0EDD230059DE400F3FCDE /* new_ios_icon_composed.icon */; };
+		58D275AD6676663AD52685DD /* Gate.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD018D5469B4CB14060D2DC0 /* Gate.swift */; };
+		6DDDF43C042465451F131629 /* Gate.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD018D5469B4CB14060D2DC0 /* Gate.swift */; };
+		6F0E134FDE1CE041DDD48DBF /* GateNotifications.swift in Sources */ = {isa = PBXBuildFile; fileRef = F810E501FA2CC76A9E9A94B9 /* GateNotifications.swift */; };
+		71EF1613C39C6A2A9B677C32 /* Gate.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD018D5469B4CB14060D2DC0 /* Gate.swift */; };
+		77160BD98CC41B1C7E2AF687 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 5817941683CABA26075EDA46 /* Assets.xcassets */; };
+		775A06712585735CFF27BD46 /* GateNotifications.swift in Sources */ = {isa = PBXBuildFile; fileRef = F810E501FA2CC76A9E9A94B9 /* GateNotifications.swift */; };
+		7E7EF5578097B164683DF85D /* BouncerShieldAction.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = A5DAFA83BC46A177BC909FDB /* BouncerShieldAction.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		8FB8E67BDB74040D3B8ED575 /* GateSchedule.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6DC81F7547F887FEC4646F94 /* GateSchedule.swift */; };
 		971D84C92FB271A2006BC538 /* FirebaseCrashlytics in Frameworks */ = {isa = PBXBuildFile; productRef = 971D84C82FB271A2006BC538 /* FirebaseCrashlytics */; };
 		974832542F91595300493A71 /* Bouncer (macOS) Extension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 974832532F91595300493A71 /* Bouncer (macOS) Extension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		97BD3B812F3EB56C00F8BF65 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97BD3B802F3EB56C00F8BF65 /* AppDelegate.swift */; };
@@ -46,11 +66,26 @@
 		AA00004000000000000000AA /* filterphrases.mp4 in Resources */ = {isa = PBXBuildFile; fileRef = AA00004100000000000000AA /* filterphrases.mp4 */; };
 		AA00005000000000000000AA /* PlatformPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00005100000000000000AA /* PlatformPickerView.swift */; };
 		AA00006000000000000000AA /* Platforms.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00006100000000000000AA /* Platforms.swift */; };
+		AA01GATETOKENSBF00000001 /* GateTokens.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA01GATETOKENSREF0000001 /* GateTokens.swift */; };
+		AA01GATETOKENSBF00000002 /* GateTokens.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA01GATETOKENSREF0000001 /* GateTokens.swift */; };
+		AA01GATETOKENSBF00000003 /* GateTokens.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA01GATETOKENSREF0000001 /* GateTokens.swift */; };
+		B9E404716C8121FC958CA0FB /* GateSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 420E2C2E22B044008DD46C11 /* GateSettingsView.swift */; };
+		AA11TUTORIALBF0000000001 /* WidgetTutorialView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11TUTORIALREF000000001 /* WidgetTutorialView.swift */; };
+		AA09SETUPSECTIONSBF00001 /* GateSetupSections.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA09SETUPSECTIONSREF0001 /* GateSetupSections.swift */; };
+		AA08TINTPICKERBF00000001 /* ShieldTintPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA08TINTPICKERREF0000001 /* ShieldTintPicker.swift */; };
+		AA06GATEPERMSBF00000001 /* GatePermissions.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA06GATEPERMSREF0000001 /* GatePermissions.swift */; };
+		C78C971BC28E48DBE328AFCA /* GateController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25EACE9DD44CFFDF36B30A6A /* GateController.swift */; };
+		CCEDD014475C057F99A2BF52 /* GateNotifications.swift in Sources */ = {isa = PBXBuildFile; fileRef = F810E501FA2CC76A9E9A94B9 /* GateNotifications.swift */; };
+		D19C57AEB8C745849965D017 /* GateSchedule.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6DC81F7547F887FEC4646F94 /* GateSchedule.swift */; };
+		D6FA91386756E09096AAC8BD /* ShieldActionExtension.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74A77CC06B8D861D126DCE7C /* ShieldActionExtension.swift */; };
 		DA00E3HEADRES0000000DA016 /* detector_head_e2b_v2.bin in Resources */ = {isa = PBXBuildFile; fileRef = DA00E3HEADBIN0000000DA015 /* detector_head_e2b_v2.bin */; };
 		DA00LISBUILD0000000DA004 /* LocalInferenceService.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA00LISFILE00000000DA003 /* LocalInferenceService.swift */; };
 		DA00LITERTLM000000DA002 /* LiteRTLM in Frameworks */ = {isa = PBXBuildFile; productRef = DA00LITERTLM000000DA001 /* LiteRTLM */; };
 		DA00MDBUILD000000000DA006 /* ModelDownloader.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA00MDFILE0000000000DA005 /* ModelDownloader.swift */; };
+		DBF3EC84A0FC4A5A0650374C /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AD4636AF33AB76AFE014926F /* Foundation.framework */; };
+		E092B93EE6C949D36F201CA0 /* DeviceActivityMonitorExtension.swift in Sources */ = {isa = PBXBuildFile; fileRef = 681FD4A58B915808440F5A34 /* DeviceActivityMonitorExtension.swift */; };
 		EE00000200000000000000EE /* manifest.json in Resources */ = {isa = PBXBuildFile; fileRef = EE00000100000000000000EE /* manifest.json */; };
+		FA3DFF4237576297BA46CB30 /* BouncerShieldConfiguration.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 380BC79B5F62800292D313AD /* BouncerShieldConfiguration.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		SF00000100000000000000SF /* manifest.json in Resources */ = {isa = PBXBuildFile; fileRef = EE00000100000000000000EE /* manifest.json */; };
 		SF00000200000000000000SF /* browser-polyfill.js in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BCB2F3EB56D00F8BF65 /* browser-polyfill.js */; };
 		SF00000300000000000000SF /* dompurify.js in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BDE2F3EB56D00F8BF65 /* dompurify.js */; };
@@ -67,6 +102,34 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
+		AA07WIDGETPROXY000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 97BD3B6A2F3EB56C00F8BF65 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = AA07WIDGETTARGET00000001;
+			remoteInfo = BouncerWidgets;
+		};
+		1B5A54861BCEBDE5530853AA /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 97BD3B6A2F3EB56C00F8BF65 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 9ABC5B9C5BBEAF2017296DC8;
+			remoteInfo = BouncerShieldAction;
+		};
+		3A260ACEEA7ACE826C3EF087 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 97BD3B6A2F3EB56C00F8BF65 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 11B673A7AC399646E64BC1A8;
+			remoteInfo = BouncerActivityMonitor;
+		};
+		6E7FCB92154A831DE0D0D699 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 97BD3B6A2F3EB56C00F8BF65 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = E6270FD93771F331ECD3D74A;
+			remoteInfo = BouncerShieldConfiguration;
+		};
 		974832552F91595300493A71 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 97BD3B6A2F3EB56C00F8BF65 /* Project object */;
@@ -77,6 +140,20 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
+		7F4F1B16EC7CAF4EE627324E /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				FA3DFF4237576297BA46CB30 /* BouncerShieldConfiguration.appex in Embed Foundation Extensions */,
+				7E7EF5578097B164683DF85D /* BouncerShieldAction.appex in Embed Foundation Extensions */,
+				2CA3287F955872471593DC16 /* BouncerActivityMonitor.appex in Embed Foundation Extensions */,
+				AA07WIDGETEMBEDBF0000001 /* BouncerWidgets.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		9748326E2F91595300493A71 /* Embed Foundation Extensions */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
@@ -91,12 +168,34 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		11245567D9A9540F860EE369 /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		22B46A751A86AC84195EABAD /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		25EACE9DD44CFFDF36B30A6A /* GateController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GateController.swift; sourceTree = "<group>"; };
+		34C5CF4C271743418F6A3931 /* BouncerActivityMonitor.entitlements */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.entitlements; path = BouncerActivityMonitor.entitlements; sourceTree = "<group>"; };
+		AA07WIDGETPRODUCT0000001 /* BouncerWidgets.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = BouncerWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		AA10WIDGETINTENTREF00001 /* TilesConfigurationIntent.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TilesConfigurationIntent.swift; sourceTree = "<group>"; };
+		AA10WIDGETENTREF00000001 /* BouncerWidgets.entitlements */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.entitlements; path = BouncerWidgets.entitlements; sourceTree = "<group>"; };
+		AA07WIDGETBUNDLEREF00001 /* BouncerWidgetsBundle.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BouncerWidgetsBundle.swift; sourceTree = "<group>"; };
+		AA07WIDGETTILESREF000001 /* PlatformTilesWidget.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PlatformTilesWidget.swift; sourceTree = "<group>"; };
+		AA07WIDGETPLISTREF000001 /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		380BC79B5F62800292D313AD /* BouncerShieldConfiguration.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = BouncerShieldConfiguration.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		420E2C2E22B044008DD46C11 /* GateSettingsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GateSettingsView.swift; sourceTree = "<group>"; };
+		AA11TUTORIALREF000000001 /* WidgetTutorialView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WidgetTutorialView.swift; sourceTree = "<group>"; };
+		AA09SETUPSECTIONSREF0001 /* GateSetupSections.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GateSetupSections.swift; sourceTree = "<group>"; };
+		AA08TINTPICKERREF0000001 /* ShieldTintPicker.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ShieldTintPicker.swift; sourceTree = "<group>"; };
+		AA06GATEPERMSREF0000001 /* GatePermissions.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GatePermissions.swift; sourceTree = "<group>"; };
+		4B8988E43528C8FDF0FB6B18 /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		4E38A4CC2F72199A00496A14 /* AppCheckBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppCheckBridge.swift; sourceTree = "<group>"; };
 		4E38A4CD2F72199A00496A14 /* AppCheckProviderFactory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppCheckProviderFactory.swift; sourceTree = "<group>"; };
 		4E3B36392F857BE300A929AD /* iosicon.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = iosicon.icon; sourceTree = "<group>"; };
 		4EC0EC642FEB068700F3FCDE /* GoogleService-Info-Dev.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "GoogleService-Info-Dev.plist"; sourceTree = "<group>"; };
 		4EC0EC802FEB06DD00F3FCDE /* GoogleService-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "GoogleService-Info.plist"; sourceTree = "<group>"; };
 		4EC0EDD230059DE400F3FCDE /* new_ios_icon_composed.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = new_ios_icon_composed.icon; sourceTree = "<group>"; };
+		5817941683CABA26075EDA46 /* Assets.xcassets */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		681FD4A58B915808440F5A34 /* DeviceActivityMonitorExtension.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = DeviceActivityMonitorExtension.swift; sourceTree = "<group>"; };
+		6DC81F7547F887FEC4646F94 /* GateSchedule.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GateSchedule.swift; sourceTree = "<group>"; };
+		73787CD6A21456C7E21FD5E3 /* BouncerShieldAction.entitlements */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.entitlements; path = BouncerShieldAction.entitlements; sourceTree = "<group>"; };
+		74A77CC06B8D861D126DCE7C /* ShieldActionExtension.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ShieldActionExtension.swift; sourceTree = "<group>"; };
 		9748323A2F91595100493A71 /* Bouncer.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Bouncer.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		974832532F91595300493A71 /* Bouncer (macOS) Extension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = "Bouncer (macOS) Extension.appex"; sourceTree = BUILT_PRODUCTS_DIR; };
 		97BD3B762F3EB56C00F8BF65 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -123,6 +222,9 @@
 		97BD3BDC2F3EB56D00F8BF65 /* popup.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; path = popup.css; sourceTree = "<group>"; };
 		97BD3BDD2F3EB56D00F8BF65 /* content.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = content.js; sourceTree = "<group>"; };
 		97BD3BDE2F3EB56D00F8BF65 /* dompurify.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = dompurify.js; sourceTree = "<group>"; };
+		998030C04E9801832761A984 /* ShieldConfigurationExtension.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ShieldConfigurationExtension.swift; sourceTree = "<group>"; };
+		A10C63E1606E7B0D2CB17A59 /* BouncerShieldConfiguration.entitlements */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.entitlements; path = BouncerShieldConfiguration.entitlements; sourceTree = "<group>"; };
+		A5DAFA83BC46A177BC909FDB /* BouncerShieldAction.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = BouncerShieldAction.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		AA00000100000000000000AA /* FilteredWebView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FilteredWebView.swift; sourceTree = "<group>"; };
 		AA00000400000000000000AA /* ChromePolyfill.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = ChromePolyfill.js; sourceTree = "<group>"; };
 		AA00000600000000000000AA /* Bouncer.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Bouncer.entitlements; sourceTree = "<group>"; };
@@ -132,10 +234,16 @@
 		AA00004100000000000000AA /* filterphrases.mp4 */ = {isa = PBXFileReference; lastKnownFileType = file; path = filterphrases.mp4; sourceTree = "<group>"; };
 		AA00005100000000000000AA /* PlatformPickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlatformPickerView.swift; sourceTree = "<group>"; };
 		AA00006100000000000000AA /* Platforms.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Platforms.swift; sourceTree = "<group>"; };
+		AA01GATETOKENSREF0000001 /* GateTokens.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GateTokens.swift; sourceTree = "<group>"; };
+		AD4636AF33AB76AFE014926F /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS26.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
+		B586C5C322369E38F6825809 /* GateRouter.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GateRouter.swift; sourceTree = "<group>"; };
+		B836BBDED9DA98620F21D6DD /* BouncerActivityMonitor.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = BouncerActivityMonitor.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		CD018D5469B4CB14060D2DC0 /* Gate.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Gate.swift; sourceTree = "<group>"; };
 		DA00E3HEADBIN0000000DA015 /* detector_head_e2b_v2.bin */ = {isa = PBXFileReference; lastKnownFileType = archive.macbinary; path = detector_head_e2b_v2.bin; sourceTree = "<group>"; };
 		DA00LISFILE00000000DA003 /* LocalInferenceService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalInferenceService.swift; sourceTree = "<group>"; };
 		DA00MDFILE0000000000DA005 /* ModelDownloader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelDownloader.swift; sourceTree = "<group>"; };
 		EE00000100000000000000EE /* manifest.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = manifest.json; sourceTree = "<group>"; };
+		F810E501FA2CC76A9E9A94B9 /* GateNotifications.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GateNotifications.swift; sourceTree = "<group>"; };
 		SP00000400000000000000SP /* SplashIcon.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = SplashIcon.png; sourceTree = "<group>"; };
 		SP00000500000000000000SP /* SplashIcon@2x.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "SplashIcon@2x.png"; sourceTree = "<group>"; };
 		SP00000600000000000000SP /* SplashIcon@3x.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "SplashIcon@3x.png"; sourceTree = "<group>"; };
@@ -144,17 +252,44 @@
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		9748323B2F91595100493A71 /* Bouncer (macOS) */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+			);
 			path = "Bouncer (macOS)";
 			sourceTree = "<group>";
 		};
 		974832572F91595300493A71 /* Bouncer (macOS) Extension */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+			);
 			path = "Bouncer (macOS) Extension";
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		AA07WIDGETFRAMEWORK00001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		3535593026C297BADF86E649 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				143F0115AC0B1EF363C93B4D /* Foundation.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		8AD27A213790D4947A6CCA4E /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				1F0F32B91BC4429B8909E7BC /* Foundation.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		974832372F91595100493A71 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -179,14 +314,96 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		D75CF944E03879D91A6C9498 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				DBF3EC84A0FC4A5A0650374C /* Foundation.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		063ACFCFFEE936D09BC6AA34 /* ScreenTime */ = {
+			isa = PBXGroup;
+			children = (
+				25EACE9DD44CFFDF36B30A6A /* GateController.swift */,
+				B586C5C322369E38F6825809 /* GateRouter.swift */,
+				420E2C2E22B044008DD46C11 /* GateSettingsView.swift */,
+				AA06GATEPERMSREF0000001 /* GatePermissions.swift */,
+				AA08TINTPICKERREF0000001 /* ShieldTintPicker.swift */,
+				AA09SETUPSECTIONSREF0001 /* GateSetupSections.swift */,
+			);
+			name = ScreenTime;
+			path = "iOS (App)/ScreenTime";
+			sourceTree = SOURCE_ROOT;
+		};
+		AA07WIDGETGROUP000000001 /* BouncerWidgets */ = {
+			isa = PBXGroup;
+			children = (
+				AA07WIDGETBUNDLEREF00001 /* BouncerWidgetsBundle.swift */,
+				AA07WIDGETTILESREF000001 /* PlatformTilesWidget.swift */,
+				AA10WIDGETINTENTREF00001 /* TilesConfigurationIntent.swift */,
+				AA07WIDGETPLISTREF000001 /* Info.plist */,
+				AA10WIDGETENTREF00000001 /* BouncerWidgets.entitlements */,
+			);
+			path = BouncerWidgets;
+			sourceTree = SOURCE_ROOT;
+		};
+		1EABBB96142759A9D7B605E6 /* BouncerActivityMonitor */ = {
+			isa = PBXGroup;
+			children = (
+				681FD4A58B915808440F5A34 /* DeviceActivityMonitorExtension.swift */,
+				11245567D9A9540F860EE369 /* Info.plist */,
+				34C5CF4C271743418F6A3931 /* BouncerActivityMonitor.entitlements */,
+			);
+			path = BouncerActivityMonitor;
+			sourceTree = SOURCE_ROOT;
+		};
+		3CDAE174A3C684332BA7F5E4 /* BouncerShieldAction */ = {
+			isa = PBXGroup;
+			children = (
+				74A77CC06B8D861D126DCE7C /* ShieldActionExtension.swift */,
+				22B46A751A86AC84195EABAD /* Info.plist */,
+				73787CD6A21456C7E21FD5E3 /* BouncerShieldAction.entitlements */,
+			);
+			path = BouncerShieldAction;
+			sourceTree = SOURCE_ROOT;
+		};
 		4E38A4D12F721C2500496A14 /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
+				9022ED9D3C88455D806740D7 /* iOS */,
 			);
 			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		8D644066E6129452AF99838D /* BouncerShieldConfiguration */ = {
+			isa = PBXGroup;
+			children = (
+				998030C04E9801832761A984 /* ShieldConfigurationExtension.swift */,
+				4B8988E43528C8FDF0FB6B18 /* Info.plist */,
+				A10C63E1606E7B0D2CB17A59 /* BouncerShieldConfiguration.entitlements */,
+				5817941683CABA26075EDA46 /* Assets.xcassets */,
+			);
+			path = BouncerShieldConfiguration;
+			sourceTree = SOURCE_ROOT;
+		};
+		9022ED9D3C88455D806740D7 /* iOS */ = {
+			isa = PBXGroup;
+			children = (
+				AD4636AF33AB76AFE014926F /* Foundation.framework */,
+			);
+			name = iOS;
+			sourceTree = "<group>";
+		};
+		916B6556E7EB2DAA29939171 /* ScreenTime */ = {
+			isa = PBXGroup;
+			children = (
+				ED07818C0BA04A96AD0C5DB8 /* Shared */,
+			);
+			name = ScreenTime;
 			sourceTree = "<group>";
 		};
 		97BD3B692F3EB56C00F8BF65 = {
@@ -198,6 +415,11 @@
 				974832572F91595300493A71 /* Bouncer (macOS) Extension */,
 				4E38A4D12F721C2500496A14 /* Frameworks */,
 				97BD3B7E2F3EB56C00F8BF65 /* Products */,
+				916B6556E7EB2DAA29939171 /* ScreenTime */,
+				8D644066E6129452AF99838D /* BouncerShieldConfiguration */,
+				3CDAE174A3C684332BA7F5E4 /* BouncerShieldAction */,
+				1EABBB96142759A9D7B605E6 /* BouncerActivityMonitor */,
+				AA07WIDGETGROUP000000001 /* BouncerWidgets */,
 			);
 			sourceTree = "<group>";
 		};
@@ -207,6 +429,10 @@
 				97BD3B7D2F3EB56C00F8BF65 /* Bouncer.app */,
 				9748323A2F91595100493A71 /* Bouncer.app */,
 				974832532F91595300493A71 /* Bouncer (macOS) Extension.appex */,
+				380BC79B5F62800292D313AD /* BouncerShieldConfiguration.appex */,
+				A5DAFA83BC46A177BC909FDB /* BouncerShieldAction.appex */,
+				B836BBDED9DA98620F21D6DD /* BouncerActivityMonitor.appex */,
+				AA07WIDGETPRODUCT0000001 /* BouncerWidgets.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -214,6 +440,7 @@
 		97BD3B7F2F3EB56C00F8BF65 /* iOS (App) */ = {
 			isa = PBXGroup;
 			children = (
+				AA11TUTORIALREF000000001 /* WidgetTutorialView.swift */,
 				4E38A4CC2F72199A00496A14 /* AppCheckBridge.swift */,
 				4E38A4CD2F72199A00496A14 /* AppCheckProviderFactory.swift */,
 				97BD3B802F3EB56C00F8BF65 /* AppDelegate.swift */,
@@ -241,6 +468,7 @@
 				4EC0EC642FEB068700F3FCDE /* GoogleService-Info-Dev.plist */,
 				4EC0EC802FEB06DD00F3FCDE /* GoogleService-Info.plist */,
 				4EC0EDD230059DE400F3FCDE /* new_ios_icon_composed.icon */,
+				063ACFCFFEE936D09BC6AA34 /* ScreenTime */,
 			);
 			path = "iOS (App)";
 			sourceTree = "<group>";
@@ -271,9 +499,38 @@
 			path = ../Bouncer;
 			sourceTree = SOURCE_ROOT;
 		};
+		ED07818C0BA04A96AD0C5DB8 /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				CD018D5469B4CB14060D2DC0 /* Gate.swift */,
+				F810E501FA2CC76A9E9A94B9 /* GateNotifications.swift */,
+				6DC81F7547F887FEC4646F94 /* GateSchedule.swift */,
+				AA01GATETOKENSREF0000001 /* GateTokens.swift */,
+			);
+			name = Shared;
+			path = ScreenTime/Shared;
+			sourceTree = SOURCE_ROOT;
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		11B673A7AC399646E64BC1A8 /* BouncerActivityMonitor */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 94499C75DA458F7CC39EA2A3 /* Build configuration list for PBXNativeTarget "BouncerActivityMonitor" */;
+			buildPhases = (
+				BDF8D6A37EA83174FD1F6530 /* Sources */,
+				D75CF944E03879D91A6C9498 /* Frameworks */,
+				30CBB65C9DB196F46F613410 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = BouncerActivityMonitor;
+			productName = BouncerActivityMonitor;
+			productReference = B836BBDED9DA98620F21D6DD /* BouncerActivityMonitor.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 		974832392F91595100493A71 /* Bouncer (macOS) */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 974832732F91595300493A71 /* Build configuration list for PBXNativeTarget "Bouncer (macOS)" */;
@@ -292,8 +549,6 @@
 				9748323B2F91595100493A71 /* Bouncer (macOS) */,
 			);
 			name = "Bouncer (macOS)";
-			packageProductDependencies = (
-			);
 			productName = "Bouncer (macOS)";
 			productReference = 9748323A2F91595100493A71 /* Bouncer.app */;
 			productType = "com.apple.product-type.application";
@@ -315,8 +570,6 @@
 				974832572F91595300493A71 /* Bouncer (macOS) Extension */,
 			);
 			name = "Bouncer (macOS) Extension";
-			packageProductDependencies = (
-			);
 			productName = "Bouncer (macOS) Extension";
 			productReference = 974832532F91595300493A71 /* Bouncer (macOS) Extension.appex */;
 			productType = "com.apple.product-type.app-extension";
@@ -329,17 +582,73 @@
 				97BD3B792F3EB56C00F8BF65 /* Sources */,
 				97BD3B7A2F3EB56C00F8BF65 /* Frameworks */,
 				97BD3B7B2F3EB56C00F8BF65 /* Resources */,
+				7F4F1B16EC7CAF4EE627324E /* Embed Foundation Extensions */,
 				CR00000400000000000000CR /* Copy GoogleService-Info plist (optional) */,
 				CR00000300000000000000CR /* Crashlytics dSYM upload */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				897793F3ED9895D2AE8A7F84 /* PBXTargetDependency */,
+				302D69061F7032E9B8C1866A /* PBXTargetDependency */,
+				58B98566C762841157FF3314 /* PBXTargetDependency */,
+				AA07WIDGETDEP00000000001 /* PBXTargetDependency */,
 			);
 			name = "Bouncer (iOS)";
 			productName = "Twitter For You Filter (iOS)";
 			productReference = 97BD3B7D2F3EB56C00F8BF65 /* Bouncer.app */;
 			productType = "com.apple.product-type.application";
+		};
+		AA07WIDGETTARGET00000001 /* BouncerWidgets */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AA07WIDGETCFGLIST0000001 /* Build configuration list for PBXNativeTarget "BouncerWidgets" */;
+			buildPhases = (
+				AA07WIDGETSOURCES0000001 /* Sources */,
+				AA07WIDGETFRAMEWORK00001 /* Frameworks */,
+				AA07WIDGETRESOURCES00001 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = BouncerWidgets;
+			productName = BouncerWidgets;
+			productReference = AA07WIDGETPRODUCT0000001 /* BouncerWidgets.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		9ABC5B9C5BBEAF2017296DC8 /* BouncerShieldAction */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = E30D0E9B1EF87BDFC275F15D /* Build configuration list for PBXNativeTarget "BouncerShieldAction" */;
+			buildPhases = (
+				66D0749D68C636779CE9E2CC /* Sources */,
+				3535593026C297BADF86E649 /* Frameworks */,
+				182F7D6A48D7EF8A244D7A3A /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = BouncerShieldAction;
+			productName = BouncerShieldAction;
+			productReference = A5DAFA83BC46A177BC909FDB /* BouncerShieldAction.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		E6270FD93771F331ECD3D74A /* BouncerShieldConfiguration */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 95D064CA7A3C6F5DDAEFB59E /* Build configuration list for PBXNativeTarget "BouncerShieldConfiguration" */;
+			buildPhases = (
+				C53D20B1367C11A501EFA068 /* Sources */,
+				8AD27A213790D4947A6CCA4E /* Frameworks */,
+				FF89C70CCA3313F7297DB0C2 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = BouncerShieldConfiguration;
+			productName = BouncerShieldConfiguration;
+			productReference = 380BC79B5F62800292D313AD /* BouncerShieldConfiguration.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -383,11 +692,36 @@
 				97BD3B7C2F3EB56C00F8BF65 /* Bouncer (iOS) */,
 				974832392F91595100493A71 /* Bouncer (macOS) */,
 				974832522F91595300493A71 /* Bouncer (macOS) Extension */,
+				E6270FD93771F331ECD3D74A /* BouncerShieldConfiguration */,
+				9ABC5B9C5BBEAF2017296DC8 /* BouncerShieldAction */,
+				11B673A7AC399646E64BC1A8 /* BouncerActivityMonitor */,
+				AA07WIDGETTARGET00000001 /* BouncerWidgets */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		AA07WIDGETRESOURCES00001 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		182F7D6A48D7EF8A244D7A3A /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		30CBB65C9DB196F46F613410 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		974832382F91595100493A71 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -447,6 +781,14 @@
 				DA00E3HEADRES0000000DA016 /* detector_head_e2b_v2.bin in Resources */,
 				4EC0EDD330059DE400F3FCDE /* new_ios_icon_composed.icon in Resources */,
 				4EC0EC652FEB068700F3FCDE /* GoogleService-Info-Dev.plist in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		FF89C70CCA3313F7297DB0C2 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				77160BD98CC41B1C7E2AF687 /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -535,6 +877,29 @@
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		AA07WIDGETSOURCES0000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AA07WIDGETBUNDLEBF000001 /* BouncerWidgetsBundle.swift in Sources */,
+				AA07WIDGETTILESBF0000001 /* PlatformTilesWidget.swift in Sources */,
+				AA10WIDGETINTENTBF000001 /* TilesConfigurationIntent.swift in Sources */,
+				AA10WIDGETGATEBF00000001 /* Gate.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		66D0749D68C636779CE9E2CC /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D6FA91386756E09096AAC8BD /* ShieldActionExtension.swift in Sources */,
+				24C454FEF25158E2612EDC44 /* Gate.swift in Sources */,
+				CCEDD014475C057F99A2BF52 /* GateNotifications.swift in Sources */,
+				094070F42F90061302C804DA /* GateSchedule.swift in Sources */,
+				AA01GATETOKENSBF00000002 /* GateTokens.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		974832362F91595100493A71 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -565,12 +930,68 @@
 				AA00006000000000000000AA /* Platforms.swift in Sources */,
 				DA00LISBUILD0000000DA004 /* LocalInferenceService.swift in Sources */,
 				DA00MDBUILD000000000DA006 /* ModelDownloader.swift in Sources */,
+				58D275AD6676663AD52685DD /* Gate.swift in Sources */,
+				6F0E134FDE1CE041DDD48DBF /* GateNotifications.swift in Sources */,
+				8FB8E67BDB74040D3B8ED575 /* GateSchedule.swift in Sources */,
+				C78C971BC28E48DBE328AFCA /* GateController.swift in Sources */,
+				3F8ABB71F5AD4AB0119B1B50 /* GateRouter.swift in Sources */,
+				B9E404716C8121FC958CA0FB /* GateSettingsView.swift in Sources */,
+				AA06GATEPERMSBF00000001 /* GatePermissions.swift in Sources */,
+				AA08TINTPICKERBF00000001 /* ShieldTintPicker.swift in Sources */,
+				AA09SETUPSECTIONSBF00001 /* GateSetupSections.swift in Sources */,
+				AA11TUTORIALBF0000000001 /* WidgetTutorialView.swift in Sources */,
+				AA01GATETOKENSBF00000001 /* GateTokens.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		BDF8D6A37EA83174FD1F6530 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E092B93EE6C949D36F201CA0 /* DeviceActivityMonitorExtension.swift in Sources */,
+				71EF1613C39C6A2A9B677C32 /* Gate.swift in Sources */,
+				775A06712585735CFF27BD46 /* GateNotifications.swift in Sources */,
+				D19C57AEB8C745849965D017 /* GateSchedule.swift in Sources */,
+				AA01GATETOKENSBF00000003 /* GateTokens.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		C53D20B1367C11A501EFA068 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				0CF924156E4373FF3E3C347F /* ShieldConfigurationExtension.swift in Sources */,
+				6DDDF43C042465451F131629 /* Gate.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		AA07WIDGETDEP00000000001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = BouncerWidgets;
+			target = AA07WIDGETTARGET00000001 /* BouncerWidgets */;
+			targetProxy = AA07WIDGETPROXY000000001 /* PBXContainerItemProxy */;
+		};
+		302D69061F7032E9B8C1866A /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = BouncerShieldAction;
+			target = 9ABC5B9C5BBEAF2017296DC8 /* BouncerShieldAction */;
+			targetProxy = 1B5A54861BCEBDE5530853AA /* PBXContainerItemProxy */;
+		};
+		58B98566C762841157FF3314 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = BouncerActivityMonitor;
+			target = 11B673A7AC399646E64BC1A8 /* BouncerActivityMonitor */;
+			targetProxy = 3A260ACEEA7ACE826C3EF087 /* PBXContainerItemProxy */;
+		};
+		897793F3ED9895D2AE8A7F84 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = BouncerShieldConfiguration;
+			target = E6270FD93771F331ECD3D74A /* BouncerShieldConfiguration */;
+			targetProxy = 6E7FCB92154A831DE0D0D699 /* PBXContainerItemProxy */;
+		};
 		974832562F91595300493A71 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = 974832522F91595300493A71 /* Bouncer (macOS) Extension */;
@@ -598,6 +1019,181 @@
 /* End PBXVariantGroup section */
 
 /* Begin XCBuildConfiguration section */
+		1C6DC20B51CC5017A3FC556C /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_ENTITLEMENTS = BouncerShieldConfiguration/BouncerShieldConfiguration.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 2;
+				DEVELOPMENT_TEAM = LDDYAR29MP;
+				ENABLE_DEBUG_DYLIB = NO;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = BouncerShieldConfiguration/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 2.0.5;
+				PRODUCT_BUNDLE_IDENTIFIER = com.imbue.xbouncer.ShieldConfig;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		40D54EECE005B599027D1CD2 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_ENTITLEMENTS = BouncerActivityMonitor/BouncerActivityMonitor.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 2;
+				DEVELOPMENT_TEAM = LDDYAR29MP;
+				ENABLE_DEBUG_DYLIB = NO;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = BouncerActivityMonitor/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 2.0.5;
+				PRODUCT_BUNDLE_IDENTIFIER = com.imbue.xbouncer.dev.ActivityMonitor;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		59E17B86BD84457D6F00F715 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_ENTITLEMENTS = BouncerShieldConfiguration/BouncerShieldConfiguration.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 2;
+				DEVELOPMENT_TEAM = LDDYAR29MP;
+				ENABLE_DEBUG_DYLIB = NO;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = BouncerShieldConfiguration/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 2.0.5;
+				PRODUCT_BUNDLE_IDENTIFIER = com.imbue.xbouncer.dev.ShieldConfig;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		AA07WIDGETCFGDEBUG000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_ENTITLEMENTS = BouncerWidgets/BouncerWidgets.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = LDDYAR29MP;
+				ENABLE_DEBUG_DYLIB = NO;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = BouncerWidgets/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 2.1.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.imbue.xbouncer.dev.Widgets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		AA07WIDGETCFGRELEASE0001 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_ENTITLEMENTS = BouncerWidgets/BouncerWidgets.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = LDDYAR29MP;
+				ENABLE_DEBUG_DYLIB = NO;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = BouncerWidgets/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 2.1.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.imbue.xbouncer.Widgets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		6C0ABE4E2D887AC1D42DA886 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_ENTITLEMENTS = BouncerShieldAction/BouncerShieldAction.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 2;
+				DEVELOPMENT_TEAM = LDDYAR29MP;
+				ENABLE_DEBUG_DYLIB = NO;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = BouncerShieldAction/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 2.0.5;
+				PRODUCT_BUNDLE_IDENTIFIER = com.imbue.xbouncer.dev.ShieldAction;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
 		9748326C2F91595300493A71 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -980,9 +1576,87 @@
 			};
 			name = Release;
 		};
+		B49F863CD3064E09CB779B6E /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_ENTITLEMENTS = BouncerActivityMonitor/BouncerActivityMonitor.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 2;
+				DEVELOPMENT_TEAM = LDDYAR29MP;
+				ENABLE_DEBUG_DYLIB = NO;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = BouncerActivityMonitor/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 2.0.5;
+				PRODUCT_BUNDLE_IDENTIFIER = com.imbue.xbouncer.ActivityMonitor;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		F07EB78EFFA31E42772A87BB /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_ENTITLEMENTS = BouncerShieldAction/BouncerShieldAction.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 2;
+				DEVELOPMENT_TEAM = LDDYAR29MP;
+				ENABLE_DEBUG_DYLIB = NO;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = BouncerShieldAction/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 2.0.5;
+				PRODUCT_BUNDLE_IDENTIFIER = com.imbue.xbouncer.ShieldAction;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		94499C75DA458F7CC39EA2A3 /* Build configuration list for PBXNativeTarget "BouncerActivityMonitor" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B49F863CD3064E09CB779B6E /* Release */,
+				40D54EECE005B599027D1CD2 /* Debug */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		95D064CA7A3C6F5DDAEFB59E /* Build configuration list for PBXNativeTarget "BouncerShieldConfiguration" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1C6DC20B51CC5017A3FC556C /* Release */,
+				59E17B86BD84457D6F00F715 /* Debug */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		974832722F91595300493A71 /* Build configuration list for PBXNativeTarget "Bouncer (macOS) Extension" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -1015,6 +1689,24 @@
 			buildConfigurations = (
 				97BD3BC02F3EB56C00F8BF65 /* Debug */,
 				97BD3BC12F3EB56C00F8BF65 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		AA07WIDGETCFGLIST0000001 /* Build configuration list for PBXNativeTarget "BouncerWidgets" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AA07WIDGETCFGRELEASE0001 /* Release */,
+				AA07WIDGETCFGDEBUG000001 /* Debug */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		E30D0E9B1EF87BDFC275F15D /* Build configuration list for PBXNativeTarget "BouncerShieldAction" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F07EB78EFFA31E42772A87BB /* Release */,
+				6C0ABE4E2D887AC1D42DA886 /* Debug */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
