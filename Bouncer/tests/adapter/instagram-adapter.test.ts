@@ -100,13 +100,12 @@ describe('InstagramAdapter', () => {
     expect(key).not.toContain('token=');
   });
 
-  it('hides and restores the whole reel slide', () => {
+  it('hides and restores a reel slide below the fold', () => {
     const { adapter, post } = mountReel();
     const card = document.getElementById('card')!;
-    // happy-dom reports an all-zero rect, which hidePost reads as "entirely
-    // above the viewport" and leaves to the scroll-fade path. Put the card
-    // on screen so the immediate-hide branch runs.
-    card.getBoundingClientRect = () => ({ top: 0, bottom: 600 }) as DOMRect;
+    // Fully below the viewport: the one place a collapse moves nothing the
+    // user can see, so it is the only place hidePost collapses immediately.
+    card.getBoundingClientRect = () => ({ top: 900, bottom: 1500, height: 600 }) as DOMRect;
 
     adapter.hidePost(post);
     expect(card.dataset.filteredByExtension).toBe('true');
@@ -114,6 +113,19 @@ describe('InstagramAdapter', () => {
 
     adapter.showPost(post);
     expect(card.dataset.filteredByExtension).toBeUndefined();
+    expect(card.style.display).toBe('');
+  });
+
+  it('defers hiding the reel currently in view — nothing replaces it unscrolled', () => {
+    const { adapter, post } = mountReel();
+    const card = document.getElementById('card')!;
+    card.getBoundingClientRect = () => ({ top: 0, bottom: 600, height: 600 }) as DOMRect;
+
+    adapter.hidePost(post);
+    // Marked for the filtered-view plumbing and the scroll-past fade, but left
+    // holding its space: display:none here would snap the next reel into view
+    // with no scroll.
+    expect(card.dataset.filteredByExtension).toBe('true');
     expect(card.style.display).toBe('');
   });
 

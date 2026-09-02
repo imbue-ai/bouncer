@@ -104,6 +104,10 @@ const EASE = 'cubic-bezier(0.22, 0.61, 0.36, 1)';
 const OPEN_SWIPE_PX = 26;
 /** The same intent on a trackpad or wheel, which arrives in small increments. */
 const WHEEL_OPEN_DELTA = 24;
+/** Cooldown after a wheel-driven go-back. Momentum keeps arriving long after
+ *  the intent, and each threshold crossing here is a whole reel of navigation —
+ *  long enough to cover the synthetic swipe and its settle. */
+const WHEEL_BACK_BLOCK_MS = 900;
 /** After a dismissal, ignore the tail of the gesture that caused it — momentum
  *  scrolling and flick inertia both keep arriving well after the finger is up,
  *  and reopening the glass you just dismissed is the one thing they must not do. */
@@ -161,11 +165,8 @@ let overlayGesture = false;
  *  that drag's rather than a tap of its own. */
 let glassDragStartY: number | null = null;
 let tapDeadUntil = 0;
-/** Whether the gesture arriving is one WE sent (see simulateSwipe). Every
- *  handler here stands down while it is raised: the one swipe we don't want to
- *  take from the page is the one we sent it. */
-let synthesizing = false;
 let wheelAccum = 0;
+let wheelBackAccum = 0;
 let reopenAfter = 0;
 
 export interface SuggestHost {
@@ -468,7 +469,6 @@ function touchY(e: Event): number | null {
  *
  *  Only the swipe-to-open READING is scoped to the reel; the holding is not. */
 function onTouchStart(e: Event): void {
-  if (synthesizing) return;
 
   touching = true;
   repin();
@@ -525,7 +525,6 @@ function endGlassDrag(dy: number): void {
  *  everything else — the feed jumped a whole reel rather than drifting, which is
  *  a page doing it on purpose, not a scroller slipping. */
 function onTouchMove(e: Event): void {
-  if (synthesizing) return;
   // A scroll inside the comments belongs to the comments: not cancelled, not
   // swallowed, not read as anything.
   if (overlayGesture) return;
@@ -577,14 +576,54 @@ function onTouchMove(e: Event): void {
  *  is a downward swipe we have already swallowed it (see onTouchMove), and a
  *  half-delivered gesture is worse than none. So the real one is suppressed and
  *  an identical synthetic one is handed to Instagram, which navigates itself. */
+/** Go back by scrolling, on a feed that scrolls.
+ *
+ *  The synthetic swipe below exists for the stacked pager, whose own gesture
+ *  recogniser reads the touch stream; on a scroller a dispatched touch event
+ *  moves nothing at all — going back simply did nothing there. A pager parks
+ *  its scrollTop at zero, so any real scroll offset is the scroller giving
+ *  itself away, and the way back is the previous slide's own position. */
+function goBackLocal(): boolean {
+  const scroller = feedEl;
+  if (!scroller || scroller.scrollTop <= 8) return false;
+  const current = scroller.scrollTop;
+  let target: number | null = null;
+  for (const child of Array.from(scroller.children)) {
+    if (!(child instanceof HTMLElement)) continue;
+    const top = child.offsetTop;
+    if (top < current - 8 && (target === null || top > target)) target = top;
+  }
+  // No slide-shaped child above (a single tall wrapper, say): one screen back
+  // is still right on any scroller, and the snap point is a slide boundary.
+  if (target === null || target < current - scroller.clientHeight * 1.5) {
+    target = Math.max(0, current - scroller.clientHeight);
+  }
+  driveTo(scroller, target);
+  return true;
+}
+
 async function goBack(): Promise<void> {
   const gen = ++restockGen;
   driving = true;
   try {
-    await simulateSwipe(false, gen);
+    // Scrolling is the ONLY way this moves. There used to be a synthetic-swipe
+    // fallback here — fabricated touch events aimed at Instagram's own gesture
+    // recogniser — and on the device it is exactly what "the reel gets forcibly
+    // replaced" looks like. A feed whose scroller has nowhere to go simply
+    // stays put now.
+    if (!goBackLocal()) {
+      console.debug('[Bouncer IG] back: no scroll position above to return to');
+      return;
+    }
+    // Hold `driving` until the feed has actually stopped, exactly as arriveAt
+    // does. The user's own touchend armed the pin for GESTURE_TAIL_MS, and the
+    // scroller settles over several hundred milliseconds — released early, the
+    // pin read the navigation we just asked for as a drift and yanked the feed
+    // back, which is a swipe-down that jerks and lands nowhere.
+    await settleAfterSwipe(null, gen);
   } finally {
     driving = false;
-    setTimeout(repin, SIM_STEP_SETTLE_MS);
+    repin();
   }
 }
 
@@ -592,7 +631,6 @@ async function goBack(): Promise<void> {
  *  the movement can still act on the release — "finger lifted, commit" — and it
  *  would commit to a swipe we spent the whole gesture refusing. */
 function onTouchEnd(e: Event): void {
-  if (synthesizing) return;
 
   if (swallowedGesture) {
     e.stopPropagation();
@@ -633,13 +671,11 @@ function onTouchEnd(e: Event): void {
  *  the same finger — blocking one stream and leaving the other open would leave
  *  the recogniser everything it needs. */
 function onPointerDown(e: PointerEvent): void {
-  if (synthesizing) return;
 
   pointerStartY = ours(e) ? null : e.clientY;
 }
 
 function onPointerMove(e: PointerEvent): void {
-  if (synthesizing) return;
   if (overlayGesture) return;
 
   if (pointerStartY === null || ours(e)) return;
@@ -658,14 +694,28 @@ function onWheel(e: WheelEvent): void {
   if (e.cancelable) e.preventDefault();
   if (isOpen() || !canOpen()) {
     wheelAccum = 0;
+    wheelBackAccum = 0;
     return;
   }
-  // Only downward intent accumulates, and an upward tick resets it — otherwise
-  // a jittery trackpad eventually sums its way to the threshold on its own.
-  wheelAccum = e.deltaY > 0 ? wheelAccum + e.deltaY : 0;
+  // Each direction accumulates only its own ticks, and an opposite tick resets
+  // it — otherwise a jittery trackpad eventually sums its way to a threshold on
+  // its own. Down is "what's next" (the glass); up is "the reel before", the
+  // same meaning a downward touch swipe has — without this, a wheel or trackpad
+  // had no way back at all.
+  if (e.deltaY > 0) {
+    wheelAccum += e.deltaY;
+    wheelBackAccum = 0;
+  } else if (e.deltaY < 0) {
+    wheelBackAccum -= e.deltaY;
+    wheelAccum = 0;
+  }
   if (wheelAccum >= WHEEL_OPEN_DELTA) {
     wheelAccum = 0;
     open();
+  } else if (wheelBackAccum >= WHEEL_OPEN_DELTA) {
+    wheelBackAccum = 0;
+    reopenAfter = performance.now() + WHEEL_BACK_BLOCK_MS;
+    void goBack();
   }
 }
 
@@ -789,9 +839,9 @@ function wait(ms: number): Promise<void> {
  *
  *  `from` grows it out of the row that was tapped, so the choice and the cover
  *  are one movement rather than a cut to a loading screen. */
-function coverWith(record: ReelRecord | null, from?: DOMRect): void {
+function coverWith(record: ReelRecord | null, from?: DOMRect): HTMLElement | null {
   document.getElementById(STILL_ID)?.remove();
-  if (!record) return;
+  if (!record) return null;
   const img = document.createElement('img');
   img.id = STILL_ID;
   img.src = record.thumbnailUrl;
@@ -802,11 +852,18 @@ function coverWith(record: ReelRecord | null, from?: DOMRect): void {
     'width: 100%',
     'height: 100%',
     'object-fit: cover',
+    // Opaque even when the picture never arrives. A thumbnail URL is a CDN
+    // token with an expiry, and an <img> whose load failed paints NOTHING —
+    // a transparent "cover" over a feed being walked, which from the outside
+    // is reels flashing past unplayed. Black is what a reel's own letterbox
+    // already is; a beat of it reads as loading.
+    'background: #000',
     'pointer-events: none',
     `z-index: ${STILL_Z}`,
   ].join(';');
   (document.body ?? document.documentElement).appendChild(img);
   if (from) flipFrom(img, from, SHRINK_MS);
+  return img;
 }
 
 /** Take the cover away, revealing wherever the feed has got to. */
@@ -855,204 +912,10 @@ function driveTo(scroller: HTMLElement, top: number): void {
   scroller.scrollTop = top;
 }
 
-// ==================== Swiping the feed ourselves ====================
-//
-// This is how the chooser moves the feed now, and it is the whole trick.
-//
-// Instagram's reels feed is not a scroller with a list in it; it is a PAGER,
-// driven by its own gesture recogniser. Everything downstream of that — which
-// reel it thinks you are on, when it fetches the next batch, whether it mounts
-// a <video> — hangs off the pager, not off scrollTop. Which is why driving the
-// scroller was a dead end in both directions: setting scrollTop moved pixels
-// without telling Instagram anything, so the feed never loaded more, and a
-// picked reel arrived without the app agreeing you were there.
-//
-// So we stop pushing pixels and speak the language it listens to: a real-shaped
-// swipe. Every move the chooser makes — going to the reel you picked, going to
-// find more — is now some number of these, and Instagram does its own
-// navigating and its own loading in response, exactly as if a thumb had done it.
-// Going to the fifth reel down means five swipes, passing through the ones in
-// between, which costs a second and buys a feed that stays consistent with
-// itself.
-//
-// Both event families, because there is no telling which one the recogniser is
-// listening to and a gesture missing half its stream is a gesture that never
-// happened: PointerEvent (what modern React handlers bind) and touch events
-// (what mobile web recognisers were written against), interleaved the way a real
-// finger produces them.
-//
-// `synthesizing` is what keeps this from being eaten by our own suppression:
-// every handler in this file stands down while it is raised, because the one
-// swipe we do NOT want to take from the page is the one we sent it.
-
-/** How many reels forward to ask for before giving up on a restock. */
-const SIM_SWIPES = 4;
-/** Long enough for Instagram to act on one and start the next fetch. */
-const SIM_SETTLE_MS = 700;
-/** And after a navigating swipe, which only has to let the pager commit.
- *
- *  Kept short on purpose. Nothing is watching this happen — the cover is over
- *  it — so the only thing the delay buys is Instagram's own state machine
- *  catching up, and every millisecond past that is a millisecond of loading
- *  screen the user paid for and got nothing back. */
+/** A beat for a programmatic scroll to start moving before the stillness
+ *  polling below begins — otherwise the first two polls agree the feed is
+ *  still because it has not started yet. */
 const SIM_STEP_SETTLE_MS = 180;
-/** Steps in one synthetic swipe, and the beat between them. A single jump from
- *  start to end reads as a teleport to a recogniser that measures velocity —
- *  but a flick is genuinely only a handful of frames, so this is a flick. */
-const SIM_STEPS = 5;
-const SIM_STEP_MS = 12;
-/** The most swipes one pick may spend. A row is at most WINDOW_SIZE away, so
- *  this is only ever reached if the list moved under us. */
-// A runaway guard, not a budget. It used to be six, chosen when a journey was
-// counted and a row was at most WINDOW_SIZE away — but a restock can leave the
-// feed several reels from where the chooser was opened, and six swipes was not
-// enough to walk back: the device log ends "step cap reached short of" and
-// then a reel nobody picked. Now that the walk watches what is PAINTED it
-// stops the instant it arrives, and stops again after two swipes that move
-// nothing, so a high cap costs nothing and only stops an infinite loop.
-const SIM_MAX_STEPS = 14;
-
-/** Where to aim the synthetic gesture: the reel itself, not the glass over it. */
-function swipeTarget(): EventTarget {
-  return document.querySelector('video')?.parentElement
-    ?? feedEl
-    ?? document.body
-    ?? document.documentElement;
-}
-
-/** One touch point, shaped like the real thing. Recognisers read more than
- *  clientY off these — identifier and pageY especially — and a point missing
- *  the field a given one happens to use is a gesture it never sees. */
-function touchPoint(target: EventTarget, x: number, y: number): Record<string, unknown> {
-  return {
-    identifier: 1,
-    target,
-    clientX: x,
-    clientY: y,
-    pageX: x,
-    pageY: y,
-    screenX: x,
-    screenY: y,
-    radiusX: 11,
-    radiusY: 11,
-    rotationAngle: 0,
-    force: 1,
-  };
-}
-
-function fireTouch(target: EventTarget, type: string, x: number, y: number): void {
-  const event = new Event(type, { bubbles: true, cancelable: true, composed: true });
-  const point = touchPoint(target, x, y);
-  const list = type === 'touchend' || type === 'touchcancel' ? [] : [point];
-  Object.defineProperty(event, 'touches', { value: list });
-  Object.defineProperty(event, 'targetTouches', { value: list });
-  Object.defineProperty(event, 'changedTouches', { value: [point] });
-  target.dispatchEvent(event);
-}
-
-/** The pointer half of the same finger. A properly constructed PointerEvent,
- *  because this one the platform will build for us — and React binds pointer
- *  handlers far more often than touch ones. */
-function firePointer(target: EventTarget, type: string, x: number, y: number): void {
-  if (typeof PointerEvent !== 'function') return;
-  target.dispatchEvent(new PointerEvent(type, {
-    bubbles: true,
-    cancelable: true,
-    composed: true,
-    pointerId: 1,
-    pointerType: 'touch',
-    isPrimary: true,
-    clientX: x,
-    clientY: y,
-    screenX: x,
-    screenY: y,
-    button: type === 'pointermove' ? -1 : 0,
-    buttons: type === 'pointerup' ? 0 : 1,
-    width: 23,
-    height: 23,
-    pressure: type === 'pointerup' ? 0 : 0.5,
-  }));
-}
-
-/** Act out one swipe on the reel. `up` is the direction a thumb moves to go to
- *  the next reel. Resolves once the gesture is delivered; the caller decides how
- *  long to let Instagram act on it. */
-/** One synthetic gesture at a time, and every one of them finished.
- *
- *  Both halves of that rule fix the same report — "picking a reel just goes
- *  back to the one I started on" — and signed in the two causes fire together
- *  on almost every pick.
- *
- *  ABANDONED GESTURES. This used to test the generation counter between steps
- *  and return the moment it went stale: mid-gesture, after a touchstart and a
- *  few touchmoves, with no touchend ever sent. A pager handed a swipe that
- *  starts, travels half a screen and then never ends does the only sensible
- *  thing available to it — springs back to the slide it came from. Cancelling
- *  the restock was itself the thing pulling the feed home, and a pick cancels
- *  the restock by definition.
- *
- *  OVERLAPPING GESTURES. The restock's walk home swipes DOWNWARD, backwards
- *  through the feed. It ran concurrently with the pick's forward journey —
- *  two coroutines dispatching into one pager — and interleaved they average
- *  out to somewhere between the two. It also left `synthesizing` cleared by
- *  whichever finished first, so our own suppression stopped standing down
- *  while a gesture was still being sent.
- *
- *  And this is why it only shows signed in: needsStock() asks for a restock
- *  whenever fewer than RESTOCK_AHEAD_MIN reels are known ahead, and that feed
- *  reveals reels so slowly (see ./durations.ts) that the condition is nearly
- *  always true. Logged out the feed is discovered in bulk, no restock runs,
- *  and picking has nothing to collide with.
- *
- *  Serialised, a superseded gesture is DROPPED rather than queued — it checks
- *  its generation before dispatching anything — so a pick waits only for the
- *  gesture actually in flight. */
-let swipeChain: Promise<void> = Promise.resolve();
-
-function simulateSwipe(up: boolean, gen: number): Promise<void> {
-  const run = swipeChain.then(() => deliverSwipe(up, gen));
-  // The chain has to survive a failure, or one thrown gesture would skip every
-  // gesture after it for the life of the page.
-  swipeChain = run.catch(() => undefined);
-  return run;
-}
-
-async function deliverSwipe(up: boolean, gen: number): Promise<void> {
-  // Superseded while queued behind another gesture: send nothing at all.
-  // Checked here, and only here, so a gesture is always all or nothing.
-  if (gen !== restockGen) return;
-
-  const target = swipeTarget();
-  const x = Math.round(window.innerWidth / 2);
-  const from = Math.round(window.innerHeight * (up ? 0.78 : 0.22));
-  const to = Math.round(window.innerHeight * (up ? 0.18 : 0.82));
-
-  synthesizing = true;
-  try {
-    firePointer(target, 'pointerdown', x, from);
-    fireTouch(target, 'touchstart', x, from);
-    for (let step = 1; step <= SIM_STEPS; step++) {
-      const y = Math.round(from + (to - from) * (step / SIM_STEPS));
-      firePointer(target, 'pointermove', x, y);
-      fireTouch(target, 'touchmove', x, y);
-      await wait(SIM_STEP_MS);
-    }
-    fireTouch(target, 'touchend', x, to);
-    firePointer(target, 'pointerup', x, to);
-  } finally {
-    synthesizing = false;
-  }
-}
-
-/** Swipe forward `count` reels, the way a thumb would, and let each one land. */
-async function swipeForward(count: number, gen: number): Promise<void> {
-  for (let i = 0; i < Math.min(count, SIM_MAX_STEPS); i++) {
-    await simulateSwipe(true, gen);
-    if (gen !== restockGen) return;
-    await wait(SIM_STEP_SETTLE_MS);
-    if (gen !== restockGen) return;
-  }
-}
 
 /** How long to keep watching a feed that is still moving, and how often. The
  *  signed-in pager ANIMATES its snap — a fixed beat raced it and lost. */
@@ -1110,44 +973,6 @@ async function settleAfterSwipe(record: ReelRecord | null, gen: number): Promise
   }
 }
 
-/** Swipe until `record`'s card IS the reel on screen — steered by where the
- *  card actually is after each swipe, not by counting rows.
- *
- *  Counting was the signed-in bug: the feed there interleaves slides this
- *  pipeline never discovers — ads, "suggested for you" — so "the second row"
- *  is not "two swipes away", and a counted journey landed on the wrong slide
- *  as often as the right one. Measuring after each swipe also absorbs a swipe
- *  the pager dropped, and notices a pager that is ignoring the synthetic
- *  gesture entirely (two swipes with no movement) — in which case the walk
- *  stands down and lets goTo's scroll do the moving.
- *
- *  Counted swipes remain the fallback for a card with no usable geometry —
- *  recycled out of the DOM, or not laid out yet. */
-/** Whether a card's rectangle says anything about where it sits in the feed.
- *
- *  It says nothing in two different situations, and both look like a healthy
- *  measurement from the inside.
- *
- *  UNMOUNTED. Instagram recycles every card you are not near, and a recycled
- *  one measures 0x0.
- *
- *  STACKED. A pager that keeps its slides in one place and shows one at a time
- *  reports EVERY slide at the top of the screen — the reel three ahead
- *  measures exactly where the reel you are watching does. Believing that is
- *  what broke picking: the walk asked "is the chosen reel under the thumb
- *  already?", got yes on the first look, sent ZERO swipes, and left the
- *  arrival to a scrollIntoView that a transform-positioned pager ignores. From
- *  the outside, choosing a reel did nothing at all.
- *
- *  So a rect is trusted only when it is real AND somewhere other than under
- *  the thumb — because a reel we deliberately chose to travel to is, by
- *  definition, one we are not already on. When it isn't trusted the walk falls
- *  back to counting rows, which is what this did before it learned to measure
- *  and is still right whenever the feed lays its slides out in a line. */
-function positionIsMeaningful(rect: DOMRect | null): boolean {
-  return rect !== null && rect.height >= 1 && Math.abs(rect.top) >= rect.height * 0.5;
-}
-
 /** The reel actually on screen, whatever the layout — by hit-testing rather
  *  than by measuring.
  *
@@ -1182,168 +1007,6 @@ function visibleRecord(): ReelRecord | null {
   return null;
 }
 
-/** Which way to swipe to get from the reel on screen to the one we want.
- *
- *  `host.records()` is the reel being watched followed by everything AFTER it,
- *  and never anything behind. So a target missing from that list is not
- *  unknown — it is BEHIND us, and reading that as "go forward" is exactly
- *  backwards.
- *
- *  That inversion is what turned a single overshoot into a runaway. Overshooting
- *  puts the target behind the reel on screen; updateActive re-anchors the list
- *  on where we landed, which drops the target out of it; the correction reads
- *  "not found, go forward" and drives further away, which overshoots more. The
- *  device log says it plainly — drifted to a reel two AHEAD, then "one swipe
- *  forward" toward a target that was behind it, twice in a row. */
-function forwardTo(target: ReelRecord, from: ReelRecord): boolean {
-  const records = host?.records() ?? [];
-  const to = records.findIndex((r) => r.reelId === target.reelId);
-  const at = records.findIndex((r) => r.reelId === from.reelId);
-  if (to < 0) return false;   // no longer ahead of us, so behind us
-  if (at < 0) return true;    // we are not in the list at all; ahead is the safe guess
-  return to > at;
-}
-
-/** Swipe until the reel on screen IS the one that was chosen.
- *
- *  Steered by what is painted rather than by counting rows or measuring boxes,
- *  so it is right on a stacked pager and on a feed laid out in a line alike.
- *  Direction comes from feed order — the records list is in that order
- *  already — so a chosen reel behind the current one is reached by going back,
- *  and undiscovered slides between the two (ads, "suggested for you") simply
- *  cost an extra swipe instead of throwing the count off. */
-async function swipeByVisibility(record: ReelRecord, gen: number): Promise<void> {
-  let deaf = 0;
-  let blind = 0;
-  for (let i = 0; i < SIM_MAX_STEPS; i++) {
-    const here = visibleRecord();
-    if (here === null) {
-      // On a slide that is not one of ours — an ad, a "suggested for you", or
-      // a frame caught mid-transition. Not a reason to stop: those are exactly
-      // the slides that made counting rows wrong, and the way past one is
-      // through it. The chooser only ever offers what is ahead, so forward.
-      blind++;
-      if (blind > 2) {
-        console.debug(`[Bouncer IG] pick: lost sight of the feed after ${i} swipe(s)`);
-        return;
-      }
-      await simulateSwipe(true, gen);
-      if (gen !== restockGen) return;
-      await settleAfterSwipe(record, gen);
-      if (gen !== restockGen) return;
-      continue;
-    }
-    blind = 0;
-    if (here.reelId === record.reelId) {
-      console.debug(`[Bouncer IG] pick: arrived at ${record.reelId} after ${i} swipe(s)`);
-      return;
-    }
-    await simulateSwipe(forwardTo(record, here), gen);
-    if (gen !== restockGen) return;
-    await settleAfterSwipe(record, gen);
-    if (gen !== restockGen) return;
-
-    if (visibleRecord()?.reelId === here.reelId) {
-      deaf++;
-      if (deaf >= 2) {
-        console.debug(`[Bouncer IG] pick: pager ignoring swipes — still showing `
-          + `${here.reelId}, giving up after ${i + 1}`);
-        return;
-      }
-    } else {
-      deaf = 0;
-    }
-  }
-  console.debug(`[Bouncer IG] pick: step cap reached short of ${record.reelId}`);
-}
-
-async function swipeToRecord(record: ReelRecord, fallbackSteps: number, gen: number): Promise<void> {
-  const rectNow = (): DOMRect | null =>
-    record.card.isConnected ? record.card.getBoundingClientRect() : null;
-
-  // Three ways to steer, in order of how much they actually know.
-  //
-  // Hit-testing first: it asks what is PAINTED, which is the only thing that
-  // survives a pager stacking every slide in one box — the layout this feed
-  // actually uses. Geometry second, for a feed laid out in a line, where a
-  // rectangle really does say where a reel sits. Counting rows last, which
-  // knows nothing but is right often enough to be the floor.
-  if (visibleRecord() !== null) {
-    await swipeByVisibility(record, gen);
-    return;
-  }
-
-  // Decided once, before any swiping: either this feed's geometry can steer
-  // the journey or it cannot, and finding out half way is how a pick ends up
-  // stopping short.
-  if (!positionIsMeaningful(rectNow())) {
-    const steps = Math.max(1, fallbackSteps);
-    const rect = rectNow();
-    console.debug(`[Bouncer IG] pick: ${record.reelId} has no usable position `
-      + `(connected=${record.card.isConnected}, `
-      + `rect=${rect ? `${Math.round(rect.height)}h@${Math.round(rect.top)}` : 'none'}) — `
-      + `swiping ${steps} counted`);
-    await swipeForward(steps, gen);
-    return;
-  }
-
-  let lastTop: number | null = null;
-  let deafSwipes = 0;
-  for (let i = 0; i < SIM_MAX_STEPS; i++) {
-    const rect = rectNow();
-    if (!rect || rect.height < 1) {
-      console.debug(`[Bouncer IG] pick: ${record.reelId} unmounted mid-journey — `
-        + `finishing with ${Math.max(1, fallbackSteps - i)} counted swipe(s)`);
-      await swipeForward(Math.max(1, fallbackSteps - i), gen);
-      return;
-    }
-    if (!positionIsMeaningful(rect)) {
-      console.debug(`[Bouncer IG] pick: arrived at ${record.reelId} after ${i} swipe(s)`);
-      return;
-    }
-    if (lastTop !== null && Math.abs(rect.top - lastTop) < 2) {
-      deafSwipes++;
-      if (deafSwipes >= 2) {
-        console.debug(`[Bouncer IG] pick: pager ignoring swipes at ${Math.round(rect.top)}px — `
-          + 'letting goTo scroll instead');
-        return;
-      }
-    } else {
-      deafSwipes = 0;
-    }
-    lastTop = rect.top;
-    await simulateSwipe(rect.top > 0, gen);
-    if (gen !== restockGen) return;
-    await settleAfterSwipe(record, gen);
-    if (gen !== restockGen) return;
-  }
-  console.debug(`[Bouncer IG] pick: step cap reached short of ${record.reelId}`);
-}
-
-/** Ask for more the way a thumb would, and put the feed back where it was.
- *  Returns whether anything new turned up. */
-async function swipeForMore(gen: number): Promise<boolean> {
-  const before = host?.records().length ?? 0;
-  let sent = 0;
-  for (; sent < SIM_SWIPES; sent++) {
-    claimScroll();
-    await simulateSwipe(true, gen);
-    if (gen !== restockGen) return false;
-    await wait(SIM_SETTLE_MS);
-    if (gen !== restockGen) return false;
-    if ((host?.records().length ?? 0) > before) break;
-  }
-  // Back the same way we came, one for one. The pager has no coordinate we can
-  // set — the only way back through it is the gesture that brought us here.
-  for (let back = 0; back <= sent && back < SIM_SWIPES; back++) {
-    claimScroll();
-    await simulateSwipe(false, gen);
-    if (gen !== restockGen) return false;
-    await wait(SIM_STEP_MS * SIM_STEPS);
-  }
-  return (host?.records().length ?? 0) > before;
-}
-
 /** Sit at the end of the list until it grows, or until it's clear it won't.
  *  Returns whether anything arrived. */
 async function waitForGrowth(scroller: HTMLElement, was: number, gen: number): Promise<boolean> {
@@ -1365,20 +1028,23 @@ async function restock(): Promise<void> {
   const home = scroller?.scrollTop ?? 0;
   restockHome = scroller ? { scroller, top: home } : null;
   // Before the first move, not after: the cover is what makes this invisible.
-  coverWith(host?.records()[0] ?? null);
+  // And WITHOUT one there is no first move. A feed nothing was discovered on
+  // has no still to hide behind, and the walk in the open is reels flashing
+  // past unplayed — strictly worse than a sheet with nothing new to offer.
+  if (coverWith(host?.records()[0] ?? null) === null) {
+    console.debug('[Bouncer IG] restock: no reel to cover the walk with — staying put');
+    restockHome = null;
+    return;
+  }
   driving = true;
 
   try {
-    // Swipes first, because this is a pager and swiping is what a pager
-    // understands. The reels arrive because Instagram fetched them, in its own
-    // time, off its own gesture — not because we dragged a scrollbar past a
-    // sentinel and hoped.
-    const grew = await swipeForMore(gen);
-    if (gen !== restockGen) return;
-
-    // Only if that told us nothing. Some routes really are a plain scroller,
-    // and reaching the end of one is free.
-    if (!grew && scroller) {
+    // By scrolling, and only by scrolling. This used to lead with a walk of
+    // fabricated touch gestures ("swipes first, because this is a pager") and
+    // that walk is what "the feed flashes through reels nobody is playing"
+    // looks like when anything lets it show. Instagram loads more when the end
+    // of the list comes into view, and a scroll puts it there.
+    if (scroller) {
       for (let round = 0; round < RESTOCK_ROUNDS; round++) {
         const was = scroller.scrollHeight;
         driveTo(scroller, scroller.scrollHeight);
@@ -1524,36 +1190,6 @@ const STEADY_POLLS = 4;
  *  back down very obviously". Real drift persists; a transient does not. */
 const WRONG_POLLS = 2;
 
-/** Whether a drift after landing is CORRECTED, or only reported.
- *
- *  Off, and the device logs are why. Three picks in a row produced exactly
- *  this shape:
- *
- *      arrived at TARGET after 2 swipe(s)
- *      drifted to <other>  — one swipe back
- *      drifted to <anchor> — one swipe forward
- *      settled on TARGET — ON SCREEN; 2 correction(s)
- *
- *  Read it backwards and it explains itself. The second drift is to the
- *  ANCHOR — the reel the user started on — which is where the FIRST
- *  correction's backward swipe put us. So the first drift was a false
- *  positive: we were on the target already, hit-testing said otherwise for
- *  two polls running, and the correction is what actually moved the feed off
- *  it. The second correction then undoes the first. From the outside: it
- *  scrolls up to the previous reel and back down, which is the report,
- *  verbatim, and it only ever happens on picks that "corrected".
- *
- *  Hit-testing is reliable enough to STEER a journey — the walk that uses it
- *  lands on the right reel every time in those same logs — but not reliable
- *  enough to overrule a landing that already succeeded. A false positive
- *  while steering costs one extra swipe behind a cover; a false positive
- *  after landing is a visible round trip.
- *
- *  So the drift is still measured and still reported in the verdict line — if
- *  real drift returns it will read WRONG REEL and we will know — but nothing
- *  acts on it. Flip this to true to restore the correcting behaviour. */
-const CORRECT_DRIFT_AFTER_LANDING = false;
-
 /** Keep the reel we just arrived at on screen for a moment.
  *
  *  Arriving and staying are different things, and the report is about the
@@ -1596,7 +1232,7 @@ async function holdArrival(record: ReelRecord, gen: number): Promise<void> {
   // every exit, whatever the reason — without it the log says how the journey
   // was steered and then stops, which is the half that was never in doubt.
   const verdict = (why: string): void => {
-    // Hit-testing first, for the same reason swipeByVisibility uses it: on a
+    // Hit-testing first, for the same reason visibleRecord exists at all: on a
     // stacked pager a rectangle says ON SCREEN about every reel at once, which
     // is a verdict that cannot fail and therefore cannot be trusted. Naming
     // the reel actually painted is what makes this line worth reading.
@@ -1646,39 +1282,12 @@ async function holdArrival(record: ReelRecord, gen: number): Promise<void> {
       // a tenth of a second and is the difference between correcting a real
       // drift and chasing a frame of the pager's own animation.
       if (++wrongFor < WRONG_POLLS) continue;
-      wrongFor = 0;
-      if (!CORRECT_DRIFT_AFTER_LANDING) {
-        // Measured, reported, not acted on. See CORRECT_DRIFT_AFTER_LANDING.
-        verdict(`reported drift to ${seen.reelId}, not corrected`);
-        return;
-      }
-      corrections++;
-      if (corrections > MAX_ARRIVAL_CORRECTIONS) {
-        verdict('drifting faster than it can be held');
-        return;
-      }
-      // ONE swipe, in the direction of the reel we chose — never a walk.
-      //
-      // This called swipeToRecord, which is a walk of up to SIM_MAX_STEPS, and
-      // a walk inside a loop that re-runs on the next poll is a runaway: each
-      // correction overshot, the overshoot read as fresh drift, and the device
-      // log ends twelve swipes and 7920px from where the user asked to be.
-      // A single step can only ever be one reel wrong, and the cap below stops
-      // even that from becoming a fight.
-      const forward = forwardTo(record, seen);
-      console.debug(`[Bouncer IG] pick: drifted to ${seen.reelId} after landing`
-        + ` — one swipe ${forward ? 'forward' : 'back'} to ${record.reelId}`);
-      driving = true;
-      try {
-        await simulateSwipe(forward, gen);
-        if (gen !== restockGen) { verdict('superseded by another move'); return; }
-        await settleAfterSwipe(record, gen);
-      } finally {
-        driving = false;
-        repin();
-      }
-      if (gen !== restockGen) { verdict('superseded by another move'); return; }
-      continue;
+      // Measured and reported, never acted on. Acting meant navigation this
+      // surface no longer performs (see arriveAt: scrolling only), and the
+      // device logs showed the corrections themselves causing the visible
+      // round trips they were meant to cure.
+      verdict(`reported drift to ${seen.reelId}, not corrected`);
+      return;
     }
 
     // No hit-test available: fall back to the geometry test, which is right on
@@ -1702,73 +1311,35 @@ async function holdArrival(record: ReelRecord, gen: number): Promise<void> {
   verdict('hold expired');
 }
 
-/** How long to give Instagram's own router before deciding it ignored us. */
-const JUMP_SETTLE_MS = 900;
-
-/** Go straight to a reel by its own address, rather than swiping to it.
+/** How long to give Instagram's own router before deciding it ignored us, and
+ *  how often to look while waiting.
  *
- *  THE POINT OF THIS, after several rounds of the alternative: on the layout
- *  this feed actually uses, every slide sits in the same box, so there is no
- *  scroll position that means "reel four" and `scrollIntoView` is inert. The
- *  only lever that moved the pager was a synthetic swipe it believed — and a
- *  journey of N swipes has N chances to be interrupted, miscounted, or walked
- *  away from by a restock. A URL has none of those. Every media object carries
- *  `code`, and the code of the reel on screen is exactly what the address bar
- *  reads; verified against the live feed before this was built.
- *
- *  Two ways in, cheapest first. Instagram's own router, which keeps the app
- *  warm and the transition instant — and if it ignores a pushState (its router
- *  is not ours to command) a real navigation, which nothing can ignore. The
- *  check between them is a hit-test, so it asks whether the reel is on screen
- *  rather than whether the URL changed, which pushState made true regardless.
- *
- *  Returns false only when there is no code to jump to, which is the caller's
- *  cue to fall back to swiping. */
-async function jumpToReel(record: ReelRecord, gen: number): Promise<boolean> {
-  const code = record.code;
-  if (!code) return false;
-
-  const target = `/reels/${code}/`;
-  if (location.pathname === target && visibleRecord()?.reelId === record.reelId) {
-    console.debug(`[Bouncer IG] pick: already at ${target}`);
-    return true;
-  }
-
-  try {
-    history.pushState({}, '', target);
-    window.dispatchEvent(new PopStateEvent('popstate', { state: {} }));
-  } catch {
-    /* the real navigation below is the fallback for this too */
-  }
-  await wait(JUMP_SETTLE_MS);
-  if (gen !== restockGen) return true;
-
-  if (visibleRecord()?.reelId === record.reelId) {
-    console.warn(`[Bouncer IG] pick: routed to ${target} in-app`);
-    return true;
-  }
-  console.warn(`[Bouncer IG] pick: router ignored ${target} — loading it outright`);
-  location.assign(target);
-  return true;
-}
-
-async function arriveAt(record: ReelRecord, steps: number, from: DOMRect): Promise<void> {
+ *  Was a single 900ms check, and the reload it triggered was the jerk every
+ *  pick produced. The router usually DOES respond to the pushState — the live
+ *  log shows the feed container being torn down within a beat — but proving
+ *  the target reel is on screen requires the rebuilt feed to be re-DISCOVERED
+ *  (video mounted, scan debounce, cover matched), which takes well over 900ms.
+ *  So jumpToReel declared failure mid-navigation and location.assign'd a full
+ *  page load on top of it: a white flash, a several-second dead zone while the
+ *  content script re-booted, and a landing in a shallower feed. Poll the whole
+ *  window instead; the reload stays as the fallback for a router that truly
+ *  did nothing. */
+async function arriveAt(record: ReelRecord, from: DOMRect): Promise<void> {
   const gen = ++restockGen;
   coverWith(record, from);
   driving = true;
   try {
-    // The reel's own address first. It cannot miscount, cannot be interrupted
-    // half way, and does not care how the pager lays its slides out — see
-    // jumpToReel. Swiping remains the fallback for a reel whose payload the
-    // hook never saw, which is the only case with no code to jump to.
-    if (await jumpToReel(record, gen)) {
-      if (gen !== restockGen) return;
-    } else {
-      await swipeToRecord(record, steps, gen);
-      if (gen !== restockGen) return;
-      claimScroll();
-      host?.goTo(record);
-    }
+    // Scrolling, and NOTHING but scrolling. This used to have three levers —
+    // scroll, a pushState into Instagram's router (with a full page load as
+    // its own fallback), and a walk of fabricated touch gestures — and every
+    // lever past the first is what "the reel gets forcibly replaced" looks
+    // like from the device: the router route tears the whole feed down and
+    // frequently ends in a white-flash reload, and the synthetic swipes flick
+    // the pager through reels nobody is playing. goTo is Instagram's own
+    // scroller moving to the chosen card; whatever it cannot reach, this
+    // surface no longer pretends it can.
+    claimScroll();
+    host?.goTo(record);
     // Hold `driving` until the feed has actually stopped. The tap that picked
     // the row armed the pin's gesture tail, which outlives any fixed claim by
     // more than a second — and the signed-in pager is still animating its snap
@@ -1940,7 +1511,14 @@ function fillSlot(
   record: ReelRecord | null,
   thumbSize: { width: number; height: number },
 ): void {
-  if (slot.dataset.ffReel) return;          // mounted, and it stays mounted
+  // Mounted, and it stays mounted — but its late facts may change IN PLACE.
+  // The byline and the length routinely land after the row does (signed in,
+  // the length may never come at all — see isRecordComplete), and both write
+  // into elements whose size was fixed at build time, so nothing moves.
+  if (slot.dataset.ffReel) {
+    if (record && slot.dataset.ffReel === record.reelId) refreshRowFacts(slot, record);
+    return;
+  }
 
   if (!record) {
     if (!slot.querySelector('.bouncer-ig-skel')) {
@@ -1960,6 +1538,23 @@ function fillSlot(
 
   slot.replaceChildren(buildRow(record, thumbSize));
   slot.dataset.ffReel = record.reelId;
+}
+
+/** Bring a mounted row's late-arriving facts up to date, in place. Text only,
+ *  into elements whose geometry was fixed when the row was built — the byline
+ *  is one line ellipsised, the time line has a min-height whether or not it
+ *  has anything to say — so nothing shifts under a finger. */
+function refreshRowFacts(slot: HTMLElement, record: ReelRecord): void {
+  const by = slot.querySelector('.bouncer-ig-by');
+  if (by instanceof HTMLElement && record.creator) {
+    const text = `by ${record.creator}`;
+    if (by.textContent !== text) by.textContent = text;
+  }
+  const time = slot.querySelector('.bouncer-ig-time');
+  if (time instanceof HTMLElement) {
+    const text = meta(record);
+    if (text && time.textContent !== text) time.textContent = text;
+  }
 }
 
 /** How many reels forward `record` is from the one the glass went up over,
@@ -1988,10 +1583,12 @@ function buildRow(
   row.className = 'bouncer-ig-opt';
   row.setAttribute('role', 'button');
   row.tabIndex = 0;
-  // It arrives whole, into space that was already being held for it, so the
-  // entrance is a fade in place rather than anything that moves.
-  row.style.animation = 'bouncer-ig-fadein 200ms ease both';
   row.style.cssText = [
+    // It arrives whole, into space that was already being held for it, so the
+    // entrance is a fade in place rather than anything that moves. Set inside
+    // the cssText block: assigning cssText replaces the whole style attribute,
+    // so an animation set before it was erased on the next line.
+    'animation: bouncer-ig-fadein 200ms ease both',
     'display: flex',
     'align-items: center',
     `gap: ${ROW_GAP_PX}px`,
@@ -2047,6 +1644,7 @@ function buildRow(
   body.appendChild(title);
 
   const by = document.createElement('div');
+  by.className = 'bouncer-ig-by';
   by.textContent = record.creator ? `by ${record.creator}` : 'by —';
   by.style.cssText = [
     'font-size: 13px',
@@ -2071,6 +1669,7 @@ function buildRow(
   // reader's thumb. An empty line of the same height holds the place instead,
   // so the number appears without anything moving.
   const time = document.createElement('div');
+  time.className = 'bouncer-ig-time';
   time.textContent = meta(record);
   time.style.cssText = [
     'font-size: 13px',
@@ -2291,10 +1890,14 @@ function wireDrag(glass: HTMLElement): void {
     dragging = true;
     moved = false;
     startY = e.clientY;
-    // So a drag that leaves the glass keeps reporting to it.
-    try {
-      glass.setPointerCapture(e.pointerId);
-    } catch { /* not every engine has it; the drag still works without */ }
+    // NO pointer capture, and its absence is load-bearing. Capturing to the
+    // glass retargets every later pointer AND compatibility mouse event to the
+    // glass — and a click's target is the common ancestor of its down and up,
+    // so a tap on a ROW delivered its click to the glass instead. The row's
+    // handler never ran and the glass's own read it as a tap on the pane:
+    // every pick was silently a dismiss. Capture bought nothing anyway — the
+    // glass is inset:0, so there is nowhere for a drag to leave to; moves on
+    // the rows bubble to these listeners regardless.
   });
 
   glass.addEventListener('pointermove', (e) => {
@@ -2393,11 +1996,19 @@ function dismiss(el: HTMLElement | null, transform: string): void {
 function close(how: 'fade' | 'down' | 'up' = 'fade'): void {
   if (!isOpen()) return;
   endRestock(true);
+  // A restock superseded mid-walk skips its own cleanup (its finally is
+  // generation-guarded so it can't clobber a pick that took over), and a
+  // dismissal is the one superseder that doesn't set `driving` itself — left
+  // raised, programmatic() stays true forever and the pin silently stops
+  // holding. Safe here: close() no-ops when the glass is already gone, so it
+  // can never land in the middle of a pick's journey.
+  driving = false;
   const away = how === 'down' ? 'translateY(100%)' : how === 'up' ? 'translateY(-100%)' : 'none';
   dismiss(document.getElementById(GLASS_ID), away);
   host?.setChromeHidden(false);
   reopenAfter = performance.now() + REOPEN_BLOCK_MS;
   wheelAccum = 0;
+  wheelBackAccum = 0;
 }
 
 function pick(record: ReelRecord, from: DOMRect): void {
@@ -2443,7 +2054,7 @@ function pick(record: ReelRecord, from: DOMRect): void {
   glassDragStartY = null;
   swallowedGesture = false;
 
-  void arriveAt(record, steps, from);
+  void arriveAt(record, from);
 }
 
 // ==================== Public API ====================
@@ -2499,8 +2110,8 @@ export function installSuggestions(next: SuggestHost): Suggestions {
       overlayGesture = false;
       tapDeadUntil = 0;
       swallowedGesture = false;
-      synthesizing = false;
       wheelAccum = 0;
+      wheelBackAccum = 0;
       reopenAfter = 0;
       endRestock(false);
       // By class, so a pane part-way through its exit animation — which has

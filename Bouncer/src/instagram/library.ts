@@ -88,30 +88,29 @@ export const PLACEHOLDER_DESCRIPTIONS = false;
  *  invented. */
 export const PENDING_DESCRIPTION = 'Describing…';
 
-/** Whether a row has everything it needs to be worth showing: what the reel
- *  is, who made it, and how long it runs.
+/** Whether a row is worth showing: does it say what the reel IS.
  *
- *  The chooser holds a row back until this is true, because the three facts do
- *  not arrive together and never will. The description is a round trip to the
- *  backend; the creator is read off a card that may not be in the DOM yet; the
- *  length usually lands last of all, because Instagram doesn't tell the page
- *  how long a reel is until you are nearly on it (see ./durations.ts). Rendered
- *  as they arrive, a row rewrites itself two or three times while you are
- *  trying to read it — and the rows below it move each time.
+ *  Only the description gates. It used to be all three facts — description,
+ *  creator, length — on the reasoning that a row rewriting itself while you
+ *  read it is worse than a beat of skeleton. Measured on the signed-in device
+ *  feed, that gate was a dead end rather than a beat: the hook's payloads
+ *  there describe reels other than the ones on screen ("0/8 reels have one …
+ *  8 of 8 on-screen covers missing"), so no length EVER arrived, no row ever
+ *  mounted, and the chooser was three skeletons for the life of the feed —
+ *  a surface whose only purpose is navigation, with nothing to tap.
+ *
+ *  The row is built for the two facts that may lag: the byline shows "by —"
+ *  and the time line is an empty element of fixed height, so either landing
+ *  later changes text in place and moves nothing (see fillSlot, which
+ *  refreshes a mounted row's facts without rebuilding it).
  *
  *  The thumbnail is deliberately NOT part of this. It is drawn into a box whose
  *  size is fixed before the image exists, so a late picture moves nothing; and
  *  gating on it would mean one dead CDN URL leaves a slot empty for good. It is
  *  prefetched instead, the moment the reel enters the window. */
 export function isRecordComplete(record: ReelRecord): boolean {
-  const described = record.description.trim().length > 0
+  return record.description.trim().length > 0
     && (PLACEHOLDER_DESCRIPTIONS || record.description !== PENDING_DESCRIPTION);
-  return described
-    && record.creator !== null
-    && record.creator.trim().length > 0
-    && record.durationSec !== null
-    && Number.isFinite(record.durationSec)
-    && record.durationSec > 0;
 }
 
 export function placeholderDescription(index: number): string {

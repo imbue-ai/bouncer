@@ -2000,6 +2000,9 @@ struct ProvidersSettingsView: View {
 // MARK: - Container View
 
 struct FilteredWebViewContainer: View {
+    /// navPath sentinel for the scroll-study screen; never a real platform id.
+    static let studyDestination = "instagram-study"
+
     @StateObject var viewModel = FilterSheetViewModel()
     // @AppStorage so external UserDefaults writes (e.g. the DEBUG-only "reset
     // onboarding" button in the filter sheet toolbar) propagate reactively —
@@ -2015,18 +2018,36 @@ struct FilteredWebViewContainer: View {
     var body: some View {
         ZStack {
             NavigationStack(path: $navPath) {
-                PlatformPickerView { platformId in
-                    viewModel.selectPlatformAndNavigate(platformId)
-                    navPath.append(platformId)
-                }
+                PlatformPickerView(
+                    onSelect: { platformId in
+                        viewModel.selectPlatformAndNavigate(platformId)
+                        navPath.append(platformId)
+                    },
+                    // The scroll study bypasses the filter pipeline: it owns
+                    // its web view and session capture, so it's a separate
+                    // destination rather than a platform.
+                    onSelectStudy: { navPath.append(Self.studyDestination) }
+                )
                 .toolbar(.hidden, for: .navigationBar)
-                .navigationDestination(for: String.self) { _ in
-                    MainFeedView(viewModel: viewModel)
-                        // Suppress the back button + edge-swipe pop so the
-                        // WebView's own `allowsBackForwardNavigationGestures`
-                        // keeps working for in-page history.
+                .navigationDestination(for: String.self) { destination in
+                    if destination == Self.studyDestination {
+                        // Pop just the study on exit — back to the feed when
+                        // launched from the nav bar's play button, back to the
+                        // picker when launched from its row there.
+                        ScrollStudyView {
+                            if navPath.last == Self.studyDestination { navPath.removeLast() }
+                        }
                         .navigationBarBackButtonHidden(true)
                         .toolbar(.hidden, for: .navigationBar)
+                    } else {
+                        MainFeedView(viewModel: viewModel,
+                                     onStartStudy: { navPath.append(Self.studyDestination) })
+                            // Suppress the back button + edge-swipe pop so the
+                            // WebView's own `allowsBackForwardNavigationGestures`
+                            // keeps working for in-page history.
+                            .navigationBarBackButtonHidden(true)
+                            .toolbar(.hidden, for: .navigationBar)
+                    }
                 }
             }
 
@@ -2063,6 +2084,9 @@ struct FilteredWebViewContainer: View {
 
 private struct MainFeedView: View {
     @ObservedObject var viewModel: FilterSheetViewModel
+    /// Pushes the scroll-study screen (owned by FilteredWebViewContainer's
+    /// navPath) — triggered by the play button in the nav bar.
+    var onStartStudy: () -> Void
 
     var body: some View {
         // The webviews and the bar are siblings in a bottom-aligned ZStack
@@ -2118,7 +2142,7 @@ private struct MainFeedView: View {
             .ignoresSafeArea(.container, edges: .bottom)
 
             if !viewModel.isFilteredModalOpen {
-                NavBarView(viewModel: viewModel)
+                NavBarView(viewModel: viewModel, onStartStudy: onStartStudy)
                     .onGeometryChange(for: CGFloat.self) { proxy in
                         proxy.size.height
                     } action: { height in
@@ -2168,6 +2192,9 @@ private struct MainFeedView: View {
 
 struct NavBarView: View {
     @ObservedObject var viewModel: FilterSheetViewModel
+    /// Launches the Instagram scroll-study screen (reels + face/expression
+    /// capture + summary video). nil hides the play button.
+    var onStartStudy: (() -> Void)? = nil
     var bouncerTip = BouncerButtonTip()
 
     // Registry-driven so a new platform in Platforms.all shows up in the
@@ -2207,34 +2234,51 @@ struct NavBarView: View {
                 .labelsHidden()
                 .frame(minHeight: 44)
 
-                // Bouncer filter button
-                Button {
-                    bouncerTip.invalidate(reason: .actionPerformed)
-                    viewModel.isPresented.toggle()
-                } label: {
-                    ZStack(alignment: .topTrailing) {
-                        Image("BouncerBlack")
-                            .resizable()
-                            .renderingMode(.template)
-                            .aspectRatio(contentMode: .fit)
-                            .frame(width: 32, height: 32)
-                            .foregroundStyle(.tint)
-
-                        if viewModel.filteredCount > 0 {
-                            Text("\(viewModel.filteredCount)")
-                                .font(.system(size: 12, weight: .bold))
-                                .foregroundColor(.white)
-                                .padding(.horizontal, 5)
-                                .padding(.vertical, 1)
-                                .background(Color.blue)
-                                .clipShape(Capsule())
-                                .offset(x: 8, y: -8)
+                // Trailing cluster: play (scroll study) directly left of the
+                // Bouncer filter button.
+                HStack(spacing: 4) {
+                    if let onStartStudy {
+                        Button {
+                            onStartStudy()
+                        } label: {
+                            Image(systemName: "play.circle")
+                                .font(.system(size: 26, weight: .medium))
+                                .foregroundStyle(.tint)
+                                .frame(width: 44, height: 44)
+                                .contentShape(Rectangle())
                         }
+                        .accessibilityLabel("Start scroll study")
                     }
-                    .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
+
+                    // Bouncer filter button
+                    Button {
+                        bouncerTip.invalidate(reason: .actionPerformed)
+                        viewModel.isPresented.toggle()
+                    } label: {
+                        ZStack(alignment: .topTrailing) {
+                            Image("BouncerBlack")
+                                .resizable()
+                                .renderingMode(.template)
+                                .aspectRatio(contentMode: .fit)
+                                .frame(width: 32, height: 32)
+                                .foregroundStyle(.tint)
+
+                            if viewModel.filteredCount > 0 {
+                                Text("\(viewModel.filteredCount)")
+                                    .font(.system(size: 12, weight: .bold))
+                                    .foregroundColor(.white)
+                                    .padding(.horizontal, 5)
+                                    .padding(.vertical, 1)
+                                    .background(Color.blue)
+                                    .clipShape(Capsule())
+                                    .offset(x: 8, y: -8)
+                            }
+                        }
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                    }
+                    .popoverTip(bouncerTip, arrowEdge: .bottom)
                 }
-                .popoverTip(bouncerTip, arrowEdge: .bottom)
                 .frame(maxWidth: .infinity, alignment: .trailing)
             }
             .padding(.horizontal, 12)

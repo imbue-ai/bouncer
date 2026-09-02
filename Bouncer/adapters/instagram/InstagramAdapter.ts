@@ -75,13 +75,29 @@ const BouncerInstagramAdapter = class InstagramAdapter implements PlatformAdapte
           el.style.transition = 'opacity 0.3s ease';
           el.style.opacity = '0';
           setTimeout(() => {
-            el.style.display = 'none';
+            InstagramAdapter._collapseAboveViewport(el);
             fadingOut.delete(el);
           }, 300);
         }
       }
     };
     window.addEventListener('scroll', scrollHandler, { passive: true, capture: true });
+  }
+
+  // Collapse a card that has scrolled above the viewport, keeping the reel in
+  // view exactly where it is. Chrome scroll-anchors that for free; WebKit has
+  // no scroll anchoring at all, so removing a reel's height above you yanked
+  // the whole feed up by one reel — a scroll nobody performed. Where anchoring
+  // is absent, the scroller is walked to and given the height back.
+  private static _collapseAboveViewport(el: HTMLElement): void {
+    const height = el.getBoundingClientRect().height;
+    el.style.display = 'none';
+    if (typeof CSS !== 'undefined' && CSS.supports?.('overflow-anchor: auto')) return;
+    if (height <= 0) return;
+    let node: HTMLElement | null = el.parentElement;
+    while (node && node.scrollHeight <= node.clientHeight + 8) node = node.parentElement;
+    const scroller = node ?? (document.scrollingElement as HTMLElement | null);
+    if (scroller) scroller.scrollTop = Math.max(0, scroller.scrollTop - height);
   }
 
   // ===========================================================================
@@ -105,17 +121,38 @@ const BouncerInstagramAdapter = class InstagramAdapter implements PlatformAdapte
   // every ancestor up to <html> holds exactly one and the climb would hand back
   // the whole document as the card (hiding the entire page on a match, and
   // scraping all of its text as the caption).
+  // Cover images are the second stop, and the one that fires on a fresh feed:
+  // Instagram mounts covers for the slides AHEAD long before their videos, so
+  // in the single-video window the video count says "one reel" about the
+  // wrapper holding the whole feed. Registering that wrapper as the card meant
+  // hidePost() could display:none the entire feed on one match. Multiple
+  // distinct covers mean multiple reels whether or not their videos exist yet.
   private _cardFromCover(img: HTMLElement): HTMLElement | null {
     let el: HTMLElement | null = img.parentElement;
     let card: HTMLElement | null = null;
     for (let i = 0; i < 20 && el; i++) {
       if (el === document.body || el === document.documentElement || el.tagName === 'MAIN') break;
       const videos = el.querySelectorAll('video').length;
+      if (videos > 1 || this._coverCount(el) > 1) break;
       if (videos === 1) card = el;
-      else if (videos > 1) break;
       el = el.parentElement;
     }
     return card;
+  }
+
+  // Distinct reel covers inside `el` — distinct files, so the same cover
+  // rendered twice still counts once. Audio-pill and hashtag chips pass the
+  // cover selector without being covers, so they are excluded. Counts past 2
+  // don't matter, so the walk stops there.
+  private _coverCount(el: HTMLElement): number {
+    const seen = new Set<string>();
+    for (const img of el.querySelectorAll<HTMLImageElement>(COVER_IMG_SELECTOR)) {
+      if (!/cdninstagram\.com/.test(img.src)) continue;
+      if (img.closest('a[href*="/reels/audio/"], a[href*="/explore/tags/"]')) continue;
+      try { seen.add(new URL(img.src).pathname); } catch { seen.add(img.src); }
+      if (seen.size > 1) return seen.size;
+    }
+    return seen.size;
   }
 
   // Longest non-link dir="auto" block in the card. Hashtag <a>s live inside the
@@ -228,10 +265,15 @@ const BouncerInstagramAdapter = class InstagramAdapter implements PlatformAdapte
     const element = this.getPostContainer(article);
     const rect = element.getBoundingClientRect();
     element.dataset.filteredByExtension = 'true';
-    if (rect.bottom > 0) {
+    // Collapse immediately ONLY below the fold, where nothing visible moves.
+    // This used to hide anything with rect.bottom > 0 — which includes the
+    // reel being WATCHED, and hiding that snaps the next reel into its place
+    // with no scroll: sequential classifications at load looked like the feed
+    // flashing through reels on its own. On-screen and above-viewport cards
+    // keep their space; the scroll handler takes them once they're behind you.
+    if (rect.height >= 1 && rect.top >= window.innerHeight) {
       element.style.display = 'none';
     }
-    // Entirely above viewport: the scroll handler fades it later.
   }
 
   showPost(article: HTMLElement): void {

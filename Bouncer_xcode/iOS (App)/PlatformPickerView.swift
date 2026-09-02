@@ -27,6 +27,11 @@ struct PlatformPickerView: View {
     // straight to viewModel.selectPlatform without translation.
     let onSelect: (String) -> Void
 
+    /// Entry point for the Instagram scroll-study screen (research sessions:
+    /// reels + face/expression capture + summary video). Bypasses the filter
+    /// pipeline entirely, so it's not a Platforms row.
+    var onSelectStudy: (() -> Void)? = nil
+
     @State private var showingDebug = false
 
     var body: some View {
@@ -50,6 +55,11 @@ struct PlatformPickerView: View {
                 }
 
                 Spacer()
+
+                if onSelectStudy != nil {
+                    studyButton
+                        .padding(.bottom, 4)
+                }
 
                 // Developer entry point: load downloaded on-device models and
                 // benchmark them against ad-hoc prompts. Dev (Debug) builds
@@ -86,6 +96,27 @@ struct PlatformPickerView: View {
             RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .stroke(Color(UIColor.separator), lineWidth: 0.5)
         )
+    }
+
+    // Styled like debugButton: a quiet secondary row under the picker card,
+    // since the study is a research tool rather than a headline feature.
+    private var studyButton: some View {
+        Button {
+            onSelectStudy?()
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "chart.xyaxis.line")
+                Text("Reels scroll study")
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 13, weight: .semibold))
+            }
+            .font(.system(size: 15, weight: .medium))
+            .foregroundStyle(.secondary)
+            .padding(.vertical, 10)
+            .padding(.horizontal, 32)
+        }
+        .buttonStyle(.plain)
     }
 
     #if DEBUG

@@ -488,6 +488,15 @@ export function fitReels(cards: Iterable<HTMLElement>): number {
   return clamped;
 }
 
+/** Give one card — and everything fitted inside it — back what it had. For a
+ *  card being dropped from tracking: fitReel's own release only runs on cards
+ *  it is about to re-fit, so a card that leaves the tracked list would keep
+ *  its clamps forever. */
+export function unfit(card: HTMLElement): void {
+  release(card);
+  for (const el of Array.from(card.querySelectorAll<HTMLElement>(`[${MARKER}]`))) release(el);
+}
+
 /** Give every resized element back exactly what it had. */
 export function unfitAll(): void {
   for (const el of Array.from(document.querySelectorAll<HTMLElement>(`[${MARKER}]`))) {

@@ -454,7 +454,15 @@ async function analyze(reel: TrackedReel, audioUrl: string): Promise<void> {
     analyzedCount++;
     if (res.shouldHide && hideMatches && reel.card.isConnected) {
       reel.card.dataset.bouncerRemoved = '1';
-      reel.card.style.display = 'none';
+      // Collapse only below the fold, where nothing visible moves. A match on
+      // the reel being WATCHED (analysis usually runs ahead, but not always)
+      // must not snap the next reel into its place — it is marked instead, and
+      // the adapter's scroll-past fade takes it once the user has moved on.
+      reel.card.dataset.filteredByExtension = 'true';
+      const rect = reel.card.getBoundingClientRect();
+      if (rect.height < 1 || rect.top >= window.innerHeight) {
+        reel.card.style.display = 'none';
+      }
       hiddenCount++;
     }
     logResult(reel.reelId, res, truncated);

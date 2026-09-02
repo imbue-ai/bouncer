@@ -4,6 +4,12 @@
 <dict>
 	<key>BouncerEnv</key>
 	<string>$(BOUNCER_ENV)</string>
+	<key>NSCameraUsageDescription</key>
+	<string>With your consent, the scroll study records your face with the front camera during a session. Recordings stay on this device until you export them.</string>
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
 	<key>SFSafariWebExtensionConverterVersion</key>
 	<string>26.2</string>
 	<key>UIApplicationSceneManifest</key>

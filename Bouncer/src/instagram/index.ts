@@ -28,7 +28,7 @@ import { showBouncePopup, showDemoBouncePopup, dismissBouncePopup } from './boun
 import { captureMidFrame, installFrameSources } from './frame';
 import { playSwipe, playTap, addDemoPhrase, removeDemoPhrase, clearDemoArtifacts } from './demo';
 import { railAnchoredBox, clampLeft, isNarrowViewport } from './layout';
-import { fitReels, installFitWatcher, unfitAll, fitReport, visibleHeight } from './fit';
+import { fitReels, installFitWatcher, unfit, unfitAll, fitReport, visibleHeight } from './fit';
 import { installPromoDismisser } from './promo';
 import { installTopBarHider } from './topbar';
 import {
@@ -36,7 +36,7 @@ import {
   installDurationSource, requestHookReplay,
 } from './durations';
 import { buildRecords, creatorReport, forgetAll, remember, type ReelRecord } from './library';
-import { installSuggestions, type Suggestions } from './suggest';
+import { installCurtain, type Curtain } from './curtain';
 import { makeSettingsIcon } from '../shared/utils';
 import { enabledStorageKey } from '../shared/platforms';
 
@@ -66,6 +66,18 @@ const CLOSE_SETTINGS_EVENT = 'bouncer-close-settings';
 // classifier removed would be.
 const BOUNCE_REEL_EVENT = 'bouncer-bounce-reel';
 const DESCRIBER_EVENT = 'bouncer-ig-describer';
+
+// DEBUG KILL SWITCHES.
+//
+// The first disables Bouncer's own surfaces (panel, icon, curtain). The second
+// disables everything that MUTATES Instagram's page — fit clamps, top-bar
+// hiding, promo clicks, the intro tour, audio-filter fetches and hides. The
+// vanilla-Instagram debugging session proved the feed plays and scrolls
+// cleanly with all of it off, so the mutating subsystems STAY off until each
+// is individually vetted; the overlay returns as the curtain (./curtain.ts),
+// which touches nothing of Instagram's.
+const DISABLE_INSTAGRAM_OVERLAY = false;
+const DISABLE_PAGE_MUTATIONS = true;
 
 // Mid-reel frames describe a reel far better than its cover thumbnail (which is
 // often a title card), and the capture path is verified working end to end —
@@ -234,10 +246,11 @@ let shownUpcomingIds = new Set<string>();
 // Whether content.js has asked us to stay hidden (the filtered-posts view is
 // up). Sticky across remounts so navigating within reels keeps it.
 let describerHidden = false;
-// Whether the chooser's glass is up. The settings icon is pinned above
-// everything else we mount, which includes the glass — and the glass is meant to
-// carry nothing but the three rows.
-let chooserOpen = false;
+// The old chooser glass hid the describer chrome while it was up; the curtain
+// never does — it is beneath the settings icon by design and carries the rows
+// over its own glass. (Kept as a const so the two gates below read as what
+// they were.)
+const chooserOpen = false;
 // "Intentional scrolling" (settings toggle, on by default). Off collapses the
 // panel to the floating icon and stops describing reels altogether — with no
 // currentTextEl/upcomingListEl mounted, refreshPanel() returns before it can
@@ -261,7 +274,7 @@ let tourRunning = false;
 // "is #bouncer-ig-frame in the DOM" can no longer answer it on its own.
 let describerActive = false;
 
-let suggestions: Suggestions | null = null;
+let suggestions: Curtain | null = null;
 
 /** How long a description may wait on its soundtrack before going without one.
  *
@@ -380,18 +393,33 @@ function activeIndex(): number {
 }
 
 function mountSuggestions(): void {
-  suggestions = installSuggestions({
+  suggestions = installCurtain({
     records: suggestionRecords,
-    // Instant, not smooth: a smooth scroll would be a journey through reels the
-    // user didn't choose — each one becoming active in turn on the way past —
-    // and the chooser's own flight animation is what covers the jump.
+    // Smooth, because with the curtain the journey IS the interface: the feed
+    // visibly scrolls to the chosen reel, and the curtain rides off with the
+    // one being left, exactly as a finger-driven advance would.
+    //
+    // The FEED scroller only — never scrollIntoView, which helpfully scrolls
+    // every ancestor too. The outer document holds Instagram's collapsible
+    // bottom bar, and chaining into it toggled the bar and jumped the whole
+    // layout on every row tap.
     goTo: (record) => {
       suppressBounceDismissOnce = true;
-      record.card.scrollIntoView({ behavior: 'auto', block: 'center' });
-    },
-    setChromeHidden: (hidden) => {
-      chooserOpen = hidden;
-      applyPanelVisibility();
+      const card = record.card;
+      let scroller: HTMLElement | null = card.parentElement;
+      while (scroller && scroller !== document.body) {
+        if (scroller.scrollHeight > scroller.clientHeight + 8
+            && /(auto|scroll|overlay)/.test(getComputedStyle(scroller).overflowY)) break;
+        scroller = scroller.parentElement;
+      }
+      if (scroller && scroller !== document.body) {
+        const top = scroller.scrollTop
+          + card.getBoundingClientRect().top
+          - scroller.getBoundingClientRect().top;
+        scroller.scrollTo({ top, behavior: 'smooth' });
+      } else {
+        card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
     },
   });
   suggestions.refresh();
@@ -725,6 +753,7 @@ function positionPanel(): void {
 }
 
 function mountPanel(): void {
+  if (DISABLE_INSTAGRAM_OVERLAY) return;
   if (describerActive) return;
   const parent = document.body ?? document.documentElement;
   if (!parent) return;
@@ -938,9 +967,23 @@ function hideReelCard(reel: Reel): void {
   const card = reel.card;
   if (!card.isConnected) return;
   card.dataset.filteredByExtension = 'true';
-  card.style.display = 'none';
+  collapseWhenOffScreen(card);
   // Hand it to content.js so it lands in "View filtered" and stays restorable.
   window.dispatchEvent(new CustomEvent(BOUNCE_REEL_EVENT, { detail: { card } }));
+}
+
+/** Collapse a filtered card only when doing so cannot move the reel in view.
+ *
+ *  `display: none` on the card being WATCHED snaps the next reel into its
+ *  place with no scroll — from the device, "the reel gets forcibly replaced".
+ *  And WebKit has no scroll anchoring, so collapsing one ABOVE the viewport
+ *  yanks the whole feed up a reel's height. Only a card wholly below the fold
+ *  can collapse invisibly, so only that collapses now; everything else keeps
+ *  its space (marked, so the filtered-view plumbing still sees it) and is
+ *  taken by the adapter's scroll-past fade once it is behind you. */
+function collapseWhenOffScreen(card: HTMLElement): void {
+  const rect = card.getBoundingClientRect();
+  if (rect.height < 1 || rect.top >= window.innerHeight) card.style.display = 'none';
 }
 
 /** Scroll to the first reel after `fromReelId` that's still in the feed and
@@ -1230,17 +1273,42 @@ function reelIdFromUrl(url: string): string {
 // every ancestor up to <html> holds exactly one and the climb would hand back
 // the whole document as the card (scraping the entire page's text as the
 // caption, and registering <html> as a reel).
+//
+// Cover images are the second stop, and the one that actually fires on a fresh
+// feed. Instagram mounts covers for the slides AHEAD long before their videos,
+// so in the single-video window the video count says "one reel" about the
+// wrapper holding the whole feed — and that wrapper, once registered, shadowed
+// every real card in paintedCard() (an ancestor contains everything, and sorts
+// first), froze activeReelId, fed the entire page to the caption scraper, and
+// handed the feed's own container to fitReel to clamp. Multiple covers mean
+// multiple reels whether or not their videos exist yet.
 function cardFromCover(img: HTMLImageElement): HTMLElement | null {
   let el: HTMLElement | null = img.parentElement;
   let card: HTMLElement | null = null;
   for (let i = 0; i < 20 && el; i++) {
     if (el === document.body || el === document.documentElement || el.tagName === 'MAIN') break;
     const videos = el.querySelectorAll('video').length;
+    if (videos > 1 || coverImgCount(el) > 1) break; // next level up merges reels — stop
     if (videos === 1) card = el; // remember the largest single-video ancestor
-    else if (videos > 1) break; // next level up merges reels — stop
     el = el.parentElement;
   }
   return card;
+}
+
+/** DISTINCT reel covers inside `el` — distinct files, so a card that renders
+ *  the same cover twice still counts as one reel. The audio-pill and hashtag
+ *  chips that pass isCoverImg without being covers are excluded, the same
+ *  exclusion coverRank applies. Counts past 2 don't matter, so the walk stops
+ *  there. */
+function coverImgCount(el: HTMLElement): number {
+  const seen = new Set<string>();
+  for (const img of Array.from(el.querySelectorAll('img'))) {
+    if (!(img instanceof HTMLImageElement) || !isCoverImg(img)) continue;
+    if (img.closest('a[href*="/reels/audio/"], a[href*="/explore/tags/"]')) continue;
+    seen.add(reelIdFromUrl(img.src));
+    if (seen.size > 1) return seen.size;
+  }
+  return seen.size;
 }
 
 // The caption is the longest text block in the card that isn't itself a link
@@ -1528,12 +1596,40 @@ function updateActive(): void {
 
 // ==================== Scan loop ====================
 
+/** Drop any tracked "card" that turns out to hold several reels.
+ *
+ *  One can get in despite cardFromCover's guards: registered while its extra
+ *  reels had nothing mounted yet, it is a WRAPPER, not a card — and a wrapper
+ *  poisons everything downstream. It contains every real card, so paintedCard
+ *  returns it for every hit-test (an ancestor sorts first in orderedReels) and
+ *  activeReelId can never advance; the caption scraper reads the whole feed's
+ *  text as "the caption"; and fitReel clamps the feed's own container. The fit
+ *  clamps it collected are handed back here, because no later fit pass will
+ *  visit a card that has left the tracked list. */
+function evictWrapperCards(): void {
+  for (let i = orderedReels.length - 1; i >= 0; i--) {
+    const reel = orderedReels[i];
+    const card = reel.card;
+    if (!card.isConnected) continue;
+    if (card.querySelectorAll('video').length <= 1 && coverImgCount(card) <= 1) continue;
+    console.warn(
+      `[Bouncer IG] dropping a feed wrapper mistaken for a reel card (${reel.reelId})`);
+    observer.unobserve(card);
+    ratios.delete(card);
+    cards.delete(card);
+    cardToReel.delete(card);
+    unfit(card);
+    orderedReels.splice(i, 1);
+  }
+}
+
 function scan(): void {
   if (!onReelsPage()) return;   // debounced scans can fire just after nav away
 
   // Before anything is read: is the feed we are describing still there? See
   // feedRoot — Instagram's own navigation unmounts it wholesale.
   pruneDeadReels();
+  evictWrapperCards();
 
   // The BIGGEST qualifying image on each card, not the first one in document
   // order. A card can carry more than one unlabelled CDN image and the reel's
@@ -1577,7 +1673,7 @@ function scan(): void {
   // Bring any reel that stands taller than the screen back inside it. Done
   // here because a reel is laid out when Instagram mounts it, which is the same
   // beat that makes it discoverable. See ./fit.ts.
-  fitReels(orderedReels.map((r) => r.card));
+  if (!DISABLE_PAGE_MUTATIONS) fitReels(orderedReels.map((r) => r.card));
   harvestDurations();
   warmDurations();
   // Which reel is on screen, re-asked on every scan.
@@ -1838,6 +1934,12 @@ function syncForLocation(): void {
 }
 
 async function boot(): Promise<void> {
+  // Which JS is actually running. The app bundles Bouncer/dist at Xcode build
+  // time, so "did the fix reach the phone" has been unanswerable from the
+  // outside — this line answers it. Bump the date when behaviour changes.
+  console.warn('[Bouncer IG] bundle 2026-09-01i (outer page pinned)'
+    + (DISABLE_INSTAGRAM_OVERLAY ? ' — OVERLAY DISABLED for debugging' : ''));
+
   // Respect the Instagram master switch, same key content/index.ts gates on.
   // Without this the panel would still mount when the platform is toggled off
   // — and its gear would be dead, because content.js returns before wiring the
@@ -1876,7 +1978,7 @@ async function boot(): Promise<void> {
   // First run after the platform toggle was switched on: play the welcome
   // carousel. Deliberately not awaited — the panel and scanning shouldn't wait
   // on it, and the overlay sits above them either way.
-  void maybeShowIntro();
+  if (!DISABLE_PAGE_MUTATIONS) void maybeShowIntro();
 
   // Both of these listen to the MAIN-world hook: the audio filter for each
   // reel's soundtrack, the frame grabber for its video track (which is how it
@@ -1900,7 +2002,7 @@ async function boot(): Promise<void> {
 
   // Install the audio filter once (its hook listener is harmless when idle) and
   // seed it with any persisted terms; scan() then feeds it discovered reels.
-  audioController = installAudioFilter();
+  if (!DISABLE_PAGE_MUTATIONS) audioController = installAudioFilter();
   const applyAudioTerms = (stored: unknown): void => {
     audioTerms = Array.isArray(stored) ? stored.filter((x): x is string => typeof x === 'string') : [];
     audioController?.setCategories(audioTerms);
@@ -1931,12 +2033,12 @@ async function boot(): Promise<void> {
   // scoped to the reels routes, where it is the strip of screen the reel most
   // needs and carries nothing the describer does not already offer. Elsewhere
   // that bar is the navigation, so it is put straight back.
-  installTopBarHider(onReelsPage);
+  if (!DISABLE_PAGE_MUTATIONS) installTopBarHider(onReelsPage);
 
   // A rotation, or iOS's own chrome sliding in and out, changes how much room a
   // reel has — and the reel was sized for the old number.
   installFitWatcher(() => {
-    fitReels(orderedReels.map((r) => r.card));
+    if (!DISABLE_PAGE_MUTATIONS) fitReels(orderedReels.map((r) => r.card));
     positionPanel();
   });
 
@@ -1994,7 +2096,7 @@ if (/(^|\.)instagram\.com$/i.test(location.hostname)) {
   // Nothing about closing that banner depends on the toggle, the storage read,
   // or the reels route: it is a nuisance on every Instagram page, and the
   // earliest possible moment is the right one to start watching for it.
-  installPromoDismisser();
+  if (!DISABLE_PAGE_MUTATIONS) installPromoDismisser();
 
   void boot().catch(err => console.error('[Bouncer IG] boot failed:', err));
 }
