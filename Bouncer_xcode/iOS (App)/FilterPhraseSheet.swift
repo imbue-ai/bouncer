@@ -2031,17 +2031,18 @@ struct FilteredWebViewContainer: View {
                 .toolbar(.hidden, for: .navigationBar)
                 .navigationDestination(for: String.self) { destination in
                     if destination == Self.studyDestination {
-                        // Pop just the study on exit — back to the feed when
-                        // launched from the nav bar's play button, back to the
-                        // picker when launched from its row there.
+                        // The full study screen (own webview, session panel,
+                        // past-session review/sharing) — reached from its row
+                        // on the picker. The nav bar's play button instead
+                        // records in place over the existing feed (see
+                        // MainFeedView). Pop just the study on exit.
                         ScrollStudyView {
                             if navPath.last == Self.studyDestination { navPath.removeLast() }
                         }
                         .navigationBarBackButtonHidden(true)
                         .toolbar(.hidden, for: .navigationBar)
                     } else {
-                        MainFeedView(viewModel: viewModel,
-                                     onStartStudy: { navPath.append(Self.studyDestination) })
+                        MainFeedView(viewModel: viewModel)
                             // Suppress the back button + edge-swipe pop so the
                             // WebView's own `allowsBackForwardNavigationGestures`
                             // keeps working for in-page history.
@@ -2084,9 +2085,25 @@ struct FilteredWebViewContainer: View {
 
 private struct MainFeedView: View {
     @ObservedObject var viewModel: FilterSheetViewModel
-    /// Pushes the scroll-study screen (owned by FilteredWebViewContainer's
-    /// navPath) — triggered by the play button in the nav bar.
-    var onStartStudy: () -> Void
+
+    // The nav-bar scroll study: recording happens IN PLACE, over this exact
+    // feed — the study instruments the active cached webview and turns the
+    // camera on; nothing about the UI changes while it observes. Play starts
+    // a session, the same button becomes pause, and pause stops the session
+    // and composes summary.mp4 (face + reel + expression graph), offered via
+    // a share sheet. Past sessions remain reviewable on the study screen
+    // reachable from the platform picker.
+    @StateObject private var studyRecorder = StudySessionRecorder()
+    /// Non-nil while summary.mp4 is composing (0…1) — the button shows it.
+    @State private var studyProgress: Double?
+    @State private var studyShare: ShareItem?
+    @State private var studyError: String?
+    @Environment(\.scenePhase) private var scenePhase
+
+    private var studyPhase: NavBarView.StudyPhase {
+        if let p = studyProgress { return .generating(p) }
+        return studyRecorder.isRunning ? .recording : .idle
+    }
 
     var body: some View {
         // The webviews and the bar are siblings in a bottom-aligned ZStack
@@ -2142,11 +2159,24 @@ private struct MainFeedView: View {
             .ignoresSafeArea(.container, edges: .bottom)
 
             if !viewModel.isFilteredModalOpen {
-                NavBarView(viewModel: viewModel, onStartStudy: onStartStudy)
+                NavBarView(viewModel: viewModel, studyPhase: studyPhase, onStudyTap: handleStudyTap)
                     .onGeometryChange(for: CGFloat.self) { proxy in
                         proxy.size.height
                     } action: { height in
                         viewModel.navBarHeight = height
+                    }
+                    // The study's own surfaces, hung off the bar so they don't
+                    // collide with the filter sheet's modifier below.
+                    .sheet(item: $studyShare) { item in
+                        ShareSheet(url: item.url)
+                    }
+                    .alert("Scroll study", isPresented: Binding(
+                        get: { studyError != nil || studyRecorder.alertMessage != nil },
+                        set: { if !$0 { studyError = nil; studyRecorder.alertMessage = nil } }
+                    )) {
+                        Button("OK", role: .cancel) {}
+                    } message: {
+                        Text(studyError ?? studyRecorder.alertMessage ?? "")
                     }
                     // Slide, don't unmount: the Picker/tips keep their state
                     // across toggles, and the offset animates on the same
@@ -2185,16 +2215,78 @@ private struct MainFeedView: View {
                 viewModel.isNavBarHidden = false
             }
         }
+        // Backgrounding ends the recording (the camera stops regardless); the
+        // session's data is already safe on disk and stays generatable from
+        // the study screen's past-sessions list. No auto-restart on return —
+        // recording is something the user starts.
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .background, studyRecorder.isRunning {
+                studyRecorder.stop()
+            }
+        }
+    }
+
+    // MARK: nav-bar study
+
+    private func handleStudyTap() {
+        switch studyPhase {
+        case .idle: startStudy()
+        case .recording: stopStudyAndGenerate()
+        case .generating: break     // button is disabled; nothing to do
+        }
+    }
+
+    private func startStudy() {
+        guard !studyRecorder.isRunning else { return }
+        guard let wv = viewModel.webView else {
+            studyError = "No feed is loaded yet."
+            return
+        }
+        StudyFeedTap.install(on: wv, recorder: studyRecorder)
+        studyRecorder.attachWebView(wv)
+        studyRecorder.start()
+    }
+
+    private func stopStudyAndGenerate() {
+        let dir = studyRecorder.currentSessionDir
+        studyRecorder.stop()
+        guard let dir else { return }
+        studyProgress = 0
+        Task {
+            do {
+                let url = try await StudyVideoComposer.compose(sessionDir: dir) { p in
+                    Task { @MainActor in studyProgress = p }
+                }
+                await MainActor.run {
+                    studyProgress = nil
+                    studyShare = ShareItem(url: url)
+                }
+            } catch {
+                await MainActor.run {
+                    studyProgress = nil
+                    studyError = "Video generation failed: \(error.localizedDescription)"
+                }
+            }
+        }
     }
 }
 
 // MARK: - Navigation Bar
 
 struct NavBarView: View {
+    /// The nav-bar study button's three faces: play (start observing), pause
+    /// (stop + generate), and the composing progress it can't interrupt.
+    enum StudyPhase {
+        case idle
+        case recording
+        case generating(Double)
+    }
+
     @ObservedObject var viewModel: FilterSheetViewModel
-    /// Launches the Instagram scroll-study screen (reels + face/expression
-    /// capture + summary video). nil hides the play button.
-    var onStartStudy: (() -> Void)? = nil
+    /// In-place scroll study (camera + behavior capture over this very feed).
+    /// nil hides the button.
+    var studyPhase: StudyPhase? = nil
+    var onStudyTap: (() -> Void)? = nil
     var bouncerTip = BouncerButtonTip()
 
     // Registry-driven so a new platform in Platforms.all shows up in the
@@ -2237,17 +2329,37 @@ struct NavBarView: View {
                 // Trailing cluster: play (scroll study) directly left of the
                 // Bouncer filter button.
                 HStack(spacing: 4) {
-                    if let onStartStudy {
+                    if let studyPhase, let onStudyTap {
                         Button {
-                            onStartStudy()
+                            onStudyTap()
                         } label: {
-                            Image(systemName: "play.circle")
-                                .font(.system(size: 26, weight: .medium))
-                                .foregroundStyle(.tint)
-                                .frame(width: 44, height: 44)
-                                .contentShape(Rectangle())
+                            Group {
+                                switch studyPhase {
+                                case .idle:
+                                    Image(systemName: "play.circle")
+                                        .font(.system(size: 26, weight: .medium))
+                                        .foregroundStyle(.tint)
+                                case .recording:
+                                    Image(systemName: "pause.circle.fill")
+                                        .font(.system(size: 26, weight: .medium))
+                                        .foregroundStyle(.red)
+                                case .generating(let p):
+                                    Text("\(Int(p * 100))%")
+                                        .font(.caption2.monospacedDigit().weight(.semibold))
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            .frame(width: 44, height: 44)
+                            .contentShape(Rectangle())
                         }
-                        .accessibilityLabel("Start scroll study")
+                        .disabled({ if case .generating = studyPhase { true } else { false } }())
+                        .accessibilityLabel({
+                            switch studyPhase {
+                            case .idle: "Start scroll study"
+                            case .recording: "Stop recording and generate video"
+                            case .generating: "Generating summary video"
+                            }
+                        }())
                     }
 
                     // Bouncer filter button

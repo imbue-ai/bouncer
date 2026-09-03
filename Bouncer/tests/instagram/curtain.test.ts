@@ -3,7 +3,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
-  rideInOffset, revealTarget, liftAction, installCurtain, type Curtain,
+  rideInOffset, revealTarget, dismissTarget, liftAction, installCurtain, type Curtain,
 } from '../../src/instagram/curtain';
 import type { ReelRecord } from '../../src/instagram/library';
 
@@ -40,6 +40,21 @@ describe('whether a released cover reveals', () => {
 
   it('lets a downward flick keep the cover even after a long drag', () => {
     expect(revealTarget(0.7, -0.8)).toBe('covered');
+  });
+});
+
+describe('whether a released row dismisses', () => {
+  it('commits once dragged past the fraction of its width', () => {
+    expect(dismissTarget(0.4, 0)).toBe('dismissed');
+    expect(dismissTarget(0.2, 0)).toBe('kept');
+  });
+
+  it('lets an outward flick dismiss from any distance', () => {
+    expect(dismissTarget(0.05, 0.8)).toBe('dismissed');
+  });
+
+  it('lets a flick back keep the row even after a long pull', () => {
+    expect(dismissTarget(0.7, -0.8)).toBe('kept');
   });
 });
 
@@ -89,13 +104,23 @@ function coverRows(): HTMLElement[] {
 
 /** A touch on `el` carrying one point — happy-dom has no TouchEvent
  *  constructor that takes touches, so the lists are attached by hand. */
-function touchOn(el: HTMLElement, type: string, clientY: number): void {
+function touchOn(el: HTMLElement, type: string, clientY: number, clientX = 200): void {
   const e = new Event(type, { bubbles: true, cancelable: true });
-  const list = [{ clientX: 200, clientY }];
+  const list = [{ clientX, clientY }];
   const ended = type === 'touchend' || type === 'touchcancel';
   Object.defineProperty(e, 'touches', { value: ended ? [] : list });
   Object.defineProperty(e, 'changedTouches', { value: list });
   el.dispatchEvent(e);
+}
+
+/** A sideways swipe across a row. Distance-judged: rows in this document have
+ *  no laid-out width, so the handler falls back to window.innerWidth — the dx
+ *  here must clear DISMISS_FRACTION of that to commit. */
+function touchSwipe(el: HTMLElement, dx: number): void {
+  touchOn(el, 'touchstart', 300, 200);
+  touchOn(el, 'touchmove', 300, 200 + Math.round(dx / 2));
+  touchOn(el, 'touchmove', 300, 200 + dx);
+  touchOn(el, 'touchend', 300, 200 + dx);
 }
 
 /** A touch tap with the drift of a real finger. Deliberately produces NO
@@ -196,5 +221,205 @@ describe('tapping a row on the cover', () => {
   it('still picks from a plain click', () => {
     coverRows()[1].click();
     expect(goTo).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('swiping a row aside on the cover', () => {
+  let api: Curtain | null = null;
+  let goTo: ReturnType<typeof vi.fn>;
+  let onDismiss: ReturnType<typeof vi.fn>;
+  let route = 0;
+
+  async function coverUp(): Promise<void> {
+    window.history.pushState({}, '', `/reels/route_${++route}/`);
+    await vi.advanceTimersByTimeAsync(600);
+  }
+
+  beforeEach(async () => {
+    vi.useFakeTimers();
+    document.body.replaceChildren();
+    window.history.pushState({}, '', `/reels/route_${++route}/`);
+    goTo = vi.fn();
+    onDismiss = vi.fn();
+    const records = [record(0), record(1), record(2)];
+    api = installCurtain({ records: () => records, goTo, onDismiss });
+    await coverUp();
+  });
+
+  afterEach(() => {
+    api?.teardown();
+    api = null;
+    vi.useRealTimers();
+  });
+
+  it('dismisses the swiped row; the cover stays, the reel is gone from it', async () => {
+    touchSwipe(coverRows()[1], 500);
+    await vi.advanceTimersByTimeAsync(250);     // the exit animation's commit
+    expect(goTo).not.toHaveBeenCalled();
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+    expect((onDismiss.mock.calls[0][0] as ReelRecord).reelId).toBe('reel_1');
+    expect(api!.isOpen()).toBe(true);
+    expect(coverRows()).toHaveLength(2);
+    expect(cover()?.textContent).not.toContain('Reel 2 description');
+  });
+
+  it('swiping the reel underneath aside journeys to the next kept reel, still covered', async () => {
+    touchSwipe(coverRows()[0], 500);
+    await vi.advanceTimersByTimeAsync(250);
+    expect(goTo).toHaveBeenCalledTimes(1);
+    expect((goTo.mock.calls[0][0] as ReelRecord).reelId).toBe('reel_1');
+    // Not a reveal: the cover went down for the journey, to rise on arrival.
+    expect(api!.isOpen()).toBe(false);
+  });
+
+  it('swiping left dismisses the same as swiping right', async () => {
+    touchSwipe(coverRows()[1], -500);
+    await vi.advanceTimersByTimeAsync(250);
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+    expect(coverRows()).toHaveLength(2);
+  });
+
+  it('a dismissed reel arriving back under the sheet is skipped, never revealed', async () => {
+    touchSwipe(coverRows()[0], 500);            // decline reel_0, journey begins
+    await vi.advanceTimersByTimeAsync(250);
+    goTo.mockClear();
+    await coverUp();                            // the feed lands on reel_0 again
+    expect(goTo).toHaveBeenCalledTimes(1);
+    expect((goTo.mock.calls[0][0] as ReelRecord).reelId).toBe('reel_1');
+    expect(api!.isOpen()).toBe(false);
+  });
+
+  it('stays dismissed on every later cover', async () => {
+    touchSwipe(coverRows()[2], 500);            // decline reel_2
+    await vi.advanceTimersByTimeAsync(250);
+    api!.close();
+    await coverUp();
+    expect(coverRows()).toHaveLength(2);
+    expect(cover()?.textContent).not.toContain('Reel 3 description');
+  });
+
+  // Slow and short, like the vertical settle test: a fast pull is a flick and
+  // a flick commits from any distance.
+  it('settles the row back after a slow pull that stops short', async () => {
+    vi.useRealTimers();
+    const row = coverRows()[1];
+    touchOn(row, 'touchstart', 300, 200);
+    touchOn(row, 'touchmove', 300, 230);
+    await new Promise((r) => setTimeout(r, 40));
+    touchOn(row, 'touchmove', 300, 240);        // 10px in 40ms: nobody's flick
+    touchOn(row, 'touchend', 300, 240);
+    expect(onDismiss).not.toHaveBeenCalled();
+    expect(coverRows()).toHaveLength(3);
+    expect(api!.isOpen()).toBe(true);
+  });
+
+  it('never dismisses out of a cancelled gesture', async () => {
+    const row = coverRows()[1];
+    touchOn(row, 'touchstart', 300, 200);
+    touchOn(row, 'touchmove', 300, 500);
+    touchOn(row, 'touchcancel', 300, 500);
+    await vi.advanceTimersByTimeAsync(250);
+    expect(onDismiss).not.toHaveBeenCalled();
+    expect(coverRows()).toHaveLength(3);
+  });
+
+  it('a sideways drag does not read as a tap on release', async () => {
+    touchSwipe(coverRows()[1], 500);
+    coverRows()[1]?.click();                    // the trailing click, if any
+    await vi.advanceTimersByTimeAsync(250);
+    expect(goTo).not.toHaveBeenCalled();
+  });
+});
+
+// The host refreshes the curtain on every rescan and description arrival —
+// which on a live feed is constantly, including mid-gesture. Rebuilding the
+// rows for that detached the element the finger was dragging: iOS keeps
+// delivering the rest of the stream to the detached node, where it no longer
+// bubbles to the cover — the row "loses grip", and the stuck mode then ate the
+// next swipe's start.
+describe('holding the rows steady under a finger', () => {
+  let api: Curtain | null = null;
+  let goTo: ReturnType<typeof vi.fn>;
+  let onDismiss: ReturnType<typeof vi.fn>;
+  let records: ReelRecord[] = [];
+  let route = 1000;
+
+  async function coverUp(): Promise<void> {
+    window.history.pushState({}, '', `/reels/route_${++route}/`);
+    await vi.advanceTimersByTimeAsync(600);
+  }
+
+  beforeEach(async () => {
+    vi.useFakeTimers();
+    document.body.replaceChildren();
+    window.history.pushState({}, '', `/reels/route_${++route}/`);
+    goTo = vi.fn();
+    onDismiss = vi.fn();
+    records = [record(0), record(1), record(2)];
+    api = installCurtain({ records: () => records, goTo, onDismiss });
+    await coverUp();
+  });
+
+  afterEach(() => {
+    api?.teardown();
+    api = null;
+    vi.useRealTimers();
+  });
+
+  it('keeps its grip on the dragged row through a mid-drag refresh', async () => {
+    const row = coverRows()[1];
+    touchOn(row, 'touchstart', 300, 200);
+    touchOn(row, 'touchmove', 300, 260);        // past the slop: the drag owns the row
+
+    api!.refresh();                             // a description landing mid-gesture
+    expect(row.isConnected).toBe(true);         // same element, still under the finger
+    expect(coverRows()[1]).toBe(row);
+
+    touchOn(row, 'touchmove', 300, 200 + 500);
+    touchOn(row, 'touchend', 300, 200 + 500);
+    await vi.advanceTimersByTimeAsync(250);
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+    expect((onDismiss.mock.calls[0][0] as ReelRecord).reelId).toBe('reel_1');
+  });
+
+  it('updates a mounted row in place when its facts arrive', () => {
+    const row = coverRows()[1];
+    records[1] = { ...records[1], description: 'Fresh words for reel two' };
+    api!.refresh();
+    expect(coverRows()[1]).toBe(row);           // never rebuilt
+    expect(row.textContent).toContain('Fresh words for reel two');
+  });
+
+  // The device sequence behind "then the next one doesn't even move": the
+  // first drag's end went to a detached node, the mode stuck, and the second
+  // gesture's start was ignored. A new finger down is proof the old gesture is
+  // over — it must reset and be heard.
+  it('recovers from a drag whose end was never delivered', async () => {
+    const first = coverRows()[1];
+    const second = coverRows()[2];
+    touchOn(first, 'touchstart', 300, 200);
+    touchOn(first, 'touchmove', 300, 260);      // mid-drag...
+    first.remove();                             // ...the row leaves the document;
+                                                // its touchend dies with it
+
+    touchSwipe(second, 500);                    // a fresh swipe on another row
+    await vi.advanceTimersByTimeAsync(250);
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+    expect((onDismiss.mock.calls[0][0] as ReelRecord).reelId).toBe('reel_2');
+  });
+
+  it('applies a deferred reshape once the finger lifts', async () => {
+    const row = coverRows()[1];
+    touchOn(row, 'touchstart', 300, 200);
+    touchOn(row, 'touchmove', 300, 230);        // a drag in flight
+    records.splice(2, 1);                       // reel_2 vanishes from the host
+    api!.refresh();                             // reshape wanted — but held back
+    expect(coverRows()).toHaveLength(3);
+
+    touchOn(row, 'touchmove', 300, 235);
+    touchOn(row, 'touchend', 300, 235);         // stops short: the row settles
+    await vi.advanceTimersByTimeAsync(250);
+    expect(coverRows()).toHaveLength(2);        // the owed render, paid on lift
+    expect(onDismiss).not.toHaveBeenCalled();
   });
 });

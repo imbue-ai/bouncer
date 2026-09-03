@@ -382,7 +382,13 @@ function suggestionRecords(): ReelRecord[] {
   // Sliced at the reel on screen: everything behind it is history the chooser
   // has no way to show, and building a row for it means scraping a byline off a
   // card Instagram recycled long ago.
-  return buildRecords(orderedReels.slice(Math.max(0, activeIndex())), describeOrCaption);
+  const ahead = orderedReels.slice(Math.max(0, activeIndex()));
+  // The LAST discovered reel is never offered: it is the tail of what Instagram
+  // has loaded, and jumping straight onto it strands the feed's own pagination
+  // with nothing queued after. It stays only when it is the reel on screen —
+  // the cover sitting on it still needs its row-one record.
+  if (ahead.length > 1) ahead.pop();
+  return buildRecords(ahead, describeOrCaption);
 }
 
 /** Where the reel on screen sits in the feed, or -1 before one is known. */
@@ -420,6 +426,13 @@ function mountSuggestions(): void {
       } else {
         card.scrollIntoView({ behavior: 'smooth', block: 'center' });
       }
+    },
+    // The curtain already skips a dismissed reel for this page's life. Logged
+    // by code so the device loop can watch dismissals land; the feed-response
+    // filter will take these as its kill list once it exists.
+    onDismiss: (record) => {
+      console.debug(`[Bouncer IG] reel dismissed: ${record.reelId}`
+        + (record.code ? ` (/reels/${record.code}/)` : ''));
     },
   });
   suggestions.refresh();
@@ -991,8 +1004,12 @@ function collapseWhenOffScreen(card: HTMLElement): void {
 function advanceToNextReel(fromReelId: string): void {
   const idx = orderedReels.findIndex(r => r.reelId === fromReelId);
   if (idx < 0) return;
+  // Stops short of the LAST discovered reel: landing on the tail of what
+  // Instagram has loaded strands its pagination (see suggestionRecords). If the
+  // only candidate is the last one, don't advance — the user scrolls there
+  // themselves, which paginates normally.
   const next = orderedReels
-    .slice(idx + 1)
+    .slice(idx + 1, orderedReels.length - 1)
     .find(r => r.card.isConnected && !swipedAway.has(r.reelId));
   if (!next) return;
   suppressBounceDismissOnce = true;
@@ -1103,10 +1120,13 @@ function feedSlice(): { current: Reel | null; upcoming: Reel[] } {
   const currentReel = idx >= 0 ? orderedReels[idx] : null;
   // A swiped-away reel keeps its slot in the feed but loses it here.
   const current = currentReel && !swipedAway.has(currentReel.reelId) ? currentReel : null;
+  // The end of the slice stops short of the LAST discovered reel: every row
+  // built from this is a click-to-jump target, and jumping onto the tail of
+  // what Instagram has loaded strands its pagination (see suggestionRecords).
   const upcoming =
     idx >= 0
       ? orderedReels
-          .slice(idx + 1)
+          .slice(idx + 1, orderedReels.length - 1)
           .filter((r) => r.card.isConnected && !swipedAway.has(r.reelId))
           .slice(0, UPCOMING_COUNT)
       : [];

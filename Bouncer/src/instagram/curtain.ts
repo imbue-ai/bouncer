@@ -1,5 +1,5 @@
-// The curtain: every reel arrives covered by a preview sheet, and revealing it
-// is the one gesture this module owns.
+// The curtain: every reel arrives covered by a preview sheet. Revealing it —
+// and swiping its previews aside — are the gestures this module owns.
 //
 // The architecture is chosen for WHERE the gestures land, because that is what
 // three failed designs came down to. Intercepting gestures aimed at
@@ -24,6 +24,11 @@
 //              by hit-testing alone. Swipe up and the cover tracks the finger
 //              off the top; let go early and it settles back. Tap a row and
 //              the feed scrolls there instead.
+//   DISMISS    a row swiped ASIDE is a reel declined sight unseen: it leaves
+//              the sheet, the host is told (the feed-response filter can drop
+//              it from future batches), and if the feed ever lands on it the
+//              cover stays down and the journey continues to the next kept
+//              reel — declined means never watched, not merely frowned at.
 //   ...        the revealed reel plays; scrolling on brings the next cover.
 //
 // The rows come from ./library.ts records, same as every chooser before this
@@ -62,6 +67,10 @@ const TAP_SLOP_PX = 24;
 const REVEAL_FRACTION = 0.3;
 /** A flick this fast reveals from any distance. Pixels per millisecond. */
 const REVEAL_VELOCITY = 0.5;
+/** Past this fraction of its width, a released row commits to leaving. */
+const DISMISS_FRACTION = 0.35;
+/** A sideways flick this fast dismisses from any distance. Px per ms. */
+const DISMISS_VELOCITY = 0.5;
 /** How long settle animations take. */
 const SETTLE_MS = 220;
 /** Quiet on the scroll stream for this long = the feed has settled. */
@@ -79,6 +88,10 @@ export interface CurtainHost {
   /** Scroll the feed to `record`'s card — smoothly; the journey should read as
    *  scrolling, because it is. */
   goTo: (record: ReelRecord) => void;
+  /** A reel swiped aside — declined sight unseen. The curtain already skips it
+   *  everywhere; the host can forward it to the feed-response filter so future
+   *  batches never carry it at all. */
+  onDismiss?: (record: ReelRecord) => void;
 }
 
 export interface Curtain {
@@ -135,6 +148,18 @@ export function rideInOffset(
   return Math.max(0, revealedTop + viewport - scrollTop);
 }
 
+/** Whether a released row commits to leaving. `progress` is how far it sits
+ *  from rest as a fraction of its width; `velocityOutward` is signed the same
+ *  way — positive is away from rest, whichever side the drag chose. The same
+ *  shape as revealTarget, for the same reasons: a flick outward means "gone"
+ *  from any distance, a flick back means "keep" from any distance, and a
+ *  deliberate drag is judged by where it stopped. Exported for tests. */
+export function dismissTarget(progress: number, velocityOutward: number): 'dismissed' | 'kept' {
+  if (velocityOutward >= DISMISS_VELOCITY) return 'dismissed';
+  if (velocityOutward <= -DISMISS_VELOCITY) return 'kept';
+  return progress >= DISMISS_FRACTION ? 'dismissed' : 'kept';
+}
+
 /** Whether a released cover commits to revealing. Exported for tests. */
 export function revealTarget(progress: number, velocityUp: number): 'revealed' | 'covered' {
   if (velocityUp >= REVEAL_VELOCITY) return 'revealed';
@@ -172,7 +197,7 @@ let host: CurtainHost | null = null;
 let curtainEl: HTMLElement | null = null;
 let listEl: HTMLElement | null = null;
 
-type Mode = 'hidden' | 'riding' | 'covering' | 'dragging';
+type Mode = 'hidden' | 'riding' | 'covering' | 'dragging' | 'rowdrag';
 let mode: Mode = 'hidden';
 
 /** Where the feed was resting when the current reel was revealed — the
@@ -190,6 +215,10 @@ let pathTimer: ReturnType<typeof setInterval> | null = null;
 let rowIds: string[] = [];
 /** A drag's trailing click must not read as a row tap. */
 let tapDeadUntil = 0;
+/** Reels swiped aside. Filtered out of the rows, skipped when the feed lands
+ *  on them; declined is for keeps (for this page's life — the host hears each
+ *  one and owns anything longer-lived). */
+const dismissedIds = new Set<string>();
 
 /** Videos WE paused, so the reveal resumes exactly those and nothing else. */
 const pausedByUs = new Set<HTMLVideoElement>();
@@ -198,6 +227,20 @@ let dragStartY = 0;
 let dragLastY = 0;
 let dragLastT = 0;
 let dragVelocity = 0;    // px/ms, positive = upward
+let dragStartX = 0;
+let dragLastX = 0;
+let dragVelocityX = 0;   // px/ms, positive = rightward
+/** The row under the finger when it went down — the one a sideways drag takes. */
+let dragRow: HTMLElement | null = null;
+let rowTimer: ReturnType<typeof setTimeout> | null = null;
+/** A finger is on the cover. While one is, the row LIST must not change shape:
+ *  replaceChildren detaches every node it re-appends, and iOS keeps delivering
+ *  an in-flight gesture to its touchstart target even detached — where it no
+ *  longer bubbles to the cover's listeners. The drag goes quiet mid-swipe
+ *  ("loses grip"), the mode sticks, and the NEXT swipe's start is eaten. */
+let touchActive = false;
+/** A render that arrived while a finger was down, owed after the lift. */
+let rowsDirty = false;
 let wheelAccum = 0;
 let wheelTimer: ReturnType<typeof setTimeout> | null = null;
 let quietTimer: ReturnType<typeof setTimeout> | null = null;
@@ -303,6 +346,7 @@ function buildRow(record: ReelRecord, isUnderneath: boolean): HTMLElement {
   body.style.cssText = 'flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px';
 
   const title = document.createElement('div');
+  title.className = 'bouncer-ig-ctitle';
   title.textContent = record.description;
   title.style.cssText = [
     'font-size: 15px', 'font-weight: 650', 'line-height: 1.3', 'color: #fff',
@@ -327,6 +371,7 @@ function buildRow(record: ReelRecord, isUnderneath: boolean): HTMLElement {
   body.append(title, by, time);
   row.append(thumb, body);
   rowRecords.set(row, record);
+  row.dataset.curtainReel = record.reelId;
   if (isUnderneath) row.dataset.curtainUnder = '1';
 
   // The mouse's path. A touch tap is acted on at touchend instead (see
@@ -360,10 +405,50 @@ function activateRow(row: HTMLElement): void {
   host?.goTo(fresh);
 }
 
+/** A row swiped aside: it plays its exit, then its reel is declined. The
+ *  commit waits for the exit because a row that vanishes mid-slide reads as a
+ *  glitch, and the finger that flung it has already let go — nothing races. */
+function dismissRow(row: HTMLElement, dir: number): void {
+  const record = rowRecords.get(row);
+  const w = Math.max(1, row.clientWidth || window.innerWidth);
+  row.style.pointerEvents = 'none';
+  setRowTransform(row, dir * (w + 48), true);
+  row.style.opacity = '0';
+  if (rowTimer) clearTimeout(rowTimer);
+  rowTimer = setTimeout(() => {
+    if (!record || !host) return;
+    dismissedIds.add(record.reelId);
+    console.debug(`[Bouncer IG] curtain: dismissed ${record.reelId}`);
+    host.onDismiss?.(record);
+    if (row.dataset.curtainUnder) {
+      // The reel UNDER the sheet was declined sight unseen: same journey as
+      // arriving on a dismissed reel — cover down, no resume, next kept reel.
+      const next = firstKept();
+      if (next) {
+        hide(false);
+        host.goTo(next);
+        return;
+      }
+      // Nothing known to go to: the cover stays; the reveal gesture remains.
+    }
+    // Refill the pinned list in place: the remaining rows keep their spots,
+    // the next kept reel takes the vacant one.
+    rowIds = rowIds.filter((id) => id !== record.reelId);
+    for (const r of host.records()) {
+      if (rowIds.length >= ROW_COUNT) break;
+      if (dismissedIds.has(r.reelId) || rowIds.includes(r.reelId) || !isRecordComplete(r)) continue;
+      rowIds.push(r.reelId);
+    }
+    renderRows();
+  }, SETTLE_MS);
+}
+
 function renderRows(): void {
   if (!listEl || !host) return;
-  const records = host.records();
-  const pinned = mode === 'covering' || mode === 'dragging';
+  // Dismissed reels are gone from every rendering — including the pinned map
+  // lookup, so a reel swiped aside mid-cover can't be re-pointed to.
+  const records = host.records().filter((r) => !dismissedIds.has(r.reelId));
+  const pinned = mode === 'covering' || mode === 'dragging' || mode === 'rowdrag';
   const wanted = pinned && rowIds.length > 0
     ? rowIds
         .map((id) => records.find((r) => r.reelId === id))
@@ -373,6 +458,7 @@ function renderRows(): void {
 
   if (wanted.length === 0) {
     if (!listEl.querySelector('[data-curtain-empty]')) {
+      if (touchActive) { rowsDirty = true; return; }
       const empty = document.createElement('div');
       empty.setAttribute('data-curtain-empty', '');
       empty.textContent = 'Nothing discovered yet.';
@@ -381,7 +467,55 @@ function renderRows(): void {
     }
     return;
   }
-  listEl.replaceChildren(...wanted.map((r, i) => buildRow(r, i === 0)));
+
+  // A row already mounted is REUSED, its late facts refreshed in place — never
+  // rebuilt. The element is what a finger may be resting on or mid-way through
+  // dragging, and rebuilding it snapped the dragged row back to rest and
+  // orphaned the touch stream (see `touchActive`). The host refreshes on every
+  // rescan and description arrival, so mid-gesture renders are the rule here,
+  // not the exception.
+  const mounted = new Map<string, HTMLElement>();
+  for (const el of Array.from(listEl.querySelectorAll<HTMLElement>('.bouncer-ig-crow'))) {
+    if (el.dataset.curtainReel) mounted.set(el.dataset.curtainReel, el);
+  }
+  const next = wanted.map((r, i) => {
+    const row = mounted.get(r.reelId);
+    if (!row) return buildRow(r, i === 0);
+    refreshRow(row, r, i === 0);
+    return row;
+  });
+  const children = Array.from(listEl.children);
+  if (next.length === children.length && next.every((el, i) => el === children[i])) return;
+  // The list changed shape. Applying that detaches even the reused nodes for a
+  // beat — fatal to an in-flight gesture — so under a finger it waits.
+  if (touchActive) { rowsDirty = true; return; }
+  listEl.replaceChildren(...next);
+}
+
+/** Bring a mounted row up to date without rebuilding it. Text and attributes
+ *  only, into the same element — nothing a resting or reaching finger can
+ *  lose its place on. */
+function refreshRow(row: HTMLElement, record: ReelRecord, isUnderneath: boolean): void {
+  rowRecords.set(row, record);
+  if (isUnderneath) row.dataset.curtainUnder = '1';
+  else delete row.dataset.curtainUnder;
+  row.style.outline = isUnderneath ? '1px solid rgba(255,255,255,0.25)' : '';
+  const img = row.querySelector('img');
+  if (img instanceof HTMLImageElement && img.getAttribute('src') !== record.thumbnailUrl) {
+    img.src = record.thumbnailUrl;
+  }
+  const title = row.querySelector('.bouncer-ig-ctitle');
+  if (title instanceof HTMLElement && title.textContent !== record.description) {
+    title.textContent = record.description;
+  }
+  const byText = record.creator ? `by ${record.creator}` : 'by —';
+  const by = row.querySelector('.bouncer-ig-cby');
+  if (by instanceof HTMLElement && by.textContent !== byText) by.textContent = byText;
+  const timeText = meta(record);
+  const time = row.querySelector('.bouncer-ig-ctime');
+  if (time instanceof HTMLElement && timeText && time.textContent !== timeText) {
+    time.textContent = timeText;
+  }
 }
 
 // ==================== The outer page ====================
@@ -444,7 +578,7 @@ function resumeUnderlying(): void {
 /** Instagram restarts its videos on its own schedule; while the cover is up,
  *  the reel underneath stays paused no matter who pressed play. */
 function onPlayCapture(e: Event): void {
-  if (mode !== 'covering' && mode !== 'dragging') return;
+  if (mode !== 'covering' && mode !== 'dragging' && mode !== 'rowdrag') return;
   const v = e.target;
   if (!(v instanceof HTMLVideoElement)) return;
   const r = v.getBoundingClientRect();
@@ -464,7 +598,69 @@ function setTransform(y: string, animate: boolean): void {
   curtainEl.style.transform = `translateY(${y})`;
 }
 
+/** A dragged row tracks the finger sideways, thinning as it goes. */
+function setRowTransform(row: HTMLElement, x: number, animate: boolean): void {
+  row.style.transition = animate
+    ? `transform ${SETTLE_MS}ms cubic-bezier(0.22, 0.61, 0.36, 1), opacity ${SETTLE_MS}ms ease`
+    : 'none';
+  row.style.transform = x === 0 ? '' : `translateX(${x}px)`;
+  const w = Math.max(1, row.clientWidth || window.innerWidth);
+  row.style.opacity = String(Math.max(0.25, 1 - Math.abs(x) / w));
+}
+
+/** The first record the user hasn't sworn off — where a skip lands. */
+function firstKept(): ReelRecord | null {
+  for (const r of host?.records() ?? []) {
+    if (!dismissedIds.has(r.reelId) && isRecordComplete(r)) return r;
+  }
+  return null;
+}
+
+/** Whether the sheet has any journey to offer beyond revealing what is already
+ *  underneath it: a kept, renderable record past the first. Mid-ride the first
+ *  record may still be the reel being LEFT, which only makes this optimistic —
+ *  cover() re-asks against the settled feed and stays hidden if the optimism
+ *  was misplaced. */
+function hasSkipTargets(): boolean {
+  const kept = (host?.records() ?? []).filter((r) => !dismissedIds.has(r.reelId));
+  return kept.slice(1).some(isRecordComplete);
+}
+
 function cover(): void {
+  // A reel dismissed earlier can still scroll back under the sheet: Instagram
+  // delivered it long ago and the feed remembers it. Declined means never
+  // watched — the cover stays down (no resume for the reel underneath) and the
+  // journey continues to the next kept reel, which arrives covered like any
+  // other. Nothing here loops: the destination is kept by construction, so the
+  // next arrival covers normally.
+  const records = host?.records() ?? [];
+  const kept = records.filter((r) => !dismissedIds.has(r.reelId));
+  const renderable = kept.filter(isRecordComplete);
+  console.debug(
+    `[Bouncer IG] curtain: covering — ${records.length} reel(s) offered, `
+    + `${renderable.length} renderable, showing ${Math.min(renderable.length, ROW_COUNT)} row(s)`,
+  );
+  const under = records[0];
+  if (under && dismissedIds.has(under.reelId)) {
+    const next = firstKept();
+    if (next) {
+      console.debug(`[Bouncer IG] curtain: skipping dismissed ${under.reelId} → ${next.reelId}`);
+      pauseUnderlying();     // it may already be playing; declined reels play to nobody
+      hide(false);
+      host?.goTo(next);
+      return;
+    }
+    // Nowhere kept to send the feed: the cover still comes down, as a blocker —
+    // declined means never watched, even with no skips to offer.
+  } else if (!hasSkipTargets()) {
+    // Nothing to skip to: a sheet whose only offer is "reveal what's already
+    // underneath" is pure obstruction. Stay out of the way; the reel plays
+    // uncovered. Decided once per arrival — a description landing mid-watch
+    // must not drop a sheet on a reel already playing.
+    console.debug('[Bouncer IG] curtain: nothing to skip to — staying hidden');
+    hide();
+    return;
+  }
   mode = 'covering';
   if (curtainEl) curtainEl.style.pointerEvents = 'auto';
   setTransform('0px', true);
@@ -472,12 +668,14 @@ function cover(): void {
   pauseUnderlying();
 }
 
-function hide(): void {
+/** `resume: false` is for leaving a DISMISSED reel: it stays paused for the
+ *  journey away — the whole point is that it is never watched. */
+function hide(resume = true): void {
   mode = 'hidden';
   rowIds = [];
   if (curtainEl) curtainEl.style.pointerEvents = 'none';
   setTransform('100%', false);
-  resumeUnderlying();
+  if (resume) resumeUnderlying();
 }
 
 /** Slide the cover off the top; the reel underneath is the reel now. */
@@ -512,11 +710,11 @@ function onFeedScroll(e?: Event): void {
     pinOuterPage();
     return;
   }
-  if (mode === 'dragging') return;
+  if (mode === 'dragging' || mode === 'rowdrag') return;
   if (!raf) {
     raf = requestAnimationFrame(() => {
       raf = 0;
-      if (mode === 'dragging') return;
+      if (mode === 'dragging' || mode === 'rowdrag') return;
       const scroller = findScroller();
       if (!scroller || !curtainEl) return;
       const away = scroller.scrollTop - revealedTop;
@@ -530,7 +728,10 @@ function onFeedScroll(e?: Event): void {
 
       // The feed is moving somewhere new — whether from a finger, momentum, a
       // row tap's smooth scroll, or Instagram's own snap. The cover rides in
-      // glued to the incoming slide, previews already on it.
+      // glued to the incoming slide, previews already on it. Unless it has
+      // nothing to offer — then it never enters the frame (cover() makes the
+      // same call at settle).
+      if (mode === 'hidden' && !hasSkipTargets()) return;
       mode = 'riding';
       if (curtainEl.style.pointerEvents !== 'none') curtainEl.style.pointerEvents = 'none';
       if (rowIds.length === 0) renderRows();
@@ -555,7 +756,7 @@ function onFeedScroll(e?: Event): void {
 let pendingPath: string | null = null;
 function onPathTick(): void {
   pinOuterPage();
-  if (mode === 'dragging' || mode === 'covering') return;
+  if (mode === 'dragging' || mode === 'covering' || mode === 'rowdrag') return;
   const path = location.pathname;
   if (path === revealedPath) { pendingPath = null; return; }
   if (pendingPath !== path) { pendingPath = path; return; }   // hold one tick
@@ -571,7 +772,7 @@ function onPathTick(): void {
 }
 
 function onFeedSettled(): void {
-  if (mode === 'dragging' || mode === 'covering') return;
+  if (mode === 'dragging' || mode === 'covering' || mode === 'rowdrag') return;
   const scroller = findScroller();
   if (!scroller) return;
   const away = Math.abs(scroller.scrollTop - revealedTop);
@@ -594,17 +795,33 @@ function onFeedSettled(): void {
 // ==================== The reveal gesture — on the cover, nowhere else ====================
 
 function onCoverTouchStart(e: TouchEvent): void {
+  // A drag whose end never arrived — its target left the document mid-gesture
+  // and iOS kept delivering the rest of the stream to the detached node, where
+  // it no longer bubbles here — must not eat this gesture too. A new finger
+  // down IS the proof the old gesture is over: put its pieces back and listen.
+  if (mode === 'rowdrag' || mode === 'dragging') {
+    if (dragRow?.isConnected) setRowTransform(dragRow, 0, true);
+    dragRow = null;
+    setTransform('0px', true);
+    mode = 'covering';
+  }
   if (mode !== 'covering') return;
   const t = e.touches[0];
   if (!t) return;
+  touchActive = true;
   dragStartY = t.clientY;
   dragLastY = t.clientY;
+  dragStartX = t.clientX;
+  dragLastX = t.clientX;
   dragLastT = performance.now();
   dragVelocity = 0;
+  dragVelocityX = 0;
+  const row = e.target instanceof Element ? e.target.closest('.bouncer-ig-crow') : null;
+  dragRow = row instanceof HTMLElement ? row : null;
 }
 
 function onCoverTouchMove(e: TouchEvent): void {
-  if (mode !== 'covering' && mode !== 'dragging') return;
+  if (mode !== 'covering' && mode !== 'dragging' && mode !== 'rowdrag') return;
   const t = e.touches[0];
   if (!t) return;
   // Cancelable by construction: the gesture began on our element, whose
@@ -612,25 +829,65 @@ function onCoverTouchMove(e: TouchEvent): void {
   if (e.cancelable) e.preventDefault();
 
   const now = performance.now();
-  const step = dragLastY - t.clientY;
-  if (now > dragLastT) dragVelocity = step / (now - dragLastT);
+  if (now > dragLastT) {
+    dragVelocity = (dragLastY - t.clientY) / (now - dragLastT);
+    dragVelocityX = (t.clientX - dragLastX) / (now - dragLastT);
+  }
   dragLastY = t.clientY;
+  dragLastX = t.clientX;
   dragLastT = now;
 
   const totalUp = dragStartY - t.clientY;
+  const totalX = t.clientX - dragStartX;
   if (mode === 'covering') {
-    if (Math.abs(totalUp) <= DRAG_SLOP_PX) return;
-    mode = 'dragging';
+    // The slop is left in whichever direction the finger chooses; the first
+    // move past it commits the gesture to an axis. Sideways belongs to the row
+    // it started on — a sideways drag on the bare sheet means nothing, and
+    // falls to the vertical path to settle as the non-gesture it is.
+    if (Math.max(Math.abs(totalUp), Math.abs(totalX)) <= DRAG_SLOP_PX) return;
+    mode = Math.abs(totalX) > Math.abs(totalUp) && dragRow !== null ? 'rowdrag' : 'dragging';
+  }
+  if (mode === 'rowdrag') {
+    if (dragRow?.isConnected) setRowTransform(dragRow, totalX, false);
+    return;
   }
   // Track the finger: up slides the cover off the top; down goes nowhere.
   setTransform(`${Math.min(0, -totalUp)}px`, false);
 }
 
 function onCoverTouchEnd(e: TouchEvent): void {
-  if (mode !== 'covering' && mode !== 'dragging') return;
+  touchActive = false;
+  // A render the finger held back is owed now — after this handler has
+  // resolved the gesture, so it never reshapes the list out from under the
+  // dismiss/settle the lift decides on.
+  if (rowsDirty) {
+    setTimeout(() => {
+      if (!rowsDirty || touchActive) return;
+      rowsDirty = false;
+      renderRows();
+    }, 0);
+  }
+  if (mode !== 'covering' && mode !== 'dragging' && mode !== 'rowdrag') return;
   // A recognised drag's trailing click must not read as a row tap; a tap's own
   // trailing click (if WebKit synthesizes one after all) is the same tap again.
   tapDeadUntil = performance.now() + 300;
+  if (mode === 'rowdrag') {
+    mode = 'covering';
+    const row = dragRow;
+    dragRow = null;
+    if (!row?.isConnected) return;
+    if (e.cancelable) e.preventDefault();
+    const dx = dragLastX - dragStartX;
+    const dir = dx < 0 ? -1 : 1;
+    const w = Math.max(1, row.clientWidth || window.innerWidth);
+    // Outward is wherever the drag went; a cancelled gesture always settles.
+    const action = e.type === 'touchcancel'
+      ? 'kept'
+      : dismissTarget(Math.abs(dx) / w, dragVelocityX * dir);
+    if (action === 'dismissed') dismissRow(row, dir);
+    else setRowTransform(row, 0, true);
+    return;
+  }
   // `||`, not `??`: an unlaid-out cover reports height 0, and dividing by the
   // 1 the clamp leaves behind reads every drag as a whole screen of progress.
   const h = Math.max(1, (curtainEl?.clientHeight || window.innerHeight));
@@ -708,7 +965,7 @@ export function installCurtain(next: CurtainHost): Curtain {
       reveal(false);
     },
     isOpen(): boolean {
-      return mode === 'covering' || mode === 'dragging';
+      return mode === 'covering' || mode === 'dragging' || mode === 'rowdrag';
     },
     teardown(): void {
       document.removeEventListener('scroll', onFeedScroll, true);
@@ -719,6 +976,8 @@ export function installCurtain(next: CurtainHost): Curtain {
       if (wheelTimer) clearTimeout(wheelTimer);
       if (quietTimer) clearTimeout(quietTimer);
       if (settleTimer) clearTimeout(settleTimer);
+      if (rowTimer) clearTimeout(rowTimer);
+      rowTimer = null;
       if (raf) cancelAnimationFrame(raf);
       curtainEl?.remove();
       document.getElementById(STYLE_ID)?.remove();
@@ -729,6 +988,10 @@ export function installCurtain(next: CurtainHost): Curtain {
       rowIds = [];
       wheelAccum = 0;
       tapDeadUntil = 0;
+      dragRow = null;
+      touchActive = false;
+      rowsDirty = false;
+      dismissedIds.clear();
     },
   };
 }
