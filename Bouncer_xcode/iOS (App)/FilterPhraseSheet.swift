@@ -8,7 +8,12 @@
 import SwiftUI
 import WebKit
 import TipKit
+import FamilyControls
 internal import Combine
+
+/// The chrome.storage.local key the JS side keeps the active model under —
+/// a cross-language contract (see shared/models.ts), spelled once here.
+private let selectedModelStorageKey = "selectedModel"
 
 // MARK: - Bouncer Tip
 
@@ -90,10 +95,10 @@ final class WebViewCache: ObservableObject {
     // Instagram off and back on from the in-page settings still replays it —
     // that path runs the popup's own code, exactly as on desktop.
     private func armInstagramIntroIfNeeded(_ platform: String) {
-        guard platform == "instagram" else { return }
+        guard platform == PlatformID.instagram else { return }
         let defaults = UserDefaults.standard
-        guard !defaults.bool(forKey: "hasArmedInstagramIntro") else { return }
-        defaults.set(true, forKey: "hasArmedInstagramIntro")
+        guard !defaults.bool(forKey: DefaultsKey.hasArmedInstagramIntro) else { return }
+        defaults.set(true, forKey: DefaultsKey.hasArmedInstagramIntro)
         defaults.set("true", forKey: "ffstore_ff_local_pendingInstagramIntro")
     }
 
@@ -200,7 +205,7 @@ class FilterSheetViewModel: ObservableObject {
     // Which platform's filter phrases the sheet is currently viewing/editing.
     // Also drives which cached webview is visible / audible — the
     // FilteredWebViewContainer's ForEach reads this to pick the active mount.
-    @Published var selectedPlatform: String = "twitter"
+    @Published var selectedPlatform: String = PlatformID.twitter
 
     // Per-platform WKWebView cache. Lazy so we can pass `self` into the
     // Coordinator's init without a chicken-and-egg problem. Held strongly by
@@ -292,6 +297,32 @@ class FilterSheetViewModel: ObservableObject {
             cache.showPlatform(platform)
             loadPhrases()
         }
+    }
+
+    // As above, but also guarantees the platform's own feed URL is what ends up
+    // on screen — for X, `https://x.com/home`.
+    //
+    // `selectPlatformAndNavigate` alone does not promise this. A webview built
+    // for the first time loads `feedURL` from the factory, but one that already
+    // exists is only made visible again, still showing whatever the user left it
+    // on — a profile, a search, a permalink they opened yesterday. That is right
+    // for the platform switcher, where the point is to pick up where you left
+    // off, and wrong for the gate's handoff, where somebody just answered
+    // "View in Bouncer" on a shield and the answer has a specific destination.
+    //
+    // Only the already-cached case loads: a fresh webview has a navigation to
+    // `feedURL` in flight and issuing a second one would cancel the first.
+    func selectPlatformAndLoadFeed(_ platform: String) {
+        let cached = cache.webView(for: platform, create: false)
+        selectPlatformAndNavigate(platform)
+
+        guard let webView = cached,
+              let def = Platforms.byId(platform),
+              let url = URL(string: def.feedURL) else { return }
+        // Already there — reloading would only throw away scroll position and
+        // whatever the pipeline has running.
+        guard webView.url?.absoluteString != def.feedURL else { return }
+        webView.load(URLRequest(url: url))
     }
 
     // Load the selected platform's phrases from the (shared, native-backed)
@@ -623,8 +654,8 @@ class FilterSheetViewModel: ObservableObject {
         // webview if it wasn't visited yet). ensureOnX below still runs to
         // handle the case where the Twitter webview happens to be on a
         // non-feed page.
-        if selectedPlatform != "twitter" {
-            selectPlatformAndNavigate("twitter")
+        if selectedPlatform != PlatformID.twitter {
+            selectPlatformAndNavigate(PlatformID.twitter)
         }
         guard let webView = webView else { return }
         Task { @MainActor in
@@ -985,7 +1016,7 @@ struct FilterPhraseSheet: View {
                 // relaunch is needed. Ladybug icon matches Xcode's debug idiom.
                 ToolbarItem(placement: .topBarLeading) {
                     Button {
-                        UserDefaults.standard.set(false, forKey: "hasCompletedOnboarding")
+                        UserDefaults.standard.set(false, forKey: DefaultsKey.hasCompletedOnboarding)
                         viewModel.isPresented = false
                     } label: {
                         Image(systemName: "ladybug")
@@ -1153,6 +1184,29 @@ struct BouncerSettingsView: View {
                     set: { viewModel.setFilterReplies($0) }
                 )) {
                     Text("Also filter replies in threads")
+                }
+            }
+
+            // The gate is the first thing here, not the last. It is the only
+            // setting in the app that changes what happens OUTSIDE Bouncer —
+            // and a feature nobody can find is off by default in the way that
+            // matters. Three taps deep, behind Advanced Settings, is where
+            // features go to be never turned on.
+            Section {
+                NavigationLink {
+                    GateSettingsView()
+                } label: {
+                    HStack {
+                        Image(systemName: "lock.shield")
+                            .foregroundStyle(.tint)
+                            .frame(width: 24)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(Gate.featureName)
+                            Text(Gate.isArmed ? "On" : "Off")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                 }
             }
 
@@ -1332,7 +1386,7 @@ struct BouncerSettingsView: View {
         if let model = LocalInferenceService.model(forKey: modelKey) {
             localService.selectModel(model)
         }
-        await viewModel.setStorage(["selectedModel": modelKey])
+        await viewModel.setStorage([selectedModelStorageKey: modelKey])
         viewModel.selectedModel = modelKey
         await viewModel.clearModelCache()
     }
@@ -1939,7 +1993,7 @@ struct ProvidersSettingsView: View {
 
     @MainActor
     private func loadAll() async {
-        let storageKeys = providerSpecs.map(\.storageKey) + ["selectedModel"]
+        let storageKeys = providerSpecs.map(\.storageKey) + [selectedModelStorageKey]
         let data = await viewModel.getStorage(keys: storageKeys)
 
         var loadedKeys: [String: String] = [:]
@@ -1955,7 +2009,7 @@ struct ProvidersSettingsView: View {
         // Imbue-enabled builds — but the native UI was showing
         // "No model selected" because we only mirrored the stored value.
         // Reflect the JS default so the providers page matches reality.
-        let stored = (data["selectedModel"] as? String) ?? ""
+        let stored = (data[selectedModelStorageKey] as? String) ?? ""
         if stored.isEmpty, hasImbueBackend {
             self.selectedModel = imbueModelKey
         } else {
@@ -1976,7 +2030,7 @@ struct ProvidersSettingsView: View {
         // break; otherwise clear the selection.
         if value.isEmpty, selectedModel.hasPrefix("\(spec.id):") {
             let fallback = hasImbueBackend ? imbueModelKey : ""
-            await viewModel.setStorage(["selectedModel": fallback])
+            await viewModel.setStorage([selectedModelStorageKey: fallback])
             selectedModel = fallback
             viewModel.selectedModel = fallback
         }
@@ -1990,7 +2044,7 @@ struct ProvidersSettingsView: View {
         if let model = LocalInferenceService.model(forKey: modelKey) {
             localService.selectModel(model)
         }
-        await viewModel.setStorage(["selectedModel": modelKey])
+        await viewModel.setStorage([selectedModelStorageKey: modelKey])
         selectedModel = modelKey
         viewModel.selectedModel = modelKey
         await viewModel.clearModelCache()
@@ -2004,10 +2058,16 @@ struct FilteredWebViewContainer: View {
     static let studyDestination = "instagram-study"
 
     @StateObject var viewModel = FilterSheetViewModel()
+    // The gate's handoff: someone chose "View in Bouncer" on a shield, in
+    // another process, possibly before this one existed. Landing them on the
+    // platform picker would ask a question they have already answered.
+    @StateObject private var gateRouter = GateRouter.shared
+    @StateObject private var gate = GateController.shared
+    @Environment(\.scenePhase) private var scenePhase
     // @AppStorage so external UserDefaults writes (e.g. the DEBUG-only "reset
     // onboarding" button in the filter sheet toolbar) propagate reactively —
     // no explicit re-read required for the change to re-show OnboardingView.
-    @AppStorage("hasCompletedOnboarding") private var isOnboarded: Bool = false
+    @AppStorage(DefaultsKey.hasCompletedOnboarding) private var isOnboarded: Bool = false
     // NavigationStack path: empty means the picker is the visible root; a
     // single appended platform id means the user has picked and the feed is
     // pushed on top. There's no way back to the picker within a session, so
@@ -2071,6 +2131,36 @@ struct FilteredWebViewContainer: View {
             if !newValue {
                 navPath.removeAll()
             }
+        }
+        // A route can be waiting before this view exists (the tap that launched
+        // us) or arrive while it is on screen (a check-in tapped mid-session),
+        // so both the arrival and the initial value are handled.
+        .onChange(of: gateRouter.pendingPlatform) { _, _ in followGateRoute() }
+        .onAppear { followGateRoute() }
+        // The engage window is closed by an extension iOS may decline to
+        // launch. Whenever we are in a position to check, check.
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { gate.reconcile() }
+        }
+    }
+
+    /// Go where the notification said, once, and only if we are not already
+    /// there — a second append would push a duplicate feed onto the stack.
+    ///
+    /// `loadFeed` rather than plain navigation: someone arriving here chose
+    /// "View in Bouncer" on a shield, and the destination they were promised is
+    /// the feed specifically. A cached X webview sitting on a profile from an
+    /// hour ago would otherwise just be made visible again.
+    private func followGateRoute() {
+        guard let platform = gateRouter.consume() else { return }
+        guard isOnboarded else { return }
+        // A route for a platform this build does not carry (the shield can name
+        // apps Bouncer has no feed for yet) lands on the picker rather than on
+        // a webview nothing knows how to build.
+        guard Platforms.byId(platform) != nil else { return }
+        viewModel.selectPlatformAndLoadFeed(platform)
+        if navPath.last != platform {
+            navPath.append(platform)
         }
     }
 }
@@ -2402,7 +2492,7 @@ struct NavBarView: View {
         .background(.bar)
         .onChange(of: viewModel.currentURL) { _, newURL in
             if newURL.contains("x.com/home") || newURL.contains("twitter.com/home") {
-                UserDefaults.standard.set(true, forKey: "hasLoggedIn")
+                UserDefaults.standard.set(true, forKey: DefaultsKey.hasLoggedIn)
                 Task { await BouncerButtonTip.loggedIn.donate() }
             }
         }

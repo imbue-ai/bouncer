@@ -13,6 +13,15 @@
 
 import Foundation
 
+/// Canonical platform ids — the SiteId values shared with the JS side. One
+/// home, so a comparison can't typo its way past the compiler.
+enum PlatformID {
+    static let twitter = "twitter"
+    static let youtube = "youtube"
+    static let linkedin = "linkedin"
+    static let instagram = "instagram"
+}
+
 struct PlatformDef {
     /// Canonical id — matches the SiteId values used on the JS side
     /// ("twitter", "youtube", "linkedin"). Stored as String so the existing
@@ -64,7 +73,7 @@ enum Platforms {
     /// WHICH of these actually appear is gated by `enabledIds` — see `all`.
     private static let defined: [PlatformDef] = [
         PlatformDef(
-            id: "twitter",
+            id: PlatformID.twitter,
             displayName: "X (Twitter)",
             feedURL: "https://x.com/home",
             loginURL: "https://x.com/i/flow/login",
@@ -92,7 +101,7 @@ enum Platforms {
 //             ]
 //         ),
         PlatformDef(
-            id: "linkedin",
+            id: PlatformID.linkedin,
             displayName: "LinkedIn",
             feedURL: "https://www.linkedin.com/feed/",
             loginURL: nil,
@@ -105,7 +114,7 @@ enum Platforms {
             ]
         ),
         PlatformDef(
-            id: "instagram",
+            id: PlatformID.instagram,
             displayName: "Instagram",
             // Bouncer's Instagram surface is the Reels viewer, not the home
             // feed — matches PLATFORM_RUNTIME.instagram.feedUrl on the JS side.

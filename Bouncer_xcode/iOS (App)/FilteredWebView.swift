@@ -135,7 +135,7 @@ struct FilteredWebView: UIViewRepresentable {
             // feedURL.
             let urlString: String = {
                 if let login = platform.loginURL,
-                   !UserDefaults.standard.bool(forKey: "hasLoggedIn") {
+                   !UserDefaults.standard.bool(forKey: DefaultsKey.hasLoggedIn) {
                     return login
                 }
                 return platform.feedURL

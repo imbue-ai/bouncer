@@ -55,6 +55,11 @@ import ARKit
 import ReplayKit
 internal import Combine
 
+/// The WKScriptMessage channel the tracker JS posts events on — must match
+/// window.webkit.messageHandlers.<name> in trackerJS. Registered by both the
+/// study's own webview and the feed-webview tap (StudyFeedTap).
+private let scrollStudyMessageName = "scrollStudy"
+
 // MARK: - Session recorder (JSONL, crash-safe)
 
 /// Owns one study session: the folder, the append-only events file, and the
@@ -72,7 +77,7 @@ final class StudySessionRecorder: ObservableObject {
     /// inputs the summary video needs.
     @Published var captureEnabled: Bool {
         didSet {
-            UserDefaults.standard.set(captureEnabled, forKey: "scrollStudyCaptureEnabled")
+            UserDefaults.standard.set(captureEnabled, forKey: DefaultsKey.scrollStudyCaptureEnabled)
             guard isRunning, captureEnabled != oldValue else { return }
             if captureEnabled { startCaptureSegment() } else { stopCaptureSegment() }
         }
@@ -98,7 +103,7 @@ final class StudySessionRecorder: ObservableObject {
 
     init() {
         // Default ON — capture is the point of the study screen.
-        captureEnabled = (UserDefaults.standard.object(forKey: "scrollStudyCaptureEnabled") as? Bool) ?? true
+        captureEnabled = (UserDefaults.standard.object(forKey: DefaultsKey.scrollStudyCaptureEnabled) as? Bool) ?? true
     }
 
     static var rootDir: URL {
@@ -920,7 +925,7 @@ struct StudyWebView: UIViewRepresentable {
 
     func makeUIView(context: Context) -> WKWebView {
         let controller = WKUserContentController()
-        controller.add(context.coordinator, name: "scrollStudy")
+        controller.add(context.coordinator, name: scrollStudyMessageName)
         controller.addUserScript(WKUserScript(
             source: Self.trackerJS,
             injectionTime: .atDocumentEnd,
@@ -950,7 +955,7 @@ struct StudyWebView: UIViewRepresentable {
         init(recorder: StudySessionRecorder) { self.recorder = recorder }
 
         func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
-            guard message.name == "scrollStudy", let body = message.body as? String else { return }
+            guard message.name == scrollStudyMessageName, let body = message.body as? String else { return }
             recorder.append(rawJSON: body)
         }
     }
@@ -1167,7 +1172,7 @@ enum StudyFeedTap {
         let handler = Handler(recorder: recorder)
         handlers[id] = handler
         let controller = webView.configuration.userContentController
-        controller.add(handler, name: "scrollStudy")
+        controller.add(handler, name: scrollStudyMessageName)
         controller.addUserScript(WKUserScript(
             source: StudyWebView.trackerJS,
             injectionTime: .atDocumentEnd,
@@ -1187,7 +1192,7 @@ enum StudyFeedTap {
 
         func userContentController(_ controller: WKUserContentController,
                                    didReceive message: WKScriptMessage) {
-            guard message.name == "scrollStudy", let body = message.body as? String else { return }
+            guard message.name == scrollStudyMessageName, let body = message.body as? String else { return }
             recorder?.append(rawJSON: body)
         }
     }
