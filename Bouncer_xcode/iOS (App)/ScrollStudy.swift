@@ -536,6 +536,11 @@ final class FaceExpressionCapture: NSObject, ARSessionDelegate {
                                 "browDown_L", "browDown_R", "browDownLeft", "browDownRight")),
             "surprise": round4(avg("browInnerUp")),
             "jawOpen": round4(avg("jawOpen")),
+            // The full blendshape vector, near-zero entries dropped (a key the
+            // composer doesn't find reads as 0). This is what compose-time PCA
+            // runs on — the named metrics above stay for offline analysis and
+            // as the graph's fallback for sessions without coefs.
+            "coefs": coefs.filter { $0.value >= 0.001 },
         ]
         io.async { [expressionsHandle] in
             guard let handle = expressionsHandle,

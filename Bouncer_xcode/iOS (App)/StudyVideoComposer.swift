@@ -32,11 +32,15 @@ import AVFoundation
 import CoreImage
 import UIKit
 
-// nonisolated, or the target's default MainActor isolation puts the whole
-// frame loop — decode, draw, encode, and its Thread.sleep backpressure wait —
-// on the main thread, freezing the UI for the entire composition. Everything
-// here is safe off-main: UIGraphicsImageRenderer / UIColor / UIFont /
-// NSString.draw are documented thread-safe, and the AV readers/writer are
+// nonisolated, or the target's default MainActor isolation claims every member
+// — but under this project's approachable-concurrency setting that is NOT
+// enough to get off the main thread: nonisolated async functions run on the
+// CALLER's actor by default (SE-0461), and the caller is a MainActor task.
+// compose() itself therefore carries @concurrent below — the explicit "run on
+// the background pool" — or the whole frame loop (decode, draw, encode, and a
+// Thread.sleep backpressure wait) freezes the UI for the entire composition.
+// Everything here is safe off-main: UIGraphicsImageRenderer / UIColor / UIFont
+// / NSString.draw are documented thread-safe, and the AV readers/writer are
 // pumped from this one call.
 nonisolated enum StudyVideoComposer {
 
@@ -57,7 +61,20 @@ nonisolated enum StudyVideoComposer {
         let color: UIColor
     }
 
-    private static let series: [Series] = [
+    /// What the graph plots when a session recorded full blendshape vectors:
+    /// the projection onto the session's own first principal component — the
+    /// single axis this face moved along most, whatever that was. Sign is
+    /// kept (zero = the session's mean expression, on the midline); the only
+    /// normalization is division by one constant, the 99th percentile of the
+    /// projection's magnitude. Axis −1…+1.
+    private static let pc1Series: [Series] = [
+        Series(key: "pc1", label: "Expression (PC1)",
+               color: UIColor(red: 0.04, green: 0.52, blue: 1.00, alpha: 1)),
+    ]
+
+    /// Fallback for sessions without coef vectors (older recordings, or the
+    /// no-TrueDepth camera path): the named derived metrics.
+    private static let namedSeries: [Series] = [
         Series(key: "smile", label: "Smile", color: UIColor(red: 0.19, green: 0.82, blue: 0.35, alpha: 1)),
         Series(key: "frown", label: "Frown", color: UIColor(red: 1.00, green: 0.27, blue: 0.23, alpha: 1)),
         Series(key: "surprise", label: "Brow raise", color: UIColor(red: 0.04, green: 0.52, blue: 1.00, alpha: 1)),
@@ -78,12 +95,17 @@ nonisolated enum StudyVideoComposer {
 
     private static let fps: Double = 20
     private static let maxDurationS: Double = 1800   // bound generation time
+    /// The summary plays this many session-seconds per video-second — a scroll
+    /// session reviews fine sped up, and it cuts composition work by the same
+    /// factor (a third of the output frames for 3×).
+    private static let speedup: Double = 3
 
     // MARK: - Entry point
 
     /// Compose summary.mp4 for a session folder. `progress` is called with
     /// 0…1 on an arbitrary thread. Returns the output URL.
-    static func compose(sessionDir: URL, progress: @escaping (Double) -> Void) async throws -> URL {
+    @concurrent
+    static func compose(sessionDir: URL, progress: @escaping @Sendable (Double) -> Void) async throws -> URL {
         let fm = FileManager.default
 
         // --- gather inputs ---------------------------------------------------
@@ -94,20 +116,20 @@ nonisolated enum StudyVideoComposer {
             throw ComposeError(message: "No timeline anchor — nothing was recorded in this session.")
         }
 
-        func makeSources(_ kind: String) async -> SegmentedSource {
+        func makeSources(_ kind: String, fit: CGSize) async -> SegmentedSource {
             var readers: [SegmentReader] = []
             for seg in recordings[kind] ?? [] {
                 let url = sessionDir.appendingPathComponent(seg.file)
                 guard fm.fileExists(atPath: url.path) else { continue }
-                if let r = await SegmentReader.open(url: url, startS: (seg.startMs - t0Ms) / 1000) {
+                if let r = await SegmentReader.open(url: url, startS: (seg.startMs - t0Ms) / 1000, fit: fit) {
                     readers.append(r)
                 }
             }
             return SegmentedSource(readers: readers.sorted { $0.startS < $1.startS })
         }
-        let face = await makeSources("face")
-        let reel = await makeSources("screen")
-        let samples = loadSamples(sessionDir, t0Ms: t0Ms)
+        let face = await makeSources("face", fit: faceRect.size)
+        let reel = await makeSources("screen", fit: reelRect.size)
+        let (plotSeries, samples, yRange) = loadPlot(sessionDir, t0Ms: t0Ms)
 
         let rawDuration = max(face.endS, reel.endS, samples.last?.t ?? 0)
         guard rawDuration > 1 else {
@@ -141,20 +163,26 @@ nonisolated enum StudyVideoComposer {
 
         // --- prerendered pieces ----------------------------------------------
         let overlay = renderStaticOverlay(
-            duration: duration,
+            duration: duration, series: plotSeries, yRange: yRange,
             hasFace: !face.isEmpty, hasReel: !reel.isEmpty, hasSamples: !samples.isEmpty)
         let graphLayer = makeGraphLayer()
         var strokedUpTo = 0            // samples already stroked into graphLayer
+        var graphImage: CGImage?       // cached copy, refreshed only when strokes land
+        // The signed (PC1) graph is a wordless area fill around the zero axis;
+        // the named fallback keeps its stroked lines, labels, and playhead.
+        let signedFill = yRange.lowerBound < 0
         let ciContext = CIContext(options: [.workingColorSpace: NSNull()])
 
         // --- frame loop --------------------------------------------------------
-        let frameCount = Int(duration * fps)
+        // Each output frame advances `speedup / fps` seconds of session time;
+        // PTS advance at 1 / fps — that ratio IS the fast-forward.
+        let frameCount = Int(duration / speedup * fps)
         for i in 0..<frameCount {
             if Task.isCancelled {
                 writer.cancelWriting()
                 throw CancellationError()
             }
-            let t = Double(i) / fps
+            let t = Double(i) / fps * speedup
 
             while !input.isReadyForMoreMediaData {
                 if writer.status != .writing {
@@ -205,14 +233,29 @@ nonisolated enum StudyVideoComposer {
 
                 // Graph: stroke newly-elapsed segments into the persistent
                 // layer, then composite it.
-                strokedUpTo = strokeNewSegments(
-                    into: graphLayer, samples: samples, from: strokedUpTo,
-                    upTo: t, duration: duration)
-                if let graphImg = graphLayer.makeImage() {
-                    drawImage(graphImg, in: CGRect(x: 0, y: 0, width: canvasW, height: canvasH), ctx: ctx)
+                let stroked = signedFill
+                    ? fillNewSegments(
+                        into: graphLayer, samples: samples, from: strokedUpTo,
+                        upTo: t, duration: duration)
+                    : strokeNewSegments(
+                        into: graphLayer, series: plotSeries, samples: samples, from: strokedUpTo,
+                        upTo: t, duration: duration)
+                // makeImage() copies the whole canvas-sized layer; only pay for
+                // it on frames that actually added strokes.
+                if stroked != strokedUpTo || graphImage == nil {
+                    strokedUpTo = stroked
+                    graphImage = graphLayer.makeImage()
+                }
+                if let graphImage {
+                    drawImage(graphImage, in: CGRect(x: 0, y: 0, width: canvasW, height: canvasH), ctx: ctx)
                 }
                 drawImage(overlay, in: CGRect(x: 0, y: 0, width: canvasW, height: canvasH), ctx: ctx)
-                drawPlayhead(at: t, duration: duration, samples: samples, upTo: strokedUpTo, ctx: ctx)
+                if !signedFill {
+                    // The fill's advancing edge is its own time cursor; only
+                    // the stroked fallback needs the playhead.
+                    drawPlayhead(at: t, duration: duration, series: plotSeries,
+                                 samples: samples, upTo: strokedUpTo, ctx: ctx)
+                }
             }
 
             let pts = CMTime(seconds: Double(i) / fps, preferredTimescale: 600)
@@ -259,20 +302,131 @@ nonisolated enum StudyVideoComposer {
         return obj["t0Ms"] as? Double
     }
 
-    private static func loadSamples(_ dir: URL, t0Ms: Double) -> [Sample] {
+    private struct RawSample {
+        let t: Double
+        let tracked: Bool
+        let obj: [String: Any]
+    }
+
+    /// The graph's series, samples, and y-axis range for a session: PC1 of
+    /// the blendshape vectors when they were recorded (signed, −1…+1), the
+    /// named derived metrics otherwise (raw blendshape 0…1). Sample values are
+    /// always stored in 0…1 plot space; `yRange` is what the axis labels say.
+    private static func loadPlot(_ dir: URL, t0Ms: Double)
+        -> (series: [Series], samples: [Sample], yRange: ClosedRange<Double>) {
         guard let text = try? String(contentsOf: dir.appendingPathComponent("expressions.jsonl"),
-                                     encoding: .utf8) else { return [] }
-        var samples: [Sample] = []
+                                     encoding: .utf8) else { return (namedSeries, [], 0...1) }
+        var raws: [RawSample] = []
         for line in text.split(separator: "\n") {
             guard let data = line.data(using: .utf8),
                   let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
                   let t = obj["t"] as? Double else { continue }
-            samples.append(Sample(
-                t: (t - t0Ms) / 1000,
-                tracked: (obj["tracked"] as? Bool) ?? false,
-                values: series.map { (obj[$0.key] as? Double) ?? 0 }))
+            raws.append(RawSample(t: (t - t0Ms) / 1000,
+                                  tracked: (obj["tracked"] as? Bool) ?? false,
+                                  obj: obj))
         }
-        return samples.sorted { $0.t < $1.t }
+        raws.sort { $0.t < $1.t }
+        if let pc1 = pc1Samples(raws) { return (pc1Series, pc1, -1...1) }
+        return (namedSeries, raws.map { r in
+            Sample(t: r.t, tracked: r.tracked,
+                   values: namedSeries.map { (r.obj[$0.key] as? Double) ?? 0 })
+        }, 0...1)
+    }
+
+    // MARK: - PC1
+
+    /// Fit PCA over the session's own blendshape vectors and project every
+    /// sample onto the first component — one line that captures however THIS
+    /// face moved most, rather than three axes chosen in advance. The fit is
+    /// per-session (there is no cross-session basis to be had on device), so
+    /// the y scale is the session's 1st–99th percentile mapped to 0…1, and the
+    /// sign is oriented smile-positive so "up" reads the same across videos.
+    /// Returns nil when the session lacks coef data — the caller falls back to
+    /// the named series.
+    private static func pc1Samples(_ raws: [RawSample]) -> [Sample]? {
+        let coefRaws: [(raw: RawSample, coefs: [String: Double])] = raws.compactMap { r in
+            guard let c = r.obj["coefs"] as? [String: Double], !c.isEmpty else { return nil }
+            return (r, c)
+        }
+        let tracked = coefRaws.filter { $0.raw.tracked }
+        // Under ~10s of tracked face is too little to fit a basis worth a graph.
+        guard tracked.count >= 100 else { return nil }
+
+        var keySet = Set<String>()
+        for (_, c) in tracked { keySet.formUnion(c.keys) }
+        let keys = keySet.sorted()
+        guard keys.count >= 2 else { return nil }
+        func vector(_ c: [String: Double]) -> [Double] { keys.map { c[$0] ?? 0 } }
+
+        var mean = [Double](repeating: 0, count: keys.count)
+        for (_, c) in tracked {
+            let v = vector(c)
+            for j in mean.indices { mean[j] += v[j] }
+        }
+        for j in mean.indices { mean[j] /= Double(tracked.count) }
+
+        // Fit on an even subsample (cost cap); project everything afterwards.
+        let step = max(1, tracked.count / 4000)
+        var rows: [[Double]] = []
+        var i = 0
+        while i < tracked.count {
+            var v = vector(tracked[i].coefs)
+            for j in v.indices { v[j] -= mean[j] }
+            rows.append(v)
+            i += step
+        }
+        guard var pc = firstPrincipalComponent(rows) else { return nil }
+
+        // Sign: PCA's is arbitrary. Orient smile-positive when smile loads at
+        // all; else make the dominant loading positive. Deterministic either way.
+        let smileLoad = keys.indices
+            .filter { keys[$0].lowercased().contains("smile") }
+            .reduce(0.0) { $0 + pc[$1] }
+        let orient: Double = smileLoad != 0
+            ? smileLoad
+            : (pc.max(by: { abs($0) < abs($1) }) ?? 1)
+        if orient < 0 { for j in pc.indices { pc[j] = -pc[j] } }
+
+        let projected: [(raw: RawSample, p: Double)] = coefRaws.map { (r, c) in
+            let v = vector(c)
+            var dot = 0.0
+            for j in pc.indices { dot += (v[j] - mean[j]) * pc[j] }
+            return (r, dot)
+        }
+        // Sign-preserving scale: divide by ONE constant (the 99th percentile
+        // of |projection|, so a single spike can't flatten the line) and keep
+        // zero where PCA put it — the session's mean expression sits at the
+        // graph's midline, excursions keep their direction. Values land in
+        // plot space as (v+1)/2; the overlay labels the axis −1…+1.
+        let spread = projected.filter { $0.raw.tracked }.map { abs($0.p) }.sorted()
+        let s = spread[Int(Double(spread.count - 1) * 0.99)]
+        guard s > 1e-9 else { return nil }
+        return projected.map { (r, p) in
+            let v = min(1.0, max(-1.0, p / s))
+            return Sample(t: r.t, tracked: r.tracked, values: [(v + 1) / 2])
+        }
+    }
+
+    /// Top eigenvector of the sample covariance, by power iteration over the
+    /// mean-centered rows (covariance-free: v ← Σ xᵢ(xᵢ·v), normalized). ~50
+    /// passes is plenty for a dominant component; a degenerate cloud (norm
+    /// collapses) returns nil.
+    private static func firstPrincipalComponent(_ rows: [[Double]]) -> [Double]? {
+        guard let d = rows.first?.count, d > 0, rows.count > 8 else { return nil }
+        var v = [Double](repeating: 1 / Double(d).squareRoot(), count: d)
+        for _ in 0..<50 {
+            var next = [Double](repeating: 0, count: d)
+            for row in rows {
+                var dot = 0.0
+                for j in 0..<d { dot += row[j] * v[j] }
+                for j in 0..<d { next[j] += dot * row[j] }
+            }
+            let norm = next.reduce(0) { $0 + $1 * $1 }.squareRoot()
+            guard norm > 1e-12 else { return nil }
+            for j in 0..<d { next[j] /= norm }
+            v = next
+        }
+        return v
     }
 
     // MARK: - Sequential segment readers
@@ -284,22 +438,27 @@ nonisolated enum StudyVideoComposer {
         let startS: Double
         let endS: Double
         private let transform: CGAffineTransform
+        /// The panel this feeds. Frames are downscaled to it BEFORE the GPU→CPU
+        /// copy — ReplayKit records at full device resolution, ~25× the panel's
+        /// pixels, and converting at that size was where composition time went.
+        private let fit: CGSize
         private var reader: AVAssetReader?
         private var output: AVAssetReaderTrackOutput?
         private var pending: (t: Double, buffer: CVPixelBuffer)?
         private var lastImage: CGImage?
         private var lastImageT = -Double.infinity
 
-        private init(startS: Double, endS: Double, transform: CGAffineTransform,
+        private init(startS: Double, endS: Double, transform: CGAffineTransform, fit: CGSize,
                      reader: AVAssetReader, output: AVAssetReaderTrackOutput) {
             self.startS = startS
             self.endS = endS
             self.transform = transform
+            self.fit = fit
             self.reader = reader
             self.output = output
         }
 
-        static func open(url: URL, startS: Double) async -> SegmentReader? {
+        static func open(url: URL, startS: Double, fit: CGSize) async -> SegmentReader? {
             let asset = AVURLAsset(url: url)
             guard let track = try? await asset.loadTracks(withMediaType: .video).first,
                   let duration = try? await asset.load(.duration),
@@ -313,16 +472,20 @@ nonisolated enum StudyVideoComposer {
             reader.add(output)
             guard reader.startReading() else { return nil }
             return SegmentReader(startS: startS, endS: startS + duration.seconds,
-                                 transform: transform, reader: reader, output: output)
+                                 transform: transform, fit: fit, reader: reader, output: output)
         }
 
         func image(at sessionT: Double, ci: CIContext) -> CGImage? {
             let t = sessionT - startS
+            // Drain everything that has elapsed, but convert only the NEWEST
+            // elapsed frame: at 3× playback several source frames can fall
+            // inside one output step, and converting frames nobody sees was
+            // pure waste.
+            var newest: (t: Double, buffer: CVPixelBuffer)?
             while let output {
                 if let p = pending {
                     if p.t <= t {
-                        lastImage = convert(p.buffer, ci: ci)
-                        lastImageT = p.t
+                        newest = p
                         pending = nil
                     } else {
                         break
@@ -336,6 +499,10 @@ nonisolated enum StudyVideoComposer {
                     pending = (CMSampleBufferGetPresentationTimeStamp(sb).seconds, ib)
                 }
             }
+            if let newest {
+                lastImage = convert(newest.buffer, ci: ci)
+                lastImageT = newest.t
+            }
             return lastImageT <= t ? lastImage : nil
         }
 
@@ -347,7 +514,20 @@ nonisolated enum StudyVideoComposer {
         }
 
         private func convert(_ buffer: CVPixelBuffer, ci: CIContext) -> CGImage? {
-            var img = CIImage(cvPixelBuffer: buffer).transformed(by: transform)
+            var img = CIImage(cvPixelBuffer: buffer)
+            // preferredTransform is written in QuickTime's top-left space;
+            // CIImage lives in a bottom-left space, where the same matrix
+            // rotates the OTHER way — applying it directly played the face
+            // upside down. Extract the angle and rotate opposite. (Rotation
+            // only: none of our recordings mirror.)
+            let angle = atan2(transform.b, transform.a)
+            if angle != 0 {
+                img = img.transformed(by: CGAffineTransform(rotationAngle: -angle))
+            }
+            let scale = min(1, max(fit.width / img.extent.width, fit.height / img.extent.height))
+            if scale < 1 {
+                img = img.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+            }
             img = img.transformed(by: CGAffineTransform(translationX: -img.extent.minX,
                                                         y: -img.extent.minY))
             return ci.createCGImage(img, from: img.extent)
@@ -404,7 +584,7 @@ nonisolated enum StudyVideoComposer {
     /// Stroke segments between consecutive samples whose time has elapsed.
     /// Returns the new "stroked up to" index. A gap (face lost, capture
     /// toggled off, >1s between samples) breaks the line.
-    private static func strokeNewSegments(into layer: CGContext, samples: [Sample],
+    private static func strokeNewSegments(into layer: CGContext, series: [Series], samples: [Sample],
                                           from: Int, upTo t: Double, duration: Double) -> Int {
         guard !samples.isEmpty else { return 0 }
         var i = from
@@ -425,9 +605,54 @@ nonisolated enum StudyVideoComposer {
         return i
     }
 
+    /// The signed graph's renderer: fill the area between the curve and the
+    /// zero axis, green where the value is positive and red where negative,
+    /// splitting any segment that crosses zero so each side keeps its color.
+    /// Same incremental contract as strokeNewSegments; gaps break the fill the
+    /// same way they break the line.
+    private static func fillNewSegments(into layer: CGContext, samples: [Sample],
+                                        from: Int, upTo t: Double, duration: Double) -> Int {
+        guard !samples.isEmpty else { return 0 }
+        let zeroY = plotRect.midY
+        let green = UIColor(red: 0.19, green: 0.82, blue: 0.35, alpha: 0.62).cgColor
+        let red = UIColor(red: 1.00, green: 0.27, blue: 0.23, alpha: 0.62).cgColor
+        func fill(_ pts: [CGPoint], positive: Bool) {
+            layer.setFillColor(positive ? green : red)
+            layer.move(to: pts[0])
+            for q in pts.dropFirst() { layer.addLine(to: q) }
+            layer.closePath()
+            layer.fillPath()
+        }
+        var i = from
+        layer.saveGState()
+        layer.clip(to: plotRect)
+        while i + 1 < samples.count, samples[i + 1].t <= t {
+            let a = samples[i], b = samples[i + 1]
+            i += 1
+            guard a.tracked, b.tracked, b.t - a.t <= 1.0 else { continue }
+            let pa = plotPoint(a, seriesIdx: 0, duration: duration)
+            let pb = plotPoint(b, seriesIdx: 0, duration: duration)
+            // Signed values around the midline, in plot space (0.5 = zero).
+            let sa = a.values[0] - 0.5, sb = b.values[0] - 0.5
+            if sa == 0 && sb == 0 { continue }
+            if sa * sb >= 0 {
+                fill([CGPoint(x: pa.x, y: zeroY), pa, pb, CGPoint(x: pb.x, y: zeroY)],
+                     positive: sa + sb > 0)
+            } else {
+                // The segment crosses zero: color each side its own way.
+                let f = sa / (sa - sb)
+                let cross = CGPoint(x: pa.x + (pb.x - pa.x) * f, y: zeroY)
+                fill([CGPoint(x: pa.x, y: zeroY), pa, cross], positive: sa > 0)
+                fill([cross, pb, CGPoint(x: pb.x, y: zeroY)], positive: sb > 0)
+            }
+        }
+        layer.restoreGState()
+        return i
+    }
+
     /// Vertical playhead line plus a dot per series at the latest value.
-    private static func drawPlayhead(at t: Double, duration: Double, samples: [Sample],
-                                     upTo: Int, ctx: CGContext) {
+    private static func drawPlayhead(at t: Double, duration: Double, series: [Series],
+                                     samples: [Sample], upTo: Int, ctx: CGContext) {
         let p = plotRect
         let x = p.minX + p.width * CGFloat(t / duration)
         ctx.setStrokeColor(UIColor.white.withAlphaComponent(0.55).cgColor)
@@ -448,7 +673,9 @@ nonisolated enum StudyVideoComposer {
 
     // MARK: - Static chrome (rendered once)
 
-    private static func renderStaticOverlay(duration: Double, hasFace: Bool, hasReel: Bool,
+    private static func renderStaticOverlay(duration: Double, series: [Series],
+                                            yRange: ClosedRange<Double>,
+                                            hasFace: Bool, hasReel: Bool,
                                             hasSamples: Bool) -> CGImage {
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
@@ -490,53 +717,71 @@ nonisolated enum StudyVideoComposer {
                 }
             }
 
-            // Graph frame, gridlines, y labels.
             let p = plotRect
-            ctx.setStrokeColor(hairline.cgColor)
-            ctx.setLineWidth(1)
-            ctx.stroke(p)
-            for v in [0.0, 0.25, 0.5, 0.75, 1.0] {
-                let y = p.minY + p.height * CGFloat(1 - v)
-                if v != 0 && v != 1 {
-                    ctx.setStrokeColor(UIColor.white.withAlphaComponent(0.08).cgColor)
-                    ctx.move(to: CGPoint(x: p.minX, y: y))
-                    ctx.addLine(to: CGPoint(x: p.maxX, y: y))
-                    ctx.strokePath()
-                }
-                text(String(format: "%.2f", v), at: CGPoint(x: graphRect.minX + 6, y: y - 8),
-                     font: labelFont)
-            }
-
-            // X ticks: pick a step that yields <= 8 labels.
-            let step = [15.0, 30, 60, 120, 300, 600].first { duration / $0 <= 8 } ?? 600
-            var tick = 0.0
-            while tick <= duration {
-                let x = p.minX + p.width * CGFloat(tick / duration)
-                ctx.setStrokeColor(hairline.cgColor)
-                ctx.move(to: CGPoint(x: x, y: p.maxY))
-                ctx.addLine(to: CGPoint(x: x, y: p.maxY + 4))
+            if yRange.lowerBound < 0 {
+                // The signed (PC1) graph is wordless: a bare y axis, the zero
+                // line as its x axis, and the poles named by faces. The fill
+                // says everything else, and its advancing edge tells the time.
+                ctx.setStrokeColor(UIColor.white.withAlphaComponent(0.35).cgColor)
+                ctx.setLineWidth(1)
+                ctx.move(to: CGPoint(x: p.minX, y: p.minY))
+                ctx.addLine(to: CGPoint(x: p.minX, y: p.maxY))
                 ctx.strokePath()
-                let mins = Int(tick) / 60, secs = Int(tick) % 60
-                text(String(format: "%d:%02d", mins, secs),
-                     at: CGPoint(x: x, y: p.maxY + 12), font: labelFont, centered: true)
-                tick += step
-            }
+                ctx.move(to: CGPoint(x: p.minX, y: p.midY))
+                ctx.addLine(to: CGPoint(x: p.maxX, y: p.midY))
+                ctx.strokePath()
+                let face = UIFont.systemFont(ofSize: 22)
+                text("🙂", at: CGPoint(x: p.minX, y: p.minY - 16), font: face, centered: true)
+                text("🙁", at: CGPoint(x: p.minX, y: p.maxY + 16), font: face, centered: true)
+            } else {
+                // Named-series fallback: frame, gridlines, y labels.
+                ctx.setStrokeColor(hairline.cgColor)
+                ctx.setLineWidth(1)
+                ctx.stroke(p)
+                for v in [0.0, 0.25, 0.5, 0.75, 1.0] {
+                    let y = p.minY + p.height * CGFloat(1 - v)
+                    let labeled = yRange.lowerBound + v * (yRange.upperBound - yRange.lowerBound)
+                    if v != 0 && v != 1 {
+                        ctx.setStrokeColor(UIColor.white.withAlphaComponent(0.08).cgColor)
+                        ctx.move(to: CGPoint(x: p.minX, y: y))
+                        ctx.addLine(to: CGPoint(x: p.maxX, y: y))
+                        ctx.strokePath()
+                    }
+                    text(String(format: "%.2f", labeled), at: CGPoint(x: graphRect.minX + 6, y: y - 8),
+                         font: labelFont)
+                }
 
-            // Legend, top-right of the graph area.
-            var legendX = p.maxX
-            for spec in series.reversed() {
-                let attrs: [NSAttributedString.Key: Any] = [.font: labelFont, .foregroundColor: textColor]
-                let size = (spec.label as NSString).size(withAttributes: attrs)
-                legendX -= size.width
-                (spec.label as NSString).draw(at: CGPoint(x: legendX, y: graphRect.minY + 12),
-                                              withAttributes: attrs)
-                legendX -= 16
-                spec.color.setFill()
-                ctx.fill(CGRect(x: legendX, y: graphRect.minY + 12 + size.height / 2 - 5, width: 10, height: 10))
-                legendX -= 18
+                // X ticks: pick a step that yields <= 8 labels.
+                let step = [15.0, 30, 60, 120, 300, 600].first { duration / $0 <= 8 } ?? 600
+                var tick = 0.0
+                while tick <= duration {
+                    let x = p.minX + p.width * CGFloat(tick / duration)
+                    ctx.setStrokeColor(hairline.cgColor)
+                    ctx.move(to: CGPoint(x: x, y: p.maxY))
+                    ctx.addLine(to: CGPoint(x: x, y: p.maxY + 4))
+                    ctx.strokePath()
+                    let mins = Int(tick) / 60, secs = Int(tick) % 60
+                    text(String(format: "%d:%02d", mins, secs),
+                         at: CGPoint(x: x, y: p.maxY + 12), font: labelFont, centered: true)
+                    tick += step
+                }
+
+                // Legend, top-right of the graph area.
+                var legendX = p.maxX
+                for spec in series.reversed() {
+                    let attrs: [NSAttributedString.Key: Any] = [.font: labelFont, .foregroundColor: textColor]
+                    let size = (spec.label as NSString).size(withAttributes: attrs)
+                    legendX -= size.width
+                    (spec.label as NSString).draw(at: CGPoint(x: legendX, y: graphRect.minY + 12),
+                                                  withAttributes: attrs)
+                    legendX -= 16
+                    spec.color.setFill()
+                    ctx.fill(CGRect(x: legendX, y: graphRect.minY + 12 + size.height / 2 - 5, width: 10, height: 10))
+                    legendX -= 18
+                }
+                text("Expression · \(Int(speedup))× speed", at: CGPoint(x: p.minX, y: graphRect.minY + 10),
+                     font: captionFont, color: UIColor.white.withAlphaComponent(0.85))
             }
-            text("Expression", at: CGPoint(x: p.minX, y: graphRect.minY + 10), font: captionFont,
-                 color: UIColor.white.withAlphaComponent(0.85))
 
             if !hasSamples {
                 text("no expression data (requires a TrueDepth front camera)",
