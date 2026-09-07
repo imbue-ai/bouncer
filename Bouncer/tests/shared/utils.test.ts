@@ -11,8 +11,37 @@ import {
   convertSystemToUserMessages,
   cleanReasoning,
   phraseAddNeedsReEvaluation,
+  formatPostForEvaluation,
   AI_DETECTION_SEED_PHRASE,
+  isAiDetectionPhrase,
 } from '../../src/shared/utils.js';
+import type { PostContent } from '../../src/types';
+
+// ==================== formatPostForEvaluation ====================
+
+describe('formatPostForEvaluation', () => {
+  const basePost: PostContent = {
+    text: 'Hello world',
+    author: 'Alice',
+    handle: '@alice',
+    avatarUrl: null,
+    timeText: null,
+    textHtml: '',
+    quote: null,
+    postUrl: null,
+    imageUrls: [],
+    hasMediaContainer: false,
+  };
+
+  it('formats a post as "author: text"', () => {
+    expect(formatPostForEvaluation(basePost)).toBe('Alice: Hello world');
+  });
+
+  it('ignores structural flags — they are handled deterministically, not via markers', () => {
+    expect(formatPostForEvaluation({ ...basePost, isRepost: true, hasVideo: true }))
+      .toBe('Alice: Hello world');
+  });
+});
 
 // ==================== parseAPIResponse ====================
 
@@ -369,12 +398,40 @@ describe('cleanReasoning', () => {
   });
 });
 
+describe('isAiDetectionPhrase', () => {
+  it('matches the seed phrase, case- and whitespace-insensitively', () => {
+    expect(isAiDetectionPhrase(AI_DETECTION_SEED_PHRASE)).toBe(true);
+    expect(isAiDetectionPhrase('  ai SLOP ')).toBe(true);
+  });
+
+  it('matches the bare keyword "AI" in any capitalization or spacing', () => {
+    expect(isAiDetectionPhrase('AI')).toBe(true);
+    expect(isAiDetectionPhrase('ai')).toBe(true);
+    expect(isAiDetectionPhrase('Ai')).toBe(true);
+    expect(isAiDetectionPhrase('  AI  ')).toBe(true);
+    expect(isAiDetectionPhrase('A I')).toBe(true);
+  });
+
+  it('does not match other phrases, including AI-adjacent ones', () => {
+    expect(isAiDetectionPhrase('AI art')).toBe(false);
+    expect(isAiDetectionPhrase('aid')).toBe(false);
+    expect(isAiDetectionPhrase('air')).toBe(false);
+    expect(isAiDetectionPhrase('crypto')).toBe(false);
+    expect(isAiDetectionPhrase('')).toBe(false);
+  });
+});
+
 describe('phraseAddNeedsReEvaluation', () => {
   const SEED = AI_DETECTION_SEED_PHRASE;
 
   it('skips the sweep when only the seed phrase was added (sparkle click)', () => {
     expect(phraseAddNeedsReEvaluation([], [SEED], [])).toBe(false);
     expect(phraseAddNeedsReEvaluation(['politics'], ['politics', SEED], undefined)).toBe(false);
+  });
+
+  it('skips the sweep when only the bare "AI" keyword was added', () => {
+    expect(phraseAddNeedsReEvaluation([], ['AI'], [])).toBe(false);
+    expect(phraseAddNeedsReEvaluation(['politics'], ['politics', ' ai '], undefined)).toBe(false);
   });
 
   it('is case- and whitespace-insensitive about the seed phrase', () => {
@@ -393,6 +450,12 @@ describe('phraseAddNeedsReEvaluation', () => {
     // No aiFilterIntent write is coming, so this sweep is what re-runs the
     // now-active detectors on visible posts.
     expect(phraseAddNeedsReEvaluation(['politics'], ['politics', SEED], [SEED])).toBe(true);
+  });
+
+  it('sweeps when "AI" is already judged, but not when only one of two added phrases is', () => {
+    expect(phraseAddNeedsReEvaluation(['politics'], ['politics', 'AI'], ['ai'])).toBe(true);
+    // The seed is new → an aiFilterIntent write is coming; it runs the sweep.
+    expect(phraseAddNeedsReEvaluation(['politics'], ['politics', 'AI', SEED], ['ai'])).toBe(false);
   });
 
   it('sweeps when nothing new was actually added (defensive)', () => {

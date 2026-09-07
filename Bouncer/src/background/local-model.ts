@@ -651,7 +651,7 @@ export async function callLocalInference(
   modelConfig: LocalModelDef | null,
   modelId: string,
   { priority = 0, onInferenceStart }: { priority?: number; onInferenceStart?: () => void } = {}
-): Promise<{ shouldHide: boolean; reasoning: string; category?: string | null; rawResponse?: string | null; inferenceTime?: number }> {
+): Promise<{ shouldHide: boolean; reasoning: string; category?: string | null; matches: string[]; rawResponse?: string | null; inferenceTime?: number }> {
   await localEngine.ensureLoaded(modelId);
 
   const contextWindowSize = modelConfig?.litertlmConfig?.maxTokens ?? 1024;
@@ -749,6 +749,7 @@ export async function callLocalInference(
     shouldHide: formatted.shouldHide,
     reasoning: formatted.reasoning,
     category,
+    matches,
     rawResponse,
     inferenceTime: parseFloat(inferenceTime),
   };

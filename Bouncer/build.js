@@ -8,6 +8,10 @@ import { generateManifest } from './generate-manifests.mjs';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isWatch = process.argv.includes('--watch');
 const env = process.argv.includes('--dev') ? 'dev' : 'prod';
+// --no-ad: identical to a prod build except the install-conversion landing
+// page (and its X/Google pixels) is disabled — for installs that must not
+// count as ad conversions (internal testing, side-loads).
+const noAd = process.argv.includes('--no-ad');
 const targetArg = process.argv.find((a) => a.startsWith('--target='));
 const target = targetArg ? targetArg.split('=')[1] : 'chrome';
 const apigwArg = process.argv.find((a) => a.startsWith('--apigw='));
@@ -27,7 +31,7 @@ const ENV_KEYS = [
   'FIREBASE_PROJECT_ID', 'FIREBASE_STORAGE_BUCKET',
   'FIREBASE_MESSAGING_SENDER_ID', 'FIREBASE_APP_ID',
   'GOOGLE_CLIENT_ID', 'IMBUE_WS_URL',
-  'BOUNCER_SIGNIN_DOMAIN', 'TWITTER_EVENT_ID',
+  'BOUNCER_SIGNIN_DOMAIN',
 ];
 
 // Keys that must all be present for the Imbue backend (Firebase auth +
@@ -146,6 +150,7 @@ const define = {
   // to the platforms that ship on this build target (keeps the popup, the
   // pipeline, and storage keys in lockstep with the generated manifest).
   'process.env.BOUNCER_TARGET': JSON.stringify(target),
+  'process.env.BOUNCER_NO_AD': JSON.stringify(String(noAd)),
 };
 for (const [key, value] of Object.entries(config)) {
   define[`process.env.${key}`] = JSON.stringify(value);
@@ -201,9 +206,10 @@ function copyLitertlmAssets() {
 }
 
 async function build() {
+  const flavor = `env: ${env}${noAd ? ', no-ad' : ''}, target: ${target}`;
   console.log(hasImbue
-    ? `Building with Imbue backend (env: ${env}, target: ${target})`
-    : `Building without Imbue backend — auth & websocket stubbed (env: ${env}, target: ${target})`);
+    ? `Building with Imbue backend (${flavor})`
+    : `Building without Imbue backend — auth & websocket stubbed (${flavor})`);
 
   // 0. Regenerate manifest.json from manifest.base.json + manifest.<target>.json.
   generateManifest(target);
@@ -246,13 +252,15 @@ async function build() {
     define,
   });
 
-  // 3. Popup & content: fully self-contained (no external imports).
-  //    instagram.js is a standalone content script for the Instagram
-  //    reel-describer panel — separate from content.js (the feed pipeline).
+  // 3. Popup, content, onboarding & instagram: fully self-contained (no
+  //    external imports). instagram.js is a standalone content script for the
+  //    Instagram reel-describer panel — separate from content.js (the feed
+  //    pipeline).
   const otherCtx = await esbuild.context({
     entryPoints: [
       path.join(__dirname, 'popup.js'),
       path.join(__dirname, 'content.js'),
+      path.join(__dirname, 'onboarding.js'),
       path.join(__dirname, 'instagram.js')
     ],
     bundle: true,

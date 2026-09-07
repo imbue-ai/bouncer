@@ -294,6 +294,14 @@ struct FilteredWebView: UIViewRepresentable {
                 """, injectionTime: .atDocumentEnd, forMainFrameOnly: true)
             controller.addUserScript(appleLoginRemovalScript)
             print("[FeedFilter] Injected Apple-login removal")
+
+            // (LinkedIn app-upsell handling used to be a dedicated WKUserScript
+            // here; it now lives in the shared adapter — the top-level
+            // neutralizer in Bouncer/adapters/linkedin/LinkedInAdapter.ts,
+            // injected above via step 5 — which pre-seeds LinkedIn's own
+            // sessionStorage dismissal records so the upsells never arm, plus
+            // click/removal/scroll-lock-strip fallbacks shared with the
+            // desktop extension and the Android app.)
         }
 
         // MARK: - Popup Bridge

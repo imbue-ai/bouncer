@@ -13,6 +13,23 @@
   var contentPorts = new Set();
   var pendingFromContent = [];
 
+  // Each platform is a live tab (see BouncerGeckoView). Since one background
+  // page fans the single native port out to every tab, this is where per-tab
+  // routing happens: tag inbound messages with the sender tab's platform, and
+  // deliver outbound UI calls (which carry __ffTarget) only to the matching tab.
+  // Untagged outbound (ws / appcheck responses) still broadcasts — the tab that
+  // owns the socket/callback id picks it up.
+  function platformOf(url) {
+    if (!url) return null;
+    try {
+      var h = new URL(url).hostname.toLowerCase();
+      if (h === "x.com" || h.endsWith(".x.com") ||
+          h === "twitter.com" || h.endsWith(".twitter.com")) return "twitter";
+      if (h === "linkedin.com" || h.endsWith(".linkedin.com")) return "linkedin";
+    } catch (e) {}
+    return null;
+  }
+
   function connectNativePort() {
     try {
       nativePort = browser.runtime.connectNative(NATIVE_APP);
@@ -22,7 +39,9 @@
       return;
     }
     nativePort.onMessage.addListener(function (msg) {
+      var target = msg && msg.__ffTarget;
       contentPorts.forEach(function (p) {
+        if (target && p._ffPlatform && p._ffPlatform !== target) return;
         try { p.postMessage(msg); } catch (_) {}
       });
     });
@@ -42,8 +61,14 @@
 
   browser.runtime.onConnect.addListener(function (port) {
     if (port.name !== CONTENT_PORT_NAME) return;
+    port._ffPlatform = platformOf(port.sender && port.sender.url);
     contentPorts.add(port);
     port.onMessage.addListener(function (msg) {
+      // Stamp the originating tab's platform so native can attribute the
+      // message to the right feed.
+      if (msg && typeof msg === "object" && port._ffPlatform) {
+        msg.__ffPlatform = port._ffPlatform;
+      }
       if (!nativePort) {
         pendingFromContent.push(msg);
         return;

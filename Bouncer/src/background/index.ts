@@ -1,10 +1,11 @@
 // Background script entry point: message handler, storage listener, startup, tab tracking
 
 import { PREDEFINED_MODELS } from '../shared/models';
-import { cacheKeyFor, GUEST_FILTER_LIMIT } from '../shared/utils';
+import { cacheKeyFor, GUEST_FILTER_LIMIT, isEmbeddedApp } from '../shared/utils';
 import { getStorage, setStorage, removeStorage, phraseSetKey } from '../shared/storage';
 import type { AiFilterIntentState, ContentToBackgroundMessage, LocalModelStatus } from '../types';
 import { refreshAiFilterIntent, pruneAiFilterPhrases, canJudgeAiIntent } from './ai-intent';
+import { STRUCTURAL_FILTER_SITES, structuralFilterKind } from '../shared/structural-filters';
 import { localEngine } from './local-model';
 import {
   initPipeline, loadCache, saveCache,
@@ -17,8 +18,9 @@ import {
 } from './pipeline';
 import { sendFeedback, callImbueInstagramAnalyze, callImbueAudioFilter } from './providers';
 import { imbueWebSocket, type ForceLoginMessage } from './ws-manager';
-import { launchAuthFlow, signInAnon, isAnonymousUser, refreshAuthToken, getAuthToken, handleAppleSignIn, signOut, setOnIdentityChanged, IS_SAFARI } from './auth';
+import { launchAuthFlow, signInAnon, isAnonymousUser, refreshAuthToken, getAuthToken, handleAppleSignIn, signOut, setOnIdentityChanged, getCurrentUid, IS_SAFARI } from './auth';
 import { initOptionalPlatforms, syncOptionalPlatformScripts } from './optional-platforms';
+import { CURRENT_TARGET, optionalPlatforms } from '../shared/platforms';
 
 // Register/unregister content scripts for user-granted optional platforms.
 // Runs at every service worker startup because dynamic registrations don't
@@ -108,6 +110,9 @@ imbueWebSocket.onForceLogin = (_msg: ForceLoginMessage) => {
 // re-run $connect with the new token and register the real identity server-side.
 setOnIdentityChanged(() => {
   void imbueWebSocket.reconnect();
+  // Keep the uninstall URL's UID in sync with the new identity (e.g.
+  // anonymous -> Google sign-in), so uninstall logs attribute to the right user.
+  updateUninstallUrl();
 });
 
 // ==================== Startup ====================
@@ -133,11 +138,29 @@ if (IS_SAFARI && chrome.cookies) {
   }
 }
 
-// Open uninstall survey when the extension is removed (not supported in Safari)
-if (chrome.runtime.setUninstallURL) {
-  chrome.runtime.setUninstallURL("https://forms.gle/41CSXsBcRMnjofVw8")
+// Open the uninstall page when the extension is removed (not supported in
+// Safari). Imbue builds point at a redirect page on imbue.com that logs the
+// uninstall (with the Firebase UID, for cohort-level uninstall analytics) to
+// the backend before forwarding to the survey form; BYOK builds go straight
+// to the survey. Called at startup (before auth restores, as a fallback),
+// once auth is ready, and on every identity change so the UID stays current.
+const UNINSTALL_SURVEY_URL = 'https://forms.gle/41CSXsBcRMnjofVw8';
+const UNINSTALL_PAGE_URL = 'https://imbue.com/product/bouncer/uninstall.html';
+
+function updateUninstallUrl(): void {
+  if (!chrome.runtime.setUninstallURL) return;
+  let url = UNINSTALL_SURVEY_URL;
+  if (process.env.HAS_IMBUE_BACKEND === 'true') {
+    const params = new URLSearchParams({ v: chrome.runtime.getManifest().version });
+    const uid = getCurrentUid();
+    if (uid) params.set('uid', uid);
+    if (process.env.BOUNCER_ENV === 'dev') params.set('env', 'dev');
+    url = `${UNINSTALL_PAGE_URL}?${params}`;
+  }
+  chrome.runtime.setUninstallURL(url)
     .catch(err => console.error('[Startup] setUninstallURL failed:', err));
 }
+updateUninstallUrl();
 
 // One-shot migration: clear any stored selection that points at a local model
 // we no longer ship (e.g. an old Qwen ID from before LiteRT-LM was the sole
@@ -165,6 +188,8 @@ async function migrateStaleLocalSelection(): Promise<void> {
       console.warn('[AiIntent] startup refresh failed:', (err as Error).message));
 
     await refreshAuthToken();
+    // Auth has restored by now, so the uninstall URL can carry the real UID.
+    updateUninstallUrl();
     // Wire up pipeline with shared state
     initPipeline(activeContentTabs);
     await localEngine.syncAllStatuses();
@@ -196,6 +221,20 @@ async function migrateStaleLocalSelection(): Promise<void> {
     console.error('[Background] Startup initialization error (non-fatal):', e);
   }
 })().catch(err => console.error('[Background] Startup error:', err));
+
+// Lifeline ports held open by content-script overlays (the platform
+// onboarding popup). No traffic flows over them — their only job is that
+// port.onDisconnect fires in the content script when this extension is
+// reloaded or removed, so the overlay can take its backdrop down instead of
+// lingering as an orphaned grey layer over the page.
+//
+// MUST stay guarded: in the mobile apps this bundle runs as a page script
+// against ChromePolyfill, whose chrome.runtime historically lacked onConnect.
+// An unguarded call here threw at top level and killed the whole background
+// script BEFORE the message handler below registered — every sendMessage in
+// both apps then resolved undefined via the polyfill's no-listener timeout
+// (no suggestions, no classification, no visible error).
+chrome.runtime.onConnect?.addListener(() => { /* held open, nothing to do */ });
 
 // ==================== Message handler ====================
 
@@ -342,6 +381,25 @@ async function handleMessage(
     case 'clearCache': {
       await clearEvaluationCache();
       return { success: true };
+    }
+
+    // Should the sender's tab show the platform-onboarding popup? True only
+    // for the designated tab (set by onInstalled). If the designated tab no
+    // longer exists — closed before the popup was dismissed — the first tab
+    // to ask inherits the claim, so the onboarding isn't lost.
+    case 'claimPlatformOnboarding': {
+      if (tabId === undefined) return { show: false };
+      const { showPlatformOnboarding, platformOnboardingTabId } =
+        await getStorage(['showPlatformOnboarding', 'platformOnboardingTabId']);
+      if (showPlatformOnboarding !== true) return { show: false };
+      if (platformOnboardingTabId === tabId) return { show: true };
+      if (platformOnboardingTabId !== undefined) {
+        const designatedStillOpen = await chrome.tabs.get(platformOnboardingTabId)
+          .then(() => true).catch(() => false);
+        if (designatedStillOpen) return { show: false };
+      }
+      await setStorage({ platformOnboardingTabId: tabId });
+      return { show: true };
     }
 
     case 'clearSinglePost': {
@@ -837,11 +895,31 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
       }
     }
 
-    const filtersChanged = Object.keys(changes).some(
+    const changedDescriptionKeys = Object.keys(changes).filter(
       key => key.startsWith('descriptions_')
     );
+    const filtersChanged = changedDescriptionKeys.length > 0;
+    // Structural phrases ("no retweets", "videos") never reach the model —
+    // getSettings excludes them from its category list and the content
+    // script resolves them deterministically. An edit that only touches
+    // structural phrases leaves the model-visible set identical, so wiping
+    // the verdict cache (and flushing in-flight batches) would just force a
+    // pointless re-classification of the whole feed.
+    const modelVisibleChangedKey = changedDescriptionKeys.find(key => {
+      const siteId = key.slice('descriptions_'.length);
+      const modelVisible = (v: unknown): string[] => {
+        const arr = Array.isArray(v) ? (v as string[]) : [];
+        return STRUCTURAL_FILTER_SITES.has(siteId)
+          ? arr.filter(p => structuralFilterKind(p) === null)
+          : arr;
+      };
+      return phraseSetKey(modelVisible(changes[key].oldValue))
+        !== phraseSetKey(modelVisible(changes[key].newValue));
+    });
+    if (modelVisibleChangedKey !== undefined) {
+      handleFilterPackChange(changes[modelVisibleChangedKey]);
+    }
     if (filtersChanged) {
-      handleFilterPackChange();
       // Deletions resolve locally and immediately: dropping the last AI
       // phrase turns AI detection off right now, not after the debounce.
       pruneAiFilterPhrases().catch(err =>
@@ -894,19 +972,82 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
 
 // ==================== Extension lifecycle ====================
 
+// Post-install landing page: runs the Google Ads and X Ads install-conversion
+// snippets first-party on imbue.com — where they can read the _gcl_aw /
+// twclid ad-click cookies the ad landing page stores on that domain — then
+// forwards the user to x.com. The snippets can't run inside the extension
+// itself: the MV3 worker has no DOM and bans remote code, and content-script
+// fetches are subject to the host page's CSP. Open-source builds (no Imbue
+// backend), dev builds, and --no-ad builds skip straight to x.com — those
+// installs are never real conversions, so the X/Google pixels must not fire.
+const INSTALL_LANDING_URL =
+  process.env.HAS_IMBUE_BACKEND === 'true' &&
+  process.env.BOUNCER_ENV !== 'dev' &&
+  process.env.BOUNCER_NO_AD !== 'true'
+    ? 'https://imbue.com/product/bouncer/just_installed_redirect.html'
+    : null;
+
 // Check local model statuses on extension install/update
 chrome.runtime.onInstalled.addListener((details) => {
   if (details.reason === 'install') {
-    // Fresh install only (not updates): flag the X Pixel install conversion,
-    // then open x.com — the content script there consumes the flag and fires
-    // the pixel (see content/install-pixel.ts for why it can't fire from
-    // this service worker). Flag first so it's set before the tab reaches
-    // document_idle.
-    setStorage({ pendingInstallPixel: true })
-      .catch(err => console.error('[Background] Failed to set install pixel flag:', err))
-      .finally(() => {
-        chrome.tabs.create({ url: 'https://x.com' }).catch(err => console.error('[Background] Failed to open x.com on install:', err));
+    // Fresh install only (not updates): open the just-installed landing page.
+    //
+    // Two guards keep this to one tab per real install:
+    //  - In the iOS/Android app webviews, ChromePolyfill synthesizes this
+    //    'install' event on EVERY page load — skip entirely there (app
+    //    installs must not report as extension install conversions, and the
+    //    landing page fires the conversion snippets every time it loads).
+    //  - installPixelArmed persists across repeat 'install' events that keep
+    //    storage (e.g. Chrome's extension Repair), so those never re-open
+    //    the landing page.
+    // The welcome flags sit behind the same guards: synthetic embedded
+    // 'install' events would otherwise re-arm the banner after every dismissal.
+    (async () => {
+      if (isEmbeddedApp()) return;
+      const { installPixelArmed } = await getStorage(['installPixelArmed']);
+      if (installPixelArmed) return;
+      // On Gecko the "activate other platforms?" UI cannot run as an iframe
+      // overlaid on x.com: extension pages in web-page iframes only get
+      // content-script privileges there (no chrome.permissions — Bugzilla
+      // 1443253), and a user gesture doesn't survive a message hop to the
+      // background (Bugzilla 1397658). So Firefox opens onboarding.html as a
+      // top-level extension tab instead, where permissions.request() works
+      // directly from the checkbox click; the page forwards to x.com (or the
+      // install landing page) when done. Chrome keeps the x.com overlay.
+      const onboardingAsTab =
+        CURRENT_TARGET === 'firefox' && optionalPlatforms().length > 0;
+      await setStorage({
+        installPixelArmed: true,
+        // New installs get the plain border ("Colored border on Bouncer box"
+        // toggle off). Seeded here rather than flipping what key-absence
+        // means: pre-existing installs store "on" as key-absence, so they
+        // keep their colored border with no migration. The guards above
+        // matter — a repeat 'install' that kept storage (Chrome Repair)
+        // must not overwrite an existing user's on-by-absence state.
+        coloredBorder: false,
+        // First-run banner (shown once the user is past the sign-in gate), and
+        // suppress the "what's new" banner for this version — a fresh install
+        // has nothing to catch up on.
+        showWelcomeBanner: true,
+        // One-time "activate other platforms?" popup, shown on x.com ahead
+        // of (and independent of) the sign-in gate — but only in the tab
+        // created below (see claimPlatformOnboarding). Never set when the
+        // onboarding runs as its own tab instead.
+        showPlatformOnboarding: !onboardingAsTab,
+        lastSeenVersion: chrome.runtime.getManifest().version,
       });
+      const tab = await chrome.tabs.create({
+        url: onboardingAsTab
+          ? chrome.runtime.getURL('onboarding.html')
+          : INSTALL_LANDING_URL ?? 'https://x.com',
+      });
+      // Pin the popup to this tab. Pre-existing x.com tabs (whose overlays
+      // would outlive an extension reload as orphaned grey backdrops) must
+      // never show it.
+      if (!onboardingAsTab && tab.id !== undefined) {
+        await setStorage({ platformOnboardingTabId: tab.id });
+      }
+    })().catch(err => console.error('[Background] Failed to open tab on install:', err));
   }
 
   if (details.reason === 'install' || details.reason === 'update') {

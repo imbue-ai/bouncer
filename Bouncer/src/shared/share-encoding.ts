@@ -7,8 +7,15 @@
 //   [byte 1+]  payload
 //
 // Methods:
-//   0x00 RAW   payload is UTF-8 phrases joined by '\n'
-//   0x01 DICT  token stream against a static dictionary (see DICT below)
+//   0x00 RAW    payload is UTF-8 phrases joined by '\n'
+//   0x01 DICT   token stream against a static dictionary (see DICT below)
+//   0x02 NAMED  length-prefixed UTF-8 pack name, then an inner RAW/DICT body:
+//                 [byte 1]                    nameLen (1..255)
+//                 [bytes 2..2+nameLen)        name (UTF-8, nameLen bytes)
+//                 [byte 2+nameLen]            inner method (0x00 or 0x01)
+//                 [bytes 2+nameLen+1..]       inner payload
+//               Old decoders that don't know 0x02 return null, so legacy
+//               readers safely ignore named codes instead of misinterpreting.
 //
 // Token stream (method 0x01) — each token is one byte unless escaped:
 //   0x00         phrase separator
@@ -16,10 +23,11 @@
 //   0xFF         literal escape: next byte = UTF-8 length L (1..255), then L bytes
 // Within a phrase, consecutive tokens decode joined by a single space.
 //
-// On encode we try both methods and pick whichever produces a shorter base64url
-// body. For phrases made of common English/topic words the dict beats the raw
-// list of phrases; for everything else the raw method is at most a few bytes
-// over the original text.
+// On encode we try both phrase methods (RAW, DICT) and pick whichever produces
+// a shorter base64url body. For phrases made of common English/topic words the
+// dict beats the raw list of phrases; for everything else the raw method is at
+// most a few bytes over the original text. When a pack name is supplied the
+// chosen body gets wrapped in method 0x02.
 
 export const FILTER_PACK_CODE_PREFIX = 'bncr2_';
 export const FILTER_PACK_CODE_REGEX = /bncr2_[A-Za-z0-9_-]+/g;
@@ -41,13 +49,18 @@ export function buildFilterPackShareUrl(code: string): string {
 }
 
 export interface SharedFilterPack {
-  /** Phrase list in display order. Pack names are deliberately not part of the
-   *  shared payload — the importer names the pack locally. */
+  /** Phrase list in display order. */
   phrases: string[];
+  /** Optional sender-chosen pack name. When present the recipient creates a
+   *  new pack with this name (auto-suffixed on collision); when absent the
+   *  recipient imports phrases as loose entries. */
+  name?: string;
 }
 
 const METHOD_RAW = 0x00;
 const METHOD_DICT = 0x01;
+const METHOD_NAMED = 0x02;
+const MAX_NAME_BYTES = 255;
 
 const TOKEN_PHRASE_SEP = 0x00;
 const TOKEN_LITERAL = 0xff;
@@ -297,7 +310,31 @@ export async function encodeFilterPackCode(pack: SharedFilterPack): Promise<stri
   for (let i = 1; i < candidates.length; i++) {
     if (candidates[i].length < best.length) best = candidates[i];
   }
+
+  const trimmedName = pack.name?.trim() ?? '';
+  if (trimmedName) {
+    const nameBytes = utf8Encoder.encode(trimmedName);
+    // Names round-trip up to 255 UTF-8 bytes. Storage caps pack names at 40
+    // chars (well under 255 bytes even with multibyte glyphs), but guard
+    // anyway in case a future caller passes an unsanitized string.
+    if (nameBytes.length > 0 && nameBytes.length <= MAX_NAME_BYTES) {
+      const wrapped = wrapNamed(nameBytes, best);
+      best = wrapped;
+    }
+  }
+
   return FILTER_PACK_CODE_PREFIX + base64urlEncode(best);
+}
+
+function wrapNamed(nameBytes: Uint8Array, inner: Uint8Array): Uint8Array {
+  // `inner` already starts with its own method byte (0x00 or 0x01) and its
+  // payload — we just glue [0x02][nameLen][name] in front of it.
+  const out = new Uint8Array(1 + 1 + nameBytes.length + inner.length);
+  out[0] = METHOD_NAMED;
+  out[1] = nameBytes.length;
+  out.set(nameBytes, 2);
+  out.set(inner, 2 + nameBytes.length);
+  return out;
 }
 
 function prefixMethod(method: number, body: Uint8Array): Uint8Array {
@@ -320,8 +357,25 @@ export async function decodeFilterPackCode(code: string): Promise<SharedFilterPa
     return null;
   }
   if (bytes.length === 0) return null;
-  const method = bytes[0];
-  const payload = bytes.subarray(1);
+
+  let name: string | undefined;
+  let inner = bytes;
+  if (bytes[0] === METHOD_NAMED) {
+    if (bytes.length < 2) return null;
+    const nameLen = bytes[1];
+    if (nameLen === 0) return null;
+    const nameEnd = 2 + nameLen;
+    if (nameEnd >= bytes.length) return null;
+    try {
+      name = utf8Decoder.decode(bytes.subarray(2, nameEnd));
+    } catch {
+      return null;
+    }
+    inner = bytes.subarray(nameEnd);
+  }
+
+  const method = inner[0];
+  const payload = inner.subarray(1);
   let phrases: string[] | null;
   if (method === METHOD_RAW) {
     try { phrases = decodeRaw(payload); } catch { return null; }
@@ -331,5 +385,5 @@ export async function decodeFilterPackCode(code: string): Promise<SharedFilterPa
     return null;
   }
   if (!phrases) return null;
-  return { phrases };
+  return name !== undefined ? { phrases, name } : { phrases };
 }

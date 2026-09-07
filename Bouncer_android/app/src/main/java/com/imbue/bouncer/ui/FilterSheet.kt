@@ -61,12 +61,14 @@ fun FilterSheet(
     aiDetectionOn: Boolean,
     aiDetectionPending: Boolean,
     filterReplies: Boolean,
+    notificationsEnabled: Boolean,
     onAdd: (String) -> Unit,
     onRemove: (String) -> Unit,
     onViewFiltered: () -> Unit,
     onShareFilterPack: () -> Unit,
     onToggleAiDetection: () -> Unit,
     onFilterRepliesChange: (Boolean) -> Unit,
+    onNotificationsEnabledChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var showSettings by remember { mutableStateOf(false) }
@@ -128,6 +130,8 @@ fun FilterSheet(
                 BouncerSettings(
                     filterReplies = filterReplies,
                     onFilterRepliesChange = onFilterRepliesChange,
+                    notificationsEnabled = notificationsEnabled,
+                    onNotificationsEnabledChange = onNotificationsEnabledChange,
                 )
             } else {
                 // Only let the list participate in scroll/nested-scroll when

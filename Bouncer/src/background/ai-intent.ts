@@ -40,7 +40,7 @@
 // engages the AI detector instead of hiding human posts about AI slop.
 
 import { getStorage, setStorage, getDescriptions, phraseSetKey } from '../shared/storage';
-import { AI_DETECTION_SEED_PHRASE } from '../shared/utils';
+import { isAiDetectionPhrase } from '../shared/utils';
 import { PLATFORMS } from '../shared/platforms';
 import { DEFAULT_MODEL, PREDEFINED_MODELS } from '../shared/models';
 import { callImbueDetectAiIntent } from './providers';
@@ -65,10 +65,10 @@ export function canJudgeAiIntent(model: string): boolean {
 
 const normalize = (p: string) => p.trim().toLowerCase();
 
-/** The seed phrase our own sparkle indicator plants. Its meaning is known by
- *  construction, so it engages detection deterministically — no LLM verdict
- *  needed, and no LLM verdict can override it. */
-const isSeedPhrase = (p: string) => normalize(p) === normalize(AI_DETECTION_SEED_PHRASE);
+// Deterministic AI-detection phrases — the seed phrase the sparkle indicator
+// plants and the bare keyword "AI" (isAiDetectionPhrase in shared/utils.ts).
+// Their meaning is known by construction, so they engage detection without an
+// LLM verdict, and no LLM verdict can override them.
 
 /** Dedupe by normalized identity, keeping the first verbatim spelling and
  *  dropping blank entries. */
@@ -126,9 +126,9 @@ export function applyAiIntentVerdict(
   now: number,
 ): AiFilterIntentState {
   return {
-    // The seed phrase is always kept, whatever the judge said.
+    // Deterministic AI-detection phrases are always kept, whatever the judge said.
     aiPhrases: dedupeNormalized([
-      ...judgedUnion.filter(isSeedPhrase),
+      ...judgedUnion.filter(isAiDetectionPhrase),
       ...intersectNormalized(returned, judgedUnion),
     ]),
     judgedSetKey: phraseSetKey(judgedUnion),
@@ -232,19 +232,21 @@ export async function refreshAiFilterIntent(): Promise<void> {
 
   const phrases = await currentPhraseUnion();
 
-  // The seed phrase turns detection on right now — no waiting on (and no
-  // vetoing by) the intent judge. judgedSetKey is left untouched: the rest
-  // of the list still gets judged normally below.
-  const seed = phrases.filter(isSeedPhrase);
-  if (seed.length > 0) {
+  // Deterministic AI-detection phrases (the seed, bare "AI") turn detection
+  // on right now — no waiting on (and no vetoing by) the intent judge.
+  // judgedSetKey is left untouched: the rest of the list still gets judged
+  // normally below. This runs on every refresh, including the unconditional
+  // startup one, so an "AI" phrase saved before this rule existed engages
+  // detection without the user touching their filter list (persistIfChanged
+  // no-ops once the phrase is in the state).
+  const deterministic = phrases.filter(isAiDetectionPhrase);
+  if (deterministic.length > 0) {
     const prev = await getState();
-    if (!prev.aiPhrases.some(isSeedPhrase)) {
-      await persistIfChanged(prev, {
-        ...prev,
-        aiPhrases: dedupeNormalized([...prev.aiPhrases, ...seed]),
-        updatedAt: Date.now(),
-      });
-    }
+    await persistIfChanged(prev, {
+      ...prev,
+      aiPhrases: dedupeNormalized([...prev.aiPhrases, ...deterministic]),
+      updatedAt: Date.now(),
+    });
   }
 
   if (phrases.length === 0) {

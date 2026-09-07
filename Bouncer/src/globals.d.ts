@@ -17,6 +17,8 @@ declare global {
   interface Window {
     /** Injected by iOS native host: popup HTML + CSS for in-app settings modal */
     __feedfilterPopup?: { html: string; css: string };
+    /** Screen color picker (Chrome 95+; absent on Firefox/Safari — feature-detect). */
+    EyeDropper?: new () => { open(): Promise<{ sRGBHex: string }> };
   }
 
   // Extend chrome namespace for iOS polyfill flag

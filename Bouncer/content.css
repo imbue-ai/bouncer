@@ -8,6 +8,16 @@
    * literal. Update here to retheme the panel outline, CTA buttons, focus
    * rings, and per-card cancel icon together. */
   --bouncer-brand-rgb: 234, 133, 84;
+  /* Darkened companion shade used by light mode (outlines, active sparkle,
+   * badge backgrounds) where the full-brightness accent lacks contrast on
+   * white. When the user picks a custom accent, the content script derives
+   * this from it (hexToDarkRgbChannels in src/shared/brand-color.ts — keep
+   * this fallback in sync with that 0.85 scale of the default above). */
+  --bouncer-brand-dark-rgb: 200, 110, 65;
+  /* Text color for content ON the accent (badge pills, filled buttons).
+   * The content script flips it to #000 for very light custom accents
+   * (contrastTextColor in src/shared/brand-color.ts). */
+  --bouncer-brand-contrast: #fff;
 }
 
 /* Base font for all Bouncer UI — applies directly to every child element
@@ -82,6 +92,26 @@
   border-radius: 4px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
+}
+
+.reasoning-header-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Repost/video detection badges — mirror .reasoning-status sizing but muted,
+   so they read as metadata rather than a verdict. */
+.reasoning-flag {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 4px 8px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  background: #2a3843;
+  color: #8899a6;
+  border: 1px solid #38444d;
 }
 
 .status-show {
@@ -355,6 +385,24 @@
   padding: 14px 16px 0;
 }
 
+/* "<name> reposted" line above a reposted tweet's card. Indented so the icon
+   sits in the avatar gutter and the text lands near the name column, like
+   Twitter's own socialContext header. */
+.slop-repost-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 16px 0 44px;
+  margin-bottom: -6px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #71767b;
+}
+
+.slop-repost-header svg {
+  flex-shrink: 0;
+}
+
 .slop-post-avatar {
   width: 40px;
   height: 40px;
@@ -505,6 +553,7 @@
   font-style: italic;
   background: rgba(255, 255, 255, 0.04);
   border-radius: 8px;
+  display: none; /* MILLAN: turn this back on if wanted */
 }
 
 .slop-post-actions {
@@ -883,7 +932,7 @@ article {
 .ff-annoying-chip:hover {
   background: rgb(var(--bouncer-brand-rgb));
   border-color: rgb(var(--bouncer-brand-rgb));
-  color: #fff;
+  color: var(--bouncer-brand-contrast);
 }
 
 .ff-annoying-chip.ff-chip-added {
@@ -964,7 +1013,7 @@ article {
 .ff-annoying-send-btn svg {
   width: 11px;
   height: 11px;
-  fill: #fff;
+  fill: var(--bouncer-brand-contrast);
 }
 
 .ff-annoying-custom-wrapper.has-text .ff-annoying-send-btn {
@@ -989,6 +1038,36 @@ article {
 
 .twitter-light .ff-missed-link {
   border-top-color: #cfd9de;
+}
+
+.ff-bounce-quote-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: #8899a6;
+  cursor: pointer;
+  user-select: none;
+}
+
+.ff-bounce-quote-row:hover {
+  color: #d6d9db;
+}
+
+.ff-bounce-quote-toggle {
+  margin: 0;
+  cursor: pointer;
+  accent-color: #1d9bf0;
+}
+
+.twitter-light .ff-bounce-quote-row {
+  color: #536471;
+}
+
+.twitter-light .ff-bounce-quote-row:hover {
+  color: #0f1419;
 }
 
 .ff-annoying-empty {
@@ -1022,7 +1101,7 @@ article {
 }
 .twitter-light .ff-annoying-chip:hover {
   background: rgb(var(--bouncer-brand-rgb));
-  color: #fff;
+  color: var(--bouncer-brand-contrast);
   border-color: rgb(var(--bouncer-brand-rgb));
 }
 .twitter-light .ff-annoying-thinking {
@@ -1292,6 +1371,38 @@ article {
   flex-direction: column
 }
 
+/* "Colored border on input box" toggle (popup, Accent Color section) turned
+   OFF: the content script adds .bouncer-plain-border to <html> and the
+   filter box swaps the brand-accent outline for the platform's native card
+   border — 1px solid, theme-matched color, 16px radius, overflow hidden.
+   Dim mode's color lives in adapters/twitter/twitter.css. */
+html.bouncer-plain-border .filter-phrases-container {
+  border-width: 1px;
+  border-color: rgb(47, 51, 54);
+  overflow: hidden;
+}
+
+html.bouncer-plain-border .light-mode .filter-phrases-container {
+  border-color: rgb(239, 243, 244);
+}
+
+/* The bottom pill draws the border itself (its inner container is
+   borderless); restore the inner container's own scrolling, which the
+   overflow: hidden above would otherwise clobber. */
+html.bouncer-plain-border .filter-phrases-bottom {
+  border-width: 1px;
+  border-color: rgb(47, 51, 54);
+}
+
+html.bouncer-plain-border .filter-phrases-bottom.light-mode {
+  border-color: rgb(239, 243, 244);
+}
+
+html.bouncer-plain-border .filter-phrases-bottom .filter-phrases-container {
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
 /* ==================== Sign-in prompt ==================== */
 
 .filter-signin-prompt {
@@ -1343,9 +1454,9 @@ article {
   align-items: center;
   gap: 10px;
   padding: 15px 20px;
-  border: 1.5px solid rgb(234, 133, 84);
+  border: 1.5px solid rgb(var(--bouncer-brand-rgb));
   border-radius: 10px;
-  background: rgba(234, 133, 84, 0.08);
+  background: rgba(var(--bouncer-brand-rgb), 0.08);
   color: inherit;
   font-size: 15px;
   font-weight: 700;
@@ -1356,7 +1467,7 @@ article {
 }
 
 .google-signin-btn:hover {
-  background: rgba(234, 133, 84, 0.18);
+  background: rgba(var(--bouncer-brand-rgb), 0.18);
 }
 
 /* Instant feedback on press: transition disabled so the color changes on the
@@ -1370,7 +1481,7 @@ article {
 .google-signin-btn:active,
 .light-mode .google-signin-btn:active {
   transition: none;
-  background: rgba(234, 133, 84, 0.32);
+  background: rgba(var(--bouncer-brand-rgb), 0.32);
 }
 
 .google-signin-btn .google-icon {
@@ -1443,8 +1554,8 @@ article {
   margin-top: 8px;
   padding: 5px 8px;
   border-radius: 10px;
-  background: rgba(234, 133, 84, 0.08);
-  border: 1px solid rgba(234, 133, 84, 0.35);
+  background: rgba(var(--bouncer-brand-rgb), 0.08);
+  border: 1px solid rgba(var(--bouncer-brand-rgb), 0.35);
   font-size: 12px;
   line-height: 1.3;
 }
@@ -1457,7 +1568,7 @@ article {
 .ff-local-model-cta {
   flex-shrink: 0;
   padding: 3px 8px;
-  border: 1.5px solid rgb(234, 133, 84);
+  border: 1.5px solid rgb(var(--bouncer-brand-rgb));
   border-radius: 8px;
   background: none;
   color: inherit;
@@ -1468,7 +1579,7 @@ article {
 }
 
 .ff-local-model-cta:hover {
-  background: rgba(234, 133, 84, 0.18);
+  background: rgba(var(--bouncer-brand-rgb), 0.18);
 }
 
 .light-mode .skip-signin-btn {
@@ -1564,11 +1675,165 @@ article {
   font-weight: 600;
 }
 
+/* First-install "activate other platforms?" popup. The card is an extension
+   iframe (onboarding.html) so its buttons can call permissions.request();
+   backgrounds mirror the guest popup so the iframe doesn't flash a
+   mismatched color before its document paints. */
+.bouncer-onboarding-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+  animation: backdrop-fade-in 0.1s ease-out;
+}
+
+.bouncer-onboarding-iframe {
+  width: min(360px, calc(100vw - 40px));
+  /* Placeholder height until the page reports its real content height via
+     the bouncerOnboardingResize message. */
+  height: 330px;
+  border: none;
+  border-radius: 16px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+  background: #15202b;
+  transition: height 0.15s ease;
+}
+
+.dim-mode .bouncer-onboarding-iframe {
+  background: #1e2732;
+}
+
+.light-mode .bouncer-onboarding-iframe {
+  background: #ffffff;
+}
+
 .filter-phrases-header {
   display: flex;
   align-items: baseline;
   flex-wrap: wrap;
   column-gap: 4px;
+  position: relative;
+}
+
+/* Paused state: grey out the whole "Filter out [phrases] and [input]" sentence
+   plus the inline pause button, and show the centered play overlay on top.
+   The overlay itself is excluded from the dim so the play button stays vivid. */
+.filter-phrases-header.paused > :not(.filter-paused-overlay),
+.filter-phrases-header.paused > .filter-phrases-list > * {
+  opacity: 0.15;
+  pointer-events: none;
+  filter: grayscale(1);
+}
+
+.filter-paused-overlay {
+  display: none;
+  position: absolute;
+  inset: 0;
+  align-items: center;
+  justify-content: center;
+  z-index: 2;
+}
+
+.filter-phrases-header.paused .filter-paused-overlay {
+  display: flex;
+}
+
+/* Inline pause button, sized to sit comfortably next to the input. The
+   parent header uses align-items: baseline, which would otherwise place the
+   button's bottom at the text baseline — making a 24px square extend ~24px
+   above the baseline and inflating the line height upward. align-self: center
+   keeps the button centered within whatever line height the surrounding
+   phrases/input establish, so it stops pushing the row up. */
+.filter-pause-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: center;
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  /* Cancel the height the 24px circle adds beyond the ~20px text line so the
+     button doesn't stretch its row — phrase-line spacing stays what it was
+     before the button existed. The full 24px stays clickable. */
+  margin-top: -2px;
+  margin-bottom: -2px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 9999px;
+  color: rgb(113, 118, 123);
+  line-height: 0;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.filter-pause-btn:hover {
+  background: rgba(29, 155, 240, 0.1);
+  color: rgb(29, 155, 240);
+}
+
+.filter-pause-btn:active {
+  opacity: 0.7;
+}
+
+.filter-pause-btn svg {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
+}
+
+.light-mode .filter-pause-btn {
+  color: rgb(83, 100, 113);
+}
+
+.light-mode .filter-pause-btn:hover {
+  background: rgba(29, 155, 240, 0.1);
+  color: rgb(29, 155, 240);
+}
+
+/* Larger circular play button centered over the greyed-out sentence. */
+.filter-paused-play-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  background: rgba(113, 118, 123, 0.9);
+  border: none;
+  border-radius: 9999px;
+  color: #fff;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  transition: background 0.15s ease, transform 0.1s ease;
+}
+
+.filter-paused-play-btn:hover {
+  background: rgb(113, 118, 123);
+}
+
+.light-mode .filter-paused-play-btn {
+  background: rgba(83, 100, 113, 0.9);
+}
+
+.light-mode .filter-paused-play-btn:hover {
+  background: rgb(83, 100, 113);
+}
+
+.filter-paused-play-btn:active {
+  transform: scale(0.96);
+}
+
+.filter-paused-play-btn svg {
+  width: 22px;
+  height: 22px;
+  fill: currentColor;
+  /* Optical centering for a right-pointing triangle. */
+  margin-left: 2px;
 }
 
 .filter-phrases-label {
@@ -1584,6 +1849,15 @@ article {
   flex: 1;
   min-width: 80px;
   gap: 4px;
+}
+
+/* When the input wraps internally, the header gets .input-wraps and the
+   and-input element claims the whole row so the textarea has the full
+   container width to extend into — typing a long phrase then reads as one
+   line until it genuinely needs more, instead of wrapping many times at
+   whatever narrow space was left next to the phrases. */
+.filter-phrases-header.input-wraps .filter-phrases-and-input {
+  flex-basis: 100%;
 }
 
 .filter-phrases-and {
@@ -1602,6 +1876,9 @@ article {
   position: relative;
   flex: 1;
   min-width: 0;
+  /* Stop just short of the row's right edge so the pause button after the
+     input sits a bit left of the box border instead of hugging it. */
+  max-width: calc(100% - 61px);
 }
 
 .filter-phrases-container .filter-phrases-input {
@@ -1612,13 +1889,22 @@ article {
   border-bottom: 2px solid rgb(113, 118, 123) !important;
   border-radius: 0 !important;
   color: rgb(231, 233, 234);
+  font-family: inherit;
   font-size: 15px;
   font-weight: 600;
+  line-height: 1.2em;
   outline: none !important;
   appearance: none;
   -webkit-appearance: none;
   box-shadow: none !important;
   transition: border-color 0.2s;
+  display: block;
+  box-sizing: border-box;
+  resize: none;
+  overflow: hidden;
+  min-height: 1.2em;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .filter-phrases-container .filter-phrases-input:focus {
@@ -1688,17 +1974,12 @@ article {
   font-size: 15px;
   font-weight: 400;
   color: rgb(231, 233, 234);
-  margin-left: -4px;
 }
 
-/* Wrapper that keeps the last phrase + oxford comma as a single flex item so
-   the comma never wraps onto a new line by itself. */
-.filter-phrase-with-oxford {
+/* Wrapper that keeps each phrase + its trailing comma as a single flex item
+   so a comma never wraps onto a new line by itself. */
+.filter-phrase-item {
   display: inline;
-}
-
-.filter-phrase-with-oxford .filter-phrase-separator {
-  margin-left: 0;
 }
 
 /* Model loading progress display */
@@ -1814,7 +2095,7 @@ article {
 /* Light mode styles */
 .light-mode .filter-phrases-container {
   background-color: rgb(255, 255, 255);
-  border-color: rgb(200, 110, 65);
+  border-color: rgb(var(--bouncer-brand-dark-rgb));
 }
 
 .light-mode .filter-phrases-label,
@@ -1906,6 +2187,9 @@ article {
 }
 .filtered-view-container.light-mode .slop-post-avatar {
   background: #cfd9de;
+}
+.filtered-view-container.light-mode .slop-repost-header {
+  color: rgb(83, 100, 113);
 }
 
 /* Dark mode for filtered modal */
@@ -2191,7 +2475,7 @@ article {
 /* Light mode darkens the box outline (see .light-mode
    .filter-phrases-container) — keep the badge identical to it. */
 .light-mode .filter-ai-indicator.on {
-  color: rgb(200, 110, 65);
+  color: rgb(var(--bouncer-brand-dark-rgb));
 }
 .filter-ai-indicator.on .filter-ai-indicator-icon {
   opacity: 1;
@@ -2223,7 +2507,7 @@ article {
   margin: -3px 0;
   border-radius: 8px;
   background: rgb(var(--bouncer-brand-rgb));
-  color: #fff;
+  color: var(--bouncer-brand-contrast);
 }
 
 .filter-ai-indicator.with-badge .filter-ai-indicator-label {
@@ -2245,11 +2529,11 @@ article {
 /* Light mode uses the darker brand orange everywhere else (box outline,
    `.on` sparkle) — keep the badge consistent with it. */
 .light-mode .filter-ai-indicator.with-badge {
-  background: rgb(200, 110, 65);
-  color: #fff;
+  background: rgb(var(--bouncer-brand-dark-rgb));
+  color: var(--bouncer-brand-contrast);
 }
 .light-mode .filter-ai-indicator.with-badge:hover {
-  background: rgba(200, 110, 65, 0.85);
+  background: rgba(var(--bouncer-brand-dark-rgb), 0.85);
 }
 
 /* Right side of the actions row: circular Share and Settings icon buttons. */
@@ -2260,58 +2544,42 @@ article {
   flex-shrink: 0;
 }
 
-/* Circular share button on the actions row, sitting just to the left of
-   Settings. Sized to match X's own icon-button affordances. */
+/* "Share filters" button on the actions row, to the right of "View filtered".
+   Same shape and typography as .filtered-toggle-btn, but with no background
+   or border so "View filtered" stays the row's primary action. */
 .filter-pack-share-btn {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
   flex-shrink: 0;
-  width: 28px;
-  height: 28px;
-  padding: 0;
+  padding: 6px 12px;
   background: transparent;
   border: none;
   border-radius: 9999px;
-  color: rgb(113, 118, 123);
-  line-height: 0;
+  color: rgb(231, 233, 234);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
   cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
+  appearance: none;
+  -webkit-appearance: none;
+  transition: background 0.2s;
 }
 
 .filter-pack-share-btn:hover {
-  background: rgba(29, 155, 240, 0.1);
-  color: rgb(29, 155, 240);
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .filter-pack-share-btn:active {
   opacity: 0.7;
 }
 
-.filter-pack-share-btn svg {
-  flex-shrink: 0;
-  width: 16px;
-  height: 16px;
-  fill: currentColor;
-}
-
 .light-mode .filter-pack-share-btn {
-  color: rgb(83, 100, 113);
+  color: rgb(15, 20, 25);
 }
 
 .light-mode .filter-pack-share-btn:hover {
-  background: rgba(29, 155, 240, 0.1);
-  color: rgb(29, 155, 240);
-}
-
-.filter-phrases-mobile .filter-pack-share-btn {
-  width: 24px;
-  height: 24px;
-}
-
-.filter-phrases-mobile .filter-pack-share-btn svg {
-  width: 14px;
-  height: 14px;
+  background: rgba(0, 0, 0, 0.05);
 }
 
 /* Settings button — circular icon button (horizontal ellipsis), matches the

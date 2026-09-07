@@ -7,10 +7,13 @@
   "scripts": {
     "build": "node build.js",
     "build:dev": "node build.js --dev",
+    "build:no-ad": "node build.js --no-ad",
     "build:safari": "node build.js --target=safari",
     "build:safari:dev": "node build.js --dev --target=safari",
+    "build:safari:no-ad": "node build.js --no-ad --target=safari",
     "build:firefox": "node build.js --target=firefox",
     "build:firefox:dev": "node build.js --dev --target=firefox",
+    "build:firefox:no-ad": "node build.js --no-ad --target=firefox",
     "gen-manifests": "node generate-manifests.mjs",
     "watch": "node build.js --watch",
     "watch:dev": "node build.js --watch --dev",
@@ -37,7 +40,7 @@
     "vitest": "^4.0.18"
   },
   "dependencies": {
-    "@litert-lm/core": "^0.12.1",
+    "@litert-lm/core": "^0.15.0",
     "dompurify": "^3.3.1",
     "firebase": "^12.11.0",
     "html-to-image": "^1.11.13"

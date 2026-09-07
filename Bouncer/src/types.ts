@@ -33,6 +33,11 @@ export interface DetectorSnapshot {
   shouldHide?: boolean;
   reasoning?: string;
   category?: string | null;
+  /** Categories this detector matched. Null/undefined means "incomplete"
+   *  (e.g. API filter only returned its best match) — the filter-removal
+   *  flow can't shortcut re-evaluation when any contributing detector is
+   *  incomplete. */
+  matches?: string[] | null;
   error?: string;
   /** Either pre-run skip reason or post-race "aborted because other detector
    *  hid first" — both render the same way in the popup. */
@@ -45,6 +50,11 @@ export interface EvaluationResult {
   reasoning: string;
   category?: string | null;
   rawResponse?: string | null;
+  /** Full list of categories the classifier matched on this post, when the
+   *  classifier evaluated every category in one shot (local table_yesno). Null
+   *  when the classifier only surfaced its best match (API path) — in that
+   *  case we can't shortcut filter-removal re-evaluation. */
+  matches?: string[] | null;
   timestamp?: number;
   /** Which model produced this evaluation. */
   model?: string;
@@ -108,6 +118,19 @@ export interface PostContent {
   hasMediaContainer: boolean;
   fromStore?: boolean;
   mediaBlurred?: boolean;
+  /** True when the post is a repost/retweet (resurfaced by someone other than
+   *  its author). Drives the deterministic structural filters
+   *  (shared/structural-filters.ts) so phrases like "no retweets" resolve
+   *  without a model call. */
+  isRepost?: boolean;
+  /** Display text for the repost header, e.g. "Alice reposted". Taken verbatim
+   *  from the DOM's socialContext header when available (locale-correct), or
+   *  synthesized from the reposter's name in the store path. Rendered above
+   *  the card in the filtered-posts panel. */
+  repostHeader?: string | null;
+  /** True when the post contains a video. Same structural-filter mechanism as
+   *  `isRepost`. */
+  hasVideo?: boolean;
   /** LinkedIn-only: connection degree ("1st", "2nd", "3rd+", or null when
    *  not surfaced by the post). Other adapters leave this undefined. */
   degree?: string | null;
@@ -122,6 +145,10 @@ export interface FilteredPost {
   reasoning: string;
   rawResponse: string;
   category: string | null;
+  /** Full match list from a complete classifier (local table_yesno). Lets the
+   *  filter-removal flow update or restore without re-running the model. Null
+   *  when the classifier didn't enumerate every category (API path). */
+  matches: string[] | null;
   timestamp: number;
   /** Adapter-defined stable identity for the post, from
    *  `getPostContentKey`. Restore matches on `post.postUrl` where a platform
@@ -354,6 +381,11 @@ export type ContentToBackgroundMessage =
   // Sent by the settings popup after the user grants an optional platform's
   // host permission; resolves once its content script is registered.
   | { type: 'syncOptionalPlatforms' }
+  // Content script asking whether THIS tab should show the one-time platform
+  // onboarding popup. The background answers true only for the tab opened by
+  // onInstalled (or, if that tab is gone, the first tab to ask afterwards),
+  // so pre-existing x.com tabs never grow a popup of their own.
+  | { type: 'claimPlatformOnboarding' }
   | { type: 'clearSinglePost'; post: string; imageUrls: string[]; postUrl?: string | null; siteId?: SiteId }
   | { type: 'getStats' }
   | { type: 'getReasoning'; post: string; imageUrls: string[]; postUrl?: string | null; siteId?: SiteId }
@@ -462,6 +494,11 @@ type PlatformEnabledKeys = { [K in SiteId as `${K}Enabled`]: boolean };
 /** Valid storage keys for site-specific descriptions. */
 export type DescriptionKey = `descriptions_${SiteId}`;
 
+/** Per-site flag for whether phrase filtering is paused. */
+type FilteringPausedKeys = { [K in SiteId as `filteringPaused_${K}`]: boolean };
+
+export type FilteringPausedKey = `filteringPaused_${SiteId}`;
+
 /** Typed schema for chrome.storage.local keys. */
 export type StorageSchema = SettingsBase & {
   authErrorApis: Record<string, boolean>;
@@ -488,10 +525,6 @@ export type StorageSchema = SettingsBase & {
   googleAuthToken: string;
   openrouterCodeVerifier: string;
   lastSeenVersion: string;
-  // Set by the background on fresh install (never on update); consumed by the
-  // content script on x.com, which fires the X Pixel install conversion and
-  // clears it (see content/install-pixel.ts).
-  pendingInstallPixel: boolean;
   // Instagram "intentional scrolling": the reel-describer panel that names the
   // reel you're on plus the next few, so you choose what to watch instead of
   // being fed it. Default true. Off collapses the panel to a floating icon and
@@ -504,7 +537,56 @@ export type StorageSchema = SettingsBase & {
   // over the Reels feed the toggle just sent the user to, then clears it (see
   // src/instagram/intro.ts).
   pendingInstagramIntro: boolean;
-} & DescriptionKeys & PlatformEnabledKeys;
+  // "Quote tweet" toggle in the why-annoying tooltip (bounce-quote flow).
+  // Default true; persisted so the choice sticks across posts and sessions.
+  bounceQuoteEnabled: boolean;
+  // Set by onInstalled on a fresh install; drives the one-time "Welcome to
+  // Bouncer" banner and is cleared when that banner is dismissed.
+  showWelcomeBanner: boolean;
+  // Set by onInstalled on a fresh install; drives the one-time "activate
+  // other platforms?" popup shown on x.com before any sign-in gating (see
+  // maybeShowPlatformOnboarding in content/ui.ts). Cleared when the popup
+  // is dismissed, whichever way.
+  showPlatformOnboarding: boolean;
+  // The one tab allowed to show the platform-onboarding popup (the tab that
+  // onInstalled opened). Claimed/reassigned via the claimPlatformOnboarding
+  // message; meaningless once showPlatformOnboarding is false.
+  platformOnboardingTabId: number;
+  // Durable once-per-install latch for the install-conversion landing page:
+  // set the first time onInstalled 'install' opens it and never cleared, so
+  // repeat 'install' events that keep storage (Chrome Repair, synthetic
+  // events from embedded hosts) can't re-open it and double-count the
+  // conversion. (Devices that ran the old in-extension pixel code may hold
+  // this flag already — that correctly suppresses a second conversion.)
+  installPixelArmed: boolean;
+  // LinkedIn "keep only" mode (browser extension only, not the iOS app).
+  // The pipeline classifies posts against the filter phrases exactly as in
+  // filter-out mode; the content script negates the verdict at the last
+  // moment so matching posts are the ones that STAY in the feed. Purely a
+  // frontend flag — the background never reads it.
+  linkedinKeepOnly: boolean;
+  // Custom accent color for Bouncer's in-feed UI, as normalized "#rrggbb"
+  // hex (see src/shared/brand-color.ts). Written by the popup's "Accent
+  // Color" picker; the content script applies it by overriding the
+  // --bouncer-brand-rgb CSS variable. Absent or invalid values fall back to
+  // the default orange defined in content.css.
+  brandColor: string;
+  // "Colored border on input box" popup toggle. Absent/true keeps the
+  // brand-accent outline on the in-feed filter box; false swaps it for the
+  // platform's native 1px card border (the content script toggles the
+  // `bouncer-plain-border` class on <html>, styled in content.css). Fresh
+  // installs are seeded to false by onInstalled (background/index.ts), so
+  // new users default to the plain border while pre-existing installs (key
+  // absent) keep the outline.
+  coloredBorder: boolean;
+  // Phrase list for whichever LinkedIn mode (filter-out / keep-only) is NOT
+  // currently active. Each mode keeps its own list: the active one lives in
+  // descriptions_linkedin as usual; switching modes swaps the two (see the
+  // mode-selector click handler in content/ui.ts). Kept out of the
+  // descriptions_* namespace so the pipeline and AI-intent aggregation never
+  // see the inactive list.
+  linkedinInactiveModePhrases: string[];
+} & DescriptionKeys & PlatformEnabledKeys & FilteringPausedKeys;
 
 // ==================== API Response Types ====================
 

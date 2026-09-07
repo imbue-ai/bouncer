@@ -23,6 +23,13 @@ div[data-testid="BottomBar"] {
   background-color: rgb(21, 32, 43);
 }
 
+/* "Colored border on input box" toggle off: dim mode's native card border
+   color (light/dark live in content.css next to the base rule). */
+html.bouncer-plain-border .dim-mode .filter-phrases-container,
+html.bouncer-plain-border .filter-phrases-bottom.dim-mode {
+  border-color: rgb(56, 68, 77);
+}
+
 .dim-mode .filter-phrases-label {
   color: rgb(231, 233, 234);
 }

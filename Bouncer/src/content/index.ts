@@ -2,8 +2,9 @@
 // Entry point: post processing, observers, init, storage/message listeners
 
 import type { PlatformAdapter, PostContent, PipelineResponse, BackgroundToContentMessage, DescriptionKey, AiFilterIntentState } from '../types';
-import { getStorage, removeStorage, getDescriptions, setDescriptions, phraseSetKey } from '../shared/storage';
+import { getStorage, removeStorage, getDescriptions, setDescriptions, phraseSetKey, filteringPausedKeyFor } from '../shared/storage';
 import { enabledStorageKey } from '../shared/platforms';
+import { hexToRgbChannels, hexToDarkRgbChannels, contrastTextColor } from '../shared/brand-color';
 import { FILTER_PACK_CODE_PREFIX } from '../shared/share-encoding';
 
 import {
@@ -20,6 +21,7 @@ import {
   injectFilterPhrasesInput, injectBottomFilterBox, injectMobileFilterBox,
   injectBannerFilterBox,
   syncFilterPhrases, addFilterPhrase, removeFilterPhrase, clearFilteredPosts,
+  restoreOrRefreshFilteredPosts,
   showSettingsModal, closeSettingsModal, renderFilteredPostsView,
   initModelLoadingListener,
   markPostPending, markPostVerified, getVerificationBar,
@@ -33,10 +35,18 @@ import {
   updateDetectorState,
   isGuestLimitReached,
   refreshAiIndicatorUI,
+  setKeepOnlyMode,
+  maybeShowPlatformOnboarding,
 } from './ui';
 
 import { formatPostForEvaluation, phraseAddNeedsReEvaluation } from '../shared/utils';
-import { maybeFireInstallPixel } from './install-pixel';
+import {
+  findStructuralMatch,
+  structuralFilterKind,
+  STRUCTURAL_FILTER_SITES,
+  STRUCTURAL_KIND_LABELS,
+  type StructuralKind,
+} from '../shared/structural-filters';
 
 (function() {
   'use strict';
@@ -68,6 +78,52 @@ import { maybeFireInstallPixel } from './install-pixel';
   // Site-specific storage key for filter phrases
   const descriptionsKey: DescriptionKey = `descriptions_${adapter.siteId}`;
 
+  // Custom accent color (popup "Accent Color" picker). Overriding
+  // --bouncer-brand-rgb inline on <html> outranks content.css's :root rule;
+  // clearing the inline value falls back to the default orange. Runs
+  // regardless of the platform toggle — it only recolors Bouncer's own UI.
+  function applyBrandColor(hex: unknown): void {
+    const channels = typeof hex === 'string' ? hexToRgbChannels(hex) : null;
+    // Light mode renders several accents in a darkened companion shade
+    // (--bouncer-brand-dark-rgb) — derive it from the same pick so both
+    // themes retheme together.
+    const darkChannels = typeof hex === 'string' ? hexToDarkRgbChannels(hex) : null;
+    if (channels && darkChannels) {
+      document.documentElement.style.setProperty('--bouncer-brand-rgb', channels);
+      document.documentElement.style.setProperty('--bouncer-brand-dark-rgb', darkChannels);
+      // Badge/button text on the accent: black when the accent is too light
+      // for white text to read.
+      document.documentElement.style.setProperty('--bouncer-brand-contrast', contrastTextColor(hex as string));
+    } else {
+      document.documentElement.style.removeProperty('--bouncer-brand-rgb');
+      document.documentElement.style.removeProperty('--bouncer-brand-dark-rgb');
+      document.documentElement.style.removeProperty('--bouncer-brand-contrast');
+    }
+  }
+  // "Colored border on input box" popup toggle. Only `false` opts out —
+  // absent keeps the brand-accent outline. New installs are seeded to false
+  // at install time (see background/index.ts), so absence in practice means
+  // a pre-seed install or an explicit opt-in. The class makes content.css
+  // restyle the filter box to the platform's native card border.
+  function applyColoredBorder(value: unknown): void {
+    document.documentElement.classList.toggle('bouncer-plain-border', value === false);
+  }
+  getStorage(['brandColor', 'coloredBorder'])
+    .then(data => {
+      applyBrandColor(data.brandColor);
+      applyColoredBorder(data.coloredBorder);
+    })
+    .catch(err => console.error('[Bouncer] Failed to load accent color:', err));
+  chrome.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName !== 'local') return;
+    if (changes.brandColor) {
+      applyBrandColor(changes.brandColor.newValue);
+    }
+    if (changes.coloredBorder) {
+      applyColoredBorder(changes.coloredBorder.newValue);
+    }
+  });
+
   // One-time migration: move descriptions from sync to local storage
   (async () => {
     const localArr = await getDescriptions(descriptionsKey);
@@ -97,6 +153,16 @@ import { maybeFireInstallPixel } from './install-pixel';
   // storage-change listener below. Defaults to true so the gate is a no-op
   // until the user explicitly opts out.
   let filterReplies = true;
+  // LinkedIn "keep only" mode (browser only — the iOS app never offers it).
+  // The pipeline runs completely unchanged; the verdict is negated at the
+  // last moment (see effectiveShouldHide in evaluatePost) so matching posts
+  // are the ones that stay. Cached like filterReplies: loaded on init, kept
+  // current by the storage-change listener.
+  const keepOnlyAvailable = adapter.siteId === 'linkedin' && !IS_IOS;
+  let keepOnlyMode = false;
+  // Gates the negation: with zero filter phrases every verdict is a skip
+  // (shouldHide=false), and negating those would hide the entire feed.
+  let sitePhraseCount = 0;
   let currentlyProcessingPostUrl: string | null = null;
 
   // ==================== Wire up modules ====================
@@ -217,8 +283,11 @@ import { maybeFireInstallPixel } from './install-pixel';
   // watch cards), rather than the desktop retry-via-observer dance.
   const isInApp = typeof chrome !== 'undefined' && chrome._polyfilled;
 
-  // Evaluate a post using the background script
-  async function evaluatePost(article: HTMLElement) {
+  // Evaluate a post using the background script. With structuralOnly, only
+  // the deterministic structural filters run: a matching post hides, a
+  // non-matching post keeps its existing verdict untouched (no model call,
+  // no pending UI) — used when a phrase-add changed nothing the model sees.
+  async function evaluatePost(article: HTMLElement, structuralOnly = false) {
     console.log('[Bouncer] evaluatePost called, isInApp:', isInApp);
     // Guest trial exhausted — stop filtering until the user signs in.
     if (isGuestLimitReached()) return;
@@ -272,10 +341,33 @@ import { maybeFireInstallPixel } from './install-pixel';
       return;
     }
 
+    // Structural filter phrases ("no retweets", "quote tweets", "videos")
+    // resolve deterministically from adapter-extracted post attributes — no
+    // model call, zero false positives. getSettings() mirrors this by
+    // excluding them from the category list the model sees.
+    let structuralMatch: { phrase: string; kind: StructuralKind } | null = null;
+    if (STRUCTURAL_FILTER_SITES.has(adapter.siteId)) {
+      try {
+        structuralMatch = findStructuralMatch(await getDescriptions(descriptionsKey), content);
+      } catch { /* storage unavailable — fall through to the model */ }
+    }
+    if (structuralOnly && !structuralMatch) return;
+
     const evaluationId = crypto.randomUUID();
     registerEvaluation(evaluationId, article);
     try {
-      const evaluatePromise = chrome.runtime.sendMessage({
+      let response: PipelineResponse;
+      if (structuralMatch) {
+        response = {
+          shouldHide: true,
+          reasoning: `This post is ${STRUCTURAL_KIND_LABELS[structuralMatch.kind]}, matching your "${structuralMatch.phrase}" filter (detected from the post's structure, not by AI).`,
+          category: structuralMatch.phrase,
+          // Deterministic verdicts hide instantly, like cache hits — the
+          // verdict was knowable before the post rendered.
+          cached: true,
+        };
+      } else {
+        response = await chrome.runtime.sendMessage({
           type: 'evaluatePost',
           evaluationId,
           post: formatPostForEvaluation(content),
@@ -288,7 +380,7 @@ import { maybeFireInstallPixel } from './install-pixel';
           // AI-text threshold to these.
           isReply: adapter.isPermalinkView()
         });
-      const response = await evaluatePromise as PipelineResponse;
+      }
       releaseEvaluation(evaluationId);
 
       // Clear processing tracker when this post's evaluation completes
@@ -343,7 +435,15 @@ import { maybeFireInstallPixel } from './install-pixel';
       // positives are effectively zero. Manual user-flagged hides (in ui.ts)
       // remain unaffected — this only vetoes the AI's automatic decision.
       const containsShareCode = (article.textContent || '').includes(FILTER_PACK_CODE_PREFIX);
-      const effectiveShouldHide = response.shouldHide && !containsShareCode;
+      // "Keep only" mode (LinkedIn browser only): identical pipeline, verdict
+      // negated at the last moment — matching posts stay, everything else is
+      // hidden. Only engages with at least one phrase set (a phraseless feed
+      // yields all-skip verdicts, whose negation would blank the feed), and
+      // the share-code veto still wins so import buttons survive.
+      const verdictHides = (keepOnlyMode && sitePhraseCount > 0)
+        ? !response.shouldHide
+        : response.shouldHide;
+      const effectiveShouldHide = verdictHides && !containsShareCode;
 
       postReasonings.set(article, {
         shouldHide: effectiveShouldHide,
@@ -371,7 +471,7 @@ import { maybeFireInstallPixel } from './install-pixel';
         };
 
         // Store in filtered posts list
-        storeFilteredPost(article, mergedContent, response.reasoning, response.rawResponse || '', response.category || null);
+        storeFilteredPost(article, mergedContent, response.reasoning, response.rawResponse || '', response.category || null, response.matches ?? null);
 
         const bar = article.querySelector('.post-verification-bar');
         const wasVerified = bar && bar.classList.contains('verified');
@@ -485,6 +585,23 @@ import { maybeFireInstallPixel } from './install-pixel';
       evaluatePost(article)
         .catch(err => console.error('[Bouncer] evaluatePost failed:', err))
         .finally(() => clearTimeout(pendingTimer));
+    });
+  }
+
+  // Apply only the deterministic structural filters to the visible feed —
+  // no model calls, no pending UI. Used when a phrase-add consists solely of
+  // structural phrases: the model's category set didn't change (the backend
+  // keeps its verdict cache for the same reason), so a full re-evaluation
+  // sweep would grey out the feed for nothing.
+  function applyStructuralFilters() {
+    const posts = findPosts();
+    const skipReplies = !filterReplies && adapter.isPermalinkView();
+    posts.forEach(article => {
+      if (adapter.getPostContainer(article).dataset.filteredByExtension) return;
+      if (adapter.isMainPost(article)) return;
+      if (skipReplies) return;
+      evaluatePost(article, true)
+        .catch(err => console.error('[Bouncer] structural filter sweep failed:', err));
     });
   }
 
@@ -661,13 +778,16 @@ import { maybeFireInstallPixel } from './install-pixel';
     // pre-date the toggle keep filtering as before. The {id}Enabled naming
     // convention is centralized in the platform registry.
     const platformKey = enabledStorageKey(adapter.siteId);
-    const data = await getStorage(['enabled', 'filterReplies', platformKey]);
+    const data = await getStorage(['enabled', 'filterReplies', 'linkedinKeepOnly', platformKey]);
     let globalEnabled = data.enabled !== false;
     const platformEnabled = data[platformKey] !== false;
     enabled = globalEnabled && platformEnabled;
     // Treat undefined as true so users on builds released before this
     // setting existed keep their current behavior.
     filterReplies = data.filterReplies !== false;
+    keepOnlyMode = keepOnlyAvailable && data.linkedinKeepOnly === true;
+    setKeepOnlyMode(keepOnlyMode);
+    sitePhraseCount = (await getDescriptions(descriptionsKey)).length;
 
     // Platform is off — don't inject any UI, don't observe posts, don't
     // wire up any listeners beyond the one that watches for re-enable.
@@ -689,6 +809,11 @@ import { maybeFireInstallPixel } from './install-pixel';
     }
 
     await checkLocalModelActive();
+    // First-install "activate other platforms?" popup. Fired before (and not
+    // awaited by) the auth check so it appears ahead of — and independent
+    // of — any sign-in gating.
+    maybeShowPlatformOnboarding().catch(err =>
+      console.error('[Bouncer] Platform onboarding popup failed:', err));
     await checkAuthStatus();
 
     if (enabled) {
@@ -760,7 +885,7 @@ import { maybeFireInstallPixel } from './install-pixel';
         isLocalModelActive = newModel.startsWith('local:') || false;
       }
       if (changes[descriptionsKey]) {
-        syncFilterPhrases();
+        void syncFilterPhrases();
         // The AI-detection state is per-platform (this platform's phrases ∩
         // the judged aiPhrases — see aiIntentActiveForSite), so editing this
         // platform's list can flip the sparkle even when the global
@@ -770,6 +895,7 @@ import { maybeFireInstallPixel } from './install-pixel';
         refreshAiIndicatorUI().catch(err => console.error('[Bouncer] refreshAiIndicatorUI failed:', err));
         const oldDescs = (changes[descriptionsKey].oldValue as string[] | undefined) || [];
         const newDescs = (changes[descriptionsKey].newValue as string[] | undefined) || [];
+        sitePhraseCount = newDescs.length;
         // Only re-evaluate when a phrase was added, not removed. Planting the
         // seed phrase alone must not sweep (phraseAddNeedsReEvaluation): it is
         // not a filter category, and the aiFilterIntent write it provokes runs
@@ -777,16 +903,37 @@ import { maybeFireInstallPixel } from './install-pixel';
         // races that write; losing the race sweeps redundantly (the old
         // behavior), never skips a needed sweep.
         if (newDescs.length > oldDescs.length) {
-          getStorage(['aiFilterIntent']).then(data => {
-            if (phraseAddNeedsReEvaluation(oldDescs, newDescs, data.aiFilterIntent?.aiPhrases)) {
-              reEvaluateAllPosts();
-            }
-          }).catch(err => console.error('[Bouncer] phrase-add re-evaluation check failed:', err));
+          // Adds that are purely structural ("no retweets", "videos") change
+          // nothing the model sees — skip the full pending-UI sweep and just
+          // apply the deterministic filters to the visible feed.
+          const oldSet = new Set(oldDescs);
+          const added = newDescs.filter(p => !oldSet.has(p));
+          const onlyStructuralAdded = STRUCTURAL_FILTER_SITES.has(adapter.siteId)
+            && added.length > 0
+            && added.every(p => structuralFilterKind(p) !== null);
+          if (onlyStructuralAdded) {
+            applyStructuralFilters();
+          } else {
+            getStorage(['aiFilterIntent']).then(data => {
+              if (phraseAddNeedsReEvaluation(oldDescs, newDescs, data.aiFilterIntent?.aiPhrases)) {
+                reEvaluateAllPosts();
+              }
+            }).catch(err => console.error('[Bouncer] phrase-add re-evaluation check failed:', err));
+          }
         } else if (newDescs.length < oldDescs.length) {
-          // Phrase removed via an out-of-band editor (iOS native sheet,
-          // desktop popup) — mirror removeFilterPhrase's in-feed behavior
-          // so the filtered-posts count resets.
-          clearFilteredPosts();
+          // Phrase(s) removed — via the in-feed chip, the iOS native sheet,
+          // the desktop popup, or another tab. Restore the posts that were
+          // hidden solely under the removed rules and refresh the rest. This
+          // listener is the single restore point: removeFilterPhrase
+          // deliberately does NOT run the restore itself (an earlier version
+          // did, but this listener fired first and cleared the filtered list
+          // out from under it), so every edit source behaves identically.
+          const newSet = new Set(newDescs);
+          const removed = oldDescs.filter(p => !newSet.has(p));
+          if (removed.length > 0) {
+            restoreOrRefreshFilteredPosts(removed, 'Filter rule removed; post no longer matches.')
+              .catch(err => console.error('[Bouncer] restore after phrase removal failed:', err));
+          }
         }
       }
       if (changes.aiFilterIntent) {
@@ -813,6 +960,30 @@ import { maybeFireInstallPixel } from './install-pixel';
           reEvaluateAllPosts();
         }
       }
+      if (changes.linkedinKeepOnly && keepOnlyAvailable) {
+        keepOnlyMode = changes.linkedinKeepOnly.newValue === true;
+        setKeepOnlyMode(keepOnlyMode);
+        // Flipping the mode inverts every past verdict: restore everything we
+        // hid, reset the filtered panel, and re-run the visible feed under the
+        // new polarity. Cheap — the backend cache still holds every verdict,
+        // only the negation changes.
+        document.querySelectorAll<HTMLElement>('[data-filtered-by-extension="true"]').forEach(cell => {
+          cell.style.display = '';
+          cell.style.visibility = '';
+          delete cell.dataset.filteredByExtension;
+          // The fade-out before hidePost leaves opacity:0 on the article
+          // itself — clear it or restored posts come back invisible.
+          const article = cell.matches(adapter.selectors.post)
+            ? cell
+            : cell.querySelector<HTMLElement>(adapter.selectors.post);
+          if (article) {
+            article.style.opacity = '';
+            article.style.transition = '';
+          }
+        });
+        clearFilteredPosts();
+        reEvaluateAllPosts();
+      }
       if (changes.filterReplies) {
         filterReplies = changes.filterReplies.newValue !== false;
         if (filterReplies) {
@@ -831,6 +1002,28 @@ import { maybeFireInstallPixel } from './install-pixel';
             delete cell.dataset.filteredByExtension;
             processedPosts.delete(article);
           });
+        }
+      }
+      const pausedKey = filteringPausedKeyFor(adapter.siteId);
+      if (changes[pausedKey]) {
+        // Apply the .paused class to every filter card (sidebar, bottom,
+        // mobile) so a second tab — or this tab after a settings-side toggle
+        // — reflects the new state immediately.
+        const isPaused = changes[pausedKey].newValue === true;
+        document.querySelectorAll('.filter-phrases-header').forEach(el => {
+          (el as HTMLElement).classList.toggle('paused', isPaused);
+        });
+        // Unpausing should behave like re-adding all phrase filters. Pausing
+        // is paired with restoreOrRefreshFilteredPosts on the originating tab,
+        // so we only need to re-evaluate on the false transition here. Skip
+        // the re-eval if no phrases are configured — pause only zeros out
+        // descriptions in the pipeline, so unpausing an empty list is a no-op
+        // and would otherwise flash every visible post grey for nothing.
+        if (!isPaused) {
+          void (async () => {
+            const descs = await getDescriptions(descriptionsKey);
+            if (descs.length > 0) reEvaluateAllPosts();
+          })();
         }
       }
     });
@@ -1029,11 +1222,6 @@ import { maybeFireInstallPixel } from './install-pixel';
   chrome.runtime.sendMessage({ type: 'pageLoad' }).catch(() => {
     // Ignore errors if background isn't ready yet
   });
-
-  // First page load after a fresh install: report the install conversion.
-  // Deliberately outside init() — it should fire even when filtering is
-  // disabled for this platform.
-  maybeFireInstallPixel().catch(err => console.error('[Bouncer] Install pixel failed:', err));
 
   // Start when DOM is ready
   if (document.readyState === 'loading') {

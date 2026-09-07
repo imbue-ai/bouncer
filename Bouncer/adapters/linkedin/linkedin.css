@@ -27,3 +27,169 @@
 .dark-mode .ff-why-annoying-btn--linkedin-header:hover {
   background: rgba(255, 255, 255, 0.12);
 }
+
+/* linkedin adaptation: suppress the mobile-web "get the full app experience"
+ * upsells (these classes only exist on the mobile layout, so this is inert on
+ * desktop SDUI). The blocking bottom sheet mounts inside a
+ * .top-level-modal-container along with its gray scrim, so the whole container
+ * must go — but only while it holds the upsell (:has guard), since other
+ * modals may mount into the same container. Class selectors only, no text
+ * matching, so this holds across locales.
+ *
+ * Hiding alone is not enough: when the blocking sheet arms it adds the
+ * `overflow-hidden` utility class to <body>, freezing gesture scrolling,
+ * and it only unlocks on a proper dismissal — which a hidden sheet can
+ * never receive. The companion neutralizer at the bottom of
+ * LinkedInAdapter.ts (shared by the desktop extension, Android, and iOS)
+ * pre-seeds LinkedIn's own sessionStorage dismissal records so the upsells
+ * never arm, with click/removal/lock-strip fallbacks. This CSS just
+ * guarantees the upsells never flash before that kicks in. */
+.upsell-bottom,
+.top-level-modal-container:has(.blocking-upsell-bottom-sheet) {
+  display: none !important;
+}
+
+/* linkedin adaptation: "Filter out" / "Keep only" mode selector. Collapsed,
+ * only the active mode's label is visible, sitting exactly where the static
+ * label normally sits. Hovering fans the two options out vertically —
+ * "Filter out" slides up, "Keep only" slides down — keeping the pair
+ * centered on the collapsed label's spot; clicking the other option switches
+ * modes (wired in ui.ts; setKeepOnlyMode swaps .active). Both buttons share
+ * one grid cell so the selector keeps a single line's footprint and the
+ * header row never reflows during the animation. Buttons inherit font/color
+ * from .filter-phrases-label so the shared light/dark theming keeps working. */
+.filter-mode-select {
+  display: inline-grid;
+  position: relative;
+}
+
+.filter-mode-option {
+  grid-area: 1 / 1;
+  justify-self: start;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  /* Padding enlarges the click target when fanned out, cancelled by negative
+   * margins so the text never shifts and the collapsed label aligns like a
+   * plain span. The expanded backdrop is the shared ::before sheet below —
+   * the options themselves stay unboxed. */
+  padding: 1px 6px;
+  margin: -1px -6px;
+  font: inherit;
+  color: inherit;
+  white-space: nowrap;
+  text-align: left;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(0);
+  transition: transform 0.22s cubic-bezier(0.25, 0.9, 0.35, 1.15), opacity 0.16s ease;
+  z-index: 4;
+}
+
+.filter-mode-option.active {
+  opacity: 1;
+  pointer-events: auto;
+  cursor: default;
+}
+
+/* Only the active option may size the selector: both buttons share one grid
+ * cell, so a wider hidden option ("Keep only" behind an active "Filter out")
+ * would otherwise pad the collapsed label on the right. Absolute positioning
+ * takes the inactive option out of flow; left/top 0 plus the shared negative
+ * margins land its text exactly on the active label's spot, so the hover fan
+ * animates the same (display: none would make it pop in untransitioned). */
+.filter-mode-option:not(.active) {
+  position: absolute;
+  left: 0;
+  top: 0;
+}
+
+/* Removing AI slop is a filter-out concept — while "Keep only" is active the
+ * indicator would read backwards (clicking it plants a removal phrase into
+ * the keep list), so the whole thing hides. The ff-keep-only class is set at
+ * render time by buildFilterContainerHTML and kept current by
+ * setKeepOnlyMode (both in content/ui.ts). */
+.filter-phrases-container.ff-keep-only .filter-ai-indicator {
+  display: none;
+}
+
+/* The fan is a pure overlay: the inactive option never rejoins the flow, so
+ * hovering must not change the selector's width (that would nudge the phrase
+ * input sitting after it in the header row). But the shared ::before sheet is
+ * anchored to the container's edges and can't see the out-of-flow option, so
+ * when the inactive label is wider it would poke past the sheet's right
+ * padding. ui.ts measures that overflow (syncModeFanOverflow) into
+ * --ff-fan-extra, and the sheet + hover hit area extend right by it. */
+
+/* Every :hover rule below is suppressed by .filter-mode-select--collapsed:
+ * ui.ts sets it when an option is clicked (choice made — close the fan) and
+ * removes it on mouseleave so the next hover expands again. */
+
+/* While expanded, stretch the hover hit area past the fanned options so the
+ * pointer can travel from the label to either option without leaving the
+ * selector and collapsing it mid-move. Sits below the buttons (z-index 4). */
+.filter-mode-select:hover:not(.filter-mode-select--collapsed)::after {
+  content: '';
+  position: absolute;
+  left: -12px;
+  right: calc(-12px - var(--ff-fan-extra, 0px));
+  top: -1.8em;
+  bottom: -1.8em;
+}
+
+/* One shared sheet behind both fanned options (no per-option pills): a
+ * single theme-colored panel that fades and stretches in on hover, sized to
+ * hug the fanned pair. Sits under the buttons (z-index 3 vs their 4) but
+ * above surrounding feed content. */
+.filter-mode-select::before {
+  content: '';
+  position: absolute;
+  left: -10px;
+  right: calc(-10px - var(--ff-fan-extra, 0px));
+  top: -16px;
+  bottom: -16px;
+  border-radius: 10px;
+  background: rgb(0, 0, 0);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.18), 0 4px 12px rgba(0, 0, 0, 0.4);
+  opacity: 0;
+  transform: scaleY(0.55);
+  transition: transform 0.22s cubic-bezier(0.25, 0.9, 0.35, 1.15), opacity 0.16s ease;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.light-mode .filter-mode-select::before {
+  background: rgb(255, 255, 255);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.14), 0 4px 12px rgba(0, 0, 0, 0.12);
+}
+
+.filter-mode-select:hover:not(.filter-mode-select--collapsed)::before {
+  opacity: 1;
+  transform: scaleY(1);
+}
+
+.filter-mode-select:hover:not(.filter-mode-select--collapsed) .filter-mode-option {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* The fan: up for "Filter out", down for "Keep only", symmetric around the
+ * collapsed center. 12px ≈ half an option's height plus a small gap. */
+.filter-mode-select:hover:not(.filter-mode-select--collapsed) .filter-mode-option--filter {
+  transform: translateY(-12px);
+}
+
+.filter-mode-select:hover:not(.filter-mode-select--collapsed) .filter-mode-option--keep {
+  transform: translateY(12px);
+}
+
+/* While expanded, the option you'd switch to reads dimmed until pointed at. */
+.filter-mode-select:hover:not(.filter-mode-select--collapsed) .filter-mode-option:not(.active) {
+  opacity: 0.6;
+}
+
+.filter-mode-select:hover:not(.filter-mode-select--collapsed) .filter-mode-option:not(.active):hover {
+  opacity: 1;
+  color: rgb(var(--bouncer-brand-rgb));
+}

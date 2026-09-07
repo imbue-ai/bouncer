@@ -21,6 +21,8 @@
 	<true/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Bouncer saves photos and videos to your photo library when you choose “Save to Photos”.</string>
 	<key>SFSafariWebExtensionConverterVersion</key>
 	<string>26.2</string>
 	<key>UIApplicationSceneManifest</key>

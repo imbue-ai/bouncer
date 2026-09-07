@@ -15,6 +15,8 @@ interface TweetStoreData {
   imageUrls: string[];
   videoThumbnailUrls: string[];
   mediaBlurred?: boolean;
+  isRepost?: boolean;
+  repostHeader?: string | null;
   quotedTweet?: {
     fullText: string;
     userName: string;
@@ -223,7 +225,34 @@ const BouncerTwitterAdapter = class TwitterAdapter implements PlatformAdapter {
 
     const hasPotentialMedia = hasMediaContainer || hasLargeImages || article.querySelectorAll('video').length > 0;
 
-    return { text, author, handle, avatarUrl, timeText, textHtml, quote, postUrl, imageUrls, hasMediaContainer: hasPotentialMedia };
+    const repostHeader = this._getRepostHeader(article);
+
+    return {
+      text, author, handle, avatarUrl, timeText, textHtml, quote, postUrl, imageUrls,
+      hasMediaContainer: hasPotentialMedia,
+      isRepost: repostHeader !== null,
+      repostHeader,
+      hasVideo: this._detectVideo(article),
+    };
+  }
+
+  /** A repost renders a socialContext header ("<name> reposted") that links to
+   *  the reposter's profile. Other socialContext variants are either not links
+   *  ("Pinned") or link under /i/ ("Posted in <community>"), so an ancestor
+   *  anchor to a profile path distinguishes reposts without locale-dependent
+   *  text matching. Returns the header text verbatim (locale-correct), or
+   *  null when the post is not a repost. */
+  private _getRepostHeader(article: HTMLElement): string | null {
+    const socialContext = article.querySelector('[data-testid="socialContext"]');
+    const link = socialContext?.closest('a[href]');
+    if (!link) return null;
+    const href = link.getAttribute('href') || '';
+    if (!href.startsWith('/') || href.startsWith('/i/')) return null;
+    return socialContext?.textContent?.replace(/\s+/g, ' ').trim() || 'Reposted';
+  }
+
+  private _detectVideo(article: HTMLElement): boolean {
+    return article.querySelector('[data-testid="videoPlayer"], video') !== null;
   }
 
   shouldProcessCurrentPage() {
@@ -418,7 +447,18 @@ const BouncerTwitterAdapter = class TwitterAdapter implements PlatformAdapter {
   async extractPostContentFromStore(article: HTMLElement): Promise<PostContent | null> {
     const storeData = await this._extractTweetDataFromStore(article);
     if (!storeData) return null;
-    return this._normalizeStoreData(storeData);
+    const content = this._normalizeStoreData(storeData);
+    // The DOM socialContext header catches reposts whose timeline entry
+    // resolves straight to the original tweet (no wrapper entity), and is
+    // locale-correct where the store path synthesizes English. The DOM video
+    // check catches players the store's media entities miss.
+    const domRepostHeader = this._getRepostHeader(article);
+    if (domRepostHeader !== null) {
+      content.isRepost = true;
+      content.repostHeader = domRepostHeader;
+    }
+    content.hasVideo = content.hasVideo || this._detectVideo(article);
+    return content;
   }
 
   /**
@@ -499,6 +539,9 @@ const BouncerTwitterAdapter = class TwitterAdapter implements PlatformAdapter {
       hasMediaContainer: allImageUrls.length > 0,
       fromStore: true,
       mediaBlurred: data.mediaBlurred || false,
+      isRepost: data.isRepost || false,
+      repostHeader: data.repostHeader || null,
+      hasVideo: (data.videoThumbnailUrls || []).length > 0,
     };
   }
 

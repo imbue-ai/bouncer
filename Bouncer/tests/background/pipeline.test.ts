@@ -316,6 +316,16 @@ describe('getSettings effectiveDescriptions', () => {
     expect(settings.effectiveDescriptions).toEqual(['politics']);
   });
 
+  it('excludes the bare "AI" keyword by construction, in any capitalization or spacing', async () => {
+    store.descriptions_twitter = [' ai ', 'AI art', 'politics'];
+    store.selectedModel = 'iosLocal:gemma-4-e2b-detector-v2';
+    // No aiFilterIntent in storage at all — the exclusion must not wait for
+    // the intent state to be written.
+
+    const settings = await getSettings('twitter');
+    expect(settings.effectiveDescriptions).toEqual(['AI art', 'politics']);
+  });
+
   it('keeps the seed phrase as an ordinary filter on models that cannot judge intent', async () => {
     store.descriptions_twitter = [AI_DETECTION_SEED_PHRASE, 'politics'];
     store.selectedModel = 'openai:gpt-4o'; // BYOK — AI detectors never engage

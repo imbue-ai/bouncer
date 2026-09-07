@@ -141,3 +141,69 @@ describe('LinkedIn desktop actor header extraction', () => {
     expect(content.handle).toBe('');
   });
 });
+
+// Current desktop SDUI layout (observed 2026-08): the FeedType componentkey
+// sits on a wrapper div; the post card is its `role="listitem"` direct child
+// (with no componentkey of its own), and a sibling "replaceableCommentTools"
+// div — whose componentkey ALSO contains "FeedType" — trails the card.
+const WRAPPER_KEY = 'expandedrmP0slHPXOJ9FeedType_MAIN_FEED_RELEVANCE';
+
+function makeWrappedDesktopPost(headerHtml: string): { wrapper: HTMLElement; post: HTMLElement } {
+  const wrapper = document.createElement('div');
+  wrapper.setAttribute('componentkey', WRAPPER_KEY);
+
+  const post = document.createElement('div');
+  post.setAttribute('role', 'listitem');
+  const header = document.createElement('div');
+  header.innerHTML = headerHtml;
+  post.appendChild(header);
+  wrapper.appendChild(post);
+
+  const commentTools = document.createElement('div');
+  commentTools.setAttribute(
+    'componentkey',
+    'EgsIgs-replaceableCommentToolsrmP0slHPXOJ9FeedType_MAIN_FEED_RELEVANCE'
+  );
+  wrapper.appendChild(commentTools);
+
+  document.body.appendChild(wrapper);
+  return { wrapper, post };
+}
+
+describe('LinkedIn desktop wrapper layout (componentkey on parent of listitem)', () => {
+  let adapter: PlatformAdapter;
+  beforeEach(() => {
+    document.body.replaceChildren();
+    adapter = new LinkedInAdapter();
+  });
+
+  it('post selector matches exactly the listitem card, not the comment-tools div', () => {
+    const { post } = makeWrappedDesktopPost(ACTOR_HEADER);
+    const matches = document.querySelectorAll(adapter.selectors.post);
+    expect(Array.from(matches)).toEqual([post]);
+  });
+
+  it('post selector still matches the older layout with componentkey on the listitem', () => {
+    const post = makeDesktopPost(ACTOR_HEADER);
+    const matches = document.querySelectorAll(adapter.selectors.post);
+    expect(Array.from(matches)).toEqual([post]);
+  });
+
+  it('resolves the content key from the wrapper componentkey', () => {
+    const { post } = makeWrappedDesktopPost(ACTOR_HEADER);
+    expect(adapter.getPostContentKey(post)).toBe(WRAPPER_KEY);
+  });
+
+  it('hides the whole wrapper (card plus comment tools), not just the listitem', () => {
+    const { wrapper, post } = makeWrappedDesktopPost(ACTOR_HEADER);
+    expect(adapter.getPostContainer(post)).toBe(wrapper);
+  });
+
+  it('extracts the actor header through the wrapper layout', () => {
+    const { post } = makeWrappedDesktopPost(ACTOR_HEADER);
+    const content = adapter.extractPostContent(post);
+    expect(content.author).toBe('Teddy Zheng');
+    expect(content.degree).toBe('3rd+');
+    expect(content.timeText).toBe('1d');
+  });
+});

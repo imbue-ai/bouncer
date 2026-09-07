@@ -4,6 +4,12 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- Lets PushRegistrar existence-check Play Services on API 30+. -->
+    <queries>
+        <package android:name="com.google.android.gms" />
+    </queries>
 
     <application
         android:name=".BouncerApplication"
@@ -30,6 +36,19 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Web Push transport: Play Services delivers push registrations and
+             encrypted push messages here. The SEND permission gate means only
+             Play Services can invoke it despite exported=true. -->
+        <receiver
+            android:name=".push.PushBroadcastReceiver"
+            android:exported="true"
+            android:permission="com.google.android.c2dm.permission.SEND">
+            <intent-filter>
+                <action android:name="com.google.android.c2dm.intent.RECEIVE" />
+                <action android:name="com.google.android.c2dm.intent.REGISTRATION" />
+            </intent-filter>
+        </receiver>
     </application>
 
 </manifest>

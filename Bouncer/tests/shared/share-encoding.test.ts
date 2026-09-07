@@ -112,3 +112,52 @@ describe('FILTER_PACK_CODE_REGEX', () => {
     expect(m?.[0]).toBe(code);
   });
 });
+
+describe('share-encoding named packs (method 0x02)', () => {
+  it('round-trips a named pack with dict-friendly phrases', async () => {
+    const pack = { phrases: ['crypto', 'engagement bait'], name: 'Money' };
+    const code = await encodeFilterPackCode(pack);
+    const decoded = await decodeFilterPackCode(code);
+    expect(decoded).toEqual(pack);
+  });
+
+  it('round-trips a name containing multibyte UTF-8', async () => {
+    const pack = { phrases: ['crypto'], name: 'Crypto 💸 pack' };
+    const code = await encodeFilterPackCode(pack);
+    const decoded = await decodeFilterPackCode(code);
+    expect(decoded).toEqual(pack);
+  });
+
+  it('round-trips an empty named pack', async () => {
+    const pack = { phrases: [], name: 'Empty' };
+    const code = await encodeFilterPackCode(pack);
+    const decoded = await decodeFilterPackCode(code);
+    expect(decoded).toEqual(pack);
+  });
+
+  it('treats whitespace-only names as absent (no 0x02 wrap)', async () => {
+    const named = await encodeFilterPackCode({ phrases: ['crypto'], name: '   ' });
+    const unnamed = await encodeFilterPackCode({ phrases: ['crypto'] });
+    expect(named).toBe(unnamed);
+    const decoded = await decodeFilterPackCode(named);
+    expect(decoded).toEqual({ phrases: ['crypto'] });
+  });
+
+  it('returns null for a truncated 0x02 record', async () => {
+    // method 0x02, nameLen 5, only 1 byte of name follows (no inner method).
+    const bytes = new Uint8Array([0x02, 0x05, 0x61]);
+    let bin = '';
+    for (const b of bytes) bin += String.fromCharCode(b);
+    const code = FILTER_PACK_CODE_PREFIX + btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    expect(await decodeFilterPackCode(code)).toBeNull();
+  });
+
+  it('returns null for a 0x02 record with zero-length name', async () => {
+    // method 0x02, nameLen 0, then inner method 0x00, empty payload.
+    const bytes = new Uint8Array([0x02, 0x00, 0x00]);
+    let bin = '';
+    for (const b of bytes) bin += String.fromCharCode(b);
+    const code = FILTER_PACK_CODE_PREFIX + btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    expect(await decodeFilterPackCode(code)).toBeNull();
+  });
+});

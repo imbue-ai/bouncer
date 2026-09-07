@@ -3,21 +3,34 @@
 import { toBlob } from 'html-to-image';
 import { asyncHandler } from '../shared/async';
 import { cleanReasoning, escapeHtml, formatPostForEvaluation, parseHTML, GUEST_FILTER_LIMIT, AI_DETECTION_SEED_PHRASE, phraseAddNeedsReEvaluation, SETTINGS_DOTS_PATH } from '../shared/utils';
+import { decideFilterRemoval } from '../shared/filter-removal';
 import { init as initPopup, applySiteScopedSettings } from '../popup/index';
 import {
   encodeFilterPackCode, decodeFilterPackCode, buildFilterPackShareUrl,
-  FILTER_PACK_SHARE_URL_REGEX,
+  FILTER_PACK_SHARE_URL_REGEX, FILTER_PACK_SHARE_URL_BASE, FILTER_PACK_CODE_PREFIX,
+  type SharedFilterPack,
 } from '../shared/share-encoding';
-import type { BackgroundToContentMessage, ContentUIDeps, FilteredPost, PostContent, LocalModelStatus } from '../types';
-import { getStorage, setStorage, getDescriptions, setDescriptions, aiIntentActiveForSite } from '../shared/storage';
-import { getReleaseNote } from './release-notes';
+import type { BackgroundToContentMessage, ContentUIDeps, FilteredPost, PipelineResponse, PostContent, LocalModelStatus } from '../types';
+import {
+  getStorage, setStorage, getDescriptions, setDescriptions,
+  aiIntentActiveForSite,
+  getFilteringPaused, setFilteringPaused,
+} from '../shared/storage';
+import { optionalPlatforms } from '../shared/platforms';
+import { getReleaseNote, WELCOME_TIP } from './release-notes';
 import { runIOSImportAnimation } from './ios';
+import {
+  applyBounceAction,
+  initBounceQuote,
+  sendMissedFeedback,
+} from './bounce-quote';
 
 // Dependencies (set by initUI from index.ts)
 let _deps: ContentUIDeps;
 
 export function initUI(deps: ContentUIDeps) {
   _deps = deps;
+  initBounceQuote(deps);
 
   // Safari re-injects content scripts when the user changes extension
   // permissions on a tab that's already loaded. The new injection has a
@@ -432,6 +445,110 @@ function showGuestLimitPopup() {
   showSignInPopup('guestLimit');
 }
 
+// ==================== First-install platform onboarding ====================
+
+let platformOnboardingBackdrop: HTMLElement | null = null;
+
+// One-time popup shown right after install (onInstalled opens x.com, sets
+// `showPlatformOnboarding`, and designates that tab), asking whether to also
+// activate Bouncer on the optional platforms (YouTube/LinkedIn on the Chrome
+// build). Deliberately shown before — and fully independent of — the sign-in
+// gate. Chrome-only: on Firefox onInstalled opens onboarding.html as its own
+// tab instead (extension iframes in web pages get no chrome.permissions on
+// Gecko), so the flag is never set there and this function no-ops.
+//
+// The dialog body is onboarding.html in an extension iframe rather than
+// content-script DOM: chrome.permissions.request() needs a user gesture in an
+// extension context, and a gesture doesn't survive a message hop to the
+// background — a click inside the iframe satisfies both (same trick as the
+// settings modal below). The popup never closes itself — granting platforms
+// leaves it up. Only an explicit dismissal (the Done button or a backdrop
+// click) clears the flag so it never comes back.
+export async function maybeShowPlatformOnboarding(): Promise<void> {
+  if (_deps.IS_IOS || chrome._polyfilled) return; // extension-only UI
+  if (optionalPlatforms().length === 0) return;   // nothing to offer on this target
+  if (platformOnboardingBackdrop?.isConnected) return; // idempotent
+  // The background arbitrates which tab may show the popup: only the tab
+  // that onInstalled opened (pre-existing x.com tabs never grow one). On
+  // Firefox the onboarding runs as its own extension tab instead — the flag
+  // is never set there, so the claim always answers false.
+  const claim = await chrome.runtime.sendMessage({ type: 'claimPlatformOnboarding' })
+    .catch(() => null) as { show?: boolean } | null;
+  if (claim?.show !== true) return;
+  if (platformOnboardingBackdrop?.isConnected) return; // re-check across the await
+
+  const theme = _deps.adapter.getThemeMode();
+  const backdrop = document.createElement('div');
+  backdrop.className = `bouncer-onboarding-backdrop ${theme}-mode`;
+  // Invisible until the iframe reports its height: the grey layer must never
+  // be on screen without a live, sized popup card in it.
+  backdrop.style.visibility = 'hidden';
+  const iframe = document.createElement('iframe');
+  iframe.className = 'bouncer-onboarding-iframe';
+  iframe.src = chrome.runtime.getURL('onboarding.html') + `?theme=${theme}`;
+  backdrop.appendChild(iframe);
+  document.body.appendChild(backdrop);
+  platformOnboardingBackdrop = backdrop;
+
+  let lifeline: chrome.runtime.Port | null = null;
+  // Remove the overlay without touching storage — used when the popup can't
+  // or shouldn't conclude the onboarding (iframe never loaded, extension
+  // reloaded), so a later page load can try again.
+  const teardown = () => {
+    window.removeEventListener('message', messageHandler);
+    clearTimeout(loadTimer);
+    try { lifeline?.disconnect(); } catch { /* runtime already gone */ }
+    lifeline = null;
+    backdrop.remove();
+    platformOnboardingBackdrop = null;
+  };
+  const close = () => {
+    teardown();
+    setStorage({ showPlatformOnboarding: false }).catch(err =>
+      console.error('[Bouncer] Failed to clear platform onboarding flag:', err));
+  };
+  // If the iframe never reports in (failed to load, dead extension frame),
+  // fold the overlay instead of leaving an inert layer over the page.
+  const loadTimer = setTimeout(teardown, 10_000);
+  const messageHandler = (event: MessageEvent<{ type?: string; height?: number }>) => {
+    if (event.source !== iframe.contentWindow || !event.data) return;
+    if (event.data.type === 'bouncerOnboardingDone') {
+      close();
+    } else if (event.data.type === 'bouncerOnboardingResize' && typeof event.data.height === 'number') {
+      iframe.style.height = `${event.data.height}px`;
+      // The card is alive and sized — now the backdrop may show.
+      backdrop.style.visibility = '';
+      clearTimeout(loadTimer);
+    }
+  };
+  window.addEventListener('message', messageHandler);
+  backdrop.addEventListener('click', (e) => {
+    if (e.target === backdrop) close();
+  });
+
+  // Lifeline to the background: no traffic, but its onDisconnect is the only
+  // signal an orphaned content script gets when the extension is reloaded or
+  // removed. Without it the extension iframe dies (blank card) while this
+  // plain-DOM backdrop lives on as an unexplained grey layer.
+  const connectLifeline = () => {
+    try {
+      lifeline = chrome.runtime.connect({ name: 'platform-onboarding' });
+      lifeline.onDisconnect.addListener(() => {
+        // The MV3 worker idling also drops the port; tear down only when the
+        // extension is actually gone (runtime.id vanishes for orphans).
+        if (chrome.runtime?.id && backdrop.isConnected) {
+          connectLifeline();
+          return;
+        }
+        teardown();
+      });
+    } catch {
+      teardown();
+    }
+  };
+  connectLifeline();
+}
+
 // Wire up the sign-in button click handler inside a container.
 // launchSignIn handles the platform split (Google popup vs Apple tab).
 function setupSignInButton(container: HTMLElement) {
@@ -447,38 +564,50 @@ function setupSignInButton(container: HTMLElement) {
 
 // ==================== Update Banner ====================
 
-// Shows a "what's new" banner inside the filter box once per version.
-// Reads release notes from src/shared/release-notes.ts. Dismissal writes
-// `lastSeenVersion` to chrome.storage.local so the banner stays gone.
+// Shows a "what's new" banner inside the filter box once per version — or,
+// on a brand-new install, the one-time welcome tip instead. Reads release
+// notes from ./release-notes.ts. Dismissal writes `lastSeenVersion` (or
+// clears `showWelcomeBanner`) to chrome.storage.local so the banner stays
+// gone. The slot only exists in the post-sign-in filter box, so the welcome
+// tip naturally appears after Google sign-in or "Skip sign-in".
 async function maybeRenderUpdateBanner(container: HTMLElement): Promise<void> {
   const slot = container.querySelector<HTMLElement>('.bouncer-update-banner-slot');
   if (!slot) return;
 
   const current = chrome.runtime.getManifest().version;
-  const { lastSeenVersion } = await getStorage(['lastSeenVersion']);
-  if (lastSeenVersion === current) return;
+  const { lastSeenVersion, showWelcomeBanner } = await getStorage(['lastSeenVersion', 'showWelcomeBanner']);
 
-  const platform = _deps.IS_IOS ? 'ios' : 'desktop';
-  const note = getReleaseNote(current, platform);
-  if (!note) {
-    // No notes for this version — silently advance so a future version still triggers.
-    await setStorage({ lastSeenVersion: current });
-    return;
+  // A fresh install gets the welcome tip — a single line, no title or
+  // bullets. onInstalled already pinned lastSeenVersion to the current
+  // version so the two banners never collide.
+  const welcome = showWelcomeBanner === true;
+  let bodyHTML: string;
+  if (welcome) {
+    bodyHTML = escapeHtml(WELCOME_TIP);
+  } else {
+    if (lastSeenVersion === current) return;
+    const note = getReleaseNote(current, _deps.IS_IOS ? 'ios' : 'desktop');
+    if (!note) {
+      // No notes for this version — silently advance so a future version still triggers.
+      await setStorage({ lastSeenVersion: current });
+      return;
+    }
+    const bulletsHTML = note.bullets.map(b => `<li>${escapeHtml(b)}</li>`).join('');
+    bodyHTML = `<div class="bouncer-update-banner-title">${escapeHtml(note.title)}</div>`
+      + `<ul class="bouncer-update-banner-bullets">${bulletsHTML}</ul>`;
   }
 
-  const bulletsHTML = note.bullets.map(b => `<li>${escapeHtml(b)}</li>`).join('');
   const html = `
     <div class="bouncer-update-banner" role="status">
       <button type="button" class="bouncer-update-banner-close" aria-label="Dismiss">×</button>
-      <div class="bouncer-update-banner-title">${escapeHtml(note.title)}</div>
-      <ul class="bouncer-update-banner-bullets">${bulletsHTML}</ul>
+      ${bodyHTML}
     </div>
   `;
   slot.replaceChildren(parseHTML(html));
 
   const closeBtn = slot.querySelector<HTMLButtonElement>('.bouncer-update-banner-close');
   closeBtn?.addEventListener('click', asyncHandler(async () => {
-    await setStorage({ lastSeenVersion: current });
+    await setStorage(welcome ? { showWelcomeBanner: false } : { lastSeenVersion: current });
     document.querySelectorAll('.bouncer-update-banner').forEach(el => el.remove());
   }));
 }
@@ -486,12 +615,24 @@ async function maybeRenderUpdateBanner(container: HTMLElement): Promise<void> {
 // ==================== Placeholder animation ====================
 
 const PLACEHOLDER_PHRASES = ['AI slop', 'politics', 'negativity', 'pessimism', 'political outrage', 'posts written by AI', 'ragebait', 'humblebragging', 'virtue signaling', 'idolizing elites', 'Elon Musk'];
+// Shown instead while LinkedIn's "Keep only" mode is active: things worth
+// keeping in a LinkedIn feed rather than things to remove. Must stay the
+// same length as PLACEHOLDER_PHRASES — the ff-placeholder-scroll keyframes
+// are generated once from that count and shared by both phrase sets.
+const KEEP_ONLY_PLACEHOLDER_PHRASES = ['job openings', 'AI research', 'startup news', 'engineering deep dives', 'career advice', 'product launches', 'industry analysis', 'open source projects', 'machine learning', 'founder stories', 'conference talks'];
 const PLACEHOLDER_DURATION = 10; // seconds for full cycle
 
-// Build placeholder HTML and inject dynamic keyframes once
-const placeholderItemsHTML = [...PLACEHOLDER_PHRASES, PLACEHOLDER_PHRASES[0]]
-  .map(p => `<span>${p}</span>`).join('');
-const placeholderHTML = `<span class="filter-input-wrapper"><input type="text" class="filter-phrases-input"><span class="filter-placeholder-cycle" aria-hidden="true"><span class="filter-placeholder-track">${placeholderItemsHTML}</span></span></span>`;
+// The cycling examples depend on the active mode, so the track contents are
+// built per render (and swapped in place by setKeepOnlyMode) instead of once
+// at module load.
+function placeholderTrackItemsHTML(): string {
+  const phrases = keepOnlyMode ? KEEP_ONLY_PLACEHOLDER_PHRASES : PLACEHOLDER_PHRASES;
+  return [...phrases, phrases[0]].map(p => `<span>${p}</span>`).join('');
+}
+
+function placeholderHTML(): string {
+  return `<span class="filter-input-wrapper"><textarea rows="1" class="filter-phrases-input"></textarea><span class="filter-placeholder-cycle" aria-hidden="true"><span class="filter-placeholder-track">${placeholderTrackItemsHTML()}</span></span></span>`;
+}
 
 // AI-detection indicator, top-right of every authenticated filter box. It
 // reports the state AND toggles it — but only through the natural-language
@@ -532,11 +673,14 @@ function injectPlaceholderKeyframes() {
 // Inject keyframes on load
 injectPlaceholderKeyframes();
 
-// X-style share-up icon used by the circular share button on the actions row.
-const shareIconSVG = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><g><path d="M12 2.59l5.7 5.7-1.41 1.42L13 6.41V16h-2V6.41l-3.3 3.3-1.41-1.42L12 2.59zM21 15l-.02 3.51c0 1.38-1.12 2.49-2.5 2.49H5.5C4.11 21 3 19.88 3 18.5V15h2v3.5c0 .28.22.5.5.5h12.98c.28 0 .5-.22.5-.5L19 15h2z"></path></g></svg>';
-
 // X-style horizontal ellipsis icon used by the settings button on the actions row.
 const settingsIconSVG = `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><g><path d="${SETTINGS_DOTS_PATH}"></path></g></svg>`;
+
+// Pause icon (two bars) for the inline button right of the input.
+const pauseIconSVG = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><g><path d="M6 5h4v14H6V5zm8 0h4v14h-4V5z"></path></g></svg>';
+
+// Play icon (right-pointing triangle) for the overlay shown while paused.
+const playIconSVG = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><g><path d="M8 5v14l11-7z"></path></g></svg>';
 
 // ==================== State Accessors ====================
 
@@ -585,26 +729,106 @@ function updateSidebarFilterVisibility() {
   }
 }
 
-/** Markup for one filter box.
- *  - `showSignOut`: adds the sign-out link (iOS in-app popup only).
- *  - `showSettings`: the "…" overflow that opens the full settings modal.
- *    Suppressed for `'external'` placements (Instagram), where the box lives
- *    inside a page panel and a blocking overlay would cover the reel. */
-function buildFilterContainerHTML(showSignOut = false, showSettings = true): string {
+// LinkedIn (browser only) "keep only" mode. Cached here for synchronous
+// label rendering; loaded and kept current from content/index.ts (init and
+// its storage-change listener) via setKeepOnlyMode. Always false elsewhere —
+// the selector below is only rendered on LinkedIn.
+let keepOnlyMode = false;
+
+export function setKeepOnlyMode(on: boolean) {
+  keepOnlyMode = on;
+  document.querySelectorAll<HTMLElement>('.filter-mode-select').forEach(sel => {
+    sel.querySelector('.filter-mode-option--filter')?.classList.toggle('active', !on);
+    sel.querySelector('.filter-mode-option--keep')?.classList.toggle('active', on);
+  });
+  // The cycling placeholder examples are mode-specific (things to remove vs
+  // things to keep) — swap the track contents in place. Both phrase sets have
+  // the same count, so the shared keyframes keep lining up mid-animation.
+  document.querySelectorAll<HTMLElement>('.filter-placeholder-track').forEach(track => {
+    track.replaceChildren(parseHTML(placeholderTrackItemsHTML()));
+  });
+  // Mirrors the class buildFilterContainerHTML sets at render time; CSS in
+  // linkedin.css hides filter-out-only chrome (the "REMOVE AI SLOP?"
+  // indicator) while keep-only is active.
+  document.querySelectorAll<HTMLElement>('.filter-phrases-container').forEach(c => {
+    c.classList.toggle('ff-keep-only', on);
+  });
+  syncModeFanOverflow();
+}
+
+// The mode selector's expanded fan is a pure overlay — the inactive option is
+// absolutely positioned (linkedin.css) so hovering never widens the selector
+// and nudges the phrase input after it. CSS therefore can't size the shared
+// hover backdrop to an inactive label that's wider than the active one;
+// measure the overflow and hand it to the stylesheet as --ff-fan-extra.
+// Called on filter-box setup and from setKeepOnlyMode (swapping .active
+// changes which label overflows).
+function syncModeFanOverflow() {
+  document.querySelectorAll<HTMLElement>('.filter-mode-select').forEach(sel => {
+    const active = sel.querySelector<HTMLElement>('.filter-mode-option.active');
+    if (!active) return;
+    const activeWidth = active.getBoundingClientRect().width;
+    const extra = Math.max(0, ...Array.from(
+      sel.querySelectorAll<HTMLElement>('.filter-mode-option'),
+      o => o.getBoundingClientRect().width - activeWidth,
+    ));
+    sel.style.setProperty('--ff-fan-extra', `${extra}px`);
+  });
+}
+
+// LinkedIn (browser only) gets a mode selector where the static "Filter out"
+// label normally sits. Collapsed it shows just the active mode; hovering fans
+// both options out vertically around that spot ("Filter out" up, "Keep only"
+// down — see .filter-mode-select in linkedin.css) and clicking one selects
+// that mode. Everywhere else (other platforms, the iOS app) the label stays
+// a plain span.
+function buildModeLabelHTML(): string {
+  if (_deps.adapter.siteId !== 'linkedin' || _deps.IS_IOS) {
+    return '<span class="filter-phrases-label">Filter out</span>';
+  }
   return `
-    <div class="filter-phrases-container">
+    <span class="filter-phrases-label filter-mode-select">
+      <button type="button" class="filter-mode-option filter-mode-option--filter${keepOnlyMode ? '' : ' active'}" title="Hide posts that match your phrases">Filter out</button>
+      <button type="button" class="filter-mode-option filter-mode-option--keep${keepOnlyMode ? ' active' : ''}" title="Hide everything except posts that match your phrases">Keep only</button>
+    </span>`;
+}
+
+interface FilterContainerInitialState {
+  hasPhrases?: boolean;
+  paused?: boolean;
+  /** The "…" overflow that opens the full settings modal. Defaults to shown;
+   *  suppressed for `'external'` placements (Instagram), where the box lives
+   *  inside a page panel and a blocking overlay would cover the reel. */
+  showSettings?: boolean;
+}
+
+function buildFilterContainerHTML(showSignOut = false, initial: FilterContainerInitialState = {}): string {
+  const placeholderHidden = initial.hasPhrases === true;
+  const placeholderClass = placeholderHidden
+    ? 'filter-placeholder-cycle hidden'
+    : 'filter-placeholder-cycle';
+  const placeholderMarkup = placeholderHTML()
+    .replace('filter-placeholder-cycle', placeholderClass);
+  const paused = initial.paused === true;
+  const headerClass = paused ? 'filter-phrases-header paused' : 'filter-phrases-header';
+  return `
+    <div class="filter-phrases-container${keepOnlyMode ? ' ff-keep-only' : ''}">
       <div class="bouncer-update-banner-slot"></div>
       <div class="filter-phrases-title-row">
         <span class="filter-phrases-box-name">Bouncer</span>
         ${aiIndicatorHTML}
       </div>
-      <div class="filter-phrases-header">
-        <span class="filter-phrases-label">Filter out</span>
+      <div class="${headerClass}">
+        ${buildModeLabelHTML()}
         <span class="filter-phrases-list"></span>
         <span class="filter-phrases-and-input">
           <span class="filter-phrases-and">and</span>
-          ${placeholderHTML}
+          ${placeholderMarkup}
+          <button class="filter-pause-btn" type="button" aria-label="Pause filtering">${pauseIconSVG}</button>
         </span>
+        <div class="filter-paused-overlay">
+          <button class="filter-paused-play-btn" type="button" aria-label="Resume filtering">${playIconSVG}</button>
+        </div>
       </div>
       ${guestTrialNoticeHTML()}
       <div class="filter-model-loading" style="display: none;">
@@ -619,10 +843,10 @@ function buildFilterContainerHTML(showSignOut = false, showSettings = true): str
             <span class="filtered-toggle-text">View filtered</span>
             <span class="filtered-toggle-count">(0)</span>
           </button>
+          <button class="filter-pack-share-btn" type="button" aria-label="Share your filters">Share filters</button>
         </div>
         <div class="filter-phrases-actions-right">
-          <button class="filter-pack-share-btn" type="button" aria-label="Share your filters">${shareIconSVG}</button>
-          ${showSettings ? `<button class="filter-settings-btn" type="button" aria-label="Settings">${settingsIconSVG}</button>` : ''}
+          ${initial.showSettings === false ? '' : `<button class="filter-settings-btn" type="button" aria-label="Settings">${settingsIconSVG}</button>`}
           ${showSignOut ? '<button class="filter-signout-btn" style="font-size:12px;color:#71767b;background:none;border:none;cursor:pointer;padding:2px 0;">Sign out</button>' : ''}
         </div>
       </div>
@@ -710,7 +934,36 @@ function findSidebarWrapper(sidebarContent: Element): HTMLElement | null {
   return null;
 }
 
-export function injectFilterPhrasesInput() {
+// Pre-fetch every bit of persisted state the filter card's first paint
+// depends on. Callers (inject*) await this BEFORE inserting the container so
+// the user never sees the template defaults flash to the persisted state on
+// page-switch reinjection.
+interface FilterCardInitialState {
+  descriptions: string[];
+  paused: boolean;
+}
+async function loadFilterCardInitialState(): Promise<FilterCardInitialState> {
+  const siteId = _deps.adapter.siteId;
+  const [descriptions, paused] = await Promise.all([
+    getDescriptions(_deps.descriptionsKey),
+    getFilteringPaused(siteId),
+  ]);
+  return { descriptions, paused };
+}
+
+// Fill in the (still off-DOM) filter card's phrase list with the user's
+// saved phrases. Mirrors what syncFilterPhrases would do later, but on the
+// detached element so the first paint already looks right.
+function paintInitialPhrasesList(card: HTMLElement, state: FilterCardInitialState): void {
+  const list = card.querySelector<HTMLElement>('.filter-phrases-list');
+  if (!list) return;
+  renderPhrasesInContainer(list, state.descriptions);
+}
+
+export function injectFilterPhrasesInput(): void {
+  void injectFilterPhrasesInputImpl();
+}
+async function injectFilterPhrasesInputImpl() {
   const existingInDom = document.querySelectorAll('.filter-phrases-sidebar').length;
   // Adopt any existing node in the DOM (may have been created by a previous
   // content-script injection whose module state is gone).
@@ -787,7 +1040,19 @@ export function injectFilterPhrasesInput() {
     'BOUNCER_ENV=', process.env.BOUNCER_ENV,
     '→ showSignOut=', showSignOut);
 
-  filterPhrasesContainer.replaceChildren(parseHTML(buildFilterContainerHTML(showSignOut)));
+  // Pre-fetch every bit of state the first paint depends on so the user sees
+  // the right card immediately, never the template defaults snapping to the
+  // persisted state. The container is only inserted into the DOM AFTER this
+  // resolves.
+  const initialState = await loadFilterCardInitialState();
+  // The DOM might have changed during the await (another inject pass might
+  // have created the box). If so, bail.
+  if (filterPhrasesContainer.isConnected) return;
+  filterPhrasesContainer.replaceChildren(parseHTML(buildFilterContainerHTML(showSignOut, {
+    hasPhrases: initialState.descriptions.length > 0,
+    paused: initialState.paused,
+  })));
+  paintInitialPhrasesList(filterPhrasesContainer, initialState);
 
   // Insert at the chosen target (inside the wrapper, or fallback at top of sidebarContent)
   insertParent.insertBefore(filterPhrasesContainer, insertBeforeRef);
@@ -872,7 +1137,7 @@ export async function toggleAiDetectionViaPhrases(): Promise<void> {
     const next = sitePhrases.filter(d => !aiKeys.has(d.trim().toLowerCase()));
     if (next.length !== sitePhrases.length) {
       await setDescriptions(_deps.descriptionsKey, next);
-      syncFilterPhrases();
+      void syncFilterPhrases();
       return;
     }
   }
@@ -888,7 +1153,7 @@ function setupFilterBoxEventHandlers(container: HTMLElement) {
   (container as HTMLElement & { __ffWired?: boolean }).__ffWired = true;
 
   const phrasesListContainer = container.querySelector('.filter-phrases-list')!;
-  const input = container.querySelector<HTMLInputElement>('.filter-phrases-input')!;
+  const input = container.querySelector<HTMLTextAreaElement>('.filter-phrases-input')!;
   const placeholderCycle = container.querySelector('.filter-placeholder-cycle');
   const toggleBtn = container.querySelector('.filtered-toggle-btn:not(.filter-pack-toggle-btn)')!;
   // Absent when the box is built with showSettings = false (Instagram).
@@ -907,10 +1172,86 @@ function setupFilterBoxEventHandlers(container: HTMLElement) {
     const hasText = input.value.length > 0;
     placeholderCycle.classList.toggle('hidden', hasPhrases || hasText);
   }
-  input.addEventListener('input', updatePlaceholderVisibility);
+  // Auto-grow the textarea so long phrases wrap onto additional lines.
+  // With box-sizing: border-box the `height` value includes borders, but
+  // scrollHeight only covers content + padding — so we add the border back
+  // in, otherwise the field visibly shrinks by the border width on the
+  // first keystroke.
+  //
+  // Once the text actually does wrap, push the whole .filter-phrases-and-
+  // input onto its own row in the header. Without this, the input shares
+  // the row with "Filter out" and any chips, so a long phrase wraps many
+  // times at a narrow column width — typing a sentence feels chopped up.
+  // Giving the input the full row width as soon as a wrap is detected lets
+  // long phrases extend naturally. The class is sticky for the editing
+  // session and only clears when the field empties out (e.g. after submit
+  // or backspace-to-empty), which avoids oscillating around the wrap
+  // boundary as characters are added/removed near the threshold.
+  const headerEl = container.querySelector<HTMLElement>('.filter-phrases-header');
+  function autosizeInput() {
+    input.style.height = 'auto';
+    const borderY = input.offsetHeight - input.clientHeight;
+    input.style.height = `${input.scrollHeight + borderY}px`;
+
+    if (!headerEl) return;
+    if (input.value === '') {
+      headerEl.classList.remove('input-wraps');
+      return;
+    }
+    if (headerEl.classList.contains('input-wraps')) return;
+
+    const lineHeightPx = parseFloat(getComputedStyle(input).lineHeight) || 22;
+    const wrapped = input.scrollHeight > lineHeightPx * 1.5;
+    if (wrapped) {
+      headerEl.classList.add('input-wraps');
+      // Re-measure after the class takes effect: the input now has the
+      // full row width, so its scrollHeight will drop back toward one
+      // line for short-ish phrases. Keep the height honest either way.
+      input.style.height = 'auto';
+      input.style.height = `${input.scrollHeight + borderY}px`;
+    }
+  }
+  input.addEventListener('input', () => {
+    updatePlaceholderVisibility();
+    autosizeInput();
+  });
 
   // Settings button click
   settingsBtn?.addEventListener('click', () => showSettingsModal());
+
+  // "Filter out" / "Keep only" mode selector — the buttons only exist on
+  // LinkedIn browser builds (see buildModeLabelHTML). Each mode keeps its own
+  // phrase list: the active one lives in descriptions_linkedin, the inactive
+  // one is stashed in linkedinInactiveModePhrases, and switching modes swaps
+  // them. All three keys go in one storage write so the change listener in
+  // content/index.ts (which flips the labels and re-evaluates the feed) sees
+  // the new mode and its list together, never a mixed state.
+  syncModeFanOverflow();
+  container.querySelectorAll<HTMLButtonElement>('.filter-mode-option').forEach(btn => {
+    btn.addEventListener('click', asyncHandler(async () => {
+      const wantKeepOnly = btn.classList.contains('filter-mode-option--keep');
+      if (wantKeepOnly === keepOnlyMode) return;
+      // Choice made — collapse the fan. It's pure :hover CSS, so without this
+      // it would stay open until the pointer wanders off. The class suppresses
+      // the hover rules (see linkedin.css) and mouseleave re-arms them.
+      const select = btn.closest<HTMLElement>('.filter-mode-select');
+      if (select) {
+        select.classList.add('filter-mode-select--collapsed');
+        select.addEventListener('mouseleave', () => {
+          select.classList.remove('filter-mode-select--collapsed');
+        }, { once: true });
+      }
+      const [currentPhrases, stash] = await Promise.all([
+        getDescriptions(_deps.descriptionsKey),
+        getStorage(['linkedinInactiveModePhrases']),
+      ]);
+      await setStorage({
+        linkedinKeepOnly: wantKeepOnly,
+        [_deps.descriptionsKey]: stash.linkedinInactiveModePhrases || [],
+        linkedinInactiveModePhrases: currentPhrases,
+      });
+    }));
+  });
 
   // Guest-trial notice: the CTA deep-links to the local model section of the
   // settings modal. If a local model is already driving filtering, the trial
@@ -934,16 +1275,46 @@ function setupFilterBoxEventHandlers(container: HTMLElement) {
   const shareBtn = container.querySelector<HTMLButtonElement>('.filter-pack-share-btn');
   if (shareBtn) {
     shareBtn.addEventListener('click', () => {
-      shareFilterPack(container).catch(err => console.error('[UI] shareFilterPack failed:', err));
+      shareFilterPack().catch(err => console.error('[UI] shareFilterPack failed:', err));
     });
   }
 
-  // Load and render saved descriptions
-  getDescriptions(_deps.descriptionsKey).then((descriptions) => {
-    if (descriptions.length > 0) {
-      renderPhrasesInContainer(phrasesListContainer, descriptions);
-    }
-  }).catch(err => console.error('[UI] Failed to load descriptions:', err));
+  // Pause / play: pause masks descriptions in the background pipeline (see
+  // getSettings) and un-hides phrase-filtered posts on the page; play clears
+  // the flag and re-evaluates visible posts. The .paused class is applied to
+  // EVERY filter card (sidebar/bottom/mobile) by the storage.onChanged
+  // listener in content/index.ts so we don't need to toggle classes here.
+  const pauseBtn = container.querySelector<HTMLButtonElement>('.filter-pause-btn');
+  if (pauseBtn) {
+    pauseBtn.addEventListener('click', asyncHandler(async () => {
+      const siteId = _deps.adapter.siteId;
+      const descriptions = await getDescriptions(_deps.descriptionsKey);
+      await setFilteringPaused(siteId, true);
+      // Un-hide posts that were hidden under phrase rules. Posts that were
+      // also flagged by the AI text filter stay hidden under that rule.
+      await restoreOrRefreshFilteredPosts(descriptions, 'Filtering paused');
+      // Cache pollution cleanup: restoreFilteredPost re-writes overridden
+      // (shouldHide=false) entries; wipe everything so play-side re-eval is
+      // fresh.
+      await chrome.runtime.sendMessage({ type: 'clearCache' }).catch(err =>
+        console.error('[UI] clearCache after pause failed:', err));
+    }));
+  }
+  const playBtn = container.querySelector<HTMLButtonElement>('.filter-paused-play-btn');
+  if (playBtn) {
+    playBtn.addEventListener('click', asyncHandler(async () => {
+      const siteId = _deps.adapter.siteId;
+      await setFilteringPaused(siteId, false);
+      // Any evaluations that ran while paused — e.g. a phrase added mid-pause,
+      // or new posts that streamed in — cached shouldHide=false because the
+      // pipeline masked descriptions to []. Wipe so play-side re-eval actually
+      // runs against the current phrase set instead of hitting stale "no
+      // filter" verdicts.
+      await chrome.runtime.sendMessage({ type: 'clearCache' }).catch(err =>
+        console.error('[UI] clearCache after play failed:', err));
+      _deps.reEvaluateAllPosts();
+    }));
+  }
 
   // Enter or comma key to add phrase
   input.addEventListener('keypress', (e) => {
@@ -953,6 +1324,7 @@ function setupFilterBoxEventHandlers(container: HTMLElement) {
         const added = await addFilterPhrase(input.value.trim());
         if (added) input.value = '';
         updatePlaceholderVisibility();
+        autosizeInput();
       })().catch(err => console.error('[UI] filter phrase keypress handler failed:', err));
     }
   });
@@ -969,6 +1341,7 @@ function setupFilterBoxEventHandlers(container: HTMLElement) {
         }
         input.value = '';
         updatePlaceholderVisibility();
+        autosizeInput();
       })().catch(err => console.error('[UI] filter phrase paste handler failed:', err));
     }
   });
@@ -1017,7 +1390,10 @@ function updateBottomFilterVisibility() {
   }
 }
 
-export function injectBottomFilterBox() {
+export function injectBottomFilterBox(): void {
+  void injectBottomFilterBoxImpl();
+}
+async function injectBottomFilterBoxImpl() {
   if (_deps.IS_IOS) return;
   const existingInDom = document.querySelectorAll('.filter-phrases-bottom').length;
   // Adopt any existing node left by a previous injection
@@ -1056,12 +1432,18 @@ export function injectBottomFilterBox() {
     return;
   }
 
+  const initialState = await loadFilterCardInitialState();
+  if (bottomFilterContainer.isConnected) return;
   bottomFilterContainer.replaceChildren(parseHTML(`
     <div class="filter-collapse-handle">
       <span class="filter-collapse-chevron"></span>
     </div>
-    ${buildFilterContainerHTML()}
+    ${buildFilterContainerHTML(false, {
+      hasPhrases: initialState.descriptions.length > 0,
+      paused: initialState.paused,
+    })}
   `));
+  paintInitialPhrasesList(bottomFilterContainer, initialState);
 
   // Append to body
   document.body.appendChild(bottomFilterContainer);
@@ -1107,7 +1489,10 @@ function updateMobileFilterVisibility() {
   }
 }
 
-export function injectMobileFilterBox() {
+export function injectMobileFilterBox(): void {
+  void injectMobileFilterBoxImpl();
+}
+async function injectMobileFilterBoxImpl() {
   if (_deps.IS_IOS) return;
   const existingInDom = document.querySelectorAll('.filter-phrases-mobile').length;
   // Adopt any existing node left by a previous injection
@@ -1140,7 +1525,13 @@ export function injectMobileFilterBox() {
     return;
   }
 
-  mobileFilterContainer.replaceChildren(parseHTML(buildFilterContainerHTML()));
+  const initialState = await loadFilterCardInitialState();
+  if (mobileFilterContainer.isConnected) return;
+  mobileFilterContainer.replaceChildren(parseHTML(buildFilterContainerHTML(false, {
+    hasPhrases: initialState.descriptions.length > 0,
+    paused: initialState.paused,
+  })));
+  paintInitialPhrasesList(mobileFilterContainer, initialState);
 
   // Insert before the navigation element
   nav.parentNode!.insertBefore(mobileFilterContainer, nav);
@@ -1227,7 +1618,7 @@ function mountExternalFilterBox(host: HTMLElement): void {
     return;
   }
 
-  container.replaceChildren(parseHTML(buildFilterContainerHTML(false, false)));
+  container.replaceChildren(parseHTML(buildFilterContainerHTML(false, { showSettings: false })));
   host.replaceChildren(container);
   panelFilterContainer = container;
 
@@ -1235,7 +1626,7 @@ function mountExternalFilterBox(host: HTMLElement): void {
   updateFilteredTabCount();
   setupFilterBoxEventHandlers(container);
   // The box is built empty; pull the persisted phrases into it.
-  syncFilterPhrases();
+  void syncFilterPhrases();
 }
 
 export function injectBannerFilterBox() {
@@ -1296,8 +1687,8 @@ export function injectBannerFilterBox() {
 
 // ==================== Filter Phrases ====================
 
-export function syncFilterPhrases() {
-  getDescriptions(_deps.descriptionsKey).then((descriptions) => {
+export function syncFilterPhrases(): Promise<void> {
+  return getDescriptions(_deps.descriptionsKey).then((descriptions) => {
 
     // Update desktop/tablet/mobile containers
     filterBoxContainers().forEach(container => {
@@ -1317,22 +1708,20 @@ export function syncFilterPhrases() {
   }).catch(err => console.error('[UI] Failed to sync filter phrases:', err));
 }
 
+
 // ==================== Share Filter Pack ====================
-
-
 
 let sharingFilterPackInProgress = false;
 
-async function shareFilterPack(container: HTMLElement): Promise<void> {
+async function shareFilterPack(): Promise<void> {
   if (sharingFilterPackInProgress) return;
   sharingFilterPackInProgress = true;
-
-  const box = container.querySelector<HTMLElement>('.filter-phrases-container');
-  if (!box) { sharingFilterPackInProgress = false; return; }
-
   try {
-    const file = await screenshotFilterBox(box);
     const sharedPhrases = await getDescriptions(_deps.descriptionsKey);
+    const file = await screenshotFilterCardOffscreen(
+      (list) => renderPhrasesInContainer(list, sharedPhrases),
+      'bouncer-filter-pack.png',
+    );
     const shareCode = await encodeFilterPackCode({ phrases: sharedPhrases });
     await openComposerWithImage(file, shareCode);
   } catch (err) {
@@ -1342,25 +1731,73 @@ async function shareFilterPack(container: HTMLElement): Promise<void> {
   }
 }
 
-async function screenshotFilterBox(box: HTMLElement): Promise<File> {
-  box.classList.add('ff-capture');
-  let blob: Blob | null;
+// Build a throwaway off-screen .filter-phrases-container, hand its phrase list
+// to the caller to fill in, rasterize it via html-to-image, and tear it down.
+// Every "capture the filter card" path in the extension (share-filters
+// desktop, share-filters iOS, bounce-quote) routes through here so screenshots
+// are independent of viewport width and never flicker the live UI.
+//
+// The wrapper deliberately doesn't use .filter-phrases-sidebar/-bottom/-mobile
+// — those classes are hidden under body.ff-ios and pull in layout-specific
+// overrides we don't want for the canonical capture. Layout-class-scoped CSS
+// (like the font-family rule at the top of content.css) won't apply either,
+// so the system font stack is inlined here.
+export async function screenshotFilterCardOffscreen(
+  populate: (list: HTMLElement) => void,
+  fileName: string,
+): Promise<File> {
+  const theme = _deps.adapter.getThemeMode();
+  const wrapper = document.createElement('div');
+  wrapper.className = `${theme}-mode`;
+  wrapper.style.position = 'fixed';
+  wrapper.style.left = '-10000px';
+  wrapper.style.top = '0';
+  // 320px clipped the right-aligned "Settings" button at the desktop card's
+  // gap+padding budget. 380px gives the actions row enough horizontal space
+  // for "View filtered (N)" + "Filter packs" + "Settings" without overflow.
+  wrapper.style.width = '380px';
+  wrapper.style.zIndex = '-1';
+  wrapper.style.pointerEvents = 'none';
+  wrapper.style.fontFamily = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
+  wrapper.replaceChildren(parseHTML(buildFilterContainerHTML(false)));
+
+  // Strip elements that don't belong in a shared screenshot:
+  //   - .filter-ai-indicator: personal state, not part of the pack identity.
+  //   - share/settings/pause icons: local chrome.
+  //   - .filter-placeholder-cycle: the cycling "negativity / ragebait / ..."
+  //     prompt would otherwise be baked into the image at whatever frame the
+  //     animation happens to be on. Keep the surrounding "and ___" input
+  //     itself so the card still reads like the live UI.
+  wrapper.querySelectorAll('.filter-ai-indicator').forEach(el => el.remove());
+  wrapper.querySelector('.filter-pack-share-btn')?.remove();
+  wrapper.querySelector('.filter-settings-btn')?.remove();
+  wrapper.querySelector('.filter-pause-btn')?.remove();
+  wrapper.querySelector('.filter-paused-overlay')?.remove();
+  wrapper.querySelector('.filter-placeholder-cycle')?.remove();
+
+  const list = wrapper.querySelector<HTMLElement>('.filter-phrases-list');
+  if (list) populate(list);
+
+  document.body.appendChild(wrapper);
   try {
-    blob = await toBlob(box, {
+    const box = wrapper.querySelector<HTMLElement>('.filter-phrases-container');
+    if (!box) throw new Error('Off-screen filter container missing');
+    box.classList.add('ff-capture');
+    const blob = await toBlob(box, {
       pixelRatio: Math.max(window.devicePixelRatio || 1, 3),
       cacheBust: true,
     });
+    if (!blob) throw new Error('html-to-image returned null');
+    return new File([blob], fileName, { type: 'image/png' });
   } finally {
-    box.classList.remove('ff-capture');
+    wrapper.remove();
   }
-  if (!blob) throw new Error('html-to-image returned null');
-  return new File([blob], 'bouncer-filter-pack.png', { type: 'image/png' });
 }
 
 // iOS variant: there's no visible filter card on x.com when the iOS app's
 // native sheet is the user's filter UI. We render an off-screen replica of
 // the desktop card, screenshot it, and feed it into the same composer-paste
-// flow the desktop "Share filters" button uses. The screenshot needs to look
+// flow the desktop share-filter-pack button uses. The screenshot needs to look
 // like what a desktop user would share, so we reuse buildFilterContainerHTML
 // + the renderPhrasesInContainer pill rendering.
 export async function shareFilterPackForIOS(): Promise<void> {
@@ -1376,49 +1813,12 @@ export async function shareFilterPackForIOS(): Promise<void> {
 async function runShareFilterPackForIOS(): Promise<void> {
   const phrases = await getDescriptions(_deps.descriptionsKey);
   if (phrases.length === 0) throw new Error('No phrases to share');
-
-  // Off-screen wrapper carries the theme class so .light-mode/.dark-mode
-  // descendant selectors in content.css resolve correctly. position:fixed +
-  // far-negative left keeps it out of the viewport without display:none,
-  // which html-to-image needs in order to compute layout.
-  //
-  // Deliberately NOT using the .filter-phrases-sidebar/-bottom/-mobile class
-  // here — content.css hides those on body.ff-ios, which would zero out the
-  // screenshot. Side effect: the font-family rule at the top of content.css
-  // is scoped to those same classes, so we inline the same stack here so the
-  // screenshot doesn't fall back to the browser's serif default.
-  const theme = _deps.adapter.getThemeMode();
-  const wrapper = document.createElement('div');
-  wrapper.className = `${theme}-mode`;
-  wrapper.style.position = 'fixed';
-  wrapper.style.left = '-10000px';
-  wrapper.style.top = '0';
-  // 320px clipped the right-aligned "Settings" button at the desktop card's
-  // gap+padding budget. 380px gives the actions row enough horizontal space
-  // for "View filtered (N)" + "Share filters" + "Settings" without overflow.
-  wrapper.style.width = '380px';
-  wrapper.style.zIndex = '-1';
-  wrapper.style.pointerEvents = 'none';
-  wrapper.style.fontFamily = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
-  wrapper.replaceChildren(parseHTML(buildFilterContainerHTML(false)));
-
-  // Strip elements that don't belong in a shared screenshot — the AI-detection
-  // indicator is personal state, not part of the filter pack identity.
-  wrapper.querySelectorAll('.filter-ai-indicator').forEach(el => el.remove());
-
-  const list = wrapper.querySelector<HTMLElement>('.filter-phrases-list');
-  if (list) renderPhrasesInContainer(list, phrases);
-
-  document.body.appendChild(wrapper);
-  try {
-    const box = wrapper.querySelector<HTMLElement>('.filter-phrases-container');
-    if (!box) throw new Error('Off-screen filter container missing');
-    const file = await screenshotFilterBox(box);
-    const shareCode = await encodeFilterPackCode({ phrases });
-    await openComposerOnMobile(file, shareCode);
-  } finally {
-    wrapper.remove();
-  }
+  const file = await screenshotFilterCardOffscreen(
+    (list) => renderPhrasesInContainer(list, phrases),
+    'bouncer-filter-pack.png',
+  );
+  const shareCode = await encodeFilterPackCode({ phrases });
+  await openComposerOnMobile(file, shareCode);
 }
 
 // Mobile X (iPhone WebView UA) renders the composer as a real <textarea>
@@ -1428,7 +1828,7 @@ async function runShareFilterPackForIOS(): Promise<void> {
 // pasted images at all. Set the value through the prototype's native setter
 // (so React's value tracker sees the change) and attach the screenshot via
 // the composer's hidden file input.
-async function openComposerOnMobile(file: File, shareCode: string): Promise<void> {
+async function openComposerOnMobile(file: File, shareCode: string, packName?: string): Promise<void> {
   const composeLink = document.querySelector<HTMLElement>('a[href="/compose/post"]');
   if (!composeLink) throw new Error('Compose link not found on page');
   composeLink.click();
@@ -1441,7 +1841,8 @@ async function openComposerOnMobile(file: File, shareCode: string): Promise<void
   await attachImageToMobileComposer(file);
 
   textbox.focus();
-  const captionWithCode = `${SHARE_TWEET_TEXT}\n\n${buildFilterPackShareUrl(shareCode)}`;
+  const captionLead = packName ? namedShareTweetText(packName) : SHARE_TWEET_TEXT;
+  const captionWithCode = `${captionLead}\n\n${buildFilterPackShareUrl(shareCode)}`;
   setReactTextareaValue(textbox, captionWithCode);
   textbox.dispatchEvent(new Event('input', { bubbles: true }));
 }
@@ -1449,7 +1850,7 @@ async function openComposerOnMobile(file: File, shareCode: string): Promise<void
 // Update a React-controlled textarea's value via its prototype's native
 // setter so React's value tracker registers the change. Direct assignment
 // to .value is silently overwritten on the next render.
-function setReactTextareaValue(el: HTMLTextAreaElement, value: string): void {
+export function setReactTextareaValue(el: HTMLTextAreaElement, value: string): void {
   const desc = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value');
   if (desc?.set) {
     desc.set.call(el, value);
@@ -1461,7 +1862,7 @@ function setReactTextareaValue(el: HTMLTextAreaElement, value: string): void {
 // Mobile X exposes a hidden <input type="file"> that the media button proxies
 // through. Setting `.files` via DataTransfer + dispatching change is the same
 // path that native picker → upload flow takes.
-async function attachImageToMobileComposer(file: File): Promise<void> {
+export async function attachImageToMobileComposer(file: File): Promise<void> {
   const fileInput = await waitForElement<HTMLInputElement>(
     'input[type="file"][data-testid="fileInput"], input[type="file"][accept*="image"]',
     3000
@@ -1487,7 +1888,18 @@ async function attachImageToMobileComposer(file: File): Promise<void> {
 // instead of fighting with React-controlled <input type="file"> semantics.
 const SHARE_TWEET_TEXT = 'I use Bouncer to remove this from my feed.';
 
-async function openComposerWithImage(file: File, shareCode: string): Promise<void> {
+// Per-pack share caption. The pack name rides inside the share code (method
+// 0x02), so the recipient's import button can create a pack with the same
+// name; keeping the name in the visible caption too is purely for humans.
+// Reads like a tweet someone would actually post showing off their setup —
+// the pack name slots in as the topic being filtered, which works for both
+// audiences: Bouncer users hear "filter pack" and know they can import, non-
+// users see what the pack is for from the wording itself.
+function namedShareTweetText(name: string): string {
+  return `I made a Bouncer filter pack that removes ${name} from my feed.`;
+}
+
+async function openComposerWithImage(file: File, shareCode: string, packName?: string): Promise<void> {
   // Click the sidebar Post link the same way a user would — this triggers X's
   // React Router to open the composer as a modal overlay.
   const composeLink = document.querySelector<HTMLElement>('a[href="/compose/post"]');
@@ -1519,7 +1931,8 @@ async function openComposerWithImage(file: File, shareCode: string): Promise<voi
 
   textbox.focus();
   const shareUrl = buildFilterPackShareUrl(shareCode);
-  const captionWithCode = `${SHARE_TWEET_TEXT}\n\n${shareUrl}`;
+  const captionLead = packName ? namedShareTweetText(packName) : SHARE_TWEET_TEXT;
+  const captionWithCode = `${captionLead}\n\n${shareUrl}`;
   const textDt = new DataTransfer();
   textDt.setData('text/plain', captionWithCode);
   textbox.dispatchEvent(new ClipboardEvent('paste', {
@@ -1529,7 +1942,7 @@ async function openComposerWithImage(file: File, shareCode: string): Promise<voi
   }));
 }
 
-function waitForElement<T extends Element>(selector: string, timeoutMs: number): Promise<T | null> {
+export function waitForElement<T extends Element>(selector: string, timeoutMs: number): Promise<T | null> {
   return new Promise((resolve) => {
     const existing = document.querySelector<T>(selector);
     if (existing) { resolve(existing); return; }
@@ -1578,20 +1991,27 @@ export function processImportCodeInPost(article: HTMLElement): void {
     decodeFilterPackCode(found.code).then((pack) => {
       if (!pack) return;
       if (!tweetText.isConnected || !found.link.isConnected) return;
-      swapImportSentenceForButton(found.link, pack.phrases);
+      swapImportSentenceForButton(found.link, pack);
     }).catch((err) => console.error('[Bouncer] decodeFilterPackCode failed:', err));
   }
 }
 
-// Derive a short signature from SHARE_TWEET_TEXT — the prose the share flow
-// always writes before the link — so a partial view (truncated by X's "Show
-// more") is still recognizable as the share format and worth expanding. First
-// four words are distinctive enough to avoid accidental matches.
-const IMPORT_SENTENCE_SIGNATURE = SHARE_TWEET_TEXT.split(' ').slice(0, 4).join(' ');
+// Detect a filter-pack share via the share URL/code itself, not via the
+// caption prose. When X truncates the tweet ("Show more") the URL's <a> tag
+// isn't in the DOM yet — but the URL string is usually visible in the
+// truncated text as plain characters, so a substring scan for the imbue.com
+// landing path or the `bncr2_` code prefix is enough to decide whether to
+// expand. The URL base alone is distinctive (only Bouncer share tweets
+// contain it); we also check the code prefix in case the truncation cut
+// before the URL but after the fragment marker is shown.
+const IMPORT_DETECTION_SUBSTRINGS: readonly string[] = [
+  FILTER_PACK_SHARE_URL_BASE,
+  FILTER_PACK_CODE_PREFIX,
+];
 
 function maybeExpandForImportCode(article: HTMLElement, tweetText: HTMLElement): void {
   const visible = tweetText.textContent || '';
-  if (!visible.includes(IMPORT_SENTENCE_SIGNATURE)) return;
+  if (!IMPORT_DETECTION_SUBSTRINGS.some(s => visible.includes(s))) return;
   const showMore = article.querySelector<HTMLElement>('[data-testid="tweet-text-show-more-link"]');
   if (!showMore) return;
   // One-shot per article — don't re-click if the first expansion already
@@ -1638,12 +2058,12 @@ function findFirstImportLink(
 // gap above. The tweet's preceding prose stays untouched.
 function swapImportSentenceForButton(
   link: HTMLAnchorElement,
-  phrases: string[],
+  pack: SharedFilterPack,
 ): void {
   const parent = link.parentNode;
   if (!parent) return;
 
-  const btn = buildImportButton(phrases);
+  const btn = buildImportButton(pack);
   parent.replaceChild(btn, link);
 
   // Clean up leading whitespace / <br>s immediately before the button.
@@ -1670,13 +2090,19 @@ function swapImportSentenceForButton(
   }
 }
 
-function buildImportButton(phrases: string[]): HTMLElement {
+function buildImportButton(pack: SharedFilterPack): HTMLElement {
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.className = 'bouncer-import-btn';
-  btn.setAttribute('aria-label', 'Import filter pack');
-  const phraseCount = phrases.length;
-  btn.replaceChildren(parseHTML(`<span>Import filter pack</span><span class="bouncer-import-btn-meta">${phraseCount} ${phraseCount === 1 ? 'phrase' : 'phrases'}</span>`));
+  const phraseCount = pack.phrases.length;
+  // Named packs render with the pack name in the primary label so recipients
+  // know what they're importing; unnamed (legacy) codes keep the old wording.
+  const label = pack.name
+    ? `Import "${escapeHtml(pack.name)}"`
+    : 'Import filter pack';
+  btn.setAttribute('aria-label', pack.name ? `Import filter pack "${pack.name}"` : 'Import filter pack');
+  btn.replaceChildren(parseHTML(`<span>${label}</span><span class="bouncer-import-btn-meta">${phraseCount} ${phraseCount === 1 ? 'phrase' : 'phrases'}</span>`));
+  const runImport = () => confirmAndImportPack(pack.phrases);
   btn.addEventListener('click', (e) => {
     // Stop the click from falling through to the tweet's own click handler
     // (which would navigate into the tweet's permalink page).
@@ -1688,11 +2114,11 @@ function buildImportButton(phrases: string[]): HTMLElement {
       // tweet image into the on-page Bouncer box" choreography doesn't
       // translate. ios.ts owns the iOS-specific genie animation; we just
       // hand it the article + the import callback.
-      runIOSImportAnimation(article, () => confirmAndImportPack(phrases)).catch((err) =>
+      runIOSImportAnimation(article, runImport).catch((err) =>
         console.error('[Bouncer] import failed:', err),
       );
     } else {
-      flyScreenshotAndImport(article, phrases).catch((err) =>
+      flyScreenshotAndImport(article, pack).catch((err) =>
         console.error('[Bouncer] import failed:', err),
       );
     }
@@ -1707,7 +2133,7 @@ function buildImportButton(phrases: string[]): HTMLElement {
 // offsetParent: offsetParent is also null for position:fixed elements, which
 // misread the bottom pill (position: fixed) as hidden and silently skipped
 // the animation at medium window widths.
-function pickVisibleBouncerLayout(): HTMLElement | null {
+export function pickVisibleBouncerLayout(): HTMLElement | null {
   const layouts = document.querySelectorAll<HTMLElement>(
     '.filter-phrases-sidebar, .filter-phrases-bottom, .filter-phrases-mobile, .filter-phrases-banner',
   );
@@ -1729,9 +2155,11 @@ function pickVisibleBouncerLayout(): HTMLElement | null {
 // can't find either the source image or the destination box.
 async function flyScreenshotAndImport(
   article: HTMLElement | null,
-  phrases: string[],
+  pack: SharedFilterPack,
 ): Promise<void> {
-  console.log('[Bouncer/import-anim] click', { hasArticle: !!article, phraseCount: phrases.length });
+  const phrases = pack.phrases;
+  const runImport = () => confirmAndImportPack(phrases);
+  console.log('[Bouncer/import-anim] click', { hasArticle: !!article, phraseCount: phrases.length, named: !!pack.name });
 
   // Three layout variants live in the DOM simultaneously (sidebar, bottom,
   // mobile); media queries display:none all but the active one. Pick the
@@ -1767,7 +2195,7 @@ async function flyScreenshotAndImport(
     console.log('[Bouncer/import-anim] bailing — falling back to plain import', {
       reason: !destEl ? 'no visible Bouncer layout on screen' : 'no tweet image found in article',
     });
-    await confirmAndImportPack(phrases);
+    await runImport();
     return;
   }
 
@@ -1783,7 +2211,7 @@ async function flyScreenshotAndImport(
       sourceWidth: sourceRect.width,
       destWidth: destRect.width,
     });
-    await confirmAndImportPack(phrases);
+    await runImport();
     return;
   }
   console.log('[Bouncer/import-anim] starting flight');
@@ -1825,16 +2253,24 @@ async function flyScreenshotAndImport(
   // Run the storage writes alongside the animation so the new phrases appear
   // in the destination box right as the flier reaches it. Errors during the
   // import are surfaced by the outer catch via the click handler.
-  const importPromise = confirmAndImportPack(phrases);
+  const importPromise = runImport();
 
-  const flightMs = 720;
+  const flightMs = 900;
+  // Fly the full distance to the destination so the flier visibly lands on
+  // the Bouncer box rather than petering out mid-flight. The final keyframe
+  // fades opacity to 0 + blur so it dissolves into the box on contact.
+  const travel = 1.0;
+  const endDx = dx * travel;
+  const endDy = dy * travel;
+  const endSx = 1 + (sx - 1) * travel;
+  const endSy = 1 + (sy - 1) * travel;
   const animation = flier.animate(
     [
       { transform: 'translate(0, 0) scale(1, 1)', opacity: 1, filter: 'blur(0px)' },
       // Mid-flight: lift slightly off the original path with a soft bloom so
       // the eye reads it as movement rather than a linear lerp.
-      { transform: `translate(${dx * 0.5}px, ${dy * 0.5 - Math.min(80, Math.abs(dy) * 0.2)}px) scale(${(1 + sx) / 2}, ${(1 + sy) / 2})`, opacity: 0.95, filter: 'blur(0px)', offset: 0.55 },
-      { transform: `translate(${dx}px, ${dy}px) scale(${sx}, ${sy})`, opacity: 0, filter: 'blur(2px)' },
+      { transform: `translate(${endDx * 0.5}px, ${endDy * 0.5 - Math.min(40, Math.abs(endDy) * 0.2)}px) scale(${(1 + endSx) / 2}, ${(1 + endSy) / 2})`, opacity: 0.95, filter: 'blur(0px)', offset: 0.55 },
+      { transform: `translate(${endDx}px, ${endDy}px) scale(${endSx}, ${endSy})`, opacity: 0, filter: 'blur(2px)' },
     ],
     { duration: flightMs, easing: 'cubic-bezier(0.22, 0.61, 0.36, 1)', fill: 'forwards' },
   );
@@ -1864,7 +2300,7 @@ async function confirmAndImportPack(phrases: string[]): Promise<void> {
   if (newPhrases.length === 0) return;
   const next = [...existing, ...newPhrases];
   await setDescriptions(_deps.descriptionsKey, next);
-  syncFilterPhrases();
+  void syncFilterPhrases();
   // Push the new phrase list to the native iOS filter sheet — without this the
   // native @Published phrases array stays at its pre-import snapshot until the
   // user opens & closes the sheet.
@@ -1880,26 +2316,29 @@ async function confirmAndImportPack(phrases: string[]): Promise<void> {
 function renderPhrasesInContainer(container: Element, descriptions: string[]) {
   container.replaceChildren();
   const len = descriptions.length;
-  descriptions.forEach((desc, index) => {
+  descriptions.forEach(desc => {
+    // Phrase + trailing comma share one wrapper so they land in the header's
+    // flex layout as a single item — a bare comma span would be its own flex
+    // item and could wrap onto a new line by itself.
+    const item = document.createElement('span');
+    item.className = 'filter-phrase-item';
+
     const phrase = document.createElement('span');
     phrase.className = 'filter-phrase-inline';
     phrase.textContent = desc;
     phrase.title = 'Click to remove';
     phrase.addEventListener('click', asyncHandler(() => removeFilterPhrase(desc)));
-    container.appendChild(phrase);
+    item.appendChild(phrase);
 
-    if (index < len - 1) {
+    // Comma after every phrase, including an Oxford comma on the last one
+    // before "and" (which lives in the wrapper element).
+    if (len > 1) {
       const separator = document.createElement('span');
       separator.className = 'filter-phrase-separator';
       separator.textContent = ', ';
-      container.appendChild(separator);
-    } else if (len > 1) {
-      // Oxford comma before "and" (which lives in the wrapper element)
-      const separator = document.createElement('span');
-      separator.className = 'filter-phrase-separator';
-      separator.textContent = ', ';
-      container.appendChild(separator);
+      item.appendChild(separator);
     }
+    container.appendChild(item);
   });
 
   // Hide placeholder when there are any phrases
@@ -1907,6 +2346,11 @@ function renderPhrasesInContainer(container: Element, descriptions: string[]) {
   if (placeholderCycle) {
     placeholderCycle.classList.toggle('hidden', len > 0);
   }
+
+  // Share Filters has nothing to share with zero phrases — disable it.
+  const shareBtn = container.closest('.filter-phrases-container')
+    ?.querySelector<HTMLButtonElement>('.filter-pack-share-btn');
+  if (shareBtn) shareBtn.disabled = len === 0;
 }
 
 const MAX_CATEGORIES_LENGTH = 1000;
@@ -1932,7 +2376,7 @@ export async function addFilterPhrase(text: string) {
     console.log('[Bouncer] Saving descriptions:', next);
     await setDescriptions(_deps.descriptionsKey, next);
     console.log('[Bouncer] addFilterPhrase complete');
-    syncFilterPhrases();
+    void syncFilterPhrases();
     // Planting the seed phrase alone must not sweep — it is not a filter
     // category, and the aiFilterIntent write it provokes triggers the sweep
     // that engages the detectors (see the storage listener in content/index.ts).
@@ -1947,15 +2391,133 @@ export async function addFilterPhrase(text: string) {
   }
 }
 
+// Mirror the Restore-button effects on the filtered list, the article in the
+// feed, and the background cache. Used by the Restore button (which also
+// sends false-positive feedback) and by removeFilterPhrase's auto-restore
+// path (which doesn't, since the AI wasn't wrong — the rule changed).
+function restoreFilteredPost(fp: FilteredPost, overrideReasoning: string) {
+  const postContent = fp.post;
+  const key = postContent.postUrl || fp.evaluationText.substring(0, 200);
+  const idx = filteredPosts.findIndex(p => (p.post.postUrl || p.evaluationText.substring(0, 200)) === key);
+  if (idx !== -1) filteredPosts.splice(idx, 1);
+  filteredPostKeys.delete(key);
+
+  for (const article of _deps.findPosts()) {
+    const postUrl = _deps.adapter.getPostUrl(article);
+    if (postUrl && postContent.postUrl && postUrl.includes(postContent.postUrl)) {
+      const container = _deps.adapter.getPostContainer(article);
+      container.style.display = '';
+      container.style.visibility = '';
+      delete container.dataset.filteredByExtension;
+      article.style.opacity = '';
+      article.style.transition = '';
+      _deps.processedPosts.delete(article);
+      markPostVerified(article);
+      break;
+    }
+  }
+
+  chrome.runtime.sendMessage({
+    type: 'overrideCacheEntry',
+    post: fp.evaluationText,
+    imageUrls: postContent.imageUrls || [],
+    shouldHide: false,
+    reasoning: overrideReasoning,
+  }).catch(err => console.error('[Bouncer] Override cache error:', err));
+}
+
 export async function removeFilterPhrase(phrase: string) {
   const descriptions = await getDescriptions(_deps.descriptionsKey);
   if (!descriptions.includes(phrase)) {
-    syncFilterPhrases();
+    void syncFilterPhrases();
     return;
   }
+
   await setDescriptions(_deps.descriptionsKey, descriptions.filter((d: string) => d !== phrase));
-  clearFilteredPosts();
-  syncFilterPhrases();
+  await syncFilterPhrases();
+
+  // Restoring the posts hidden under the removed rule happens in the
+  // descriptions_* storage listener (content/index.ts), which fires for every
+  // edit source — this chip click, the desktop popup, the iOS sheet, or
+  // another tab. Running the restore here too would race that listener over
+  // the same filteredPosts entries.
+}
+
+// Decide what to do with each previously-filtered post when one or more rules
+// are removed from the active filter set. Fast-paths posts whose stored
+// matches fully determine the outcome (local table_yesno evaluated every
+// category in one shot, so we already know which other rules still fire) and
+// only calls back into the pipeline for posts classified by an incomplete
+// classifier (API filter — only the single best match was reported).
+// Shared by phrase removal and pack deactivation.
+export async function restoreOrRefreshFilteredPosts(
+  removedPhrases: string[],
+  restoreReason: string,
+): Promise<void> {
+  const removedLc = new Set(removedPhrases.map(p => p.toLowerCase()));
+  // Snapshot before mutation — restoreFilteredPost splices entries out of
+  // filteredPosts as it goes, which would skip indices on a live iteration.
+  const snapshot = filteredPosts.slice();
+
+  for (const fp of snapshot) {
+    const decision = decideFilterRemoval(fp.matches, fp.category, removedLc);
+    if (decision.kind === 'unaffected') continue;
+
+    try {
+      // Drop the stale cache entry whether we re-evaluate or not — the cached
+      // verdict reflects the old rule list and would re-hide the post under a
+      // since-removed rule on the next encounter.
+      await chrome.runtime.sendMessage({
+        type: 'clearSinglePost',
+        post: fp.evaluationText,
+        imageUrls: fp.post.imageUrls || [],
+      });
+
+      if (decision.kind === 'restore') {
+        restoreFilteredPost(fp, restoreReason);
+        continue;
+      }
+
+      if (decision.kind === 'refresh') {
+        fp.matches = decision.remaining;
+        fp.category = decision.remaining.join(', ');
+        fp.reasoning = `Still matches: ${decision.remaining.join(', ')}`;
+        continue;
+      }
+
+      // 'reevaluate' — incomplete classifier; ask the pipeline to score the
+      // post against the smaller rule list.
+      const evaluationId = crypto.randomUUID();
+      const response: PipelineResponse = await chrome.runtime.sendMessage({
+        type: 'evaluatePost',
+        evaluationId,
+        post: fp.evaluationText,
+        rawText: fp.post.text,
+        imageUrls: fp.post.imageUrls || [],
+        postUrl: fp.post.postUrl || null,
+        siteId: _deps.adapter.siteId,
+      });
+
+      if (!response || 'retry' in response || 'error' in response) continue;
+
+      if (!response.shouldHide) {
+        restoreFilteredPost(fp, restoreReason);
+      } else {
+        fp.reasoning = response.reasoning;
+        fp.category = response.category ?? null;
+        fp.matches = response.matches ?? null;
+        fp.rawResponse = response.rawResponse ?? '';
+      }
+    } catch (err) {
+      console.error('[Bouncer] re-evaluate after filter removal failed:', err);
+    }
+  }
+
+  updateFilteredTabCount();
+  if (filteredTabActive && filteredViewContainer) {
+    const content = filteredViewContainer.querySelector('.filtered-modal-content');
+    if (content) renderFilteredPostsView(content);
+  }
 }
 
 // ==================== Settings Modal ====================
@@ -2196,7 +2758,7 @@ export function updateFilteredToggleButtons() {
   const containers = filterBoxContainers();
   containers.forEach(container => {
     if (container && container.isConnected) {
-      const toggleBtn = container.querySelector('.filtered-toggle-btn:not(.filter-pack-toggle-btn)');
+      const toggleBtn = container.querySelector('.filtered-toggle-btn');
       if (toggleBtn) {
         if (filteredTabActive) {
           toggleBtn.classList.add('active');
@@ -2737,6 +3299,22 @@ function buildTwitterCard(post: FilteredPost): HTMLElement {
   const postRow = document.createElement('div');
   postRow.className = 'slop-post';
 
+  // Repost header — mirrors the "<name> reposted" socialContext line above
+  // the tweet, since the card below shows the ORIGINAL author's name/avatar.
+  if (postContent.isRepost) {
+    const repostRow = document.createElement('div');
+    repostRow.className = 'slop-repost-header';
+    repostRow.replaceChildren(parseHTML(
+      '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">' +
+      '<path fill="currentColor" d="M4.75 3.79l4.603 4.3-1.706 1.82L6 8.38v7.37c0 .97.784 1.75 1.75 1.75H13V20H7.75c-2.347 0-4.25-1.9-4.25-4.25V8.38L1.853 9.91.147 8.09l4.603-4.3zm11.5 2.71H11V4h5.25c2.347 0 4.25 1.9 4.25 4.25v7.37l1.647-1.53 1.706 1.82-4.603 4.3-4.603-4.3 1.706-1.82L18 15.62V8.25c0-.97-.784-1.75-1.75-1.75z"/>' +
+      '</svg>'
+    ));
+    const label = document.createElement('span');
+    label.textContent = postContent.repostHeader || 'Reposted';
+    repostRow.appendChild(label);
+    wrapper.appendChild(repostRow);
+  }
+
   // Avatar — show image if available, otherwise show initial as fallback
   const avatar = document.createElement('div');
   avatar.className = 'slop-post-avatar';
@@ -3013,7 +3591,7 @@ function buildTwitterCard(post: FilteredPost): HTMLElement {
 
 // ==================== Filtered Post Storage ====================
 
-export function storeFilteredPost(article: HTMLElement, contentObj: PostContent, reasoning: string, rawResponse = '', category: string | null = null) {
+export function storeFilteredPost(article: HTMLElement, contentObj: PostContent, reasoning: string, rawResponse = '', category: string | null = null, matches: string[] | null = null) {
   // Use postUrl or content hash as dedup key
   const evalText = formatPostForEvaluation(contentObj);
   const key = contentObj.postUrl || evalText.substring(0, 200);
@@ -3028,6 +3606,7 @@ export function storeFilteredPost(article: HTMLElement, contentObj: PostContent,
     reasoning,
     rawResponse,
     category: category || null,
+    matches,
     timestamp: Date.now(),
     // Captured while we still hold the element — restore has only the record.
     contentKey: _deps.adapter.getPostContentKey?.(article) || undefined,
@@ -3214,9 +3793,21 @@ export function showReasoningPopup(article: HTMLElement, x: number, y: number) {
     bodyHtml = `<div class="reasoning-text">${escapeHtml(cleanReasoning(reasoning) ?? '')}</div>`;
   }
 
+  // Surface the adapter's structural detection (what the deterministic
+  // repost/quote/video filters key on) so it can be eyeballed per tweet.
+  const flags = [
+    ...(content.isRepost ? ['Repost'] : []),
+    ...(content.quote ? ['Quote'] : []),
+    ...(content.hasVideo ? ['Video'] : []),
+  ];
+  const flagsHtml = flags.map(f => `<span class="reasoning-flag">${f}</span>`).join('');
+
   popup.replaceChildren(parseHTML(`
     <div class="reasoning-header">
-      <span class="reasoning-status ${statusClass}">${statusText}</span>
+      <span class="reasoning-header-left">
+        <span class="reasoning-status ${statusClass}">${statusText}</span>
+        ${flagsHtml}
+      </span>
       <button class="reasoning-close">&times;</button>
     </div>
     ${bodyHtml}
@@ -3457,7 +4048,7 @@ function showCategoryLimitWarning() {
       actionsRow.parentNode!.insertBefore(warning, actionsRow);
     }
     // Remove when user types or clicks elsewhere
-    const input = container.querySelector<HTMLInputElement>('.filter-phrases-input');
+    const input = container.querySelector<HTMLTextAreaElement>('.filter-phrases-input');
     if (input) {
       const dismiss = () => {
         warning.remove();
@@ -3626,6 +4217,36 @@ async function ensureFilterRepliesEnabled(article: HTMLElement) {
   }
 }
 
+// Build the "Quote tweet" toggle row appended at the bottom of the why-annoying
+// tooltip. State is persisted under `bounceQuoteEnabled` (default true).
+function buildQuoteToggleRow(): HTMLElement {
+  const row = document.createElement('label');
+  row.className = 'ff-bounce-quote-row';
+
+  const input = document.createElement('input');
+  input.type = 'checkbox';
+  input.className = 'ff-bounce-quote-toggle';
+  input.checked = true; // optimistic default; corrected by storage read below
+
+  const text = document.createElement('span');
+  text.textContent = 'Quote tweet';
+
+  row.appendChild(input);
+  row.appendChild(text);
+
+  getStorage(['bounceQuoteEnabled']).then(data => {
+    input.checked = data.bounceQuoteEnabled !== false;
+  }).catch(err => console.error('[UI] Failed to load bounceQuoteEnabled:', err));
+
+  input.addEventListener('click', e => e.stopPropagation());
+  input.addEventListener('change', () => {
+    chrome.storage.local.set({ bounceQuoteEnabled: input.checked })
+      .catch(err => console.error('[UI] Failed to save bounceQuoteEnabled:', err));
+  });
+
+  return row;
+}
+
 // Add inline "why annoying" button next to Share post button
 export function addWhyAnnoyingButton(article: HTMLElement) {
   if (!_deps.adapter.getShareButton(article)) {
@@ -3785,6 +4406,7 @@ export function addWhyAnnoyingButton(article: HTMLElement) {
     if (!alreadyDone) {
       // Still loading — show spinner while we wait
       tooltip.replaceChildren(parseHTML(`<div class="ff-annoying-spinner"><div class="ff-spinner-dot"></div><div class="ff-spinner-dot"></div><div class="ff-spinner-dot"></div></div><span class="ff-annoying-thinking">Diagnosing annoyances</span><div class="ff-progress-bar"><div class="ff-progress-track"><div class="ff-progress-fill" data-stage="0"></div></div></div><a href="#" class="ff-missed-link">This should already be filtered</a>`));
+      tooltip.appendChild(buildQuoteToggleRow());
 
       const progressListener = (message: { type: string; verified: number }) => {
         if (message.type === 'annoyingProgress') {
@@ -3805,30 +4427,12 @@ export function addWhyAnnoyingButton(article: HTMLElement) {
       tooltip.querySelector('.ff-missed-link')!.addEventListener('click', (linkEvent) => {
         linkEvent.preventDefault();
         linkEvent.stopPropagation();
-        const reasoning = _deps.postReasonings.get(article);
-        chrome.runtime.sendMessage({
-          type: 'sendFeedback',
-          siteId: _deps.adapter.siteId,
-          postUrl: content.postUrl || null,
-          tweetData: { text: formatPostForEvaluation(content), imageUrls: content.imageUrls || [] },
-          rawResponse: reasoning?.rawResponse || '',
-          reasoning: reasoning?.reasoning || '',
-          decision: 'false_negative'
-        }).catch(err => console.error('[Bouncer] Missed feedback error:', err));
-        tooltip.remove();
-        storeFilteredPost(article, content, 'User reported: should have been filtered');
-        article.style.transition = 'opacity 0.3s ease';
-        article.style.opacity = '0';
-        setTimeout(() => hidePost(article), 300);
-        chrome.runtime.sendMessage({
-          type: 'overrideCacheEntry',
-          post: formatPostForEvaluation(content),
-          imageUrls: content.imageUrls || [],
-          postUrl: content.postUrl || null,
-          siteId: _deps.adapter.siteId,
-          shouldHide: true,
-          reasoning: 'User reported: should have been filtered'
-        }).catch(err => console.error('[Bouncer] Override cache error:', err));
+        sendMissedFeedback(article, content);
+        applyBounceAction({
+          article, content, tooltip,
+          phrase: null,
+          reasoning: 'User reported: should have been filtered',
+        }).catch(err => console.error('[Bouncer] missed flow error:', err));
       });
       try {
         response = await cachedPromise;
@@ -3862,11 +4466,15 @@ export function addWhyAnnoyingButton(article: HTMLElement) {
         }
         chip.addEventListener('click', (ce) => {
           ce.stopPropagation();
-          // Remove tooltip before the filter triggers re-evaluation and captures the post
-          tooltip.remove();
+          // Bouncing a reply is a no-op while "filter replies" is off —
+          // flip it on before the bounce triggers re-evaluation.
           ensureFilterRepliesEnabled(article)
-            .then(() => addFilterPhrase(r))
-            .catch(err => console.error('[UI] addFilterPhrase failed:', err));
+            .then(() => applyBounceAction({
+              article, content, tooltip,
+              phrase: r,
+              reasoning: `User blocked: ${r}`,
+            }))
+            .catch(err => console.error('[Bouncer] chip click flow error:', err));
         });
         tooltip.appendChild(chip);
       });
@@ -3887,25 +4495,13 @@ export function addWhyAnnoyingButton(article: HTMLElement) {
       const submitCustomInput = () => {
         const value = customInput.value.trim();
         if (!value) return;
-        tooltip.remove();
         ensureFilterRepliesEnabled(article)
-          .then(() => addFilterPhrase(value))
-          .catch(err => console.error('[UI] addFilterPhrase failed:', err));
-        // Forcibly remove this post regardless of AI evaluation
-        const reasoning = `User blocked: ${value}`;
-        storeFilteredPost(article, content, reasoning, '', value);
-        article.style.transition = 'opacity 0.3s ease';
-        article.style.opacity = '0';
-        setTimeout(() => hidePost(article), 300);
-        chrome.runtime.sendMessage({
-          type: 'overrideCacheEntry',
-          post: formatPostForEvaluation(content),
-          imageUrls: content.imageUrls || [],
-          postUrl: content.postUrl || null,
-          siteId: _deps.adapter.siteId,
-          shouldHide: true,
-          reasoning
-        }).catch(err => console.error('[Bouncer] Override cache error:', err));
+          .then(() => applyBounceAction({
+            article, content, tooltip,
+            phrase: value,
+            reasoning: `User blocked: ${value}`,
+          }))
+          .catch(err => console.error('[Bouncer] custom-input flow error:', err));
       };
 
       customInput.addEventListener('click', (e) => e.stopPropagation());
@@ -3937,32 +4533,15 @@ export function addWhyAnnoyingButton(article: HTMLElement) {
       missedLink.addEventListener('click', (linkEvent) => {
         linkEvent.preventDefault();
         linkEvent.stopPropagation();
-        const reasoning = _deps.postReasonings.get(article);
-        chrome.runtime.sendMessage({
-          type: 'sendFeedback',
-          siteId: _deps.adapter.siteId,
-          postUrl: content.postUrl || null,
-          tweetData: { text: formatPostForEvaluation(content), imageUrls: content.imageUrls || [] },
-          rawResponse: reasoning?.rawResponse || '',
-          reasoning: reasoning?.reasoning || '',
-          decision: 'false_negative'
-        }).catch(err => console.error('[Bouncer] Missed feedback error:', err));
-        tooltip.remove();
-        storeFilteredPost(article, content, 'User reported: should have been filtered');
-        article.style.transition = 'opacity 0.3s ease';
-        article.style.opacity = '0';
-        setTimeout(() => hidePost(article), 300);
-        chrome.runtime.sendMessage({
-          type: 'overrideCacheEntry',
-          post: formatPostForEvaluation(content),
-          imageUrls: content.imageUrls || [],
-          postUrl: content.postUrl || null,
-          siteId: _deps.adapter.siteId,
-          shouldHide: true,
-          reasoning: 'User reported: should have been filtered'
-        }).catch(err => console.error('[Bouncer] Override cache error:', err));
+        sendMissedFeedback(article, content);
+        applyBounceAction({
+          article, content, tooltip,
+          phrase: null,
+          reasoning: 'User reported: should have been filtered',
+        }).catch(err => console.error('[Bouncer] missed flow error:', err));
       });
       tooltip.appendChild(missedLink);
+      tooltip.appendChild(buildQuoteToggleRow());
 
     // Reposition after content change (height may differ from spinner)
     requestAnimationFrame(positionTooltip);
