@@ -212,7 +212,16 @@ final class LocalInferenceService: ObservableObject {
         var requiredRAMDisplay: String = "6 GB"
         var supportsDetection: Bool { adapterFilename != nil && headBlobResource != nil }
         var isSupportedOnThisDevice: Bool {
-            ProcessInfo.processInfo.physicalMemory >= minimumRAMBytes
+            // The simulator can't run local inference: the LiteRT-LM TopK
+            // Metal sampler ships no simulator binary (the sim slice is a
+            // link-only stub) and the Metal accelerator path is untested
+            // under simulation. Gating here hides the local-model option
+            // everywhere it's offered (onboarding, settings, JS catalog).
+            #if targetEnvironment(simulator)
+            return false
+            #else
+            return ProcessInfo.processInfo.physicalMemory >= minimumRAMBytes
+            #endif
         }
         var selectedModelKey: String { "iosLocal:\(id)" }
     }

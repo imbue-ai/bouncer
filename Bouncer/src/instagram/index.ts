@@ -98,7 +98,7 @@ const USE_MID_REEL_FRAME = false;
 // the poster wanted to say, not what the reel is, and a reel posted with no
 // caption has nothing to show. Both are fine for a demo and neither is fine
 // as the product, which is why this is a switch rather than a deletion.
-const SHOW_CAPTIONS_NOT_DESCRIPTIONS = true;
+const SHOW_CAPTIONS_NOT_DESCRIPTIONS = false;
 
 // Scripted phrases for the welcome tour — five, matching the panel's one
 // current + UPCOMING_COUNT upcoming rows. Concrete and varied on purpose: the

@@ -19,7 +19,10 @@
 //              rides in with it (a passive scroll listener translating our
 //              fixed element — scroll-linking, not interception), so what
 //              arrives is a covered reel: previews of what's underneath and
-//              what follows it.
+//              what follows it. On the transform pager, which emits no scroll
+//              events, the cover instead POPS fully up the moment a swipe
+//              commits and the slide changes behind it — see "Popping up
+//              before the pager moves".
 //   REVEAL     the covered reel is behind our sheet, so every gesture is ours
 //              by hit-testing alone. Swipe up and the cover tracks the finger
 //              off the top; let go early and it settles back. Tap a row and
@@ -78,6 +81,9 @@ const DISMISS_VELOCITY = 0.5;
 const SETTLE_MS = 220;
 /** Quiet on the scroll stream for this long = the feed has settled. */
 const SETTLE_QUIET_MS = 150;
+/** A scroll event this recent means the scroll-linked ride owns the cover's
+ *  transform; the pager tracker stands down rather than fight it. */
+const SCROLL_OWNS_MS = 300;
 /** The feed has to travel at least this fraction of a viewport from the last
  *  revealed resting place before a settle counts as a NEW reel. */
 const NEW_SLIDE_FRACTION = 0.5;
@@ -199,6 +205,8 @@ export function liftAction(
 let host: CurtainHost | null = null;
 let curtainEl: HTMLElement | null = null;
 let listEl: HTMLElement | null = null;
+/** The opaque pane inside the cover — see buildCurtain. */
+let shadeEl: HTMLElement | null = null;
 
 type Mode = 'hidden' | 'riding' | 'covering' | 'dragging' | 'rowdrag';
 let mode: Mode = 'hidden';
@@ -292,8 +300,27 @@ function buildCurtain(): HTMLElement {
     'will-change: transform',
   ].join(';');
 
+  // The glass is deliberate — a covered reel shows through as a hint of what
+  // is underneath. But during a POP the thing underneath is the reel being
+  // LEFT, and the whole point of popping early is that it is not looked at.
+  // This pane makes the cover opaque for exactly that window: solid the
+  // instant the pop begins, faded back to glass once the new reel has settled
+  // in underneath. Its own opacity transition, because setTransform owns the
+  // cover's `transition` property and overwrites it on every call.
+  const shade = document.createElement('div');
+  shade.style.cssText = [
+    'position: absolute',
+    'inset: 0',
+    'background: linear-gradient(180deg, #0c0c12 0%, #08080c 55%, #0c0c12 100%)',
+    'opacity: 0',
+    'pointer-events: none',
+  ].join(';');
+  el.appendChild(shade);
+  shadeEl = shade;
+
   const list = document.createElement('div');
-  list.style.cssText = 'display: flex; flex-direction: column; gap: 8px;';
+  // Positioned so it paints above the (positioned) shade.
+  list.style.cssText = 'position: relative; display: flex; flex-direction: column; gap: 8px;';
   el.appendChild(list);
   listEl = list;
 
@@ -455,14 +482,19 @@ function dismissRow(row: HTMLElement, dir: number): void {
 function renderRows(): void {
   if (!listEl || !host) return;
   // Dismissed reels are gone from every rendering — including the pinned map
-  // lookup, so a reel swiped aside mid-cover can't be re-pointed to.
+  // lookup, so a reel swiped aside mid-cover can't be re-pointed to. While a
+  // pop is in flight, so is the reel it is leaving: the host's records may
+  // still lead with it, and the cover must never show the reel being fled.
   const records = host.records().filter((r) => !dismissedIds.has(r.reelId));
+  const offered = popped && poppedFromId !== null
+    ? records.filter((r) => r.reelId !== poppedFromId)
+    : records;
   const pinned = mode === 'covering' || mode === 'dragging' || mode === 'rowdrag';
   const wanted = pinned && rowIds.length > 0
     ? rowIds
         .map((id) => records.find((r) => r.reelId === id))
         .filter((r): r is ReelRecord => r !== undefined)
-    : records.slice(0, ROW_COUNT).filter(isRecordComplete);
+    : offered.slice(0, ROW_COUNT).filter(isRecordComplete);
   if (!pinned) rowIds = wanted.map((r) => r.reelId);
 
   if (wanted.length === 0) {
@@ -605,6 +637,15 @@ function setTransform(y: string, animate: boolean): void {
     ? `transform ${SETTLE_MS}ms cubic-bezier(0.22, 0.61, 0.36, 1)`
     : 'none';
   curtainEl.style.transform = `translateY(${y})`;
+}
+
+/** Solid or glass — see the shade in buildCurtain. Solid arrives instantly
+ *  (the pop must never show a frame of the departing reel); glass returns on
+ *  a fade, revealing the reel that has settled in underneath. */
+function setShade(opaque: boolean, animate: boolean): void {
+  if (!shadeEl) return;
+  shadeEl.style.transition = animate ? `opacity ${SETTLE_MS}ms ease` : 'none';
+  shadeEl.style.opacity = opaque ? '1' : '0';
 }
 
 /** A dragged row tracks the finger sideways, thinning as it goes. */
@@ -761,6 +802,9 @@ function cover(): void {
   mode = 'covering';
   if (curtainEl) curtainEl.style.pointerEvents = 'auto';
   setTransform('0px', true);
+  // Back to glass: what is underneath now is the covered reel, whose blurred
+  // presence is the design. (A no-op except after a pop.)
+  setShade(false, true);
   // The covered reel waits instead of playing to nobody.
   pauseUnderlying();
 }
@@ -769,9 +813,11 @@ function cover(): void {
  *  journey away — the whole point is that it is never watched. */
 function hide(resume = true): void {
   mode = 'hidden';
+  popped = false;
   rowIds = [];
   if (curtainEl) curtainEl.style.pointerEvents = 'none';
   setTransform('100%', false);
+  setShade(false, false);
   if (resume) resumeUnderlying();
 }
 
@@ -782,9 +828,11 @@ function reveal(animate: boolean): void {
   revealedPath = location.pathname;
   resumeUnderlying();
   mode = 'hidden';
+  popped = false;
   rowIds = [];
   if (curtainEl) curtainEl.style.pointerEvents = 'none';
   setTransform('-100%', animate);
+  setShade(false, false);
   // Park it back below, off any transition, once the exit has played.
   if (settleTimer) clearTimeout(settleTimer);
   settleTimer = setTimeout(() => {
@@ -807,11 +855,17 @@ function onFeedScroll(e?: Event): void {
     pinOuterPage();
     return;
   }
+  // A feed scroll event is proof this layout HAS them — the pager tracker
+  // yields to this path for as long as they keep coming.
+  lastScrollEventAt = performance.now();
   if (mode === 'dragging' || mode === 'rowdrag') return;
   if (!raf) {
     raf = requestAnimationFrame(() => {
       raf = 0;
       if (mode === 'dragging' || mode === 'rowdrag') return;
+      // A popped cover owns its transform until the feed settles; dressing
+      // the scroll under it would yank it from fully-up back to the seam.
+      if (popped) return;
       const scroller = findScroller();
       if (!scroller || !curtainEl) return;
       const away = scroller.scrollTop - revealedTop;
@@ -866,6 +920,7 @@ function onPathTick(): void {
   rowIds = [];
   renderRows();
   cover();
+  popped = false;
 }
 
 function onFeedSettled(): void {
@@ -875,8 +930,10 @@ function onFeedSettled(): void {
   const away = Math.abs(scroller.scrollTop - revealedTop);
   const viewport = Math.max(1, scroller.clientHeight);
   if (away < viewport * NEW_SLIDE_FRACTION) {
-    // Settled back where the last reveal left us; stay out of the way.
-    if (mode !== 'hidden') hide();
+    // Settled back where the last reveal left us; stay out of the way. A
+    // popped cover is on screen in full view — it leaves gently.
+    if (popped) retreat();
+    else if (mode !== 'hidden') hide();
     return;
   }
   // A new reel owns the screen. It arrives covered, previews re-anchored on it.
@@ -887,6 +944,165 @@ function onFeedSettled(): void {
   rowIds = [];
   renderRows();
   cover();
+  popped = false;
+}
+
+// ==================== Popping up before the pager moves ====================
+//
+// The transform-driven pager never emits scroll events (see revealedPath), so
+// on that layout the scroll-linked ride above never runs and the only new-reel
+// signal used to be the address poll — which fires AFTER the slide has landed.
+// The result was a glimpse: the next reel visibly arrives, sits for up to half
+// a second, and only then does the cover slide up over it.
+//
+// The first fix reproduced the ride from bounding rects, one rAF frame at a
+// time — and felt exactly like what it was: a copy of a native animation
+// running a frame behind it. So the pager does not get a ride; it gets a POP.
+// The moment a touch on the feed commits to being an upward swipe — slop
+// passed, more vertical than not — the cover slides fully up as its own
+// animation at its own tempo, and the slide change happens BEHIND it. What
+// arrives was never visible at all.
+//
+// Passive and observational only, as the module comment requires: nothing is
+// prevented, and the cover keeps pointer-events off until commit, so the
+// in-flight gesture stays the feed's. A rAF loop watches the on-screen card's
+// rect only to learn when the pager has SETTLED — there is no event to say so
+// here. Address changed = a new reel, commit the cover; address held = the
+// swipe was abandoned, the cover retreats the way it came.
+
+/** An upward swipe has committed once the finger travels this far. */
+const SWIPE_COVER_PX = 24;
+/** "Settled back where it started" is only believed after this much quiet —
+ *  longer than SETTLE_QUIET_MS, because retreating mid-transition, a beat
+ *  before the address catches up, would flash the cover off and back on. */
+const RETREAT_QUIET_MS = 400;
+
+let lastScrollEventAt = 0;
+let pagerRaf = 0;
+/** The card of the reel on screen when the gesture began. Its rect moving is
+ *  how a layout without scroll events says "still in flight". */
+let pagerAnchor: HTMLElement | null = null;
+let pagerTouchDown = false;
+let pagerStartX = 0;
+let pagerStartY = 0;
+/** The cover popped for this gesture and owns its transform until the pager
+ *  settles; the scroll-linked ride stands down while this is set. */
+let popped = false;
+/** The reel the pop is leaving. Excluded from the rows while popped: until
+ *  the pager settles, the host's records still lead with it, and a cover
+ *  whose first offer is the reel being fled reads as a glitch. Identity
+ *  captured at gesture start rather than positionally — mid-pop the host may
+ *  or may not have re-anchored records on the incoming reel yet. */
+let poppedFromId: string | null = null;
+let pagerLastTop: number | null = null;
+let pagerLastMoveAt = 0;
+
+function onPagerTouchStart(e: TouchEvent): void {
+  if (mode !== 'hidden' && mode !== 'riding') return;
+  if (curtainEl && e.target instanceof Node && curtainEl.contains(e.target)) return;
+  const records = host?.records() ?? [];
+  // Same bar the scroll ride sets: with nothing to offer, the cover never
+  // enters the frame.
+  const kept = records.filter((r) => !dismissedIds.has(r.reelId));
+  if (!kept.slice(1).some(isRecordComplete)) return;
+  // Only gestures on the feed itself. Comments, share sheets and profile
+  // overlays scroll with the same upward swipe, and popping a cover over
+  // those would be theft. (While riding — momentum from the gesture that
+  // popped — the anchor from that gesture is still the one being watched.)
+  if (mode === 'hidden') {
+    const cards = records.map((r) => r.card).filter((c) => c.isConnected);
+    if (!(e.target instanceof Node) || !cards.some((c) => c.contains(e.target as Node))) return;
+    pagerAnchor = records[0]?.card ?? null;
+    poppedFromId = records[0]?.reelId ?? null;
+  }
+  const t = e.touches[0];
+  if (!t) return;
+  pagerTouchDown = true;
+  pagerStartX = t.clientX;
+  pagerStartY = t.clientY;
+  pagerLastMoveAt = performance.now();
+  if (popped && !pagerRaf) pagerRaf = requestAnimationFrame(trackPagerSettle);
+}
+
+function onPagerTouchMove(e: TouchEvent): void {
+  if (!pagerTouchDown || popped || mode !== 'hidden') return;
+  const t = e.touches[0];
+  if (!t) return;
+  const up = pagerStartY - t.clientY;
+  if (up < SWIPE_COVER_PX || up <= Math.abs(t.clientX - pagerStartX)) return;
+  // Scroll events flowing means the scroll-linked ride is already dressing
+  // this gesture, frame-accurately. Checked here rather than at touchstart:
+  // the first events of the gesture are what prove the layout has them.
+  if (performance.now() - lastScrollEventAt < SCROLL_OWNS_MS) return;
+  popCover();
+}
+
+function onPagerTouchEnd(): void {
+  // The settle loop outlives the finger: momentum and the snap animation are
+  // still moving the slide. It stops itself once the rects go quiet.
+  pagerTouchDown = false;
+}
+
+/** The pop: the cover slides fully up, and the slide change happens behind
+ *  it. Pointer-events stay off — the in-flight gesture is the feed's, and
+ *  stays deliverable to it. */
+function popCover(): void {
+  mode = 'riding';
+  popped = true;
+  // Opaque from the first frame: the pop exists so the reel being left is
+  // not seen, and glass would show it sliding away underneath.
+  setShade(true, false);
+  if (curtainEl) curtainEl.style.pointerEvents = 'none';
+  if (rowIds.length === 0) renderRows();
+  setTransform('0px', true);
+  pagerLastTop = null;
+  pagerLastMoveAt = performance.now();
+  if (!pagerRaf) pagerRaf = requestAnimationFrame(trackPagerSettle);
+}
+
+/** An abandoned swipe: the feed settled back on the reel that was already
+ *  revealed, so the cover leaves the way it came — animated, unlike hide(),
+ *  because unlike hide() it is on screen in full view when this happens. */
+function retreat(): void {
+  popped = false;
+  mode = 'hidden';
+  rowIds = [];
+  if (curtainEl) curtainEl.style.pointerEvents = 'none';
+  setTransform('100%', true);
+  // Fading to glass as it goes: the reel underneath is the one that stayed,
+  // which there is no reason to hide.
+  setShade(false, true);
+}
+
+function trackPagerSettle(): void {
+  pagerRaf = 0;
+  if (!popped || mode !== 'riding') return;
+  const now = performance.now();
+  const top = pagerAnchor?.isConnected ? pagerAnchor.getBoundingClientRect().top : null;
+  const moved = top !== pagerLastTop
+    && (top === null || pagerLastTop === null || Math.abs(top - pagerLastTop) > 0.5);
+  if (moved) pagerLastMoveAt = now;
+  pagerLastTop = top;
+  const quiet = now - pagerLastMoveAt;
+
+  if (!pagerTouchDown && quiet > SETTLE_QUIET_MS && location.pathname !== revealedPath) {
+    // A new reel owns the screen — the same commit onFeedSettled makes.
+    console.debug('[Bouncer IG] curtain: covering — pager settled'
+      + ` (address ${revealedPath} → ${location.pathname})`);
+    revealedPath = location.pathname;
+    const scroller = findScroller();
+    revealedTop = scroller ? scroller.scrollTop : 0;
+    rowIds = [];
+    renderRows();
+    cover();
+    popped = false;
+    return;
+  }
+  if (!pagerTouchDown && quiet > RETREAT_QUIET_MS) {
+    retreat();
+    return;
+  }
+  pagerRaf = requestAnimationFrame(trackPagerSettle);
 }
 
 // ==================== The reveal gesture — on the cover, nowhere else ====================
@@ -1049,6 +1265,13 @@ export function installCurtain(next: CurtainHost): Curtain {
   // Media events don't bubble either, but they do run the capture phase — one
   // listener covers every video Instagram will ever mount.
   document.addEventListener('play', onPlayCapture, true);
+  // The pager tracker's trigger. Passive and observational only: these never
+  // preventDefault, and gestures on the cover itself are filtered out — the
+  // feed's gestures stay the feed's, as the architecture requires.
+  document.addEventListener('touchstart', onPagerTouchStart, { capture: true, passive: true });
+  document.addEventListener('touchmove', onPagerTouchMove, { capture: true, passive: true });
+  document.addEventListener('touchend', onPagerTouchEnd, { capture: true, passive: true });
+  document.addEventListener('touchcancel', onPagerTouchEnd, { capture: true, passive: true });
   pathTimer = setInterval(onPathTick, 250);
 
   return {
@@ -1071,6 +1294,10 @@ export function installCurtain(next: CurtainHost): Curtain {
     teardown(): void {
       document.removeEventListener('scroll', onFeedScroll, true);
       document.removeEventListener('play', onPlayCapture, true);
+      document.removeEventListener('touchstart', onPagerTouchStart, true);
+      document.removeEventListener('touchmove', onPagerTouchMove, true);
+      document.removeEventListener('touchend', onPagerTouchEnd, true);
+      document.removeEventListener('touchcancel', onPagerTouchEnd, true);
       if (pathTimer) clearInterval(pathTimer);
       pathTimer = null;
       resumeUnderlying();
@@ -1080,6 +1307,14 @@ export function installCurtain(next: CurtainHost): Curtain {
       if (rowTimer) clearTimeout(rowTimer);
       rowTimer = null;
       if (raf) cancelAnimationFrame(raf);
+      if (pagerRaf) cancelAnimationFrame(pagerRaf);
+      pagerRaf = 0;
+      pagerAnchor = null;
+      pagerTouchDown = false;
+      pagerLastTop = null;
+      popped = false;
+      poppedFromId = null;
+      shadeEl = null;
       for (const el of shields.values()) el.remove();
       shields.clear();
       curtainEl?.remove();
