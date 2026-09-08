@@ -555,6 +555,12 @@ struct FilteredWebView: UIViewRepresentable {
                         )
                     }
 
+                    // First-run "REMOVE AI SLOP?" badge state — global like
+                    // aiDetectionOn (one flag across all platforms).
+                    if let badgeDismissed = json["aiBadgeDismissed"] as? Bool {
+                        vm.aiBadgeDismissed = badgeDismissed
+                    }
+
                     guard senderPlatform == nil || senderPlatform == vm.selectedPlatform else { return }
 
                     // Phrase list is driven by the sheet's platform dropdown

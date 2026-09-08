@@ -660,6 +660,7 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
                 themeMode = theme ?: s.themeMode,
                 aiDetectionOn = if (obj.has("aiDetectionOn")) obj.optBoolean("aiDetectionOn") else s.aiDetectionOn,
                 aiDetectionPending = if (aiConfirmed) false else s.aiDetectionPending,
+                aiBadgeDismissed = if (obj.has("aiBadgeDismissed")) obj.optBoolean("aiBadgeDismissed") else s.aiBadgeDismissed,
             )
         }
     }
@@ -790,6 +791,7 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
             s.copy(
                 aiDetectionOn = if (obj.has("aiDetectionOn")) obj.optBoolean("aiDetectionOn") else s.aiDetectionOn,
                 filterReplies = if (obj.has("filterReplies")) obj.optBoolean("filterReplies", s.filterReplies) else s.filterReplies,
+                aiBadgeDismissed = if (obj.has("aiBadgeDismissed")) obj.optBoolean("aiBadgeDismissed") else s.aiBadgeDismissed,
             )
         }
     }

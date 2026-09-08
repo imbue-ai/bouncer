@@ -404,6 +404,7 @@ fun BouncerApp(viewModel: BouncerViewModel = viewModel()) {
                 filteredCount = state.filteredCount,
                 aiDetectionOn = state.aiDetectionOn,
                 aiDetectionPending = state.aiDetectionPending,
+                aiBadgeDismissed = state.aiBadgeDismissed,
                 filterReplies = state.filterReplies,
                 notificationsEnabled = state.notificationsEnabled,
                 onAdd = viewModel::addPhrase,
