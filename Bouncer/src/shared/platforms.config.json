@@ -18,8 +18,8 @@
   },
   {
     "id": "youtube",
-    "targets": ["chrome", "firefox", "safari"],
-    "optionalTargets": ["chrome", "firefox"],
+    "targets": ["chrome"],
+    "optionalTargets": ["chrome"],
     "manifestHost": "https://*.youtube.com/*",
     "adapterScript": "dist/YouTubeAdapter.js",
     "cssPath": "adapters/youtube/youtube.css",
@@ -27,8 +27,7 @@
   },
   {
     "id": "instagram",
-    "targets": ["chrome", "safari"],
-    "optionalTargets": ["chrome"],
+    "targets": ["safari"],
     "manifestHost": "https://www.instagram.com/*",
     "adapterScript": "dist/InstagramAdapter.js",
     "cssPath": "adapters/instagram/instagram.css",
