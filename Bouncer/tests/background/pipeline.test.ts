@@ -342,4 +342,25 @@ describe('getSettings effectiveDescriptions', () => {
     const settings = await getSettings('twitter');
     expect(settings.effectiveDescriptions).toEqual(['politics']);
   });
+
+  it('pause masks descriptions AND turns off the AI-detection gate', async () => {
+    store.descriptions_twitter = ['posts written by AI', 'politics'];
+    store.selectedModel = 'iosLocal:gemma-4-e2b-detector-v2';
+    store.aiFilterIntent = { aiPhrases: ['posts written by AI'], judgedSetKey: 'k', updatedAt: 1 };
+    store.filteringPaused_twitter = true;
+
+    const settings = await getSettings('twitter');
+    expect(settings.descriptions).toEqual([]);
+    expect(settings.effectiveDescriptions).toEqual([]);
+    expect(settings.aiFilterIntentActive).toBe(false);
+  });
+
+  it('AI-detection gate is on for the same state when not paused', async () => {
+    store.descriptions_twitter = ['posts written by AI', 'politics'];
+    store.selectedModel = 'iosLocal:gemma-4-e2b-detector-v2';
+    store.aiFilterIntent = { aiPhrases: ['posts written by AI'], judgedSetKey: 'k', updatedAt: 1 };
+
+    const settings = await getSettings('twitter');
+    expect(settings.aiFilterIntentActive).toBe(true);
+  });
 });

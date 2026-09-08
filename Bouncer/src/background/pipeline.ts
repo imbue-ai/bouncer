@@ -15,6 +15,7 @@ import { iosLocalClassify, iosLocalGenerate, iosLocalAiTextDetect } from './ios-
 import { getStorage, setStorage, removeStorage, getDescriptions, getFilteringPaused, clampThreshold, clampImageThreshold, clampReplyThreshold, aiIntentActiveForSite, DEFAULT_AI_TEXT_DETECTION_THRESHOLD, DEFAULT_AI_IMAGE_DETECTION_THRESHOLD } from '../shared/storage';
 import { canJudgeAiIntent } from './ai-intent';
 import { STRUCTURAL_FILTER_SITES, structuralFilterKind } from '../shared/structural-filters';
+import { AI_TEXT_DETECTOR_CATEGORIES, AI_IMAGE_DETECTOR_CATEGORIES } from '../shared/filter-removal';
 import { PLATFORMS, enabledStorageKey } from '../shared/platforms';
 export { DEFAULT_AI_TEXT_DETECTION_THRESHOLD, DEFAULT_AI_IMAGE_DETECTION_THRESHOLD };
 import type {
@@ -470,11 +471,9 @@ export function replayDetectorStates(tabId: number, evaluationId: string, evalRe
   // cached reasoning to whichever detector likely produced it (by category).
   // Legacy cache entries predate aiImage so the winner can only be aiText or filter.
   // Old cache entries carry the former "AI-generated" labels; match both.
-  const aiTextCategories = ['AI-generated', 'Looks like AI text'];
-  const aiImageCategories = ['AI-generated image', 'Looks like AI image'];
-  const isAi = aiTextCategories.includes(evalResult.category ?? '')
-    || aiImageCategories.includes(evalResult.category ?? '');
-  const winnerName = aiImageCategories.includes(evalResult.category ?? '')
+  const isAi = AI_TEXT_DETECTOR_CATEGORIES.includes(evalResult.category ?? '')
+    || AI_IMAGE_DETECTOR_CATEGORIES.includes(evalResult.category ?? '');
+  const winnerName = AI_IMAGE_DETECTOR_CATEGORIES.includes(evalResult.category ?? '')
     ? 'aiImage'
     : (isAi ? 'aiText' : 'filter');
   const detectorNames = ['filter', 'aiText', 'aiImage'];
@@ -571,9 +570,9 @@ export async function getSettings(siteId?: SiteId): Promise<Settings> {
     geminiApiKey: data.geminiApiKey || '',
     anthropicApiKey: data.anthropicApiKey || '',
     enabled: data.enabled !== false,
-    // When the user pauses phrase filtering, present empty description
-    // lists to the pipeline so the filterEnabled gate short-circuits.
-    // Storage still holds the real list — only the runtime view is masked.
+    // When the user pauses filtering, present empty description lists to
+    // the pipeline so the filterEnabled gate short-circuits. Storage still
+    // holds the real list — only the runtime view is masked.
     descriptions: paused ? [] : descriptions,
     effectiveDescriptions: paused ? [] : effectiveDescriptions,
     useEmbeddings: data.useEmbeddings || false,
@@ -585,8 +584,10 @@ export async function getSettings(siteId?: SiteId): Promise<Settings> {
     aiImageDetectionThreshold: clampImageThreshold(data.aiImageDetectionThreshold),
     // Per-site: only this site's own phrases can engage its detectors.
     // False when getSettings is called without a siteId (descriptions is
-    // empty then) — those callers never read this field.
-    aiFilterIntentActive: aiIntentActiveForSite(data, descriptions),
+    // empty then) — those callers never read this field. Pause masks this
+    // too: AI detection is engaged by filter phrases, so pausing the
+    // phrases pauses the AI detectors along with them.
+    aiFilterIntentActive: paused ? false : aiIntentActiveForSite(data, descriptions),
     filterReplies: data.filterReplies !== false,
     platformEnabled,
     youtubeShowPlaceholder: data.youtubeShowPlaceholder === true
