@@ -3,7 +3,7 @@
 import { toBlob } from 'html-to-image';
 import { asyncHandler } from '../shared/async';
 import { cleanReasoning, escapeHtml, formatPostForEvaluation, parseHTML, GUEST_FILTER_LIMIT, AI_DETECTION_SEED_PHRASE, phraseAddNeedsReEvaluation } from '../shared/utils';
-import { decideFilterRemoval } from '../shared/filter-removal';
+import { decideFilterRemoval, AI_DETECTOR_CATEGORIES } from '../shared/filter-removal';
 import { init as initPopup } from '../popup/index';
 import {
   encodeFilterPackCode, decodeFilterPackCode, buildFilterPackShareUrl,
@@ -1243,20 +1243,24 @@ function setupFilterBoxEventHandlers(container: HTMLElement) {
     });
   }
 
-  // Pause / play: pause masks descriptions in the background pipeline (see
-  // getSettings) and un-hides phrase-filtered posts on the page; play clears
-  // the flag and re-evaluates visible posts. The .paused class is applied to
-  // EVERY filter card (sidebar/bottom/mobile) by the storage.onChanged
-  // listener in content/index.ts so we don't need to toggle classes here.
+  // Pause / play: pause masks descriptions AND the AI-detection gate in the
+  // background pipeline (see getSettings) and un-hides filtered posts on the
+  // page; play clears the flag and re-evaluates visible posts. The .paused
+  // class is applied to EVERY filter card (sidebar/bottom/mobile) by the
+  // storage.onChanged listener in content/index.ts so we don't need to
+  // toggle classes here.
   const pauseBtn = container.querySelector<HTMLButtonElement>('.filter-pause-btn');
   if (pauseBtn) {
     pauseBtn.addEventListener('click', asyncHandler(async () => {
       const siteId = _deps.adapter.siteId;
       const descriptions = await getDescriptions(_deps.descriptionsKey);
       await setFilteringPaused(siteId, true);
-      // Un-hide posts that were hidden under phrase rules. Posts that were
-      // also flagged by the AI text filter stay hidden under that rule.
-      await restoreOrRefreshFilteredPosts(descriptions, 'Filtering paused');
+      // Un-hide everything: phrase-hidden posts (their rules are in
+      // `descriptions`) and AI-detector-hidden posts (their rules are the
+      // detector category labels). AI detection is engaged by filter
+      // phrases, so pausing the phrases pauses it too.
+      await restoreOrRefreshFilteredPosts(
+        [...descriptions, ...AI_DETECTOR_CATEGORIES], 'Filtering paused');
       // Cache pollution cleanup: restoreFilteredPost re-writes overridden
       // (shouldHide=false) entries; wipe everything so play-side re-eval is
       // fresh.

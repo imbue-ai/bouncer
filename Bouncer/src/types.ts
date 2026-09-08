@@ -249,7 +249,8 @@ export interface Settings extends SettingsBase {
    *  when one of that site's own phrases was judged an AI-removal request
    *  (aiIntentActiveForSite). The sole gate for the AI text/image detectors —
    *  there is no manual toggle. Always false when getSettings was called
-   *  without a siteId. */
+   *  without a siteId, and forced false while the site's filtering is paused
+   *  (the pause button pauses the phrase-engaged AI detectors too). */
   aiFilterIntentActive: boolean;
 }
 
@@ -464,7 +465,7 @@ type PlatformEnabledKeys = { [K in SiteId as `${K}Enabled`]: boolean };
 /** Valid storage keys for site-specific descriptions. */
 export type DescriptionKey = `descriptions_${SiteId}`;
 
-/** Per-site flag for whether phrase filtering is paused. */
+/** Per-site flag for whether filtering (phrases + AI detectors) is paused. */
 type FilteringPausedKeys = { [K in SiteId as `filteringPaused_${K}`]: boolean };
 
 export type FilteringPausedKey = `filteringPaused_${SiteId}`;

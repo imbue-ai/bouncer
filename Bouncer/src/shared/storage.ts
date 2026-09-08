@@ -38,14 +38,14 @@ export function filteringPausedKeyFor(siteId: SiteId): `filteringPaused_${SiteId
   return `filteringPaused_${siteId}`;
 }
 
-/** Read whether phrase filtering is paused for this site. */
+/** Read whether filtering (phrases + AI detectors) is paused for this site. */
 export async function getFilteringPaused(siteId: SiteId): Promise<boolean> {
   const key = filteringPausedKeyFor(siteId);
   const data = await chrome.storage.local.get([key]);
   return data[key] === true;
 }
 
-/** Persist whether phrase filtering is paused for this site. */
+/** Persist whether filtering (phrases + AI detectors) is paused for this site. */
 export async function setFilteringPaused(siteId: SiteId, paused: boolean): Promise<void> {
   const key = filteringPausedKeyFor(siteId);
   await chrome.storage.local.set({ [key]: paused });
