@@ -23,6 +23,14 @@ data class BouncerUiState(
     // and the iOS sheet's `aiDetectionPending`.
     val aiDetectionOn: Boolean = false,
     val aiDetectionPending: Boolean = false,
+    // First-run badge: until AI detection turns on for the first time, the
+    // sheet's sparkle wears a "REMOVE AI SLOP?" pill — the counterpart of the
+    // desktop indicator's `with-badge` pill (content.css). Mirrors the
+    // extension's persisted `aiIndicatorBadgeDismissed` flag (written on
+    // first activation; see refreshAiIndicatorUI in content/ui.ts). Defaults
+    // to true so existing users never see a flash of the badge before the
+    // first state load.
+    val aiBadgeDismissed: Boolean = true,
     val filterReplies: Boolean = true,
     val hasCompletedOnboarding: Boolean = false,
     val hasLoggedIn: Boolean = false,

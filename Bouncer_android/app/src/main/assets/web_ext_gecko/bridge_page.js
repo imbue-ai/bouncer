@@ -463,6 +463,16 @@
         'feedfilterAiSettings',
         'filterReplies'
       );
+      // First-run "REMOVE AI SLOP?" badge: dismissed forever once AI
+      // detection has been on once (same flag the desktop indicator
+      // persists — see refreshAiIndicatorUI in content/ui.ts).
+      window.__ff_resolveAndPost(
+        window.__ff_getStorage(['aiIndicatorBadgeDismissed']).then(function (d) {
+          return !!(d && d.aiIndicatorBadgeDismissed === true);
+        }),
+        'feedfilterAiSettings',
+        'aiBadgeDismissed'
+      );
     }
   };
 

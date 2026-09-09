@@ -1,7 +1,7 @@
 // iOS FAB, filtered modal, native sheet bridge
 
 import type { IOSDeps, DescriptionKey, SiteId } from '../types';
-import { clampThreshold, clampImageThreshold, clampReplyThreshold, getDescriptions, setDescriptions, getStorage, aiIntentActiveForSite } from '../shared/storage';
+import { clampThreshold, clampImageThreshold, clampReplyThreshold, getDescriptions, setDescriptions, getStorage, setStorage, aiIntentActiveForSite } from '../shared/storage';
 import { platformById, descriptionsStorageKey } from '../shared/platforms';
 import { parseHTML } from '../shared/utils';
 import { shareFilterPackForIOS, toggleAiDetectionViaPhrases } from './ui';
@@ -321,16 +321,27 @@ export function updateIOSFilteredCount(aiStateWrite = false) {
   if (!_deps) return;
   if (typeof webkit !== 'undefined' && webkit.messageHandlers?.feedfilterPhrasesUpdated) {
     const count = _deps.getFilteredPosts().length;
-    chrome.storage.local.get([_deps.descriptionsKey, 'aiFilterIntent'], (data) => {
+    chrome.storage.local.get([_deps.descriptionsKey, 'aiFilterIntent', 'aiIndicatorBadgeDismissed'], (data) => {
       const phrases = (data[_deps.descriptionsKey] as string[] | undefined) || [];
+      const aiOn = aiIntentActiveForSite(data, phrases);
+      const badgeDismissed = data.aiIndicatorBadgeDismissed === true;
+      // First activation dismisses the first-run "REMOVE AI SLOP?" badge
+      // forever — the same write refreshAiIndicatorUI does for the desktop
+      // indicator. The native apps inject no filter box, so this push path
+      // is the reliable place to persist it for mobile-only users.
+      if (aiOn && !badgeDismissed) void setStorage({ aiIndicatorBadgeDismissed: true });
       webkit.messageHandlers.feedfilterPhrasesUpdated?.postMessage(
         JSON.stringify({
           phrases,
           filteredCount: count,
           // Per-platform: on only when one of this page's own phrases
           // engages detection (aiIntentActiveForSite).
-          aiDetectionOn: aiIntentActiveForSite(data, phrases),
+          aiDetectionOn: aiOn,
           aiDetectionConfirmed: aiStateWrite,
+          // Drives the native sheet's first-run badge (shown while
+          // !aiDetectionOn && !aiBadgeDismissed) — the counterpart of the
+          // desktop indicator's `with-badge` pill.
+          aiBadgeDismissed: badgeDismissed,
         })
       );
     });

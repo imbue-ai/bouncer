@@ -580,6 +580,18 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
             _state.update { it.copy(loadFailed = false) }
         }
         maybeLoadAiSettings()
+        if (prefs.getBoolean(KEY_PENDING_AI_SLOP_SEED, false) && isOnX(_state.value.currentUrl)) {
+            prefs.edit().remove(KEY_PENDING_AI_SLOP_SEED).apply()
+            // The onboarding "Remove AI Slop" checkbox. Planting the seed
+            // phrase engages AI detection deterministically
+            // (isAiDetectionPhrase in shared/utils.ts) — the same end state
+            // as tapping the sparkle indicator, no judge round trip needed.
+            // The badge dismissal is persisted BEFORE the phrase add,
+            // mirroring toggleAiDetection's ordering on iOS: the pushes the
+            // add triggers re-read the flag from storage.
+            callJs("__ff_setStorage", JSONObject().put("aiIndicatorBadgeDismissed", true))
+            callJs("__ff_addPhrase", "AI slop")
+        }
         if (pendingShareFilterPack && isOnX(_state.value.currentUrl)) {
             pendingShareFilterPack = false
             pendingShareTimeoutJob?.cancel()
@@ -660,6 +672,7 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
                 themeMode = theme ?: s.themeMode,
                 aiDetectionOn = if (obj.has("aiDetectionOn")) obj.optBoolean("aiDetectionOn") else s.aiDetectionOn,
                 aiDetectionPending = if (aiConfirmed) false else s.aiDetectionPending,
+                aiBadgeDismissed = if (obj.has("aiBadgeDismissed")) obj.optBoolean("aiBadgeDismissed") else s.aiBadgeDismissed,
             )
         }
     }
@@ -671,9 +684,24 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
         callJs("__ff_setSheetClass", open)
     }
 
-    fun completeOnboarding() {
+    fun completeOnboarding(enableAiSlop: Boolean) {
         prefs.edit().putBoolean(KEY_ONBOARDED, true).apply()
-        _state.update { it.copy(hasCompletedOnboarding = true) }
+        // The extension isn't reachable yet — the GeckoView (and its content
+        // script) only mounts after onboarding — so park the intent in prefs
+        // and plant the seed phrase on the first x.com load (onPageStop).
+        if (enableAiSlop) {
+            prefs.edit().putBoolean(KEY_PENDING_AI_SLOP_SEED, true).apply()
+        }
+        // Checking the box IS the action the sparkle's first-run "REMOVE AI
+        // SLOP?" pill advertises — treat it as already tapped so the sheet
+        // opens with the plain sparkle (the storage flag is persisted
+        // alongside the seed phrase in onPageStop).
+        _state.update {
+            it.copy(
+                hasCompletedOnboarding = true,
+                aiBadgeDismissed = it.aiBadgeDismissed || enableAiSlop,
+            )
+        }
         // Pop the OS notification-permission dialog right now, before login, so the
         // one required tap is out of the way up front; the x.com subscribe then
         // happens silently once the user reaches their home timeline.
@@ -790,6 +818,7 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
             s.copy(
                 aiDetectionOn = if (obj.has("aiDetectionOn")) obj.optBoolean("aiDetectionOn") else s.aiDetectionOn,
                 filterReplies = if (obj.has("filterReplies")) obj.optBoolean("filterReplies", s.filterReplies) else s.filterReplies,
+                aiBadgeDismissed = if (obj.has("aiBadgeDismissed")) obj.optBoolean("aiBadgeDismissed") else s.aiBadgeDismissed,
             )
         }
     }
@@ -806,6 +835,7 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
 
     companion object {
         private const val KEY_ONBOARDED = "hasCompletedOnboarding"
+        private const val KEY_PENDING_AI_SLOP_SEED = "pendingAiSlopSeed"
         private const val KEY_LOGGED_IN = "hasLoggedIn"
         private const val KEY_BOUNCER_TOOLTIP_SEEN = "hasSeenBouncerTooltip"
         private const val KEY_NOTIF_PROMPTED = "hasPromptedNotifications"
