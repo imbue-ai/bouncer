@@ -11,6 +11,7 @@ import android.util.Log
 import android.widget.Toast
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.imbue.bouncer.analytics.Analytics
 import com.imbue.bouncer.push.NotificationPermissionBroker
 import com.imbue.bouncer.push.PushRegistrar
 import com.imbue.bouncer.push.PushSubscriptionStore
@@ -262,6 +263,7 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
         NotificationPermissionBroker.ensurePermission(getApplication()) { granted ->
             prefs.edit().putBoolean(KEY_NOTIF_PROMPTED, true).apply()
             Log.i(tag, "notif permission (early) granted=$granted")
+            Analytics.logNotificationPermissionResult(getApplication(), "onboarding", granted)
         }
     }
 
@@ -295,6 +297,7 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
             NotificationPermissionBroker.ensurePermission(getApplication()) { granted ->
                 prefs.edit().putBoolean(KEY_NOTIF_PROMPTED, true).apply()
                 Log.i(tag, "auto-enable: POST_NOTIFICATIONS granted=$granted")
+                Analytics.logNotificationPermissionResult(getApplication(), "timeline_fallback", granted)
                 if (granted) startBackgroundPushEnable()
             }
         } else {
@@ -319,6 +322,7 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
     fun setNotificationsEnabled(on: Boolean) {
         prefs.edit().putBoolean(WebNotificationHandler.KEY_NOTIFICATIONS_ON, on).apply()
         _state.update { it.copy(notificationsEnabled = on) }
+        Analytics.logNotificationsToggled(getApplication(), on)
         if (!on) return
         val subscribed = runCatching {
             PushSubscriptionStore(getApplication()).get("https://x.com/") != null
@@ -336,6 +340,7 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
             NotificationPermissionBroker.ensurePermission(getApplication()) { granted ->
                 prefs.edit().putBoolean(KEY_NOTIF_PROMPTED, true).apply()
                 Log.i(tag, "manual enable: POST_NOTIFICATIONS granted=$granted")
+                Analytics.logNotificationPermissionResult(getApplication(), "settings", granted)
                 if (granted) startBackgroundPushEnable()
                 else debugToast("Bouncer: notifications need permission")
             }
@@ -439,6 +444,7 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
                 // (the toggle then reads "off" everywhere). Keep the tab alive for
                 // a grace period so the backend registration completes first.
                 Log.i(tag, "auto-enable: subscription registered for $scope; POST in background")
+                Analytics.logPushSubscribed(getApplication())
                 debugToast("Bouncer: notifications enabled ✓")
                 val mode = pushEnableMode
                 pushEnableMode = null
