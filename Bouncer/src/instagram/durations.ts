@@ -419,6 +419,18 @@ export function videoUrlFor(thumbnailUrl: string): string | null {
   return f === null ? null : lookup(videoUrlByFilename, videoUrlByStem, f);
 }
 
+/** Remember a video URL read straight off a mounted card's <video src>.
+ *
+ *  The hook's manifest announcements miss most on-screen covers (their
+ *  filenames never join up), but the card's own element is authoritative and
+ *  needs no join at all. Fed into the same maps so videoUrlFor, the duration
+ *  probes and the describer all see it — and so it survives Instagram
+ *  recycling the card. */
+export function rememberCardVideoUrl(thumbnailUrl: string, url: string): void {
+  const f = fileNameOf(thumbnailUrl);
+  if (f !== null) rememberVideoUrl(f, url);
+}
+
 /** How long to give the header read before giving up on it. */
 const PROBE_TIMEOUT_MS = 6000;
 

@@ -335,7 +335,7 @@ async function handleMessage(
       try {
         const result = await callImbueInstagramAnalyze(
           message.caption || '', message.thumbnailUrl || '', message.frameBase64,
-          message.audioBase64, message.audioFormat);
+          message.audioBase64, message.audioFormat, message.videoUrl);
         return { description: result.description || '' };
       } catch (err) {
         console.error('[Bouncer] analyzeReel error:', err);

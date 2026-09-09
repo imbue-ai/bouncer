@@ -422,7 +422,13 @@ export type ContentToBackgroundMessage =
       audioBase64?: string;
       /** Container for the above: 'ogg' when the transcode worked, 'mp4' for
        *  the raw fallback. Unknown values fall back to mp4 server-side. */
-      audioFormat?: string }
+      audioFormat?: string;
+      /** The reel's progressive-MP4 URL (Instagram CDN, video+audio muxed),
+       *  sent when no audio clip could be extracted client-side — the iOS
+       *  norm, where WebCodecs can't transcode. The backend fetches a slice
+       *  and extracts the soundtrack itself: no 32 KB frame cap, whole
+       *  soundtrack. Ignored server-side when audioBase64 is present. */
+      videoUrl?: string }
   | { type: 'analyzeReelAudio'; audioBase64: string; mimeType: string; categories: string[] };
 
 export type BackgroundToContentMessage =

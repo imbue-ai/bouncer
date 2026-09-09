@@ -21,7 +21,7 @@
 
 import type { ContentToBackgroundMessage } from '../types';
 import {
-  clipForDescribe, installAudioFilter, type AudioFilterController,
+  clipForDescribe, installAudioFilter, installAudioHookListener, type AudioFilterController,
 } from './audiofilter';
 import { showIntro } from './intro';
 import { showBouncePopup, showDemoBouncePopup, dismissBouncePopup } from './bounce';
@@ -33,10 +33,10 @@ import { installPromoDismisser } from './promo';
 import { installTopBarHider } from './topbar';
 import {
   durationFor, noteDuration, probeDuration, onDurationResolved, durationReport,
-  installDurationSource, requestHookReplay,
+  installDurationSource, requestHookReplay, rememberCardVideoUrl, videoUrlFor,
 } from './durations';
 import { buildRecords, creatorReport, forgetAll, remember, type ReelRecord } from './library';
-import { installCurtain, type Curtain } from './curtain';
+import { installCurtain, ROW_COUNT, type Curtain } from './curtain';
 import { makeSettingsIcon } from '../shared/utils';
 import { enabledStorageKey } from '../shared/platforms';
 
@@ -388,6 +388,14 @@ function suggestionRecords(): ReelRecord[] {
   // with nothing queued after. It stays only when it is the reel on screen —
   // the cover sitting on it still needs its row-one record.
   if (ahead.length > 1) ahead.pop();
+  // Describe what the cover is about to render. The IntersectionObserver
+  // prefetch cannot reach a reel whose card Instagram has recycled, and on
+  // the stacked-pager layout it fires only once per card — either way the
+  // deepest row was never queued and sat on its caption forever. Kicked here,
+  // on every refresh, because the per-reel cache makes a re-kick free and a
+  // failed describe self-heals on the next one. Two past ROW_COUNT because
+  // dismissed rows backfill from deeper in the list.
+  for (const reel of ahead.slice(0, ROW_COUNT + 2)) void describeReel(reel);
   return buildRecords(ahead, describeOrCaption);
 }
 
@@ -1348,8 +1356,58 @@ function captionFromCard(card: HTMLElement): string {
 
 // ==================== Inference (via background → imbue) ====================
 
-type CacheEntry = { description: string } | { pending: Promise<string> };
+type CacheEntry =
+  | { description: string }
+  | { pending: Promise<string> }
+  // A failed describe, cooling down. Retried after retryAt, with the delay
+  // doubling per consecutive failure — see noteDescribeFailure.
+  | { retryAt: number; failures: number };
 const cache = new Map<string, CacheEntry>();
+
+// How long a failed describe sits out before the next attempt. The old
+// delete-and-retry left a failed reel eligible again on the very next refresh,
+// and refreshes arrive several times a second — so the moment the backend
+// started erroring (rate limit, backed-up queue, dropped socket) every tracked
+// reel turned into a tight retry loop that kept the failure tripped. Doubling
+// per consecutive failure probes a dead backend instead of hammering it, and
+// still self-heals: the first retry after a blip is 5s away.
+const DESCRIBE_RETRY_BASE_MS = 5_000;
+const DESCRIBE_RETRY_MAX_MS = 120_000;
+
+function noteDescribeFailure(reelId: string, priorFailures: number): void {
+  const failures = priorFailures + 1;
+  const delay = Math.min(DESCRIBE_RETRY_BASE_MS * 2 ** (failures - 1), DESCRIBE_RETRY_MAX_MS);
+  cache.set(reelId, { retryAt: Date.now() + delay, failures });
+}
+
+// Backstop for a transport that never answers at all. The background's own WS
+// timeout settles every request in 60s, so this only fires when the message
+// never comes back (background process died mid-request, port wedged) — the
+// exact case that used to park a reel's cache entry as pending forever and
+// silently stop all describe traffic.
+const DESCRIBE_WATCHDOG_MS = 90_000;
+
+/** The reel's progressive-MP4 URL — muxed video+audio, fetchable server-side.
+ *
+ *  Straight off the mounted card's <video> when there is one: on the phone
+ *  Instagram plays reels natively (a plain https src, not MSE's blob:), so
+ *  the element itself carries the URL and no filename join can fail. Falls
+ *  back to whatever manifest URL the hook announced. Only Instagram's own CDN
+ *  hosts are ever offered to the backend, which enforces the same list. */
+function reelVideoUrl(reel: Reel): string | null {
+  const video = reel.card.querySelector('video');
+  const src = video?.currentSrc || video?.src || '';
+  if (src.startsWith('https:')) {
+    try {
+      const host = new URL(src).hostname;
+      if (host.endsWith('.cdninstagram.com') || host.endsWith('.fbcdn.net')) {
+        rememberCardVideoUrl(reel.thumbnailUrl, src);
+        return src;
+      }
+    } catch { /* not a URL; fall through to the hook's map */ }
+  }
+  return videoUrlFor(reel.thumbnailUrl);
+}
 
 async function describeReel(reel: Reel): Promise<string> {
   // Nothing to ask for while captions are what's on screen. This is the line
@@ -1359,9 +1417,18 @@ async function describeReel(reel: Reel): Promise<string> {
   if (SHOW_CAPTIONS_NOT_DESCRIPTIONS) return '';
 
   const existing = cache.get(reel.reelId);
-  if (existing) return 'description' in existing ? existing.description : existing.pending;
+  if (existing) {
+    if ('description' in existing) return existing.description;
+    if ('pending' in existing) return existing.pending;
+    if (Date.now() < existing.retryAt) return '';   // failed recently — cooling down
+  }
+  const priorFailures = existing && 'failures' in existing ? existing.failures : 0;
 
-  const caption = captionFromCard(reel.card);
+  // From the card while it's mounted; from the captions map when Instagram
+  // has recycled it — describes kicked for a cover row (suggestionRecords)
+  // routinely arrive after the card is gone, and an empty caption would throw
+  // away the poster's own words for exactly the reels that need them most.
+  const caption = captionFromCard(reel.card) || captionFor(reel) || '';
 
   const pending = (async (): Promise<string> => {
     try {
@@ -1392,11 +1459,18 @@ async function describeReel(reel: Reel): Promise<string> {
       // than delay, and a description the user is waiting to read is the wrong
       // place to block on a CDN fetch. A clip that misses this window is still
       // cached, so the same reel described again gets it.
-      const clip = await clipForDescribe(reel.thumbnailUrl, AUDIO_CLIP_DEADLINE_MS);
+      // The progressive-MP4 URL doubles as a clip source: the client transcode
+      // gets a shot at it (measured, not assumed, to fail on iOS — the logs
+      // say which step breaks if it does), and whatever it can't turn into a
+      // clip goes to the backend as a URL for server-side extraction instead.
+      const videoUrl = reelVideoUrl(reel);
+      const clip = await clipForDescribe(reel.thumbnailUrl, AUDIO_CLIP_DEADLINE_MS, videoUrl);
       if (clip) {
         console.debug(
           `[Bouncer IG] audio: ${clip.base64.length} b64 chars (${clip.format})`,
           reel.reelId);
+      } else if (videoUrl) {
+        console.debug('[Bouncer IG] video URL riding along for server-side audio', reel.reelId);
       }
 
       const message: ContentToBackgroundMessage = {
@@ -1405,12 +1479,17 @@ async function describeReel(reel: Reel): Promise<string> {
         thumbnailUrl: reel.thumbnailUrl,
         ...(frame?.ok ? { frameBase64: frame.base64 } : {}),
         ...(clip ? { audioBase64: clip.base64, audioFormat: clip.format } : {}),
+        ...(!clip && videoUrl ? { videoUrl } : {}),
       };
-      const res: { description?: string; error?: string } | undefined = await chrome.runtime.sendMessage(message);
+      const res = await Promise.race<{ description?: string; error?: string } | undefined>([
+        chrome.runtime.sendMessage(message),
+        new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), DESCRIBE_WATCHDOG_MS)),
+      ]);
       const description = (res?.description ?? '').trim();
       if (res?.error || !description) {
-        // Drop the cache entry so a later scroll-by can retry.
-        cache.delete(reel.reelId);
+        // Park the entry with a cooldown so a later scroll-by retries — but
+        // not on the very next refresh (see noteDescribeFailure).
+        noteDescribeFailure(reel.reelId, priorFailures);
         // Both arms log: a well-formed response carrying no description (the
         // backend answered but the action isn't wired up) is otherwise
         // indistinguishable from "nothing is happening" — the panel just stays
@@ -1428,7 +1507,7 @@ async function describeReel(reel: Reel): Promise<string> {
       suggestions?.refresh();
       return description;
     } catch (err) {
-      cache.delete(reel.reelId);
+      noteDescribeFailure(reel.reelId, priorFailures);
       console.warn('[Bouncer IG] analyzeReel send failed:', (err as Error).message);
       return '';
     }
@@ -2012,6 +2091,11 @@ async function boot(): Promise<void> {
   // rotation into the phone-width flow finds them already there rather than
   // starting blank.
   installDurationSource();
+  // The soundtrack map, on the same reasoning — and unlike the audio filter
+  // it must NOT wait for installAudioFilter below: the describer's audio
+  // modality (clipForDescribe) reads this map on every describe, including on
+  // builds where DISABLE_PAGE_MUTATIONS keeps the filter itself off.
+  installAudioHookListener();
   // A length arriving is a reason to re-render whatever is showing: the chooser
   // asks for these before it needs them, and the answers land on their own.
   onDurationResolved(() => {

@@ -55,8 +55,10 @@ const SHIELD_Z = 2147483600;
 
 const PANEL_FONT = '-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif';
 
-/** How many rows the cover lists: the reel underneath plus what follows. */
-const ROW_COUNT = 3;
+/** How many rows the cover lists: the reel underneath plus what follows.
+ *  Exported so the describer knows how deep the cover renders (see
+ *  suggestionRecords in index.ts). */
+export const ROW_COUNT = 3;
 
 const THUMB_ASPECT = 9 / 16;
 const THUMB_H_PX = 132;

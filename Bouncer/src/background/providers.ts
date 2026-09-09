@@ -294,6 +294,7 @@ export async function callImbueInstagramAnalyze(
   frameBase64?: string,
   audioBase64?: string,
   audioFormat?: string,
+  videoUrl?: string,
 ): Promise<ImbueInstagramResponse> {
   const image = frameBase64
     ? `data:image/jpeg;base64,${frameBase64}`
@@ -306,6 +307,11 @@ export async function callImbueInstagramAnalyze(
       // Only when there is one. An empty string is a documented "no audio" too,
       // but sending a key we have nothing for invites a truncated clip later.
       ...(audioBase64 ? { audioData: audioBase64, audioFormat: audioFormat ?? 'mp4' } : {}),
+      // The server-side audio path: the reel's progressive-MP4 URL, for the
+      // backend to fetch and strip the soundtrack from itself. Ignored
+      // server-side when audioData is present, so never sent alongside one —
+      // the URL alone can run to ~2 KB of the 32 KB frame.
+      ...(!audioBase64 && videoUrl ? { videoUrl } : {}),
     },
     version: chrome.runtime.getManifest().version,
   };

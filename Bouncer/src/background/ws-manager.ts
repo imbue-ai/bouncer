@@ -107,6 +107,9 @@ class ImbueWebSocket {
   unackedRequests: Map<string, PendingRequest>;
   // Requests that have been acked (have a jobId) but waiting for result
   pendingRequests: Map<string, PendingRequest>;
+  // When the current socket last delivered ANY message. Liveness signal for
+  // spotting a half-open socket — see the timeout handler in send().
+  lastMessageAt: number;
   // Invoked when the backend pushes a `forceLogin` message. Set by the
   // background entry point to broadcast the guest-limit gate to content tabs.
   onForceLogin: ((msg: ForceLoginMessage) => void) | null;
@@ -116,6 +119,7 @@ class ImbueWebSocket {
     this.connectPromise = null;
     this.unackedRequests = new Map();
     this.pendingRequests = new Map();
+    this.lastMessageAt = 0;
     this.onForceLogin = null;
   }
 
@@ -180,6 +184,7 @@ class ImbueWebSocket {
       };
 
       ws.onmessage = (event: MessageEvent) => {
+        this.lastMessageAt = Date.now();
         try {
           const parsed: unknown = JSON.parse(event.data as string);
           // forceLogin is an out-of-band push (requestId may be null) — handle
@@ -208,8 +213,13 @@ class ImbueWebSocket {
       ws.onclose = (event) => {
         clearTimeout(connectTimeout);
         console.log(`[WS Manager] Closed (code: ${event.code}, clean: ${event.wasClean})`);
-        this.ws = null;
-        this._rejectAll(new Error(`WebSocket closed (code: ${event.code})`));
+        // Only tear down state that still belongs to this socket. A socket
+        // already replaced (dropped as half-open, or reconnect()) closes late,
+        // and its stale close must not reject requests riding the new one.
+        if (this.ws === ws || this.ws === null) {
+          this.ws = null;
+          this._rejectAll(new Error(`WebSocket closed (code: ${event.code})`));
+        }
       };
     });
   }
@@ -220,6 +230,7 @@ class ImbueWebSocket {
 
     const requestId = crypto.randomUUID();
     message.requestId = requestId;
+    const sentAt = Date.now();
 
     return new Promise((resolve, reject) => {
       const timeoutId = setTimeout(() => {
@@ -235,6 +246,22 @@ class ImbueWebSocket {
               break;
             }
           }
+        }
+        // Nothing came back on the socket — not even the gateway's immediate
+        // ack — in the whole timeout window. On a healthy connection the ack
+        // lands within a second even when the result is slow, so total silence
+        // is the half-open-socket signature: the network path died without a
+        // close frame (device slept, network switched, the gateway idle-closed
+        // while the app was suspended), readyState still says OPEN, and every
+        // send since has been written into the void. Drop the socket so the
+        // next send — including the caller's own retry — reconnects instead of
+        // feeding the corpse forever.
+        if (this.ws && this.lastMessageAt < sentAt) {
+          console.warn('[WS Manager] No traffic since this request was sent — dropping half-open socket');
+          const dead = this.ws;
+          this.ws = null;
+          this._rejectAll(new Error('WebSocket unresponsive — reconnecting on next request'));
+          try { dead.close(); } catch { /* already dead */ }
         }
         reject(new Error(`Request timed out after ${Math.round(timeout / 1000)} seconds.`));
       }, timeout);
