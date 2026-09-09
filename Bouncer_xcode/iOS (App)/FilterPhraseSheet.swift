@@ -158,6 +158,21 @@ class FilterSheetViewModel: ObservableObject {
     // class.
     @Published var aiDetectionOn: Bool = false
     @Published var aiDetectionPending: Bool = false
+    // First-run badge: until AI detection turns on for the first time, the
+    // sheet's sparkle wears a "REMOVE AI SLOP?" capsule — the counterpart of
+    // the desktop indicator's `with-badge` pill (content.css). The extension
+    // persists `aiIndicatorBadgeDismissed` on first activation (see
+    // refreshAiIndicatorUI in content/ui.ts and updateIOSFilteredCount in
+    // content/ios.ts); this mirrors that flag. Defaults to true so existing
+    // users never see a flash of the badge before the first state load.
+    @Published var aiBadgeDismissed: Bool = true
+    // True while the badge's shrink-into-the-sparkle animation plays. Gates
+    // which toolbar item FilterPhraseSheet hosts: the wide, transform-only
+    // collapsing item must stay mounted until the animation finishes, because
+    // swapping to the compact item changes the toolbar item's layout size —
+    // and UIKit applies toolbar item size changes without animation.
+    @Published var aiBadgeCollapsing: Bool = false
+    private var aiBadgeCollapseTask: Task<Void, Never>?
     // Initial values mirror the JS-side defaults (clampThreshold /
     // clampReplyThreshold / clampImageThreshold in shared/storage.ts);
     // real values load from storage via the __ff_ bridges.
@@ -406,6 +421,9 @@ class FilterSheetViewModel: ObservableObject {
             } catch {
                 print("[FeedFilter] loadAiDetectionState error: \(error)")
             }
+            // First-run badge flag — same store the desktop indicator reads.
+            let data = await self.getStorage(keys: ["aiIndicatorBadgeDismissed"])
+            self.aiBadgeDismissed = data["aiIndicatorBadgeDismissed"] as? Bool == true
         }
     }
 
@@ -423,6 +441,32 @@ class FilterSheetViewModel: ObservableObject {
         }
     }
 
+    // Debug-only: restore the first-run "Remove AI Slop?" badge as if the app
+    // were freshly installed. Order matters: detection must turn off before
+    // the flag clears — the badge only shows while detection is off, and any
+    // push that still sees detection on would immediately re-persist the
+    // dismissal (see updateIOSFilteredCount in content/ios.ts).
+    func resetAiBadgeForDebug() {
+        guard let webView = webView else { return }
+        Task { @MainActor in
+            if aiDetectionOn {
+                do {
+                    _ = try await webView.callAsyncJavaScript(
+                        "return await window.__ff_toggleAiDetection()",
+                        arguments: [:],
+                        in: nil,
+                        contentWorld: Self.contentWorld
+                    )
+                } catch {
+                    print("[FeedFilter] resetAiBadgeForDebug toggle error: \(error)")
+                }
+            }
+            await setStorage(["aiIndicatorBadgeDismissed": false])
+            aiDetectionOn = false
+            aiBadgeDismissed = false
+        }
+    }
+
     private var aiPendingFallbackTask: Task<Void, Never>?
 
     // Toggle AI detection through the natural-language phrase mechanism —
@@ -435,6 +479,31 @@ class FilterSheetViewModel: ObservableObject {
     // mode but re-renders often enough to recover).
     func toggleAiDetection() {
         guard let webView = webView else { return }
+        // Shrink the first-run badge on the tap itself — the collapse into
+        // the sparkle should track the click, not the backend round trip
+        // that follows. One-shot by design: even if the seed-phrase judgment
+        // then fails, the badge has served its purpose.
+        let dismissBadge = !aiBadgeDismissed
+        if dismissBadge {
+            aiBadgeDismissed = true
+            aiBadgeCollapsing = true
+            aiBadgeCollapseTask?.cancel()
+            aiBadgeCollapseTask = Task { @MainActor [weak self] in
+                // Just past the 0.45s collapse animation.
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                guard !Task.isCancelled else { return }
+                // Animated, so the toolbar treats the wide→compact item swap
+                // as an animated change. Item removal+insertion is the form
+                // the bar CAN animate (unlike resizing one hosted item, which
+                // it stamps in a single layout pass) — on iOS 26 this is what
+                // lets the shared glass group morph around the sparkle
+                // joining share/settings and the freed-up title fade back in
+                // instead of both snapping.
+                withAnimation(.snappy(duration: 0.35)) {
+                    self?.aiBadgeCollapsing = false
+                }
+            }
+        }
         aiDetectionPending = true
         aiPendingFallbackTask?.cancel()
         aiPendingFallbackTask = Task { @MainActor [weak self] in
@@ -444,6 +513,12 @@ class FilterSheetViewModel: ObservableObject {
             self.loadAiDetectionState()
         }
         Task { @MainActor in
+            // Persist the dismissal BEFORE the toggle: the pushes the toggle
+            // triggers re-read the flag from storage, so writing it second
+            // would race them and could flip the badge back mid-animation.
+            if dismissBadge {
+                await setStorage(["aiIndicatorBadgeDismissed": true])
+            }
             do {
                 _ = try await webView.callAsyncJavaScript(
                     "return await window.__ff_toggleAiDetection()",
@@ -870,7 +945,7 @@ struct FilterPhraseSheet: View {
         NavigationStack {
             List {
                 if viewModel.phrases.isEmpty {
-                    Text("No topics added yet.")
+                    Text("No filter topics added yet.")
                         .font(.system(size: 16, weight: .medium))
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
@@ -968,6 +1043,9 @@ struct FilterPhraseSheet: View {
                 ToolbarItem(placement: .topBarLeading) {
                     Button {
                         UserDefaults.standard.set(false, forKey: "hasCompletedOnboarding")
+                        // Also restore the first-run "Remove AI Slop?" badge
+                        // (turns detection off and clears the dismissal flag).
+                        viewModel.resetAiBadgeForDebug()
                         viewModel.isPresented = false
                     } label: {
                         Image(systemName: "ladybug")
@@ -982,19 +1060,29 @@ struct FilterPhraseSheet: View {
                 // natural-language-derived state AND toggles it — but only
                 // through the phrase mechanism itself; there is no override
                 // switch (see the extension's background/ai-intent.ts).
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        viewModel.toggleAiDetection()
-                    } label: {
-                        Image(systemName: "sparkles")
-                            .font(.system(size: 17, weight: .regular))
-                            .foregroundStyle(viewModel.aiDetectionOn ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+                // Until detection first turns on, the sparkle wears a
+                // "Remove AI Slop?" capsule — the desktop indicator's
+                // first-run badge (`with-badge` in content.css) — that
+                // shrinks down into the plain sparkle on tap.
+                if showAiBadge || viewModel.aiBadgeCollapsing {
+                    if #available(iOS 26.0, *) {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            collapsingAiBadgeButton
+                        }
+                        // The wide item draws its own capsule; keeping it out
+                        // of the toolbar's shared glass group stops the system
+                        // from stretching a glass background across the item's
+                        // (transparent) collapse footprint.
+                        .sharedBackgroundVisibility(.hidden)
+                    } else {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            collapsingAiBadgeButton
+                        }
                     }
-                    .opacity(viewModel.aiDetectionPending ? 0.55 : 1.0)
-                    .disabled(viewModel.aiDetectionPending)
-                    .accessibilityLabel(viewModel.aiDetectionOn
-                        ? "Removing AI-generated content — your filter phrases ask for it. Tap to stop (removes those phrases)."
-                        : "Tap to remove AI-generated content from your feed (adds the filter phrase \"AI slop\").")
+                } else {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        plainAiSparkleButton
+                    }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
@@ -1023,6 +1111,80 @@ struct FilterPhraseSheet: View {
             viewModel.syncPlatformToCurrentSite()
             viewModel.loadPhrases()
         }
+    }
+
+    // First-run badge visibility — mirrors the desktop indicator's
+    // `showBadge` in refreshAiIndicatorUI (content/ui.ts).
+    private var showAiBadge: Bool {
+        !viewModel.aiDetectionOn && !viewModel.aiBadgeDismissed
+    }
+
+    private var aiIndicatorAccessibilityLabel: String {
+        viewModel.aiDetectionOn
+            ? "Removing AI-generated content — your filter phrases ask for it. Tap to stop (removes those phrases)."
+            : "Tap to remove AI-generated content from your feed (adds the filter phrase \"AI slop\")."
+    }
+
+    // The badge and its collapse. CRITICAL constraint: toolbar items are
+    // hosted by UIKit's navigation bar, which applies item size changes in a
+    // single un-animated layout pass — every layout-driven variant of this
+    // collapse (width, padding, font size) snapped in one jerk regardless of
+    // what .animation asked for. So the collapse animates NO layout at all:
+    // the item keeps its wide footprint for the whole animation while the
+    // capsule shrinks via scaleEffect and crossfades into the sparkle — pure
+    // render transforms, composited outside the layout pass. Once the
+    // animation settles, the toolbar swaps in the compact plain-sparkle item
+    // (gated by aiBadgeCollapsing); the swap itself moves nothing visible
+    // because the sparkle is pinned to the item's trailing edge either way.
+    private var collapsingAiBadgeButton: some View {
+        ZStack(alignment: .trailing) {
+            // Destination state: the plain sparkle the capsule shrinks into.
+            Image(systemName: "sparkles")
+                .font(.system(size: 17, weight: .regular))
+                .foregroundStyle(viewModel.aiDetectionOn ? Color.accentColor : Color(.secondaryLabel))
+                .scaleEffect(showAiBadge ? 0.4 : 1)
+                .opacity(showAiBadge ? 0 : 1)
+
+            Button {
+                viewModel.toggleAiDetection()
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 14, weight: .semibold))
+                    Text("Remove AI Slop?")
+                        .font(.subheadline.weight(.semibold))
+                        .lineLimit(1)
+                        .fixedSize()
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .foregroundStyle(Color.white)
+                .background(Capsule().fill(Color.accentColor))
+            }
+            .disabled(viewModel.aiDetectionPending)
+            // Shrink toward the sparkle's spot just inside the trailing edge.
+            .scaleEffect(showAiBadge ? 1 : 0.1, anchor: UnitPoint(x: 0.93, y: 0.5))
+            .opacity(showAiBadge ? 1 : 0)
+            .allowsHitTesting(showAiBadge)
+        }
+        .animation(.snappy(duration: 0.45), value: showAiBadge)
+        .opacity(viewModel.aiDetectionPending ? 0.55 : 1.0)
+        .accessibilityLabel(aiIndicatorAccessibilityLabel)
+    }
+
+    // Steady-state item once the badge is gone: an ordinary toolbar sparkle
+    // that participates in the system toolbar background like share/settings.
+    private var plainAiSparkleButton: some View {
+        Button {
+            viewModel.toggleAiDetection()
+        } label: {
+            Image(systemName: "sparkles")
+                .font(.system(size: 17, weight: .regular))
+                .foregroundStyle(viewModel.aiDetectionOn ? Color.accentColor : Color(.secondaryLabel))
+        }
+        .opacity(viewModel.aiDetectionPending ? 0.55 : 1.0)
+        .disabled(viewModel.aiDetectionPending)
+        .accessibilityLabel(aiIndicatorAccessibilityLabel)
     }
 
     private func submitPhrase() {

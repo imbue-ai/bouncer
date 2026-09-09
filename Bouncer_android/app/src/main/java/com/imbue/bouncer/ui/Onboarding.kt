@@ -5,10 +5,12 @@ import androidx.annotation.RawRes
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
@@ -24,14 +26,20 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -59,9 +67,10 @@ private val typewriterPhrases = listOf(
 )
 
 @Composable
-fun Onboarding(onDone: () -> Unit, modifier: Modifier = Modifier) {
-    val pagerState = rememberPagerState(pageCount = { 4 })
+fun Onboarding(onDone: (enableAiSlop: Boolean) -> Unit, modifier: Modifier = Modifier) {
+    val pagerState = rememberPagerState(pageCount = { 5 })
     val scope = rememberCoroutineScope()
+    var removeAiSlop by rememberSaveable { mutableStateOf(true) }
 
     Column(
         modifier = modifier
@@ -90,6 +99,10 @@ fun Onboarding(onDone: () -> Unit, modifier: Modifier = Modifier) {
                     subtitle = "Tap the trash icon on any post to bounce it from your feed.",
                     imageRes = R.drawable.onboarding_bounce,
                 )
+                4 -> AiSlopOnboardingPage(
+                    checked = removeAiSlop,
+                    onCheckedChange = { removeAiSlop = it },
+                )
             }
         }
 
@@ -101,11 +114,11 @@ fun Onboarding(onDone: () -> Unit, modifier: Modifier = Modifier) {
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
-            DotsIndicator(count = 4, selected = pagerState.currentPage)
-            val isLast = pagerState.currentPage == 3
+            DotsIndicator(count = 5, selected = pagerState.currentPage)
+            val isLast = pagerState.currentPage == 4
             Button(
                 onClick = {
-                    if (isLast) onDone()
+                    if (isLast) onDone(removeAiSlop)
                     else scope.launch {
                         pagerState.animateScrollToPage(pagerState.currentPage + 1)
                     }
@@ -191,9 +204,43 @@ private fun VideoOnboardingPage(title: String, subtitle: String, @RawRes videoRe
 }
 
 @Composable
+private fun AiSlopOnboardingPage(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    PageWithMedia(
+        title = "AI Slop Detector",
+        subtitle = "Works on both text and images.",
+        belowSubtitle = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(12.dp))
+                    .clickable { onCheckedChange(!checked) }
+                    .padding(end = 12.dp),
+            ) {
+                Checkbox(checked = checked, onCheckedChange = onCheckedChange)
+                Text(
+                    text = "Remove AI slop from my feed",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+            }
+        },
+    ) { modifier ->
+        Image(
+            painter = painterResource(R.drawable.onboarding_ai_slop),
+            contentDescription = null,
+            // The art is landscape; crop-fill the portrait media box instead
+            // of letterboxing inside it.
+            contentScale = ContentScale.Crop,
+            modifier = modifier,
+        )
+    }
+}
+
+@Composable
 private fun PageWithMedia(
     title: String,
     subtitle: String,
+    belowSubtitle: (@Composable () -> Unit)? = null,
     media: @Composable (Modifier) -> Unit,
 ) {
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
@@ -203,6 +250,11 @@ private fun PageWithMedia(
             modifier = Modifier.fillMaxSize(),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
+            // Fixed-fraction regions rather than content-sized flex: the
+            // media box always spans 0.55 of the page and the text region
+            // below always gets 2/3 of the remainder, top-aligned. Every
+            // page's media box and title therefore land at identical heights
+            // regardless of subtitle length or extra content (the checkbox).
             Spacer(Modifier.weight(1f))
             Box(
                 modifier = Modifier
@@ -217,22 +269,32 @@ private fun PageWithMedia(
             ) {
                 media(Modifier.fillMaxSize())
             }
-            Spacer(Modifier.height(24.dp))
-            Text(
-                text = title,
-                style = MaterialTheme.typography.headlineMedium,
-                color = MaterialTheme.colorScheme.onSurface,
-                textAlign = TextAlign.Center,
-            )
-            Spacer(Modifier.height(12.dp))
-            Text(
-                text = subtitle,
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                textAlign = TextAlign.Center,
-                modifier = Modifier.padding(horizontal = 32.dp),
-            )
-            Spacer(Modifier.weight(2f))
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(2f)
+                    .padding(top = 24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.headlineMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    textAlign = TextAlign.Center,
+                )
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(horizontal = 32.dp),
+                )
+                if (belowSubtitle != null) {
+                    Spacer(Modifier.height(24.dp))
+                    belowSubtitle()
+                }
+            }
         }
     }
 }

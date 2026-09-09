@@ -892,6 +892,12 @@ import {
           }
         }
       }
+      if (changes.aiIndicatorBadgeDismissed && IS_IOS) {
+        // The first-run "REMOVE AI SLOP?" badge was dismissed (first
+        // activation, possibly from another platform's webview or desktop) —
+        // re-push so the native sheet's badge collapses to the sparkle.
+        updateIOSFilteredCount();
+      }
       if (changes.aiFilterIntent) {
         // Any write re-syncs the passive AI-detection indicator.
         refreshAiIndicatorUI().catch(err => console.error('[Bouncer] refreshAiIndicatorUI failed:', err));

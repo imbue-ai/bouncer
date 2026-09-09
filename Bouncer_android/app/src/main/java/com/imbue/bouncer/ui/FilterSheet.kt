@@ -1,7 +1,9 @@
 package com.imbue.bouncer.ui
 
+import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -15,6 +17,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -31,6 +34,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SheetState
 import androidx.compose.material3.SheetValue
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.OutlinedTextField
@@ -44,10 +48,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -60,6 +66,7 @@ fun FilterSheet(
     filteredCount: Int,
     aiDetectionOn: Boolean,
     aiDetectionPending: Boolean,
+    aiBadgeDismissed: Boolean,
     filterReplies: Boolean,
     notificationsEnabled: Boolean,
     onAdd: (String) -> Unit,
@@ -122,6 +129,7 @@ fun FilterSheet(
                 shareEnabled = phrases.isNotEmpty(),
                 aiDetectionOn = aiDetectionOn,
                 aiDetectionPending = aiDetectionPending,
+                aiBadgeDismissed = aiBadgeDismissed,
                 onToggleAiDetection = onToggleAiDetection,
                 onShare = onShareFilterPack,
                 onToggle = { showSettings = !showSettings },
@@ -198,6 +206,7 @@ private fun SheetHeader(
     shareEnabled: Boolean,
     aiDetectionOn: Boolean,
     aiDetectionPending: Boolean,
+    aiBadgeDismissed: Boolean,
     onToggleAiDetection: () -> Unit,
     onShare: () -> Unit,
     onToggle: () -> Unit,
@@ -219,24 +228,51 @@ private fun SheetHeader(
         // natural-language-derived state AND toggles it — but only through
         // the phrase mechanism itself; there is no override switch (see the
         // extension's background/ai-intent.ts).
-        IconButton(
+        // Until detection first turns on, the sparkle wears a "REMOVE AI
+        // SLOP?" pill — the desktop indicator's first-run badge (`with-badge`
+        // in content.css) — that collapses down to the plain sparkle once
+        // detection engages.
+        val showBadge = !aiDetectionOn && !aiBadgeDismissed
+        Surface(
             onClick = onToggleAiDetection,
             enabled = !aiDetectionPending,
+            shape = CircleShape,
+            color = if (showBadge) MaterialTheme.colorScheme.primary else Color.Transparent,
+            contentColor = when {
+                showBadge -> MaterialTheme.colorScheme.onPrimary
+                aiDetectionOn -> MaterialTheme.colorScheme.primary
+                else -> MaterialTheme.colorScheme.onSurfaceVariant
+            },
             modifier = Modifier.alpha(if (aiDetectionPending) 0.55f else 1f),
         ) {
-            Icon(
-                Icons.Default.AutoAwesome,
-                contentDescription = if (aiDetectionOn) {
-                    "Removing AI-generated content — your filter phrases ask for it. Tap to stop (removes those phrases)."
-                } else {
-                    "Tap to remove AI-generated content from your feed (adds the filter phrase \"AI slop\")."
-                },
-                tint = if (aiDetectionOn) {
-                    MaterialTheme.colorScheme.primary
-                } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                },
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                modifier = Modifier
+                    .animateContentSize()
+                    .padding(
+                        horizontal = 12.dp,
+                        vertical = if (showBadge) 8.dp else 12.dp,
+                    ),
+            ) {
+                Icon(
+                    Icons.Default.AutoAwesome,
+                    contentDescription = if (aiDetectionOn) {
+                        "Removing AI-generated content — your filter phrases ask for it. Tap to stop (removes those phrases)."
+                    } else {
+                        "Tap to remove AI-generated content from your feed (adds the filter phrase \"AI slop\")."
+                    },
+                    modifier = Modifier.size(if (showBadge) 16.dp else 24.dp),
+                )
+                if (showBadge) {
+                    Text(
+                        "REMOVE AI SLOP?",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                    )
+                }
+            }
         }
         IconButton(onClick = onShare, enabled = shareEnabled) {
             Icon(Icons.Default.Share, contentDescription = "Share filters")
@@ -262,7 +298,7 @@ private fun PhraseList(
             contentAlignment = Alignment.Center,
         ) {
             Text(
-                "No topics added yet.",
+                "No filter topics added yet.",
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

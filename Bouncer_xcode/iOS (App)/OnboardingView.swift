@@ -14,11 +14,12 @@ struct OnboardingView: View {
     @State private var currentPage = 0
     @State private var videoPlayer = PreloadedVideoPlayer(videoName: "filterphrases")
     @State private var inferenceMode: InferenceMode = .cloud
+    @State private var removeAiSlop = true
     // True once the user commits to Local and the model transfer starts;
     // onboarding then blocks on the download and auto-finishes when it lands.
     @State private var isDownloadingModel = false
     @ObservedObject private var localService = LocalInferenceService.shared
-    private let pageCount = 5
+    private let pageCount = 6
 
     var body: some View {
         VStack(spacing: 0) {
@@ -50,12 +51,15 @@ struct OnboardingView: View {
                 )
                 .tag(3)
 
+                AiSlopOnboardingPage(isOn: $removeAiSlop)
+                    .tag(4)
+
                 InferenceModePage(
                     mode: $inferenceMode,
                     isDownloading: $isDownloadingModel,
                     localService: localService
                 )
-                .tag(4)
+                .tag(5)
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
             .animation(.easeInOut(duration: 0.3), value: currentPage)
@@ -157,6 +161,9 @@ struct OnboardingView: View {
 
     private func completeOnboarding() {
         videoPlayer.stop()
+        if removeAiSlop {
+            seedAiSlopFilterPhrase()
+        }
         UserDefaults.standard.set(true, forKey: "hasCompletedOnboarding")
         withAnimation(.easeOut(duration: 0.35)) {
             isOnboarded = true
@@ -169,6 +176,45 @@ struct OnboardingView: View {
     // JSON strings the ChromePolyfill would send, hence the added quotes.
     private func writeSelectedModel(_ modelKey: String) {
         UserDefaults.standard.set("\"\(modelKey)\"", forKey: "ffstore_ff_local_selectedModel")
+    }
+
+    // Plant the AI-detection seed phrase into X's phrase list (the
+    // descriptions_twitter key in the same ffstore backing). The phrase's
+    // meaning is deterministic (isAiDetectionPhrase in shared/utils.ts), so
+    // the extension engages AI detection at startup without a judge round
+    // trip — the same end state as tapping the sparkle indicator.
+    private func seedAiSlopFilterPhrase() {
+        let seedPhrase = "AI slop"
+        let key = "ffstore_ff_local_descriptions_twitter"
+        let defaults = UserDefaults.standard
+        var phrases: [String] = []
+        if let raw = defaults.string(forKey: key),
+           let data = raw.data(using: .utf8),
+           let existing = try? JSONDecoder().decode([String].self, from: data) {
+            phrases = existing
+        }
+        // Checking the onboarding box IS the action the sparkle's first-run
+        // "REMOVE AI SLOP?" badge advertises — dismiss it up front so the
+        // sheet opens with the plain sparkle, as if the badge had been tapped.
+        defaults.set("true", forKey: "ffstore_ff_local_aiIndicatorBadgeDismissed")
+        guard !phrases.contains(where: { $0.caseInsensitiveCompare(seedPhrase) == .orderedSame }) else { return }
+        phrases.append(seedPhrase)
+        if let data = try? JSONEncoder().encode(phrases),
+           let json = String(data: data, encoding: .utf8) {
+            defaults.set(json, forKey: key)
+            // Seed the derived intent state too — exactly what the
+            // deterministic rule in background/ai-intent.ts would write for
+            // the seed phrase (it is verdict-proof, and judgedSetKey stays
+            // null so the union is still judged normally). The phrase alone
+            // isn't enough: native UserDefaults writes emit no
+            // storage.onChanged, so a live extension (debug onboarding
+            // re-runs) never re-derives the state and the sparkle would sit
+            // grey with "AI slop" in the list.
+            defaults.set(
+                "{\"aiPhrases\":[\"\(seedPhrase)\"],\"judgedSetKey\":null,\"updatedAt\":0}",
+                forKey: "ffstore_ff_local_aiFilterIntent"
+            )
+        }
     }
 }
 
@@ -337,26 +383,28 @@ private struct LoopingVideoView: UIViewRepresentable {
     }
 }
 
-// MARK: - Video Onboarding Page
+// MARK: - Shared Media-Page Layout
 
-private struct VideoOnboardingPage: View {
+// Fixed-fraction regions rather than content-sized flex: the media slot is
+// always 0.65 of the page and the text region below it is a fixed 0.30
+// slice, top-aligned — so every page's media and title land at identical
+// heights regardless of image aspect, subtitle length, or extra content
+// below the subtitle. `media` receives the slot size; aspect-fit content
+// simply centers inside the slot.
+private struct OnboardingMediaLayout<Media: View, Extra: View>: View {
     let title: String
     let subtitle: String
-    let player: PreloadedVideoPlayer
-    let pageIndex: Int
+    @ViewBuilder let media: (CGSize) -> Media
+    @ViewBuilder let belowSubtitle: () -> Extra
 
     var body: some View {
         GeometryReader { geo in
-            VStack(spacing: 24) {
+            let slot = CGSize(width: geo.size.width * 0.85, height: geo.size.height * 0.65)
+            VStack(spacing: 0) {
                 Spacer()
 
-                LoopingVideoView(player: player.player)
-                    .frame(maxWidth: geo.size.width * 0.85, maxHeight: geo.size.height * 0.65)
-                    .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 20, style: .continuous)
-                            .stroke(Color(UIColor.separator), lineWidth: 0.5)
-                    )
+                media(slot)
+                    .frame(height: slot.height)
 
                 VStack(spacing: 12) {
                     Text(title)
@@ -368,12 +416,40 @@ private struct VideoOnboardingPage: View {
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, 32)
-                }
 
-                Spacer()
-                Spacer()
+                    belowSubtitle()
+                }
+                .padding(.top, 24)
+                .frame(height: geo.size.height * 0.30, alignment: .top)
             }
             .frame(maxWidth: .infinity)
+        }
+    }
+}
+
+extension OnboardingMediaLayout where Extra == EmptyView {
+    init(title: String, subtitle: String, @ViewBuilder media: @escaping (CGSize) -> Media) {
+        self.init(title: title, subtitle: subtitle, media: media, belowSubtitle: { EmptyView() })
+    }
+}
+
+// MARK: - Video Onboarding Page
+
+private struct VideoOnboardingPage: View {
+    let title: String
+    let subtitle: String
+    let player: PreloadedVideoPlayer
+    let pageIndex: Int
+
+    var body: some View {
+        OnboardingMediaLayout(title: title, subtitle: subtitle) { slot in
+            LoopingVideoView(player: player.player)
+                .frame(maxWidth: slot.width, maxHeight: slot.height)
+                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .stroke(Color(UIColor.separator), lineWidth: 0.5)
+                )
         }
     }
 }
@@ -540,6 +616,48 @@ private struct InferenceModePage: View {
     }
 }
 
+// MARK: - Remove AI Slop Page (image page + enable checkbox)
+
+private struct AiSlopOnboardingPage: View {
+    @Binding var isOn: Bool
+
+    var body: some View {
+        OnboardingMediaLayout(
+            title: "AI Slop Detector",
+            subtitle: "Works on both text and images.",
+            media: { size in
+                // The art is landscape; crop-fill the whole media slot
+                // instead of letterboxing inside it.
+                Image("onboarding-ai-slop")
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: size.width, height: size.height)
+                    .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 20, style: .continuous)
+                            .stroke(Color(UIColor.separator), lineWidth: 0.5)
+                    )
+            },
+            belowSubtitle: {
+                Button {
+                    isOn.toggle()
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: isOn ? "checkmark.square.fill" : "square")
+                            .font(.system(size: 22))
+                            .foregroundStyle(isOn ? Color.accentColor : Color.secondary)
+                        Text("Remove AI slop from my feed")
+                            .font(.system(size: 17, weight: .medium))
+                            .foregroundStyle(.primary)
+                    }
+                }
+                .buttonStyle(.plain)
+                .padding(.top, 12)
+            }
+        )
+    }
+}
+
 // MARK: - Single Onboarding Page
 
 private struct OnboardingPage: View {
@@ -549,36 +667,16 @@ private struct OnboardingPage: View {
     let pageIndex: Int
 
     var body: some View {
-        GeometryReader { geo in
-            VStack(spacing: 24) {
-                Spacer()
-
-                Image(imageName)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(maxWidth: geo.size.width * 0.85, maxHeight: geo.size.height * 0.65)
-                    .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 20, style: .continuous)
-                            .stroke(Color(UIColor.separator), lineWidth: 0.5)
-                    )
-
-                VStack(spacing: 12) {
-                    Text(title)
-                        .font(.system(size: 28, weight: .bold))
-                        .multilineTextAlignment(.center)
-
-                    Text(subtitle)
-                        .font(.system(size: 17))
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 32)
-                }
-
-                Spacer()
-                Spacer()
-            }
-            .frame(maxWidth: .infinity)
+        OnboardingMediaLayout(title: title, subtitle: subtitle) { slot in
+            Image(imageName)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(maxWidth: slot.width, maxHeight: slot.height)
+                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .stroke(Color(UIColor.separator), lineWidth: 0.5)
+                )
         }
     }
 }
