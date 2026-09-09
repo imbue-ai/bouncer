@@ -35,6 +35,13 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
 
     private var session: GeckoSession? = null
     private var bridge: GeckoBridge? = null
+    // True only once a feedfilterAiSettings reply has actually arrived. The
+    // first onPageStop can fire before the x.com content script exists (the
+    // freshly-opened session delivers a success stop for about:blank while
+    // loadUri waits on the extension install) — a request sent then vanishes,
+    // so the flag must not latch on send or the native toggles would stay on
+    // their defaults forever (e.g. "filter replies" showing on after restart
+    // even though storage says off).
     private var aiSettingsLoaded = false
     private var popupSessionRef: GeckoSession? = null
     @Volatile private var savedState: GeckoSession.SessionState? = null
@@ -66,6 +73,12 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
             hasCompletedOnboarding = prefs.getBoolean(KEY_ONBOARDED, false),
             hasLoggedIn = prefs.getBoolean(KEY_LOGGED_IN, false),
             hasSeenBouncerTooltip = prefs.getBoolean(KEY_BOUNCER_TOOLTIP_SEEN, false),
+            // Native prefs are the display truth for this toggle. The JS-side
+            // copy lives in per-origin page localStorage behind the content
+            // script, which doesn't exist on the login flow (exclude_matches)
+            // or before a feed page loads — seeding from it left the toggle
+            // stuck on its default after every restart.
+            filterReplies = prefs.getBoolean(KEY_FILTER_REPLIES, true),
             // The settings toggle's state: the persisted display preference,
             // defaulting to whether a subscription already exists (so pre-existing
             // subscribers show "on").
@@ -142,6 +155,11 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
     fun onShowSheet(json: String) {
         applyPhrasesJson(null, json)
         _state.update { it.copy(isSheetPresented = !it.isSheetPresented) }
+        // Re-sync settings from storage whenever the sheet becomes visible —
+        // the counterpart of the iOS sheet's .onAppear { loadFilterReplies() }.
+        // Storage is the truth and JS can change it behind the native UI's
+        // back (e.g. bouncing a reply flips filterReplies back on).
+        if (_state.value.isSheetPresented) callJs("__ff_loadAiSettings")
     }
 
     // platformId identifies which tab pushed this (null = the active tab). The
@@ -579,6 +597,9 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
         if (_state.value.loadFailed) {
             _state.update { it.copy(loadFailed = false) }
         }
+        // Stamp the persisted choice into this page's storage BEFORE the read
+        // below, so the reply reflects it.
+        syncFilterRepliesToPage()
         maybeLoadAiSettings()
         if (prefs.getBoolean(KEY_PENDING_AI_SLOP_SEED, false) && isOnX(_state.value.currentUrl)) {
             prefs.edit().remove(KEY_PENDING_AI_SLOP_SEED).apply()
@@ -682,6 +703,8 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
     fun setSheetPresented(open: Boolean) {
         _state.update { it.copy(isSheetPresented = open) }
         callJs("__ff_setSheetClass", open)
+        // Same on-appear re-sync as onShowSheet: storage is the truth.
+        if (open) callJs("__ff_loadAiSettings")
     }
 
     fun completeOnboarding(enableAiSlop: Boolean) {
@@ -781,11 +804,26 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
         callJs("__ff_toggleAiDetection")
     }
 
-    // Same storage key the JS pipeline reads (`filterReplies`); the content
-    // script's storage.onChanged listener applies it live, including
-    // un-hiding already-filtered replies when turned off.
+    // Persist natively (display truth, survives restarts and pages where no
+    // content script is reachable), then mirror into the JS pipeline's storage
+    // key (`filterReplies`); the content script's storage.onChanged listener
+    // applies it live, including un-hiding already-filtered replies when
+    // turned off. If the mirror write is dropped (login screen, mid-load),
+    // syncFilterRepliesToPage re-applies it on the next page load.
     fun setFilterReplies(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_FILTER_REPLIES, enabled).apply()
         _state.update { it.copy(filterReplies = enabled) }
+        callJs("__ff_setStorage", JSONObject().put("filterReplies", enabled))
+    }
+
+    // Re-apply the natively persisted choice to the freshly loaded page. The
+    // JS pipeline reads page storage, which on Android is per-origin
+    // localStorage (the polyfill has no native store) — so every origin the
+    // user filters needs the value stamped in, and a toggle flipped while no
+    // content script was reachable would otherwise never take effect.
+    private fun syncFilterRepliesToPage() {
+        if (!prefs.contains(KEY_FILTER_REPLIES)) return
+        val enabled = prefs.getBoolean(KEY_FILTER_REPLIES, true)
         callJs("__ff_setStorage", JSONObject().put("filterReplies", enabled))
     }
 
@@ -814,6 +852,16 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
 
     fun onAiSettingsReply(json: String) {
         val obj = runCatching { JSONObject(json) }.getOrElse { return }
+        aiSettingsLoaded = true
+        // JS can flip this setting itself (bouncing a reply on a permalink
+        // turns it back on — ensureFilterRepliesEnabled in content/ui.ts), so
+        // follow reported page state into prefs; otherwise the next page load
+        // would stamp the stale native value back over the user's action.
+        if (obj.has("filterReplies")) {
+            prefs.edit()
+                .putBoolean(KEY_FILTER_REPLIES, obj.optBoolean("filterReplies", true))
+                .apply()
+        }
         _state.update { s ->
             s.copy(
                 aiDetectionOn = if (obj.has("aiDetectionOn")) obj.optBoolean("aiDetectionOn") else s.aiDetectionOn,
@@ -823,9 +871,11 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // Re-request on every full page load until a reply lands (onAiSettingsReply
+    // sets the flag). Requests sent to a page without the content script are
+    // silently lost, so latching on send would freeze the UI on its defaults.
     private fun maybeLoadAiSettings() {
         if (aiSettingsLoaded) return
-        aiSettingsLoaded = true
         callJs("__ff_loadAiSettings")
     }
 
@@ -838,6 +888,7 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
         private const val KEY_PENDING_AI_SLOP_SEED = "pendingAiSlopSeed"
         private const val KEY_LOGGED_IN = "hasLoggedIn"
         private const val KEY_BOUNCER_TOOLTIP_SEEN = "hasSeenBouncerTooltip"
+        private const val KEY_FILTER_REPLIES = "filterReplies"
         private const val KEY_NOTIF_PROMPTED = "hasPromptedNotifications"
         private const val PUSH_SETTINGS_URL = "https://x.com/settings/push_notifications"
         // How long to let the off-screen (background, throttled) surface try to
