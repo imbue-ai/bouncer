@@ -224,6 +224,7 @@ dependencies {
     implementation(libs.okhttp)
     implementation(libs.geckoview)
     implementation(platform(libs.firebase.bom))
+    implementation(libs.firebase.analytics)
     implementation(libs.firebase.appcheck)
     implementation(libs.firebase.appcheck.playintegrity)
     implementation(libs.firebase.appcheck.debug)
