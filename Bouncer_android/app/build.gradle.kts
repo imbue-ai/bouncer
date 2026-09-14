@@ -42,7 +42,9 @@ android {
         buildConfigField("String", "APP_CHECK_DEBUG_TOKEN", "\"$debugToken\"")
 
         ndk {
-            abiFilters += listOf("arm64-v8a")
+            // armeabi-v7a covers 32-bit-firmware devices (e.g. Samsung A02s),
+            // which Play otherwise filters out as incompatible.
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
         }
     }
 
