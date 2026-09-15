@@ -21,7 +21,7 @@ import {
   injectFilterPhrasesInput, injectBottomFilterBox, injectMobileFilterBox,
   injectBannerFilterBox,
   syncFilterPhrases, addFilterPhrase, removeFilterPhrase, clearFilteredPosts,
-  restoreOrRefreshFilteredPosts,
+  restoreOrRefreshFilteredPosts, restoreFilteredRepliesOnPage,
   showSettingsModal, renderFilteredPostsView,
   initModelLoadingListener,
   markPostPending, markPostVerified, getVerificationBar,
@@ -954,16 +954,8 @@ import {
           reEvaluateAllPosts();
         } else if (adapter.isPermalinkView()) {
           // Toggling off: undo what we'd already hidden on this permalink
-          // page so the user sees the replies they wanted without a
-          // reload. We deliberately only touch replies on this page —
-          // home-timeline filtering is unaffected by this setting.
-          document.querySelectorAll<HTMLElement>('[data-filtered-by-extension="true"]').forEach(cell => {
-            const article = cell.querySelector<HTMLElement>(adapter.selectors.post);
-            if (!article || adapter.isMainPost(article)) return;
-            cell.style.display = '';
-            delete cell.dataset.filteredByExtension;
-            processedPosts.delete(article);
-          });
+          // page so the user sees the replies they wanted without a reload.
+          restoreFilteredRepliesOnPage();
         }
       }
       const pausedKey = filteringPausedKeyFor(adapter.siteId);
