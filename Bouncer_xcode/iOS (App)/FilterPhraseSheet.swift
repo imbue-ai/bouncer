@@ -2347,13 +2347,25 @@ struct NavBarView: View {
         VStack(spacing: 0) {
             Divider()
 
-            // Single row: platform dropdown centered on the bar, Bouncer
-            // button pinned to the trailing edge (a ZStack rather than an
-            // HStack so the picker centers on the bar itself, not on the
-            // space left over next to the button). Back/forward stay
-            // available via the webview's edge swipes
-            // (allowsBackForwardNavigationGestures).
+            // Single row: reload button pinned to the leading edge, platform
+            // dropdown centered on the bar, Bouncer button pinned to the
+            // trailing edge (a ZStack rather than an HStack so the picker
+            // centers on the bar itself, not on the space left over next to
+            // the buttons). Back/forward stay available via the webview's
+            // edge swipes (allowsBackForwardNavigationGestures).
             ZStack {
+                // Reload button pinned to the leading edge, mirroring the
+                // Android NavBar's refresh placement.
+                Button {
+                    viewModel.reload()
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .accessibilityLabel("Reload")
+                .frame(maxWidth: .infinity, alignment: .leading)
+
                 // Platform dropdown — native SwiftUI Picker with .menu style.
                 // Renders the selected platform in the accent color followed
                 // by the standard up/down chevron glyph, and shows a checkmark

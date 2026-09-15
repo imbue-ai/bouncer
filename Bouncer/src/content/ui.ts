@@ -2316,6 +2316,20 @@ export async function addFilterPhrase(text: string) {
   }
 }
 
+// Undo everything hidePost left on a post's DOM: the container-level hide and
+// the fade-out residue on the article itself (opacity:0 would otherwise leave
+// a "restored" post invisible). Also forgets the article so a later rule
+// change re-evaluates it.
+function unhidePostDom(container: HTMLElement, article: HTMLElement) {
+  container.style.display = '';
+  container.style.visibility = '';
+  delete container.dataset.filteredByExtension;
+  article.style.opacity = '';
+  article.style.transition = '';
+  _deps.processedPosts.delete(article);
+  markPostVerified(article);
+}
+
 // Mirror the Restore-button effects on the filtered list, the article in the
 // feed, and the background cache. Used by the Restore button (which also
 // sends false-positive feedback) and by removeFilterPhrase's auto-restore
@@ -2330,14 +2344,7 @@ function restoreFilteredPost(fp: FilteredPost, overrideReasoning: string) {
   for (const article of _deps.findPosts()) {
     const postUrl = _deps.adapter.getPostUrl(article);
     if (postUrl && postContent.postUrl && postUrl.includes(postContent.postUrl)) {
-      const container = _deps.adapter.getPostContainer(article);
-      container.style.display = '';
-      container.style.visibility = '';
-      delete container.dataset.filteredByExtension;
-      article.style.opacity = '';
-      article.style.transition = '';
-      _deps.processedPosts.delete(article);
-      markPostVerified(article);
+      unhidePostDom(_deps.adapter.getPostContainer(article), article);
       break;
     }
   }
@@ -2437,6 +2444,41 @@ export async function restoreOrRefreshFilteredPosts(
       console.error('[Bouncer] re-evaluate after filter removal failed:', err);
     }
   }
+
+  updateFilteredTabCount();
+  if (filteredTabActive && filteredViewContainer) {
+    const content = filteredViewContainer.querySelector('.filtered-modal-content');
+    if (content) renderFilteredPostsView(content);
+  }
+}
+
+// Turning the "filter replies" setting off restores every reply hidden on the
+// current permalink page. The filter rules themselves didn't change, so unlike
+// restoreOrRefreshFilteredPosts this must leave the background verdict cache
+// alone — those verdicts are still valid, and toggling the setting back on
+// relies on them to re-hide the same replies. Only on-page replies are
+// touched: the main post and home-timeline filtering are unaffected by the
+// setting.
+export function restoreFilteredRepliesOnPage() {
+  document.querySelectorAll<HTMLElement>('[data-filtered-by-extension="true"]').forEach(cell => {
+    const article = cell.matches(_deps.adapter.selectors.post)
+      ? cell
+      : cell.querySelector<HTMLElement>(_deps.adapter.selectors.post);
+    if (!article || _deps.adapter.isMainPost(article)) return;
+
+    const postUrl = _deps.adapter.getPostUrl(article);
+    unhidePostDom(cell, article);
+
+    // Drop the matching entry so "View filtered" no longer lists a post
+    // that's visible in the thread again.
+    if (postUrl) {
+      const idx = filteredPosts.findIndex(p => p.post.postUrl && postUrl.includes(p.post.postUrl));
+      if (idx !== -1) {
+        const [fp] = filteredPosts.splice(idx, 1);
+        filteredPostKeys.delete(fp.post.postUrl || fp.evaluationText.substring(0, 200));
+      }
+    }
+  });
 
   updateFilteredTabCount();
   if (filteredTabActive && filteredViewContainer) {
