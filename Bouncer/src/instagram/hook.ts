@@ -12,8 +12,45 @@
 // key its reelIds are derived from).
 //
 // Everything is wrapped in try/catch — this must never break instagram.com.
+//
+// Since 2026-09 it also REWRITES: reels the user deletes (curtain swipe-away)
+// are dropped from Instagram's own feed responses before the page reads them,
+// so the feed's data simply never contains them again. The pure filtering
+// lives in ./rewrite.ts; this file owns the fetch/XHR plumbing.
+
+import {
+  coverFilenames,
+  extractClipsEntries,
+  filterClipsPayload,
+  rewriteClipsText,
+  type ClipsMediaEntry,
+} from './rewrite';
 
 const SOURCE = 'bouncer-ig-audio-hook';
+// Isolated → MAIN: reels the user deleted. Payload `keys: string[]` — reel
+// shortcodes and cover filenames, matched against every media object in feed
+// responses from then on. Must match index.ts REMOVE_REELS_SOURCE.
+const REMOVE_SOURCE = 'bouncer-ig-remove-reels';
+// The hold-and-classify handshake (all must match index.ts):
+//   MAIN → isolated: a fresh batch's reels, straight out of the JSON, asking
+//   for verdicts while the response is held.
+const CLASSIFY_BATCH_SOURCE = 'bouncer-ig-classify-batch';
+//   isolated → MAIN: the verdicts. dropKeys name the reels to remove from the
+//   held (and every later) response; judgedKeys name everything that got a
+//   verdict either way, so a re-served reel is never classified twice.
+const CLASSIFY_VERDICTS_SOURCE = 'bouncer-ig-classify-verdicts';
+//   isolated → MAIN: whether the user has any filter phrases at all. Holds
+//   only happen while true — with nothing to classify against, batches must
+//   flow through untouched at full speed.
+const FILTER_ACTIVE_SOURCE = 'bouncer-ig-filter-active';
+
+// How long a feed response may be held while its reels are classified.
+// Instagram prefetches the next batch well before the user reaches it, so a
+// held response is normally invisible; this cap is for the fast scroller and
+// for a backend having a bad day — on expiry the batch flows through
+// unfiltered and the verdicts, when they do land, still shield those reels at
+// discovery (index.ts pendingVerdicts).
+const HOLD_MS = 15_000;
 
 interface HookEntry {
   filenames: string[];
@@ -75,6 +112,14 @@ const hookStats = {
   droppedNoCover: 0,
   /** The keys of the first few cover-less media objects, to name the shape. */
   coverlessShapes: [] as string[],
+  /** The deletion rewrite: how many names are on the kill list, and how many
+   *  responses/edges it has actually dropped. `keys > 0, edges = 0` across a
+   *  whole session is the signature of a payload-shape change. */
+  removed: { keys: 0, batches: 0, edges: 0 },
+  /** Hold-and-classify: batches held for verdicts, and how many of those
+   *  expired unanswered. Rising timeouts = the classifier can't keep up with
+   *  the hold window; those reels fall back to discovery-time shields. */
+  held: { batches: 0, timeouts: 0 },
 };
 
 function noteCoverless(obj: Record<string, unknown>): void {
@@ -93,13 +138,236 @@ function noteCoverless(obj: Record<string, unknown>): void {
 // The reel most likely to want its length was the one certain not to have it.
 const announced: HookEntry[] = [];
 
-function fileNameOf(url: string): string | null {
+// ==================== Feed-response deletion ====================
+
+// Every name a deleted reel goes by: shortcode, numeric id, cover filenames.
+// Seeded by REMOVE_SOURCE messages from the isolated world (which only knows
+// filenames and sometimes a code) and grown by alias expansion below.
+const removedKeys = new Set<string>();
+
+// A removal usually arrives as ONE name — the cover filename the isolated
+// world scraped off the <img>. But a future payload's surest name is the
+// shortcode, and its cover candidates may be different renditions with
+// different filenames. The harvest has already seen most reels' full identity
+// (all filenames + code), so join the kill list against it: any entry that
+// shares a name with a removed reel donates all its other names.
+function expandAliases(entries: readonly HookEntry[]): void {
+  if (removedKeys.size === 0) return;
+  for (const entry of entries) {
+    const known = entry.filenames.some(f => removedKeys.has(f))
+      || (entry.code !== undefined && removedKeys.has(entry.code));
+    if (!known) continue;
+    if (entry.code) removedKeys.add(entry.code);
+    for (const f of entry.filenames) removedKeys.add(f);
+  }
+  hookStats.removed.keys = removedKeys.size;
+}
+
+// The prototype's own response getters, kept so WE can read a body without
+// tripping the per-instance shadows installed below — harvest must see the
+// ORIGINAL payload, or a deleted reel drops out of the alias index too.
+function protoGetter(name: 'responseText' | 'response'): (() => unknown) | null {
+  let p: object | null = XMLHttpRequest.prototype;
+  while (p) {
+    const d = Object.getOwnPropertyDescriptor(p, name);
+    // Intentional unbound getter capture — always re-invoked with .call(xhr).
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    if (d?.get) return d.get as () => unknown;
+    p = Object.getPrototypeOf(p) as object | null;
+  }
+  return null;
+}
+const origTextGet = protoGetter('responseText');
+const origResponseGet = protoGetter('response');
+
+// Shadow ONE request's responseText/response with getters that hand the page a
+// body with deleted reels filtered out. Instance properties shadow the
+// prototype's, so this catches the read no matter when or how Instagram
+// registered its handlers. Lazy and cached: the rewrite runs on first read,
+// not on arrival, and reruns only if the underlying body changes (readyState
+// 3 → 4 on text streams).
+function shadowResponses(xhr: XMLHttpRequest): void {
+  if (!origTextGet || !origResponseGet) return;
   try {
-    const p = new URL(url).pathname;
-    const name = p.slice(p.lastIndexOf('/') + 1);
-    return name || null;
+    let rewrittenFrom: string | null = null;
+    let rewrittenTo: string | null = null;
+    const rewriteText = (raw: unknown): unknown => {
+      if (typeof raw !== 'string' || xhr.readyState !== 4 || removedKeys.size === 0) return raw;
+      if (rewrittenFrom !== raw) {
+        rewrittenFrom = raw;
+        const out = rewriteClipsText(raw, removedKeys);
+        if (out) {
+          hookStats.removed.batches++;
+          hookStats.removed.edges += out.dropped;
+        }
+        rewrittenTo = out ? out.text : raw;
+      }
+      return rewrittenTo;
+    };
+    Object.defineProperty(xhr, 'responseText', {
+      configurable: true,
+      get: () => rewriteText(origTextGet.call(xhr)),
+    });
+    // response: a string body filters like responseText; a parsed-JSON body
+    // (responseType 'json') filters in place, once. Anything else (blob,
+    // arraybuffer, document) passes through untouched.
+    let jsonFiltered = false;
+    Object.defineProperty(xhr, 'response', {
+      configurable: true,
+      get: () => {
+        const raw = origResponseGet.call(xhr);
+        if (xhr.responseType === '' || xhr.responseType === 'text') return rewriteText(raw);
+        if (xhr.responseType === 'json' && !jsonFiltered && xhr.readyState === 4
+            && removedKeys.size > 0) {
+          jsonFiltered = true;
+          try {
+            const dropped = filterClipsPayload(raw, removedKeys);
+            if (dropped > 0) {
+              hookStats.removed.batches++;
+              hookStats.removed.edges += dropped;
+            }
+          } catch { /* hand it back unfiltered */ }
+        }
+        return raw;
+      },
+    });
+  } catch {
+    /* never break the page */
+  }
+}
+
+// ==================== Hold-and-classify ====================
+//
+// Deleting a reel the page already holds can only ever be papered over — the
+// dismissed cover. The reels the page DOESN'T have yet can be removed for
+// real: every clips batch arrives seconds before it's needed, so the response
+// is held, its reels are classified against the user's filter phrases (over
+// in the isolated world, via the describe backend), and matching edges are
+// dropped before Instagram reads a byte. To the pager they never existed.
+
+// Whether the user has any filter phrases. Nothing is held when false.
+let classifyActive = false;
+
+// Names (codes + cover filenames) of every reel a verdict has ever come back
+// for, hidden or kept — a re-served reel must not stall a batch again.
+const classifiedKeys = new Set<string>();
+
+const verdictWaiters = new Map<string, (dropKeys: readonly string[]) => void>();
+let batchSeq = 0;
+
+/** Ship a batch's reels off for classification; resolve with the keys to drop.
+ *  Resolves [] on timeout — the batch then flows through unfiltered and the
+ *  discovery-time shield picks up whatever the verdicts eventually say. */
+function requestVerdicts(entries: readonly ClipsMediaEntry[]): Promise<readonly string[]> {
+  return new Promise((resolve) => {
+    const batchId = `b${++batchSeq}`;
+    hookStats.held.batches++;
+    const timer = setTimeout(() => {
+      verdictWaiters.delete(batchId);
+      hookStats.held.timeouts++;
+      resolve([]);
+    }, HOLD_MS);
+    verdictWaiters.set(batchId, (dropKeys) => {
+      clearTimeout(timer);
+      verdictWaiters.delete(batchId);
+      resolve(dropKeys);
+    });
+    window.postMessage({ source: CLASSIFY_BATCH_SOURCE, batchId, entries }, '*');
+  });
+}
+
+function entryKeys(entry: ClipsMediaEntry): string[] {
+  return entry.code ? [entry.code, ...entry.filenames] : [...entry.filenames];
+}
+
+/** The reels of `text` still needing a verdict, or null when this body is not
+ *  worth holding at all (no clips batch, or everything in it already judged —
+ *  already-judged hidden reels drop synchronously through removedKeys). */
+function entriesNeedingVerdicts(text: unknown): ClipsMediaEntry[] | null {
+  if (!classifyActive || typeof text !== 'string' || !/clips/i.test(text)) return null;
+  try {
+    const fresh = extractClipsEntries(JSON.parse(text))
+      .filter(entry => !entryKeys(entry).some(k => classifiedKeys.has(k) || removedKeys.has(k)));
+    return fresh.length > 0 ? fresh : null;
   } catch {
     return null;
+  }
+}
+
+/** Classify a held body's reels and fold the verdicts into the kill list.
+ *  When this resolves, the existing rewrite layer (shadowResponses / the fetch
+ *  wrapper) does the actual dropping on first read. */
+async function classifyHeldBody(entries: readonly ClipsMediaEntry[]): Promise<void> {
+  const dropKeys = await requestVerdicts(entries);
+  for (const k of dropKeys) {
+    if (typeof k === 'string' && k.length > 0) removedKeys.add(k);
+  }
+  hookStats.removed.keys = removedKeys.size;
+}
+
+// ---- The XHR side of holding ----
+//
+// A fetch can simply be awaited; an XHR announces its response through events
+// that fire when they fire. So every XHR gets interceptor listeners at
+// CONSTRUCTION — registered before any listener the page will ever add, which
+// makes their stopImmediatePropagation() total — and while a response is held
+// its terminal events are swallowed and replayed once the verdicts are in.
+// The page sees one delivery, slightly late, already filtered.
+
+type HoldState = 'none' | 'released' | { swallowed: string[] };
+const holdStates = new WeakMap<XMLHttpRequest, HoldState>();
+const syntheticEvents = new WeakSet<Event>();
+
+function releaseHeldXhr(xhr: XMLHttpRequest, state: { swallowed: string[] }): void {
+  holdStates.set(xhr, 'released');
+  try {
+    // Aborted mid-hold: readyState fell back to 0 and the page already got its
+    // abort/loadend — replaying a load now would announce a response that
+    // officially never arrived.
+    if (xhr.readyState !== 4) return;
+    const swallowed = new Set(state.swallowed);
+    for (const type of ['readystatechange', 'load', 'loadend'] as const) {
+      if (!swallowed.has(type)) continue;
+      const ev = type === 'readystatechange' ? new Event(type) : new ProgressEvent(type);
+      syntheticEvents.add(ev);
+      xhr.dispatchEvent(ev);
+    }
+  } catch {
+    /* never break the page */
+  }
+}
+
+/** Decide, once per XHR, whether its response gets held. Runs inside the first
+ *  terminal event, when the body is finally readable. */
+function beginHoldIfNeeded(xhr: XMLHttpRequest): HoldState {
+  if (!classifyActive || !origTextGet) return 'none';
+  if (!isInterestingUrl(xhrUrls.get(xhr) ?? '')) return 'none';
+  // Text bodies only: Instagram's web client doesn't use the json
+  // responseType for the feed, and those can still filter at read time.
+  if (xhr.responseType !== '' && xhr.responseType !== 'text') return 'none';
+  const entries = entriesNeedingVerdicts(origTextGet.call(xhr));
+  if (!entries) return 'none';
+  const state: HoldState = { swallowed: [] };
+  void classifyHeldBody(entries).then(() => releaseHeldXhr(xhr, state));
+  return state;
+}
+
+/** The constructor-installed listener: swallow a held request's terminal
+ *  events; pass everything else (progress states, aborts, our own replays)
+ *  straight through. */
+function interceptTerminalEvent(xhr: XMLHttpRequest, e: Event): void {
+  try {
+    if (syntheticEvents.has(e) || xhr.readyState !== 4) return;
+    let state = holdStates.get(xhr);
+    if (state === undefined) {
+      state = beginHoldIfNeeded(xhr);
+      holdStates.set(xhr, state);
+    }
+    if (state === 'none' || state === 'released') return;
+    state.swallowed.push(e.type);
+    e.stopImmediatePropagation();
+  } catch {
+    /* never break the page */
   }
 }
 
@@ -158,26 +426,6 @@ function durationFromManifest(xml: string): number | undefined {
   } catch {
     return undefined;
   }
-}
-
-// Every cover-image filename a media object goes by (image_versions2 on the
-// app-API shape; display_url/thumbnail_src on older web-GraphQL shapes). These
-// are the join key each consumer matches reel cards on.
-function coverFilenames(obj: Record<string, unknown>): string[] {
-  const filenames: string[] = [];
-  const iv = obj.image_versions2 as { candidates?: { url?: string }[] } | undefined;
-  for (const c of iv?.candidates ?? []) {
-    const f = c?.url ? fileNameOf(c.url) : null;
-    if (f) filenames.push(f);
-  }
-  for (const k of ['display_url', 'thumbnail_src', 'display_uri']) {
-    const v = obj[k];
-    if (typeof v === 'string') {
-      const f = fileNameOf(v);
-      if (f) filenames.push(f);
-    }
-  }
-  return filenames;
 }
 
 // Walk any JSON payload for media-shaped objects: something carrying a
@@ -269,6 +517,9 @@ function harvest(root: unknown, via: HarvestSource): void {
     if (found.length > 0) {
       announced.push(...found);
       hookStats.posted += found.length;
+      // A deleted reel's fuller identity may only now have gone past — teach
+      // the kill list its other names before the next response is filtered.
+      expandAliases(found);
       window.postMessage({ source: SOURCE, entries: found, via, stats: hookStats }, '*');
     }
   } catch {
@@ -291,8 +542,35 @@ const hookedFetch = async function (this: unknown, ...args: Parameters<typeof fe
     const url = typeof input === 'string' ? input : input instanceof Request ? input.url : String(input);
     if (isInterestingUrl(url)) {
       hookStats.responses.fetch++;
+      // Harvest from a clone of the ORIGINAL — see shadowResponses on why the
+      // alias index must not read through the deletion filter.
       res.clone().json().then((json: unknown) => harvest(json, 'fetch'))
         .catch(() => { hookStats.parseFailures++; });
+      // Hold-and-classify: a clips batch with unjudged reels waits here for
+      // verdicts (bounded by HOLD_MS) before the page sees it, so matching
+      // reels can be dropped below rather than papered over later.
+      let heldText: string | null = null;
+      if (classifyActive) {
+        heldText = await res.clone().text();
+        const entries = entriesNeedingVerdicts(heldText);
+        if (entries) await classifyHeldBody(entries);
+      }
+      // Deletion rewrite: hand the page a Response that never contained the
+      // removed reels. Only when something actually matched — the common case
+      // returns Instagram's own untouched Response object.
+      if (removedKeys.size > 0) {
+        const text = heldText ?? await res.clone().text();
+        const out = rewriteClipsText(text, removedKeys);
+        if (out) {
+          hookStats.removed.batches++;
+          hookStats.removed.edges += out.dropped;
+          return new Response(out.text, {
+            status: res.status,
+            statusText: res.statusText,
+            headers: res.headers,
+          });
+        }
+      }
     }
   } catch {
     /* never break the page */
@@ -318,12 +596,22 @@ const hookedOpen = function (this: XMLHttpRequest, ...args: unknown[]): void {
 };
 
 const hookedSend = function (this: XMLHttpRequest, ...args: unknown[]): void {
+  try {
+    // Shadow before the request goes out, so the filtered view is in place
+    // whenever Instagram first reads the body. Installed unconditionally on
+    // interesting URLs (not only while the kill list is non-empty): a reel can
+    // be deleted while its next batch's request is already in flight.
+    if (isInterestingUrl(xhrUrls.get(this) ?? '')) shadowResponses(this);
+  } catch { /* ignore */ }
   this.addEventListener('load', () => {
     try {
       const url = xhrUrls.get(this) ?? '';
       if (!isInterestingUrl(url)) return;
       if (this.responseType !== '' && this.responseType !== 'text') return;
-      const text = this.responseText;
+      // Through the prototype getter, not `this.responseText` — that now reads
+      // the filtered view, and the harvest wants the original (see
+      // shadowResponses).
+      const text = origTextGet ? origTextGet.call(this) as string : this.responseText;
       if (!text || text.charAt(0) !== '{') return;
       hookStats.responses.xhr++;
       try {
@@ -387,14 +675,66 @@ if (/(^|\.)instagram\.com$/i.test(location.hostname)) {
   window.fetch = hookedFetch;
   XMLHttpRequest.prototype.open = hookedOpen;
   XMLHttpRequest.prototype.send = hookedSend;
+  // The hold interceptors, installed at construction so they are FIRST in
+  // every XHR's listener list — the property that makes their
+  // stopImmediatePropagation() silence the page's own handlers (see the
+  // hold-and-classify section). The subclass inherits the patched prototype,
+  // so open/send hooks keep working unchanged.
+  const OriginalXHR = XMLHttpRequest;
+  window.XMLHttpRequest = class extends OriginalXHR {
+    constructor() {
+      super();
+      const intercept = (e: Event): void => interceptTerminalEvent(this, e);
+      this.addEventListener('readystatechange', intercept);
+      this.addEventListener('load', intercept);
+      this.addEventListener('loadend', intercept);
+    }
+  };
 
   // A consumer booting later than us asks for what it missed, and gets the whole
   // accumulated set. Cheap — the entries are already built — and it is the only
   // way anything harvested before document_idle ever reaches them.
   window.addEventListener('message', (e: MessageEvent) => {
     try {
-      const data = e.data as { source?: string } | null;
-      if (e.source !== window || data?.source !== READY_SOURCE) return;
+      const data = e.data as { source?: string; keys?: unknown } | null;
+      if (e.source !== window) return;
+      // The kill list. Sent whole on every change (and on boot, from
+      // storage), so receipt is idempotent and nothing is lost to ordering.
+      if (data?.source === REMOVE_SOURCE) {
+        if (Array.isArray(data.keys)) {
+          for (const k of data.keys) {
+            if (typeof k === 'string' && k.length > 0) removedKeys.add(k);
+          }
+        }
+        hookStats.removed.keys = removedKeys.size;
+        expandAliases(announced);
+        return;
+      }
+      // Whether holds happen at all — flipped by the isolated world whenever
+      // the user's phrase list goes empty/non-empty.
+      if (data?.source === FILTER_ACTIVE_SOURCE) {
+        const payload = data as { active?: unknown };
+        classifyActive = payload.active === true;
+        return;
+      }
+      // Verdicts for a held batch. judgedKeys stop re-classification;
+      // dropKeys land via the waiter, which folds them into removedKeys.
+      if (data?.source === CLASSIFY_VERDICTS_SOURCE) {
+        const payload = data as { batchId?: unknown; dropKeys?: unknown; judgedKeys?: unknown };
+        if (Array.isArray(payload.judgedKeys)) {
+          for (const k of payload.judgedKeys) {
+            if (typeof k === 'string' && k.length > 0) classifiedKeys.add(k);
+          }
+        }
+        const drops = Array.isArray(payload.dropKeys)
+          ? payload.dropKeys.filter((k): k is string => typeof k === 'string' && k.length > 0)
+          : [];
+        if (typeof payload.batchId === 'string') {
+          verdictWaiters.get(payload.batchId)?.(drops);
+        }
+        return;
+      }
+      if (data?.source !== READY_SOURCE) return;
       // Re-scan first: a consumer asking for a replay has just booted, and
       // between our DOMContentLoaded pass and now the page may have embedded
       // more state — on a route change it certainly has.

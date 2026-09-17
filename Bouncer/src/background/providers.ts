@@ -295,12 +295,18 @@ export async function callImbueInstagramAnalyze(
   audioBase64?: string,
   audioFormat?: string,
   videoUrl?: string,
+  categories?: string[],
 ): Promise<ImbueInstagramResponse> {
   const image = frameBase64
     ? `data:image/jpeg;base64,${frameBase64}`
     : thumbnailUrl;
   const message: Record<string, unknown> = {
     action: 'instagramAnalyze',
+    // The user's filter phrases, top-level like the audioFilter action's. When
+    // sent, the one describe inference also classifies the reel against them
+    // and the response carries shouldHide/category/reasoning. Never an empty
+    // list — the server 400s on one; no phrases means describe-only.
+    ...(categories && categories.length > 0 ? { categories } : {}),
     tweetData: {
       text: caption,
       imageUrls: image ? [image] : [],

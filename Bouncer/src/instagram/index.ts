@@ -39,6 +39,7 @@ import { buildRecords, creatorReport, forgetAll, remember, type ReelRecord } fro
 import { installCurtain, ROW_COUNT, type Curtain } from './curtain';
 import { makeSettingsIcon } from '../shared/utils';
 import { enabledStorageKey } from '../shared/platforms';
+import { getDescriptions } from '../shared/storage';
 
 // Audio filter terms use their own storage key. (Bouncer filter topics for
 // Instagram live under `descriptions_instagram` and are managed by the original
@@ -66,6 +67,26 @@ const CLOSE_SETTINGS_EVENT = 'bouncer-close-settings';
 // classifier removed would be.
 const BOUNCE_REEL_EVENT = 'bouncer-bounce-reel';
 const DESCRIBER_EVENT = 'bouncer-ig-describer';
+
+// Isolated → MAIN-world channel: the names of reels the user DELETED (swiped
+// away on the curtain), for the hook's feed-response filter. From then on
+// every /graphql feed response is rewritten to not contain them — the feed's
+// data simply never carries the reel again, on this load or any later one.
+// Must match hook.ts REMOVE_SOURCE.
+const REMOVE_REELS_SOURCE = 'bouncer-ig-remove-reels';
+// The hold-and-classify handshake with the hook (all must match hook.ts):
+// the hook holds a fresh clips batch and asks for verdicts; we classify each
+// reel straight off its payload (caption + cover + progressive-MP4 for
+// server-side audio) and answer with what to drop. Reels judged after the
+// hold expires still get the dismissed cover at discovery (pendingVerdicts).
+const CLASSIFY_BATCH_SOURCE = 'bouncer-ig-classify-batch';
+const CLASSIFY_VERDICTS_SOURCE = 'bouncer-ig-classify-verdicts';
+const FILTER_ACTIVE_SOURCE = 'bouncer-ig-filter-active';
+// storage.local key persisting those names across reloads: a flat string[] of
+// shortcodes and cover filenames, capped so a heavy swiper's list can't grow
+// without bound (the cap comfortably exceeds a session's worth of dismissals).
+const REMOVED_REELS_KEY = 'removedReels_instagram';
+const REMOVED_REELS_CAP = 600;
 
 // DEBUG KILL SWITCHES.
 //
@@ -406,6 +427,221 @@ function activeIndex(): number {
     : orderedReels.findIndex((r) => r.reelId === activeReelId);
 }
 
+// ==================== Auto-filter (traditional Bouncer) ====================
+
+// The user's Instagram filter phrases (descriptions_instagram — the same list
+// the classic feed pipeline classifies against). When non-empty, every
+// describe request carries them and the SAME inference also classifies the
+// reel; a shouldHide verdict lands in autoFilterReel below.
+const DESCRIPTIONS_STORAGE_KEY = 'descriptions_instagram' as const;
+let filterPhrases: string[] = [];
+
+// Reels the classifier hid, so a verdict re-delivered (recycled card, cache
+// cleared) can't double-file the reel under "View filtered".
+const autoFiltered = new Set<string>();
+
+/** Traditional Bouncer, reel-shaped: the describe verdict says this reel
+ *  matches one of the user's filter phrases. Same treatment as a manual
+ *  bounce — card hidden and filed under "View filtered" (restorable, with the
+ *  model's own reasoning), panel rows skip it, curtain shields and skips it —
+ *  but deliberately NOT fed to the feed-response kill list: that list is
+ *  permanent, and an AI verdict must stay reversible. */
+function autoFilterReel(reel: Reel, category: string | null, reasoning: string | null): void {
+  if (autoFiltered.has(reel.reelId) || swipedAway.has(reel.reelId)) return;
+  autoFiltered.add(reel.reelId);
+  console.debug(`[Bouncer IG] auto-filtered ${reel.reelId}`
+    + (category ? ` — category "${category}"` : ''));
+  swipedAway.add(reel.reelId);
+  hideReelCard(reel, reasoning ?? (category ? `Matches "${category}"` : 'Matched your filters'),
+    category);
+  suggestions?.dismiss(reel.reelId);
+  if (reel.reelId === activeReelId) advanceToNextReel(reel.reelId);
+}
+
+// ---- Batch classification, for the hook's held responses ----
+
+/** What a payload-time classification concluded, waiting for its reel to gain
+ *  a DOM presence. Keyed by cover FILENAME (the last path segment — the one
+ *  name shared between a payload's image candidates and a card's reelId).
+ *  Covers two paths: a reel that leaked through a hold timeout gets its
+ *  dismissed cover the moment scan() discovers it, and a KEPT reel gets its
+ *  description for free (no second inference). */
+interface PayloadVerdict {
+  shouldHide: boolean;
+  category: string | null;
+  reasoning: string | null;
+  description: string;
+}
+const pendingVerdicts = new Map<string, PayloadVerdict>();
+
+/** How long a single reel's classification may hold up its batch's answer.
+ *  Just under the hook's HOLD_MS: an answer that would arrive after the hold
+ *  expired anyway shouldn't keep the whole batch's message from sending. */
+const BATCH_VERDICT_DEADLINE_MS = 14_000;
+/** Sanity cap; clips batches run 4-12 reels. */
+const MAX_BATCH_CLASSIFY = 12;
+
+function basenameOf(reelId: string): string {
+  return reelId.slice(reelId.lastIndexOf('/') + 1);
+}
+
+/** One reel out of a held payload, as the hook sends it (rewrite.ts
+ *  ClipsMediaEntry) — revalidated here because it crossed a postMessage. */
+interface BatchEntry {
+  code?: string;
+  caption?: string;
+  thumbnailUrl?: string;
+  videoUrl?: string;
+  filenames: string[];
+}
+
+function sanitizeBatchEntries(raw: unknown): BatchEntry[] {
+  if (!Array.isArray(raw)) return [];
+  const entries: BatchEntry[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const e = item as Record<string, unknown>;
+    const filenames = Array.isArray(e.filenames)
+      ? e.filenames.filter((f): f is string => typeof f === 'string' && f.length > 0)
+      : [];
+    if (filenames.length === 0) continue;
+    entries.push({
+      ...(typeof e.code === 'string' && e.code ? { code: e.code } : {}),
+      ...(typeof e.caption === 'string' ? { caption: e.caption } : {}),
+      ...(typeof e.thumbnailUrl === 'string' ? { thumbnailUrl: e.thumbnailUrl } : {}),
+      ...(typeof e.videoUrl === 'string' ? { videoUrl: e.videoUrl } : {}),
+      filenames,
+    });
+  }
+  return entries;
+}
+
+/** File a payload-time verdict: remember it for reels yet to mount, and apply
+ *  it at once to any matching reel already discovered (a hold that timed out,
+ *  or a reel served again later). */
+function recordPayloadVerdict(entry: BatchEntry, verdict: PayloadVerdict): void {
+  for (const f of entry.filenames) pendingVerdicts.set(f, verdict);
+  if (!verdict.shouldHide) return;
+  for (const reel of orderedReels) {
+    if (entry.filenames.includes(basenameOf(reel.reelId))) {
+      autoFilterReel(reel, verdict.category, verdict.reasoning);
+    }
+  }
+}
+
+/** A newly discovered reel meets any verdict that predates it. Called from
+ *  scan() for every reel, right after registration. */
+function applyPendingVerdict(reel: Reel): void {
+  const verdict = pendingVerdicts.get(basenameOf(reel.reelId));
+  if (!verdict) return;
+  if (verdict.description && !cache.has(reel.reelId)) {
+    cache.set(reel.reelId, { description: verdict.description });
+  }
+  if (verdict.shouldHide) autoFilterReel(reel, verdict.category, verdict.reasoning);
+}
+
+/** Classify one held batch and answer the hook. Every reel is judged from its
+ *  payload alone — caption, cover URL, and the progressive-MP4 the backend
+ *  strips audio from server-side; there is no card to grab a frame off yet.
+ *  Per-reel failures just leave that reel unjudged (it renders, and a later
+ *  sighting retries); the batch answer always goes back so the hook never
+ *  waits out its full timeout on a fast failure. */
+async function classifyHeldBatch(batchId: string, entries: BatchEntry[]): Promise<void> {
+  const phrases = [...filterPhrases];
+  const judgedKeys: string[] = [];
+  const dropKeys: string[] = [];
+  if (phrases.length > 0) {
+    await Promise.all(entries.slice(0, MAX_BATCH_CLASSIFY).map(async (entry) => {
+      const keys = [...(entry.code ? [entry.code] : []), ...entry.filenames];
+      const message: ContentToBackgroundMessage = {
+        type: 'analyzeReel',
+        caption: entry.caption ?? '',
+        thumbnailUrl: entry.thumbnailUrl ?? '',
+        ...(entry.videoUrl ? { videoUrl: entry.videoUrl } : {}),
+        categories: phrases,
+      };
+      const answer: Promise<{
+        description?: string; error?: string;
+        shouldHide?: boolean; category?: string | null; reasoning?: string | null;
+      } | undefined> = chrome.runtime.sendMessage(message);
+      // However late the verdict lands, it still counts — as a discovery-time
+      // shield rather than a payload drop.
+      answer.then((res) => {
+        if (!res || res.error) return;
+        recordPayloadVerdict(entry, {
+          shouldHide: !!res.shouldHide,
+          category: res.category ?? null,
+          reasoning: res.reasoning ?? null,
+          description: (res.description ?? '').trim(),
+        });
+      }).catch(() => { /* unjudged; a later sighting retries */ });
+      const res = await Promise.race([
+        answer,
+        new Promise<undefined>((resolve) =>
+          setTimeout(() => resolve(undefined), BATCH_VERDICT_DEADLINE_MS)),
+      ]).catch(() => undefined);
+      if (!res || res.error) return;
+      judgedKeys.push(...keys);
+      if (res.shouldHide) dropKeys.push(...keys);
+    }));
+  }
+  if (dropKeys.length > 0) {
+    console.debug(`[Bouncer IG] held batch ${batchId}: dropping ${dropKeys.length} key(s)`);
+  }
+  window.postMessage({
+    source: CLASSIFY_VERDICTS_SOURCE, batchId, dropKeys, judgedKeys,
+  }, '*');
+}
+
+/** Tell the hook whether holding is worth anything at all right now. */
+function postFilterActive(): void {
+  window.postMessage({ source: FILTER_ACTIVE_SOURCE, active: filterPhrases.length > 0 }, '*');
+}
+
+// ==================== Feed-response deletion ====================
+
+// Every name a deleted reel goes by — its shortcode when known, and its cover
+// filename always (the reelId's last path segment, the one name the DOM side
+// is guaranteed to have). The hook cross-references these against the media
+// identities it has harvested, so one name is enough to catch them all.
+const removedReelKeys = new Set<string>();
+
+/** The whole list, every time. Idempotent on the hook side, so neither a
+ *  repeat nor a boot-time replay can double-delete, and no addition is lost
+ *  to message ordering. */
+function postRemovedReelKeys(): void {
+  if (removedReelKeys.size === 0) return;
+  window.postMessage({ source: REMOVE_REELS_SOURCE, keys: [...removedReelKeys] }, '*');
+}
+
+/** Delete a reel from the feed's DATA, not just from view: the MAIN-world
+ *  hook rewrites every feed response from here on to not contain it. The
+ *  curtain's own dismissed-set handles the copy React was already handed;
+ *  this makes sure no refetch, pagination batch, or reload serves it again. */
+function eraseReelFromFeed(reelId: string, code?: string): void {
+  const filename = reelId.slice(reelId.lastIndexOf('/') + 1);
+  if (filename) removedReelKeys.add(filename);
+  if (code) removedReelKeys.add(code);
+  postRemovedReelKeys();
+  // Newest-last, so the cap sheds the oldest deletions first.
+  void chrome.storage.local.set({
+    [REMOVED_REELS_KEY]: [...removedReelKeys].slice(-REMOVED_REELS_CAP),
+  });
+}
+
+/** Reels deleted on past visits: reload the kill list and hand it to the hook
+ *  (listening since document_start) before the batches it should filter
+ *  arrive. */
+async function restoreRemovedReelKeys(): Promise<void> {
+  const data = await chrome.storage.local.get(REMOVED_REELS_KEY);
+  const list: unknown = data[REMOVED_REELS_KEY];
+  if (!Array.isArray(list)) return;
+  for (const k of list) {
+    if (typeof k === 'string' && k.length > 0) removedReelKeys.add(k);
+  }
+  postRemovedReelKeys();
+}
+
 function mountSuggestions(): void {
   suggestions = installCurtain({
     records: suggestionRecords,
@@ -435,12 +671,14 @@ function mountSuggestions(): void {
         card.scrollIntoView({ behavior: 'smooth', block: 'center' });
       }
     },
-    // The curtain already skips a dismissed reel for this page's life. Logged
-    // by code so the device loop can watch dismissals land; the feed-response
-    // filter will take these as its kill list once it exists.
+    // The curtain already skips a dismissed reel for this page's life; the
+    // feed-response filter takes it from there — a swipe-away is a DELETE,
+    // and the feed's data never carries the reel again. Logged by code so the
+    // device loop can watch dismissals land.
     onDismiss: (record) => {
       console.debug(`[Bouncer IG] reel dismissed: ${record.reelId}`
         + (record.code ? ` (/reels/${record.code}/)` : ''));
+      eraseReelFromFeed(record.reelId, record.code);
     },
   });
   suggestions.refresh();
@@ -983,14 +1221,20 @@ let suppressBounceDismissOnce = false;
  *  Uses exactly the markers the Instagram adapter's own filtering uses —
  *  `display: none` plus `data-filtered-by-extension` — so the adapter's
  *  scroll observer treats it identically to a reel the classifier removed, and
- *  the restore path in the filtered-posts panel can find and un-hide it. */
-function hideReelCard(reel: Reel): void {
+ *  the restore path in the filtered-posts panel can find and un-hide it.
+ *
+ *  `reasoning`/`category` ride along to the "View filtered" entry. The manual
+ *  swipe passes neither and content.js falls back to its stock line; the
+ *  auto-filter passes the model's own sentence and matched phrase. */
+function hideReelCard(reel: Reel, reasoning?: string, category?: string | null): void {
   const card = reel.card;
   if (!card.isConnected) return;
   card.dataset.filteredByExtension = 'true';
   collapseWhenOffScreen(card);
   // Hand it to content.js so it lands in "View filtered" and stays restorable.
-  window.dispatchEvent(new CustomEvent(BOUNCE_REEL_EVENT, { detail: { card } }));
+  window.dispatchEvent(new CustomEvent(BOUNCE_REEL_EVENT, {
+    detail: { card, reasoning, category },
+  }));
 }
 
 /** Collapse a filtered card only when doing so cannot move the reel in view.
@@ -1480,8 +1724,15 @@ async function describeReel(reel: Reel): Promise<string> {
         ...(frame?.ok ? { frameBase64: frame.base64 } : {}),
         ...(clip ? { audioBase64: clip.base64, audioFormat: clip.format } : {}),
         ...(!clip && videoUrl ? { videoUrl } : {}),
+        // The user's filter phrases turn the describe into a describe+classify
+        // — one inference, verdict handled below. Never an empty list: the
+        // backend 400s on one, and no phrases means nothing to filter anyway.
+        ...(filterPhrases.length > 0 ? { categories: [...filterPhrases] } : {}),
       };
-      const res = await Promise.race<{ description?: string; error?: string } | undefined>([
+      const res = await Promise.race<{
+        description?: string; error?: string;
+        shouldHide?: boolean; category?: string | null; reasoning?: string | null;
+      } | undefined>([
         chrome.runtime.sendMessage(message),
         new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), DESCRIBE_WATCHDOG_MS)),
       ]);
@@ -1499,6 +1750,12 @@ async function describeReel(reel: Reel): Promise<string> {
         return '';
       }
       cache.set(reel.reelId, { description });
+      // The classify half of the answer, when phrases rode along. Before the
+      // refreshes below, so the panel and curtain render this reel already
+      // hidden rather than offering it for one frame.
+      if (res?.shouldHide) {
+        autoFilterReel(reel, res.category ?? null, res.reasoning ?? null);
+      }
       // A visible slot may have been waiting on this phrase. Both surfaces:
       // refreshPanel returns early in the phone-width flow (no panel is
       // mounted there), so without the second call a chooser row that opened
@@ -1768,6 +2025,9 @@ function scan(): void {
     // Read the creator off the card NOW: Instagram recycles cards as you move,
     // so a later read may be describing a different reel, or nothing at all.
     remember(reel);
+    // A verdict may have preceded the reel here (classified at payload time,
+    // leaked through a hold timeout): shield it before it's ever offered.
+    applyPendingVerdict(reel);
   }
   // Bring any reel that stands taller than the screen back inside it. Done
   // here because a reel is laid out when Instagram mounts it, which is the same
@@ -2122,6 +2382,43 @@ async function boot(): Promise<void> {
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local' || !changes[AUDIO_TERMS_KEY]) return;
     applyAudioTerms(changes[AUDIO_TERMS_KEY].newValue);
+  });
+
+  // Reels deleted on past visits start deleted on this one. Fire-and-forget:
+  // nothing else waits on the storage read, and eraseReelFromFeed re-posts the
+  // whole list on every new deletion anyway.
+  void restoreRemovedReelKeys().catch(() => { /* an empty kill list, not a failure */ });
+
+  // The filter phrases, for the describe+classify calls. getDescriptions
+  // rather than a raw storage read: it owns the legacy filter-pack migration.
+  // On any change (the settings modal and the bounce popup both write this
+  // key) the phrase list refreshes AND the describe cache empties — verdicts
+  // are phrase-relative, so every reel still ahead re-describes against the
+  // new list on the next panel/curtain refresh. Already-hidden reels stay
+  // hidden; "View filtered" is their way back.
+  void getDescriptions(DESCRIPTIONS_STORAGE_KEY).then((phrases) => {
+    filterPhrases = phrases;
+    postFilterActive();
+  });
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local' || !changes[DESCRIPTIONS_STORAGE_KEY]) return;
+    void getDescriptions(DESCRIPTIONS_STORAGE_KEY).then((phrases) => {
+      filterPhrases = phrases;
+      postFilterActive();
+      cache.clear();
+      refreshPanel();
+      suggestions?.refresh();
+    });
+  });
+
+  // The hook's held batches, asking for verdicts. Answered even with no
+  // phrases (empty verdict) so a hold that raced a phrase-list wipe releases
+  // immediately instead of waiting out its timeout.
+  window.addEventListener('message', (e: MessageEvent) => {
+    const data = e.data as { source?: string; batchId?: unknown; entries?: unknown } | null;
+    if (e.source !== window || data?.source !== CLASSIFY_BATCH_SOURCE) return;
+    if (typeof data.batchId !== 'string') return;
+    void classifyHeldBatch(data.batchId, sanitizeBatchEntries(data.entries));
   });
 
   // Every consumer of the MAIN-world hook is listening by now, so ask it for

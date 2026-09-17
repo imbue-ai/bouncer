@@ -110,6 +110,13 @@ export interface Curtain {
   onActiveReelChanged(): void;
   close(): void;
   isOpen(): boolean;
+  /** Decline a reel WITHOUT a gesture — the auto-filter's entry point. Same
+   *  consequences as a row swipe: shield up, rows drop it, journeys skip it —
+   *  including moving off it right now if it's the reel on screen. The host's
+   *  onDismiss is NOT invoked: that callback is the user's own verdict
+   *  (it feeds the permanent feed-response kill list), and an AI verdict
+   *  must stay restorable. */
+  dismiss(reelId: string): void;
   teardown(): void;
 }
 
@@ -1292,6 +1299,27 @@ export function installCurtain(next: CurtainHost): Curtain {
     },
     isOpen(): boolean {
       return mode === 'covering' || mode === 'dragging' || mode === 'rowdrag';
+    },
+    dismiss(reelId: string): void {
+      if (!host || dismissedIds.has(reelId)) return;
+      dismissedIds.add(reelId);
+      console.debug(`[Bouncer IG] curtain: auto-dismissed ${reelId}`);
+      // Shield first, exactly as a row swipe commits: attached to the card it
+      // rides along, so the declined frame never reaches the screen.
+      syncShields();
+      // Declined while being watched (or while sitting under the cover): same
+      // journey as arriving on a dismissed reel — on to the next kept one.
+      const under = host.records()[0];
+      if (under && under.reelId === reelId) {
+        const next = firstKept();
+        if (next) {
+          pauseUnderlying();
+          hide(false);
+          host.goTo(next);
+        }
+      }
+      rowIds = rowIds.filter((id) => id !== reelId);
+      renderRows();
     },
     teardown(): void {
       document.removeEventListener('scroll', onFeedScroll, true);

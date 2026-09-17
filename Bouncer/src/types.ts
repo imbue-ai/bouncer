@@ -428,7 +428,12 @@ export type ContentToBackgroundMessage =
        *  norm, where WebCodecs can't transcode. The backend fetches a slice
        *  and extracts the soundtrack itself: no 32 KB frame cap, whole
        *  soundtrack. Ignored server-side when audioBase64 is present. */
-      videoUrl?: string }
+      videoUrl?: string;
+      /** The user's Instagram filter phrases (descriptions_instagram). When
+       *  present, the SAME describe inference also classifies the reel against
+       *  them — the response then carries shouldHide/category/reasoning
+       *  alongside the description. Absent = describe only. */
+      categories?: string[] }
   | { type: 'analyzeReelAudio'; audioBase64: string; mimeType: string; categories: string[] };
 
 export type BackgroundToContentMessage =
@@ -656,12 +661,17 @@ export interface ImbueAiImageResponse extends ImbueResponseBase {
   confidence: number;
 }
 
-/** Response from the instagramAnalyze action. The worker passes the LLM output
- *  through verbatim (worker_utils _parse_passthrough_response): `description` is
- *  the <=5-word phrase describing the reel. */
+/** Response from the instagramAnalyze action. `description` is the short
+ *  preview blurb. When the request carried `categories` (the user's filter
+ *  phrases), the same inference also classifies the reel and the verdict
+ *  fields are present (worker_utils _parse_instagram_response); on a plain
+ *  describe job the LLM output passes through verbatim and they are absent. */
 export interface ImbueInstagramResponse extends ImbueResponseBase {
   description: string;
   rawResponse: string;
+  shouldHide?: boolean;
+  reasoning?: string | null;
+  category?: string | null;
 }
 
 /** Discriminated Imbue response — callers should narrow via the action they sent. */

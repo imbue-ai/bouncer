@@ -750,7 +750,10 @@ import {
     // the record of it lives here — file it under "View filtered" so it shows
     // up alongside classifier-filtered reels and can be restored.
     window.addEventListener('bouncer-bounce-reel', (e) => {
-      const card = (e as CustomEvent<{ card?: HTMLElement }>).detail?.card;
+      const detail = (e as CustomEvent<{
+        card?: HTMLElement; reasoning?: string; category?: string | null;
+      }>).detail;
+      const card = detail?.card;
       if (!card) return;
       // The pipeline's unit is the "post" element (the cover image's parent),
       // not the card wrapper the panel tracks — find it inside.
@@ -759,7 +762,11 @@ import {
         : card.querySelector<HTMLElement>(adapter.selectors.post);
       if (!article) return;
       const content = extractPostContent(article);
-      storeFilteredPost(article, content, 'Swiped away in the Bouncer panel');
+      // A manual swipe sends no reasoning and gets the stock line; the
+      // auto-filter sends the model's own sentence and the matched phrase.
+      storeFilteredPost(article, content,
+        detail.reasoning ?? 'Swiped away in the Bouncer panel', '',
+        detail.category ?? null);
     });
 
     window.addEventListener('bouncer-add-filter-phrase', (e) => {

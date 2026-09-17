@@ -27,7 +27,8 @@
   },
   {
     "id": "instagram",
-    "targets": ["safari"],
+    "targets": ["chrome", "safari"],
+    "optionalTargets": ["chrome"],
     "manifestHost": "https://www.instagram.com/*",
     "adapterScript": "dist/InstagramAdapter.js",
     "cssPath": "adapters/instagram/instagram.css",
