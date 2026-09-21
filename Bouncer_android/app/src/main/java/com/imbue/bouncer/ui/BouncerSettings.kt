@@ -21,6 +21,8 @@ fun BouncerSettings(
     onFilterRepliesChange: (Boolean) -> Unit,
     notificationsEnabled: Boolean,
     onNotificationsEnabledChange: (Boolean) -> Unit,
+    debugModeEnabled: Boolean,
+    onDebugModeChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier.fillMaxWidth().padding(bottom = 8.dp)) {
@@ -47,6 +49,21 @@ fun BouncerSettings(
                 Switch(
                     checked = notificationsEnabled,
                     onCheckedChange = onNotificationsEnabledChange,
+                )
+            },
+            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+        )
+
+        // Enables the press-and-hold reasoning popup on posts (why a post was
+        // kept or hidden). This toggle is the sole switch for it — the build
+        // type doesn't matter.
+        ListItem(
+            headlineContent = { Text("Debug mode") },
+            trailingContent = {
+                Switch(
+                    checked = debugModeEnabled,
+                    onCheckedChange = onDebugModeChange,
                 )
             },
             colors = ListItemDefaults.colors(containerColor = Color.Transparent),

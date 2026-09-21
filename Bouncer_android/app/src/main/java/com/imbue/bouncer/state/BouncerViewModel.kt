@@ -80,6 +80,7 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
             // or before a feed page loads — seeding from it left the toggle
             // stuck on its default after every restart.
             filterReplies = prefs.getBoolean(KEY_FILTER_REPLIES, true),
+            debugModeEnabled = prefs.getBoolean(KEY_DEBUG_MODE, false),
             // The settings toggle's state: the persisted display preference,
             // defaulting to whether a subscription already exists (so pre-existing
             // subscribers show "on").
@@ -606,6 +607,7 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
         // Stamp the persisted choice into this page's storage BEFORE the read
         // below, so the reply reflects it.
         syncFilterRepliesToPage()
+        syncDebugModeToPage()
         maybeLoadAiSettings()
         if (prefs.getBoolean(KEY_PENDING_AI_SLOP_SEED, false) && isOnX(_state.value.currentUrl)) {
             prefs.edit().remove(KEY_PENDING_AI_SLOP_SEED).apply()
@@ -822,6 +824,21 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
         callJs("__ff_setStorage", JSONObject().put("filterReplies", enabled))
     }
 
+    // Same shape as setFilterReplies: native prefs are the display truth, the
+    // `debugMode` storage key is what the content script reads to enable the
+    // press-and-hold reasoning popup (addContextMenuHandler in content/ui.ts).
+    fun setDebugMode(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_DEBUG_MODE, enabled).apply()
+        _state.update { it.copy(debugModeEnabled = enabled) }
+        callJs("__ff_setStorage", JSONObject().put("debugMode", enabled))
+    }
+
+    private fun syncDebugModeToPage() {
+        if (!prefs.contains(KEY_DEBUG_MODE)) return
+        val enabled = prefs.getBoolean(KEY_DEBUG_MODE, false)
+        callJs("__ff_setStorage", JSONObject().put("debugMode", enabled))
+    }
+
     // Re-apply the natively persisted choice to the freshly loaded page. The
     // JS pipeline reads page storage, which on Android is per-origin
     // localStorage (the polyfill has no native store) — so every origin the
@@ -895,6 +912,7 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
         private const val KEY_LOGGED_IN = "hasLoggedIn"
         private const val KEY_BOUNCER_TOOLTIP_SEEN = "hasSeenBouncerTooltip"
         private const val KEY_FILTER_REPLIES = "filterReplies"
+        private const val KEY_DEBUG_MODE = "debugMode"
         private const val KEY_NOTIF_PROMPTED = "hasPromptedNotifications"
         private const val PUSH_SETTINGS_URL = "https://x.com/settings/push_notifications"
         // How long to let the off-screen (background, throttled) surface try to
