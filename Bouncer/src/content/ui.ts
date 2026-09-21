@@ -3908,6 +3908,24 @@ function showCategoryLimitWarning() {
 
 // ==================== Context Menu ====================
 
+// Runtime "Debug mode" setting (Android settings sheet). The native toggle
+// mirrors it into the `debugMode` storage key via __ff_setStorage, the same
+// path filterReplies takes; the onChanged listener applies flips live so
+// posts already on screen gain/lose the long-press without a reload.
+let debugModeSetting = false;
+let debugModeWatcherInstalled = false;
+function watchDebugModeSetting() {
+  if (debugModeWatcherInstalled) return;
+  debugModeWatcherInstalled = true;
+  getStorage(['debugMode']).then((data) => {
+    debugModeSetting = data.debugMode === true;
+  }).catch(err => console.error('[UI] Failed to load debugMode:', err));
+  chrome.storage.onChanged.addListener((changes: Record<string, chrome.storage.StorageChange>, areaName: string) => {
+    if (areaName !== 'local' || !changes.debugMode) return;
+    debugModeSetting = changes.debugMode.newValue === true;
+  });
+}
+
 export function addContextMenuHandler(article: HTMLElement) {
   const openPopup = (x: number, y: number) => {
     (async () => {
@@ -3932,13 +3950,16 @@ export function addContextMenuHandler(article: HTMLElement) {
   // following `click`, `contextmenu`, and `touchend` so the system callout
   // doesn't appear and Twitter doesn't navigate to the post.
   //
-  // Debug-only: dev bundles (Xcode Debug builds the extension with --dev)
-  // enable it via IS_DEV_BUILD. Android debug APKs embed the same prod
-  // bundle as release, so their debug source set sets __ff_debugBuild on
-  // the page instead (build_flag.js in the GeckoView bridge extension).
-  const isDebugNativeShell = IS_DEV_BUILD
-    || (window as Window & { __ff_debugBuild?: boolean }).__ff_debugBuild === true;
-  if (_deps.IS_IOS && isDebugNativeShell) {
+  // On Android (both build types — debug APKs embed the same prod bundle as
+  // release, so IS_DEV_BUILD is always false there) this is driven entirely
+  // by the settings sheet's "Debug mode" toggle (debugModeSetting). iOS has
+  // no such toggle; its dev bundles (Xcode Debug builds the extension with
+  // --dev) enable it via IS_DEV_BUILD. Checked per-press rather than at
+  // registration so the toggle takes effect without a reload; while off, no
+  // timer ever starts and every handler below is a no-op.
+  const isDebugNativeShell = () => IS_DEV_BUILD || debugModeSetting;
+  if (_deps.IS_IOS) {
+    watchDebugModeSetting();
     const LONG_PRESS_MS = 500;
     const MOVE_TOLERANCE_PX = 10;
     let pressTimer: number | null = null;
@@ -3954,6 +3975,7 @@ export function addContextMenuHandler(article: HTMLElement) {
     };
 
     article.addEventListener('touchstart', (e: TouchEvent) => {
+      if (!isDebugNativeShell()) return;
       if (e.touches.length !== 1) {
         cancelTimer();
         triggered = false;

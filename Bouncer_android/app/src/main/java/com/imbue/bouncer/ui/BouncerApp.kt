@@ -407,6 +407,7 @@ fun BouncerApp(viewModel: BouncerViewModel = viewModel()) {
                 aiBadgeDismissed = state.aiBadgeDismissed,
                 filterReplies = state.filterReplies,
                 notificationsEnabled = state.notificationsEnabled,
+                debugModeEnabled = state.debugModeEnabled,
                 onAdd = viewModel::addPhrase,
                 onRemove = viewModel::removePhrase,
                 onViewFiltered = viewModel::openFilteredModal,
@@ -414,6 +415,7 @@ fun BouncerApp(viewModel: BouncerViewModel = viewModel()) {
                 onToggleAiDetection = viewModel::toggleAiDetection,
                 onFilterRepliesChange = viewModel::setFilterReplies,
                 onNotificationsEnabledChange = viewModel::setNotificationsEnabled,
+                onDebugModeChange = viewModel::setDebugMode,
                 modifier = Modifier.imePadding(),
             )
         }

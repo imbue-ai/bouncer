@@ -69,6 +69,7 @@ fun FilterSheet(
     aiBadgeDismissed: Boolean,
     filterReplies: Boolean,
     notificationsEnabled: Boolean,
+    debugModeEnabled: Boolean,
     onAdd: (String) -> Unit,
     onRemove: (String) -> Unit,
     onViewFiltered: () -> Unit,
@@ -76,6 +77,7 @@ fun FilterSheet(
     onToggleAiDetection: () -> Unit,
     onFilterRepliesChange: (Boolean) -> Unit,
     onNotificationsEnabledChange: (Boolean) -> Unit,
+    onDebugModeChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var showSettings by remember { mutableStateOf(false) }
@@ -110,12 +112,20 @@ fun FilterSheet(
             modifier = Modifier
                 .fillMaxWidth()
                 .layout { measurable, innerConstraints ->
-                    val sheetTop = runCatching { sheetState.requireOffset() }
-                        .getOrDefault(0f)
-                        .toInt()
-                        .coerceAtLeast(0)
-                    val capped = (fullHeightPx - sheetTop - stickyHeightPx)
-                        .coerceAtLeast(0)
+                    // Settings mode has no sticky block, so no cap: capping
+                    // there squeezes the last toggle into whatever sliver
+                    // remains at partial expansion (a bare clipped Switch)
+                    // instead of letting rows sit below the fold.
+                    val capped = if (showSettings) {
+                        innerConstraints.maxHeight
+                    } else {
+                        val sheetTop = runCatching { sheetState.requireOffset() }
+                            .getOrDefault(0f)
+                            .toInt()
+                            .coerceAtLeast(0)
+                        (fullHeightPx - sheetTop - stickyHeightPx)
+                            .coerceAtLeast(0)
+                    }
                     val placeable = measurable.measure(
                         innerConstraints.copy(maxHeight = capped),
                     )
@@ -140,6 +150,8 @@ fun FilterSheet(
                     onFilterRepliesChange = onFilterRepliesChange,
                     notificationsEnabled = notificationsEnabled,
                     onNotificationsEnabledChange = onNotificationsEnabledChange,
+                    debugModeEnabled = debugModeEnabled,
+                    onDebugModeChange = onDebugModeChange,
                 )
             } else {
                 // Only let the list participate in scroll/nested-scroll when

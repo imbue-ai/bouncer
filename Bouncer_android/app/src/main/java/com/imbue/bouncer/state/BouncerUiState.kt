@@ -32,6 +32,10 @@ data class BouncerUiState(
     // first state load.
     val aiBadgeDismissed: Boolean = true,
     val filterReplies: Boolean = true,
+    // Settings-sheet "Debug mode" toggle: enables the press-and-hold reasoning
+    // popup on posts. The sole switch for it on Android, debug and release
+    // alike (see addContextMenuHandler in content/ui.ts). Defaults off.
+    val debugModeEnabled: Boolean = false,
     val hasCompletedOnboarding: Boolean = false,
     val hasLoggedIn: Boolean = false,
     // Set once we actually observe the /home timeline this session — the
