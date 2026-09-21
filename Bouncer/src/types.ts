@@ -473,6 +473,11 @@ export type FilteringPausedKey = `filteringPaused_${SiteId}`;
 /** Typed schema for chrome.storage.local keys. */
 export type StorageSchema = SettingsBase & {
   authErrorApis: Record<string, boolean>;
+  // Android settings sheet's "Debug mode" toggle (mirrored from native prefs
+  // via __ff_setStorage). The sole switch for the press-and-hold reasoning
+  // popup on Android, debug and release builds alike (see
+  // addContextMenuHandler in content/ui.ts). Defaults to false.
+  debugMode: boolean;
   // Inferred "user wants AI content removed" state, judged from the phrase
   // list (backend detectAiIntent route / local model) and re-checked only
   // when the list changes. The sole on/off control for AI detection — there
