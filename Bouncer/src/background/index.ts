@@ -435,7 +435,7 @@ async function handleMessage(
 
     case 'getErrorStatus': {
       const settings = await getSettings();
-      const hasAlternativeApis = !!(settings.openaiApiKey || settings.geminiApiKey || settings.openrouterApiKey || settings.anthropicApiKey);
+      const hasAlternativeApis = !!(settings.openaiApiKey || settings.geminiApiKey || settings.openrouterApiKey || settings.requestyApiKey || settings.anthropicApiKey);
       return {
         errorType: errorState.type,
         subType: errorState.subType,
@@ -909,7 +909,7 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
     }
 
     // Also retry error posts when API keys change (even without other settings changes)
-    if (changes.openaiApiKey || changes.geminiApiKey || changes.openrouterApiKey || changes.anthropicApiKey) {
+    if (changes.openaiApiKey || changes.geminiApiKey || changes.openrouterApiKey || changes.requestyApiKey || changes.anthropicApiKey) {
       // Clear auth error for the provider whose key changed
       const authData = await getStorage(['authErrorApis']);
       const authErrorApis = { ...(authData.authErrorApis || {}) };
@@ -917,6 +917,7 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
       if (changes.openaiApiKey && authErrorApis.openai) { delete authErrorApis.openai; authChanged = true; }
       if (changes.geminiApiKey && authErrorApis.gemini) { delete authErrorApis.gemini; authChanged = true; }
       if (changes.openrouterApiKey && authErrorApis.openrouter) { delete authErrorApis.openrouter; authChanged = true; }
+      if (changes.requestyApiKey && authErrorApis.requesty) { delete authErrorApis.requesty; authChanged = true; }
       if (changes.anthropicApiKey && authErrorApis.anthropic) { delete authErrorApis.anthropic; authChanged = true; }
       if (authChanged) await setStorage({ authErrorApis });
 

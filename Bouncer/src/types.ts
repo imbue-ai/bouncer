@@ -207,6 +207,7 @@ interface SettingsBase {
   openaiApiKey: string;
   openaiApiBase: string;
   openrouterApiKey: string;
+  requestyApiKey: string;
   geminiApiKey: string;
   anthropicApiKey: string;
   enabled: boolean;
