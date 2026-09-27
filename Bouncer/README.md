@@ -68,3 +68,28 @@ manifest.json                        # Chrome MV3 manifest
 - **[esbuild](https://esbuild.github.io/)** — bundler
 - **[vitest](https://vitest.dev/)** — test runner
 - **[TypeScript](https://www.typescriptlang.org/)** — type checking (no emit, esbuild handles transpilation)
+
+## Optional Jev feed decisions (BYOK)
+
+Advanced Settings includes a separate, opt-in Jev decision layer. It is not a
+chat model entry and does not replace the selected Bouncer filter model.
+
+- Route through **TypeSafe directly** with a TypeSafe key, or through
+  **OpenRouter** with the existing OpenRouter key.
+- Independently enable helpful-probability badges, hiding clearly unhelpful
+  posts, and hiding hateful posts. Each action has its own threshold.
+- Customize what “helpful” means. “Hateful” is narrowly defined as
+  identity-targeted dehumanization, hatred, or threats—not criticism,
+  disagreement, or quotations condemning hate.
+- All options default off. When any option is enabled, post text is transmitted
+  to the selected provider. Keys remain in extension storage and API calls are
+  made by the background worker; keys are never sent to the page or logged.
+- API failures, malformed responses, and uncertain helpfulness scores fail open.
+  Bouncer does not try a second provider automatically or invent an explanation;
+  the UI displays only Jev probabilities.
+
+The implementation follows the official typed-decision APIs:
+[TypeSafe `POST /v1/systemone`](https://docs.typesafe.ai/api) with the versioned
+`jev-1.13.0` model, and
+[OpenRouter `POST /api/v1/systemone`](https://openrouter.ai/docs/api/api-reference/systemone/submit-a-system-one-request)
+with `typesafe/jev-1.13`.

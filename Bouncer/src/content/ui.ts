@@ -2526,6 +2526,10 @@ export function showSettingsModal(section?: 'local') {
     const container = document.createElement('div');
     container.className = 'settings-modal-iframe';
     container.replaceChildren(parseHTML(popup.html));
+    // Jev BYOK is desktop-extension only. In native in-page mode, removing the
+    // section before popup initialization prevents a credential input from
+    // ever being populated into page-owned DOM.
+    container.querySelector('#jevSettingsSection')?.remove();
     container.style.overflow = 'auto';
 
     // Show close button (modal mode)
