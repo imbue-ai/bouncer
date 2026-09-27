@@ -40,7 +40,7 @@ import {
 } from './ui';
 
 import { formatPostForEvaluation, phraseAddNeedsReEvaluation } from '../shared/utils';
-import { applyJevVisuals, normalizeJevEvaluationResult } from './jev-ui';
+import { applyJevVisuals, awaitPipelineWithIndependentJev } from './jev-ui';
 import {
   findStructuralMatch,
   structuralFilterKind,
@@ -233,6 +233,41 @@ import {
     return adapter.extractPostContent(article);
   }
 
+  function applyJevEvaluation(
+    article: HTMLElement,
+    content: PostContent,
+    result: JevEvaluationResult,
+  ): void {
+    // Jev returns typed probabilities only. The extension applies the local
+    // opt-in policy and never invents a model explanation.
+    const jevHideReason = applyJevVisuals(article, result);
+    const containsShareCode = (article.textContent || '').includes(FILTER_PACK_CODE_PREFIX);
+    if (!jevHideReason || containsShareCode) return;
+
+    postReasonings.set(article, {
+      shouldHide: true,
+      reasoning: jevHideReason,
+    });
+    const freshContent = extractPostContent(article);
+    const mergedContent: PostContent = {
+      ...content,
+      imageUrls: content.imageUrls?.length > 0 ? content.imageUrls : freshContent.imageUrls,
+      textHtml: freshContent.textHtml || content.textHtml,
+      quote: freshContent.quote || content.quote,
+      postUrl: content.postUrl || freshContent.postUrl,
+      avatarUrl: freshContent.avatarUrl || content.avatarUrl,
+    };
+    storeFilteredPost(
+      article,
+      mergedContent,
+      jevHideReason,
+      '',
+      result.hideReason === 'hateful' ? 'Jev: hateful' : 'Jev: unhelpful',
+      null,
+    );
+    hidePost(article);
+  }
+
   async function checkLocalModelActive() {
     try {
       const data = await getStorage(['selectedModel']);
@@ -359,7 +394,6 @@ import {
     registerEvaluation(evaluationId, article);
     try {
       let response: PipelineResponse;
-      let jevResult: JevEvaluationResult | null = null;
       if (structuralMatch) {
         response = {
           shouldHide: true,
@@ -372,6 +406,7 @@ import {
       } else {
         const evaluationText = formatPostForEvaluation(content);
         const jevRequestGeneration = jevSettingsGeneration;
+        const jevContentKey = adapter.getPostContentKey(article);
         const pipelineRequest: Promise<PipelineResponse> = chrome.runtime.sendMessage({
           type: 'evaluatePost',
           evaluationId,
@@ -385,53 +420,21 @@ import {
           // AI-text threshold to these.
           isReply: adapter.isPermalinkView()
         });
-        const rawJevRequest: Promise<unknown> = chrome.runtime.sendMessage({
+        const jevRequest: Promise<unknown> = chrome.runtime.sendMessage({
           type: 'evaluateJevPost',
           post: evaluationText,
         });
-        const jevRequest = rawJevRequest
-          .then(normalizeJevEvaluationResult)
-          .catch(() => null);
-        [response, jevResult] = await Promise.all([pipelineRequest, jevRequest]);
-        if (jevRequestGeneration !== jevSettingsGeneration) jevResult = null;
-      }
-      releaseEvaluation(evaluationId);
-
-      // Clear processing tracker when this post's evaluation completes.
-      // Do this before either Jev or the regular pipeline can return early.
-      if (content.postUrl && content.postUrl === currentlyProcessingPostUrl) {
-        currentlyProcessingPostUrl = null;
-      }
-
-      // Jev is an independent typed-decision path. Its response contains only
-      // probabilities and locally-applied policy — never generated rationale.
-      const jevHideReason = applyJevVisuals(article, jevResult);
-      const containsShareCode = (article.textContent || '').includes(FILTER_PACK_CODE_PREFIX);
-      if (jevHideReason && !containsShareCode) {
-        postReasonings.set(article, {
-          shouldHide: true,
-          reasoning: jevHideReason,
-        });
-        const freshContent = extractPostContent(article);
-        const mergedContent: PostContent = {
-          ...content,
-          imageUrls: content.imageUrls?.length > 0 ? content.imageUrls : freshContent.imageUrls,
-          textHtml: freshContent.textHtml || content.textHtml,
-          quote: freshContent.quote || content.quote,
-          postUrl: content.postUrl || freshContent.postUrl,
-          avatarUrl: freshContent.avatarUrl || content.avatarUrl,
-        };
-        storeFilteredPost(
-          article,
-          mergedContent,
-          jevHideReason,
-          '',
-          jevResult?.hideReason === 'hateful' ? 'Jev: hateful' : 'Jev: unhelpful',
-          null,
+        response = await awaitPipelineWithIndependentJev(
+          pipelineRequest,
+          jevRequest,
+          () => jevRequestGeneration === jevSettingsGeneration
+            && article.isConnected
+            && adapter.getPostContentKey(article) === jevContentKey,
+          result => applyJevEvaluation(article, content, result),
         );
-        hidePost(article);
-        return;
       }
+
+      const containsShareCode = (article.textContent || '').includes(FILTER_PACK_CODE_PREFIX);
 
       if (response == null) {
         // Skip - post stays as-is (pending). Covers: disabled, no_rules,
@@ -548,12 +551,19 @@ import {
       }
     } catch (err) {
       console.debug('Post evaluation error:', err);
-      releaseEvaluation(evaluationId);
       postReasonings.set(article, {
         shouldHide: false,
         reasoning: `Error evaluating: ${(err instanceof Error) ? err.message : 'Unknown error'}`
       });
       markPostVerified(article);
+    } finally {
+      releaseEvaluation(evaluationId);
+      // The local-model preemption tracker belongs to the regular pipeline,
+      // not the independent Jev request. Always clear it on success, error,
+      // retry, or another early return from the pipeline response handler.
+      if (content.postUrl && content.postUrl === currentlyProcessingPostUrl) {
+        currentlyProcessingPostUrl = null;
+      }
     }
   }
 

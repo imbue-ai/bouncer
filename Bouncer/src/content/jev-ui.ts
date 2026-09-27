@@ -23,6 +23,33 @@ export function normalizeJevEvaluationResult(value: unknown): JevEvaluationResul
   };
 }
 
+/**
+ * Observe the optional Jev decision without putting it on the regular filter
+ * pipeline's critical path. Invalid, failed, or stale Jev responses fail open.
+ */
+export function awaitPipelineWithIndependentJev<T>(
+  pipelineRequest: Promise<T>,
+  jevRequest: Promise<unknown>,
+  shouldApplyJev: () => boolean,
+  applyJev: (result: JevEvaluationResult) => void,
+): Promise<T> {
+  // Attach the rejection handler immediately: Jev can fail before the regular
+  // pipeline settles, and a delayed handler would surface an unhandled promise.
+  const settledJevRequest = jevRequest.catch(() => null);
+  void pipelineRequest
+    .catch(() => undefined)
+    .then(() => settledJevRequest)
+    .then(normalizeJevEvaluationResult)
+    .then((result) => {
+      if (result && shouldApplyJev()) applyJev(result);
+    })
+    .catch(() => {
+      // The background service already fails open; also contain message-channel
+      // and content-side rendering failures so they cannot block filtering.
+    });
+  return pipelineRequest;
+}
+
 export function renderJevHelpfulBadge(article: HTMLElement, probability: number | null): void {
   const existing = article.querySelector<HTMLElement>('.jev-helpful-badge');
   if (probability === null) {
