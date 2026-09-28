@@ -232,7 +232,7 @@ async function build() {
     format: 'esm',
     platform: 'browser',
     target: 'es2020',
-    minify: true,
+    minify: false,
     sourcemap: false,
     external: ['url'],
     define,
@@ -250,7 +250,7 @@ async function build() {
     format: 'esm',
     platform: 'browser',
     target: 'es2020',
-    minify: true,
+    minify: false,
     sourcemap: false,
     external: ['url'],
     define,
@@ -268,7 +268,7 @@ async function build() {
     format: 'esm',
     platform: 'browser',
     target: 'es2020',
-    minify: true,
+    minify: false,
     sourcemap: false,
     external: ['url'],
     define,
@@ -283,7 +283,7 @@ async function build() {
     format: 'iife',
     platform: 'browser',
     target: 'es2020',
-    minify: true,
+    minify: false,
     sourcemap: false,
     define,
   });
@@ -304,7 +304,7 @@ async function build() {
         format: 'iife',
         platform: 'browser',
         target: 'es2020',
-        minify: true,
+        minify: false,
         sourcemap: false,
         external: ['url'],
         define,
@@ -327,7 +327,6 @@ async function build() {
       format: 'iife',
       platform: 'browser',
       target: 'es2020',
-      minify: true,
     });
     contexts.push(adapterCtx);
   }
