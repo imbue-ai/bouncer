@@ -560,7 +560,61 @@ object BouncerGeckoView {
         session.contentDelegate = contentDelegate(runtime, vm, view, appCtx)
         session.scrollDelegate = scrollDelegate(vm)
         session.permissionDelegate = permissionDelegate(appCtx)
+        session.promptDelegate = promptDelegate(appCtx)
     }
+
+    // GeckoView ships no UI for content prompts: without a PromptDelegate an
+    // <input type="file"> tap (x.com's "add image" button in the composer)
+    // resolves to nothing, so posting media is silently impossible. Only the
+    // file prompt is handled; every other prompt type keeps the no-delegate
+    // default.
+    private fun promptDelegate(appCtx: Context) =
+        object : GeckoSession.PromptDelegate {
+            override fun onFilePrompt(
+                session: GeckoSession,
+                prompt: GeckoSession.PromptDelegate.FilePrompt,
+            ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse> {
+                val multiple =
+                    prompt.type == GeckoSession.PromptDelegate.FilePrompt.Type.MULTIPLE
+                // The page's accept list (e.g. image/jpeg,video/mp4) filters the
+                // picker via EXTRA_MIME_TYPES; the base type stays */* because
+                // GET_CONTENT ignores comma lists in setType.
+                val mimeTypes = prompt.mimeTypes.orEmpty().filter { it.isNotBlank() }
+                val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type = if (mimeTypes.size == 1) mimeTypes[0] else "*/*"
+                    if (mimeTypes.isNotEmpty()) {
+                        putExtra(Intent.EXTRA_MIME_TYPES, mimeTypes.toTypedArray())
+                    }
+                    if (multiple) putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+                }
+                val result = GeckoResult<GeckoSession.PromptDelegate.PromptResponse>()
+                FilePromptBroker.pick(intent) { resultCode, data ->
+                    // Gecko can complete the prompt itself (page navigated away
+                    // while the picker was up); confirming twice throws.
+                    if (prompt.isComplete) return@pick
+                    val uris = mutableListOf<Uri>()
+                    val clip = data?.clipData
+                    if (clip != null) {
+                        for (i in 0 until clip.itemCount) {
+                            clip.getItemAt(i).uri?.let { uris.add(it) }
+                        }
+                    } else {
+                        data?.data?.let { uris.add(it) }
+                    }
+                    result.complete(
+                        if (resultCode != Activity.RESULT_OK || uris.isEmpty()) {
+                            prompt.dismiss()
+                        } else if (multiple) {
+                            prompt.confirm(appCtx, uris.toTypedArray())
+                        } else {
+                            prompt.confirm(appCtx, uris.first())
+                        },
+                    )
+                }
+                return result
+            }
+        }
 
     // x.com's "turn on push notifications" toggle requests the
     // desktop-notification content permission (also implied by
