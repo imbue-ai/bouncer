@@ -32,6 +32,7 @@
 .filtered-view-container *,
 .post-verification-bar,
 .post-verification-bar *,
+.jev-helpful-badge,
 .ff-missed-link,
 .ff-why-annoying-btn,
 .ff-reasoning-popup,
@@ -3592,5 +3593,21 @@ body.ff-ios .ff-ios-page.dark-mode .ff-ios-page-header {
 }
 .filtered-view-container--linkedin.dark-mode .slop-li-globe-icon {
   color: rgba(255, 255, 255, 0.55);
+}
+
+/* Probability-only Jev badge. It is extension UI, never model-generated text. */
+.jev-helpful-badge {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  z-index: 2;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgb(var(--bouncer-brand-dark-rgb));
+  color: var(--bouncer-brand-contrast);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.4;
+  pointer-events: none;
 }
 

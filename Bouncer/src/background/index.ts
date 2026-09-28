@@ -17,6 +17,7 @@ import {
   replayDetectorStates,
 } from './pipeline';
 import { sendFeedback } from './providers';
+import { evaluateJevForPost, invalidateJevSettings } from './jev-service';
 import { imbueWebSocket, type ForceLoginMessage } from './ws-manager';
 import { launchAuthFlow, signInAnon, isAnonymousUser, refreshAuthToken, getAuthToken, handleAppleSignIn, signOut, setOnIdentityChanged, getCurrentUid, IS_SAFARI } from './auth';
 import { initOptionalPlatforms, syncOptionalPlatformScripts } from './optional-platforms';
@@ -248,6 +249,11 @@ async function handleMessage(
   const tabId = sender.tab?.id;
 
   switch (message.type) {
+    case 'evaluateJevPost':
+      // The page supplies only post text. Provider choice and BYOK credentials
+      // are resolved inside the extension-owned background context.
+      return evaluateJevForPost(message.post);
+
     case 'evaluatePost': {
       console.log('[Bouncer][diag] evaluatePost received: tabId=', tabId, 'activeTabId=', activeTabId, 'sender.tab=', !!sender.tab);
       // Ensure tab is registered (re-registers after service worker restart)
@@ -789,6 +795,15 @@ chrome.runtime.onMessage.addListener((message: ContentToBackgroundMessage, sende
 // ==================== Storage change listener ====================
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName === 'local' && [
+    'jevRoute', 'typesafeApiKey', 'openrouterApiKey', 'jevHelpfulBadge',
+    'jevHideUnhelpful', 'jevHideHateful', 'jevHelpfulBadgeThreshold',
+    'jevUnhelpfulThreshold', 'jevHatefulThreshold', 'jevHelpfulCriteria',
+  ].some(key => changes[key])) {
+    // Synchronous invalidation prevents a request started under old settings
+    // from populating the cache or returning a stale policy decision.
+    invalidateJevSettings();
+  }
   (async () => {
     if (areaName !== 'local') return;
 

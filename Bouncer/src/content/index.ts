@@ -1,7 +1,7 @@
 // Bouncer - Content Script
 // Entry point: post processing, observers, init, storage/message listeners
 
-import type { PlatformAdapter, PostContent, PipelineResponse, BackgroundToContentMessage, DescriptionKey, AiFilterIntentState } from '../types';
+import type { PlatformAdapter, PostContent, PipelineResponse, BackgroundToContentMessage, DescriptionKey, AiFilterIntentState, JevEvaluationResult } from '../types';
 import { getStorage, removeStorage, getDescriptions, setDescriptions, phraseSetKey, filteringPausedKeyFor } from '../shared/storage';
 import { enabledStorageKey } from '../shared/platforms';
 import { hexToRgbChannels, hexToDarkRgbChannels, contrastTextColor } from '../shared/brand-color';
@@ -40,6 +40,7 @@ import {
 } from './ui';
 
 import { formatPostForEvaluation, phraseAddNeedsReEvaluation } from '../shared/utils';
+import { applyJevVisuals, awaitPipelineWithIndependentJev } from './jev-ui';
 import {
   findStructuralMatch,
   structuralFilterKind,
@@ -164,6 +165,7 @@ import {
   // (shouldHide=false), and negating those would hide the entire feed.
   let sitePhraseCount = 0;
   let currentlyProcessingPostUrl: string | null = null;
+  let jevSettingsGeneration = 0;
 
   // ==================== Wire up modules ====================
 
@@ -229,6 +231,41 @@ import {
 
   function extractPostContent(article: HTMLElement): PostContent {
     return adapter.extractPostContent(article);
+  }
+
+  function applyJevEvaluation(
+    article: HTMLElement,
+    content: PostContent,
+    result: JevEvaluationResult,
+  ): void {
+    // Jev returns typed probabilities only. The extension applies the local
+    // opt-in policy and never invents a model explanation.
+    const jevHideReason = applyJevVisuals(article, result);
+    const containsShareCode = (article.textContent || '').includes(FILTER_PACK_CODE_PREFIX);
+    if (!jevHideReason || containsShareCode) return;
+
+    postReasonings.set(article, {
+      shouldHide: true,
+      reasoning: jevHideReason,
+    });
+    const freshContent = extractPostContent(article);
+    const mergedContent: PostContent = {
+      ...content,
+      imageUrls: content.imageUrls?.length > 0 ? content.imageUrls : freshContent.imageUrls,
+      textHtml: freshContent.textHtml || content.textHtml,
+      quote: freshContent.quote || content.quote,
+      postUrl: content.postUrl || freshContent.postUrl,
+      avatarUrl: freshContent.avatarUrl || content.avatarUrl,
+    };
+    storeFilteredPost(
+      article,
+      mergedContent,
+      jevHideReason,
+      '',
+      result.hideReason === 'hateful' ? 'Jev: hateful' : 'Jev: unhelpful',
+      null,
+    );
+    hidePost(article);
   }
 
   async function checkLocalModelActive() {
@@ -367,10 +404,13 @@ import {
           cached: true,
         };
       } else {
-        response = await chrome.runtime.sendMessage({
+        const evaluationText = formatPostForEvaluation(content);
+        const jevRequestGeneration = jevSettingsGeneration;
+        const jevContentKey = adapter.getPostContentKey(article);
+        const pipelineRequest: Promise<PipelineResponse> = chrome.runtime.sendMessage({
           type: 'evaluatePost',
           evaluationId,
-          post: formatPostForEvaluation(content),
+          post: evaluationText,
           rawText: content.text,
           imageUrls: content.imageUrls || [],
           postUrl: content.postUrl || null,
@@ -380,13 +420,21 @@ import {
           // AI-text threshold to these.
           isReply: adapter.isPermalinkView()
         });
+        const jevRequest: Promise<unknown> = chrome.runtime.sendMessage({
+          type: 'evaluateJevPost',
+          post: evaluationText,
+        });
+        response = await awaitPipelineWithIndependentJev(
+          pipelineRequest,
+          jevRequest,
+          () => jevRequestGeneration === jevSettingsGeneration
+            && article.isConnected
+            && adapter.getPostContentKey(article) === jevContentKey,
+          result => applyJevEvaluation(article, content, result),
+        );
       }
-      releaseEvaluation(evaluationId);
 
-      // Clear processing tracker when this post's evaluation completes
-      if (content.postUrl && content.postUrl === currentlyProcessingPostUrl) {
-        currentlyProcessingPostUrl = null;
-      }
+      const containsShareCode = (article.textContent || '').includes(FILTER_PACK_CODE_PREFIX);
 
       if (response == null) {
         // Skip - post stays as-is (pending). Covers: disabled, no_rules,
@@ -434,7 +482,6 @@ import {
       // bncr2_ is the share-code prefix and is unique enough that false
       // positives are effectively zero. Manual user-flagged hides (in ui.ts)
       // remain unaffected — this only vetoes the AI's automatic decision.
-      const containsShareCode = (article.textContent || '').includes(FILTER_PACK_CODE_PREFIX);
       // "Keep only" mode (LinkedIn browser only): identical pipeline, verdict
       // negated at the last moment — matching posts stay, everything else is
       // hidden. Only engages with at least one phrase set (a phraseless feed
@@ -504,12 +551,19 @@ import {
       }
     } catch (err) {
       console.debug('Post evaluation error:', err);
-      releaseEvaluation(evaluationId);
       postReasonings.set(article, {
         shouldHide: false,
         reasoning: `Error evaluating: ${(err instanceof Error) ? err.message : 'Unknown error'}`
       });
       markPostVerified(article);
+    } finally {
+      releaseEvaluation(evaluationId);
+      // The local-model preemption tracker belongs to the regular pipeline,
+      // not the independent Jev request. Always clear it on success, error,
+      // retry, or another early return from the pipeline response handler.
+      if (content.postUrl && content.postUrl === currentlyProcessingPostUrl) {
+        currentlyProcessingPostUrl = null;
+      }
     }
   }
 
@@ -822,6 +876,22 @@ import {
 
     // Listen for settings changes
     chrome.storage.onChanged.addListener((changes) => {
+      const jevSettingKeys = [
+        'jevRoute', 'typesafeApiKey', 'openrouterApiKey', 'jevHelpfulBadge',
+        'jevHideUnhelpful', 'jevHideHateful', 'jevHelpfulBadgeThreshold',
+        'jevUnhelpfulThreshold', 'jevHatefulThreshold', 'jevHelpfulCriteria',
+      ];
+      if (jevSettingKeys.some(key => changes[key])) {
+        jevSettingsGeneration += 1;
+        // Remove stale badges immediately, restore posts hidden only by Jev,
+        // then re-run visible posts under the new local thresholds/policy.
+        document.querySelectorAll('.jev-helpful-badge').forEach(el => el.remove());
+        restoreOrRefreshFilteredPosts(
+          ['Jev: hateful', 'Jev: unhelpful'],
+          'Jev settings changed; post no longer meets the active hide policy.',
+        ).then(reEvaluateAllPosts)
+          .catch(err => console.error('[Bouncer] Jev settings refresh failed:', err));
+      }
       // Platform toggle flipped off — reload so the script re-runs into the
       // disabled branch and tears everything down cleanly.
       if (changes[platformKey] && changes[platformKey].newValue === false) {

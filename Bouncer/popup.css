@@ -3077,3 +3077,57 @@ body.dark-mode .cp-swatch.selected {
 body.dim-mode .cp-swatch.selected {
   box-shadow: 0 0 0 2px rgb(21, 32, 43), 0 0 0 4px #1d9bf0;
 }
+
+/* Jev typed-decision settings (desktop extension only). */
+.jev-settings-section {
+  padding: 12px;
+  border: 1px solid #cfd9de;
+  border-radius: 8px;
+}
+
+.jev-settings-header {
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.jev-settings-section select,
+.jev-settings-section textarea {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid #cfd9de;
+  border-radius: 6px;
+  color: inherit;
+  background: inherit;
+  font: inherit;
+}
+
+.jev-toggle {
+  margin-top: 12px;
+}
+
+.jev-threshold-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 8px;
+  align-items: center;
+  margin: 6px 0;
+  color: #536471;
+  font-size: 11px;
+}
+
+.jev-threshold-row input {
+  grid-column: 1 / -1;
+  width: 100%;
+}
+
+body.dark-mode .jev-settings-section,
+body.dim-mode .jev-settings-section {
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
+body.dark-mode .jev-settings-section select,
+body.dark-mode .jev-settings-section textarea,
+body.dim-mode .jev-settings-section select,
+body.dim-mode .jev-settings-section textarea {
+  border-color: rgba(255, 255, 255, 0.2);
+}

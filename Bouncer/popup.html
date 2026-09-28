@@ -198,6 +198,66 @@
         </div>
         <div class="api-provider-content advanced-settings-content" id="advancedSettingsContent">
 
+    <section class="jev-settings-section" id="jevSettingsSection">
+      <div class="jev-settings-header">
+        <span>Jev feed decisions <span class="free-badge">BYOK</span></span>
+      </div>
+      <p class="hint">Optional. When any option below is on, each post&rsquo;s text is sent to your selected Jev provider. Keys remain in extension storage and requests are made by the background worker.</p>
+      <div class="api-field">
+        <label for="jevRoute">Jev provider</label>
+        <select id="jevRoute">
+          <option value="openrouter">OpenRouter</option>
+          <option value="typesafe">TypeSafe (direct)</option>
+        </select>
+      </div>
+      <div class="api-field" id="typesafeApiKeyField" style="display: none;">
+        <label for="typesafeApiKey">TypeSafe API Key</label>
+        <input type="password" id="typesafeApiKey" placeholder="TypeSafe API key" autocomplete="off">
+      </div>
+      <p class="hint" id="jevOpenRouterKeyHint">Uses the OpenRouter key configured below.</p>
+
+      <label class="toggle-switch jev-toggle">
+        <input type="checkbox" id="jevHelpfulBadge">
+        <span class="toggle-switch-slider" aria-hidden="true"></span>
+        <span class="toggle-switch-text"><span class="toggle-switch-label">Show helpful badges</span></span>
+      </label>
+      <div class="jev-threshold-row">
+        <label for="jevHelpfulBadgeThreshold">Badge at or above</label>
+        <input type="range" id="jevHelpfulBadgeThreshold" min="0" max="1" step="0.01" value="0.75">
+        <span id="jevHelpfulBadgeThresholdValue">75%</span>
+      </div>
+
+      <label class="toggle-switch jev-toggle">
+        <input type="checkbox" id="jevHideUnhelpful">
+        <span class="toggle-switch-slider" aria-hidden="true"></span>
+        <span class="toggle-switch-text"><span class="toggle-switch-label">Hide clearly unhelpful posts</span></span>
+      </label>
+      <div class="jev-threshold-row">
+        <label for="jevUnhelpfulThreshold">Hide at helpful probability at or below</label>
+        <input type="range" id="jevUnhelpfulThreshold" min="0" max="0.49" step="0.01" value="0.25">
+        <span id="jevUnhelpfulThresholdValue">25%</span>
+      </div>
+      <p class="hint">Scores near 50% are uncertain and are never treated as unhelpful by default.</p>
+
+      <label class="toggle-switch jev-toggle">
+        <input type="checkbox" id="jevHideHateful">
+        <span class="toggle-switch-slider" aria-hidden="true"></span>
+        <span class="toggle-switch-text"><span class="toggle-switch-label">Hide hateful posts</span></span>
+      </label>
+      <div class="jev-threshold-row">
+        <label for="jevHatefulThreshold">Hide at or above</label>
+        <input type="range" id="jevHatefulThreshold" min="0.5" max="1" step="0.01" value="0.8">
+        <span id="jevHatefulThresholdValue">80%</span>
+      </div>
+      <p class="hint">Hateful means identity-targeted dehumanization, hatred, or threats &mdash; not criticism, disagreement, or quotations condemning hate.</p>
+
+      <div class="api-field">
+        <label for="jevHelpfulCriteria">What is helpful to you? <span class="optional">(optional)</span></label>
+        <textarea id="jevHelpfulCriteria" rows="3" maxlength="1000" placeholder="e.g. Practical software and robotics advice, thoughtful research, and constructive discussion"></textarea>
+      </div>
+      <p class="hint">Jev returns probabilities only. Bouncer does not invent explanations for its decisions.</p>
+    </section>
+
     <section>
       <label>Choose a model</label>
       <div class="model-dropdown" id="modelDropdown">

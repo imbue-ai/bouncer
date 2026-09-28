@@ -66,6 +66,14 @@ export interface EvaluationPostData {
   imageUrls: string[];
 }
 
+/** Typed Jev probabilities plus the locally-applied opt-in display policy. */
+export interface JevEvaluationResult {
+  helpfulProbability: number;
+  hatefulProbability: number;
+  showHelpfulBadge: boolean;
+  hideReason: 'unhelpful' | 'hateful' | null;
+}
+
 // ==================== Pipeline Response ====================
 
 /** What the pipeline returns to content scripts via chrome.runtime.sendMessage. */
@@ -368,6 +376,7 @@ export interface ChatMessage {
 export type ContentToBackgroundMessage =
   | { type: 'pageLoad' }
   | { type: 'evaluatePost'; evaluationId: string; post: string; rawText: string; imageUrls: string[]; postUrl: string | null; siteId: SiteId; isReply?: boolean }
+  | { type: 'evaluateJevPost'; post: string }
   | { type: 'suggestAnnoyingReasons'; post: string; imageUrls: string[]; siteId?: SiteId }
   | { type: 'clearCache' }
   // Sent by the settings popup after the user grants an optional platform's
@@ -472,6 +481,16 @@ export type FilteringPausedKey = `filteringPaused_${SiteId}`;
 
 /** Typed schema for chrome.storage.local keys. */
 export type StorageSchema = SettingsBase & {
+  /** Direct TypeSafe key used only by extension pages and the background worker. */
+  typesafeApiKey: string;
+  jevRoute: 'typesafe' | 'openrouter';
+  jevHelpfulBadge: boolean;
+  jevHideUnhelpful: boolean;
+  jevHideHateful: boolean;
+  jevHelpfulBadgeThreshold: number;
+  jevUnhelpfulThreshold: number;
+  jevHatefulThreshold: number;
+  jevHelpfulCriteria: string;
   authErrorApis: Record<string, boolean>;
   // Android settings sheet's "Debug mode" toggle (mirrored from native prefs
   // via __ff_setStorage). The sole switch for the press-and-hold reasoning

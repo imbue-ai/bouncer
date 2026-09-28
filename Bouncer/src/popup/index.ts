@@ -2,6 +2,12 @@
 
 import type { ModelDef, LocalModelStatus, StorageSchema, SiteId } from '../types';
 import { PREDEFINED_MODELS, DEFAULT_MODEL } from '../shared/models';
+import {
+  clampJevHatefulThreshold,
+  clampJevThreshold,
+  clampJevUnhelpfulThreshold,
+  DEFAULT_JEV_SETTINGS,
+} from '../background/jev';
 import { escapeHtml, parseHTML } from '../shared/utils';
 import { getStorage, setStorage, removeStorage, clampThreshold, clampImageThreshold, clampReplyThreshold, aiIntentAutoActive } from '../shared/storage';
 import {
@@ -308,6 +314,17 @@ export async function init() {
 
 function setupStorageListener() {
   chrome.storage.onChanged.addListener((changes, areaName) => {
+    const jevKeys = [
+      'typesafeApiKey', 'jevRoute', 'jevHelpfulBadge', 'jevHideUnhelpful',
+      'jevHideHateful', 'jevHelpfulBadgeThreshold', 'jevUnhelpfulThreshold',
+      'jevHatefulThreshold', 'jevHelpfulCriteria',
+    ];
+    const hasJevSettingsUI = !chrome._polyfilled
+      && !!document.getElementById('jevSettingsSection');
+    if (areaName === 'local' && hasJevSettingsUI && jevKeys.some(key => changes[key])) {
+      getStorage(popupStorageKeys(true)).then(applyJevSettingsUI)
+        .catch(err => console.error('[Popup] Failed to refresh Jev settings:', err));
+    }
     if (areaName === 'local' && changes.authErrorApis) {
       loadSettings().catch(err => console.error('[Popup] loadSettings failed:', err));
     }
@@ -399,8 +416,8 @@ function setupStorageListener() {
   });
 }
 
-async function loadSettings() {
-  const data = await getStorage([
+export function popupStorageKeys(includeJev: boolean): (keyof StorageSchema)[] {
+  const keys: (keyof StorageSchema)[] = [
     'enabled',
     'selectedModel',
     'customModels',
@@ -420,7 +437,28 @@ async function loadSettings() {
     'youtubeShowPlaceholder',
     // Per-platform master-switch keys come from the registry.
     ...PLATFORMS.map(p => enabledStorageKey(p.id)),
-  ]);
+  ];
+  if (includeJev) {
+    keys.push(
+      'typesafeApiKey',
+      'jevRoute',
+      'jevHelpfulBadge',
+      'jevHideUnhelpful',
+      'jevHideHateful',
+      'jevHelpfulBadgeThreshold',
+      'jevUnhelpfulThreshold',
+      'jevHatefulThreshold',
+      'jevHelpfulCriteria',
+    );
+  }
+  return keys;
+}
+
+async function loadSettings() {
+  // The popup module is also reused by native in-page settings. Never fetch
+  // the direct TypeSafe credential there; Jev BYOK is extension-page only.
+  const includeJev = !chrome._polyfilled && !!document.getElementById('jevSettingsSection');
+  const data = await getStorage(popupStorageKeys(includeJev));
 
   // Load predefined model kwargs overrides
   predefinedModelKwargs = data.predefinedModelKwargs || {};
@@ -435,6 +473,7 @@ async function loadSettings() {
   (document.getElementById('geminiApiKey') as HTMLInputElement).value = data.geminiApiKey || '';
   (document.getElementById('anthropicApiKey') as HTMLInputElement).value = data.anthropicApiKey || '';
   updateAnthropicEnabledUI(!!data.anthropicApiKey);
+  applyJevSettingsUI(data);
 
   // "Filter replies in conversations" toggle (defaults to true so existing
   // installs keep filtering replies). The content script reads the same
@@ -634,6 +673,145 @@ function updateApiProviderStates(data: Partial<StorageSchema>) {
   }
 }
 
+const JEV_PERMISSION_ORIGINS = {
+  typesafe: 'https://api.typesafe.ai/*',
+  openrouter: 'https://openrouter.ai/*',
+} as const;
+
+function showJevRouteFields(route: 'typesafe' | 'openrouter'): void {
+  const directField = document.getElementById('typesafeApiKeyField');
+  if (directField) directField.style.display = route === 'typesafe' ? '' : 'none';
+  const routerHint = document.getElementById('jevOpenRouterKeyHint');
+  if (routerHint) routerHint.style.display = route === 'openrouter' ? '' : 'none';
+}
+
+function applyJevSettingsUI(data: Partial<StorageSchema>): void {
+  const route = data.jevRoute === 'typesafe' ? 'typesafe' : 'openrouter';
+  const routeEl = document.getElementById('jevRoute') as HTMLSelectElement | null;
+  if (!routeEl) return; // Embedded app settings may omit the desktop-only UI.
+  routeEl.value = route;
+  routeEl.dataset.savedRoute = route;
+  showJevRouteFields(route);
+
+  const directKey = document.getElementById('typesafeApiKey') as HTMLInputElement | null;
+  if (directKey) directKey.value = data.typesafeApiKey || '';
+  const checkboxValues: Array<[string, boolean]> = [
+    ['jevHelpfulBadge', data.jevHelpfulBadge === true],
+    ['jevHideUnhelpful', data.jevHideUnhelpful === true],
+    ['jevHideHateful', data.jevHideHateful === true],
+  ];
+  for (const [id, checked] of checkboxValues) {
+    const el = document.getElementById(id) as HTMLInputElement | null;
+    if (el) el.checked = checked;
+  }
+
+  const thresholds: Array<[string, string, number]> = [
+    ['jevHelpfulBadgeThreshold', 'jevHelpfulBadgeThresholdValue', clampJevThreshold(data.jevHelpfulBadgeThreshold, DEFAULT_JEV_SETTINGS.helpfulBadgeThreshold)],
+    ['jevUnhelpfulThreshold', 'jevUnhelpfulThresholdValue', clampJevUnhelpfulThreshold(data.jevUnhelpfulThreshold, DEFAULT_JEV_SETTINGS.unhelpfulThreshold)],
+    ['jevHatefulThreshold', 'jevHatefulThresholdValue', clampJevHatefulThreshold(data.jevHatefulThreshold, DEFAULT_JEV_SETTINGS.hatefulThreshold)],
+  ];
+  for (const [inputId, valueId, value] of thresholds) {
+    const input = document.getElementById(inputId) as HTMLInputElement | null;
+    if (input) input.value = String(value);
+    const valueEl = document.getElementById(valueId);
+    if (valueEl) valueEl.textContent = `${Math.round(value * 100)}%`;
+  }
+  const criteria = document.getElementById('jevHelpfulCriteria') as HTMLTextAreaElement | null;
+  if (criteria) criteria.value = data.jevHelpfulCriteria || '';
+}
+
+async function requestJevPermission(route: 'typesafe' | 'openrouter'): Promise<boolean> {
+  if (!chrome.permissions?.request) return true;
+  try {
+    return await chrome.permissions.request({ origins: [JEV_PERMISSION_ORIGINS[route]] });
+  } catch {
+    return false;
+  }
+}
+
+export function setupJevSettings(): void {
+  const routeEl = document.getElementById('jevRoute') as HTMLSelectElement | null;
+  if (!routeEl) return;
+
+  routeEl.addEventListener('change', () => {
+    void (async () => {
+      const route = routeEl.value === 'typesafe' ? 'typesafe' : 'openrouter';
+      const previousRoute = routeEl.dataset.savedRoute === 'typesafe' ? 'typesafe' : 'openrouter';
+      const anyFeatureEnabled = ['jevHelpfulBadge', 'jevHideUnhelpful', 'jevHideHateful']
+        .some(id => (document.getElementById(id) as HTMLInputElement | null)?.checked === true);
+      if (anyFeatureEnabled && !await requestJevPermission(route)) {
+        routeEl.value = previousRoute;
+        showJevRouteFields(previousRoute);
+        return;
+      }
+      await setStorage({ jevRoute: route });
+      routeEl.dataset.savedRoute = route;
+      showJevRouteFields(route);
+    })().catch(err => console.error('[Popup] Failed to save Jev route:', err));
+  });
+
+  document.getElementById('typesafeApiKey')?.addEventListener('change', (event) => {
+    const key = (event.target as HTMLInputElement).value.trim();
+    void setStorage({ typesafeApiKey: key })
+      .catch(err => console.error('[Popup] Failed to save TypeSafe key:', err));
+  });
+
+  const toggles: Array<[string, 'jevHelpfulBadge' | 'jevHideUnhelpful' | 'jevHideHateful']> = [
+    ['jevHelpfulBadge', 'jevHelpfulBadge'],
+    ['jevHideUnhelpful', 'jevHideUnhelpful'],
+    ['jevHideHateful', 'jevHideHateful'],
+  ];
+  for (const [id, key] of toggles) {
+    document.getElementById(id)?.addEventListener('change', (event) => {
+      void (async () => {
+        const input = event.target as HTMLInputElement;
+        if (input.checked) {
+          const route = routeEl.value === 'typesafe' ? 'typesafe' : 'openrouter';
+          if (!await requestJevPermission(route)) {
+            input.checked = false;
+            return;
+          }
+        }
+        await setStorage({ [key]: input.checked });
+      })().catch(err => console.error(`[Popup] Failed to save ${key}:`, err));
+    });
+  }
+
+  const sliders: Array<[string, string, 'jevHelpfulBadgeThreshold' | 'jevUnhelpfulThreshold' | 'jevHatefulThreshold']> = [
+    ['jevHelpfulBadgeThreshold', 'jevHelpfulBadgeThresholdValue', 'jevHelpfulBadgeThreshold'],
+    ['jevUnhelpfulThreshold', 'jevUnhelpfulThresholdValue', 'jevUnhelpfulThreshold'],
+    ['jevHatefulThreshold', 'jevHatefulThresholdValue', 'jevHatefulThreshold'],
+  ];
+  for (const [inputId, valueId, key] of sliders) {
+    const input = document.getElementById(inputId) as HTMLInputElement | null;
+    const value = document.getElementById(valueId);
+    input?.addEventListener('input', () => {
+      if (value) value.textContent = `${Math.round(Number(input.value) * 100)}%`;
+    });
+    input?.addEventListener('change', () => {
+      const fallbackKey = key === 'jevUnhelpfulThreshold'
+        ? 'unhelpfulThreshold'
+        : key === 'jevHatefulThreshold'
+          ? 'hatefulThreshold'
+          : 'helpfulBadgeThreshold';
+      const clamp = key === 'jevUnhelpfulThreshold'
+        ? clampJevUnhelpfulThreshold
+        : key === 'jevHatefulThreshold'
+          ? clampJevHatefulThreshold
+          : clampJevThreshold;
+      const threshold = clamp(Number(input.value), DEFAULT_JEV_SETTINGS[fallbackKey]);
+      void setStorage({ [key]: threshold })
+        .catch(err => console.error(`[Popup] Failed to save ${key}:`, err));
+    });
+  }
+
+  document.getElementById('jevHelpfulCriteria')?.addEventListener('change', (event) => {
+    const criteria = (event.target as HTMLTextAreaElement).value.trim();
+    void setStorage({ jevHelpfulCriteria: criteria })
+      .catch(err => console.error('[Popup] Failed to save Jev helpful criteria:', err));
+  });
+}
+
 function setupEventListeners() {
 
   // Headline model radios (Imbue vs Local E2B)
@@ -642,6 +820,7 @@ function setupEventListeners() {
   // Accent Color picker
   setupAccentColorPicker();
   setupColoredBorderToggle();
+  setupJevSettings();
 
   // Model dropdown
   setupModelDropdown();
