@@ -82,7 +82,12 @@ export { checkAuthStatus };
 
 // ==================== UI State ====================
 
-// Filtered posts storage
+// Filtered posts storage. Capped: feed tabs live for hours and each entry
+// retains a few KB of post text/HTML, so an uncapped array is the dominant
+// memory-growth term in the content process. Oldest entries are evicted
+// FIFO once the cap is hit — the panel is about recently hidden posts, not
+// a permanent archive.
+const MAX_FILTERED_POSTS = 500;
 const filteredPosts: FilteredPost[] = [];
 const filteredPostKeys = new Set<string>();
 
@@ -3456,6 +3461,10 @@ export function storeFilteredPost(article: HTMLElement, contentObj: PostContent,
     matches,
     timestamp: Date.now()
   });
+  while (filteredPosts.length > MAX_FILTERED_POSTS) {
+    const evicted = filteredPosts.shift()!;
+    filteredPostKeys.delete(evicted.post.postUrl || evicted.evaluationText.substring(0, 200));
+  }
   updateFilteredTabCount();
 }
 

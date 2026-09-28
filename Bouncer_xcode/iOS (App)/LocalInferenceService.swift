@@ -13,6 +13,7 @@
 //
 
 import Foundation
+import UIKit
 internal import Combine
 import LiteRTLM
 import Accelerate
@@ -369,6 +370,8 @@ final class LocalInferenceService: ObservableObject {
         // Pick up any download iOS continued while the app was suspended
         // or killed; also reflect persisted resume data into the UI.
         Task { await self.downloader.reconcileWithSession() }
+
+        registerMemoryPressureHandler()
     }
 
     // MARK: - Public API
@@ -1101,6 +1104,49 @@ final class LocalInferenceService: ObservableObject {
         samplerConfig = nil
         if downloader.isDownloaded(selectedModel.filename) {
             modelStatus = .downloaded
+        }
+    }
+
+    // MARK: - Memory pressure
+
+    private func registerMemoryPressureHandler() {
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.didReceiveMemoryWarningNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            // queue: .main → main thread, and this service is MainActor-bound.
+            MainActor.assumeIsolated {
+                self?.handleMemoryWarning()
+            }
+        }
+    }
+
+    private func handleMemoryWarning() {
+        // Never drop the engine mid-load: a load in progress means inference
+        // is imminent, and reloading immediately would double the cost.
+        guard loadTask == nil else { return }
+        if UIApplication.shared.applicationState == .background {
+            // Nothing classifies while backgrounded, so release everything —
+            // a multi-GB GPU-resident model is the first jetsam target.
+            // Serialized behind the inference queue so an engine is never
+            // torn down under an active native call; the next classify
+            // reloads via ensureReady().
+            guard engine != nil || detectionEngine != nil else { return }
+            Task { [weak self] in
+                guard let self else { return }
+                try? await self.inferenceQueue.run { [weak self] in
+                    guard let self else { return }
+                    await MainActor.run { self.unloadEngine() }
+                }
+            }
+        } else {
+            // Foreground warning: classifications may be mid-flight, so shed
+            // only the cached base conversation (the system-prompt KV cache).
+            // getOrBuildBase rebuilds it on the next classify — one extra
+            // prefill, no engine reload.
+            baseConversation = nil
+            baseSystemMessage = nil
         }
     }
 
