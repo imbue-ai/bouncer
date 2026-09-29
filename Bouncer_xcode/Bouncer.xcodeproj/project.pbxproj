@@ -10,7 +10,6 @@
 		4E38A4CE2F72199A00496A14 /* AppCheckBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E38A4CC2F72199A00496A14 /* AppCheckBridge.swift */; };
 		4E38A4CF2F72199A00496A14 /* AppCheckProviderFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E38A4CD2F72199A00496A14 /* AppCheckProviderFactory.swift */; };
 		4E38A4D32F721C2500496A14 /* FirebaseAppCheck in Frameworks */ = {isa = PBXBuildFile; productRef = 4E38A4D22F721C2500496A14 /* FirebaseAppCheck */; };
-		4E3B363A2F857BE400A929AD /* iosicon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 4E3B36392F857BE300A929AD /* iosicon.icon */; };
 		4EC0EC652FEB068700F3FCDE /* GoogleService-Info-Dev.plist in Resources */ = {isa = PBXBuildFile; fileRef = 4EC0EC642FEB068700F3FCDE /* GoogleService-Info-Dev.plist */; };
 		4EC0EC812FEB06DD00F3FCDE /* GoogleService-Info.plist in Resources */ = {isa = PBXBuildFile; fileRef = 4EC0EC802FEB06DD00F3FCDE /* GoogleService-Info.plist */; };
 		4EC0EDD330059DE400F3FCDE /* new_ios_icon_composed.icon in Resources */ = {isa = PBXBuildFile; fileRef = 4EC0EDD230059DE400F3FCDE /* new_ios_icon_composed.icon */; };
@@ -22,21 +21,13 @@
 		97BD3B892F3EB56C00F8BF65 /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3B872F3EB56C00F8BF65 /* Main.storyboard */; };
 		97BD3BB52F3EB56C00F8BF65 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3B762F3EB56C00F8BF65 /* Assets.xcassets */; };
 		97BD3BE02F3EB56D00F8BF65 /* browser-polyfill.js in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BCB2F3EB56D00F8BF65 /* browser-polyfill.js */; };
-		97BD3BE12F3EB56D00F8BF65 /* popup.js in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BCC2F3EB56D00F8BF65 /* popup.js */; };
 		97BD3BE22F3EB56D00F8BF65 /* content.css in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BCD2F3EB56D00F8BF65 /* content.css */; };
-		97BD3BE32F3EB56D00F8BF65 /* background.js in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BCE2F3EB56D00F8BF65 /* background.js */; };
 		97BD3BE42F3EB56D00F8BF65 /* dist in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BCF2F3EB56D00F8BF65 /* dist */; };
 		97BD3BE52F3EB56D00F8BF65 /* popup.html in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BD02F3EB56D00F8BF65 /* popup.html */; };
-		97BD3BE72F3EB56D00F8BF65 /* build.js in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BD22F3EB56D00F8BF65 /* build.js */; };
-		97BD3BE82F3EB56D00F8BF65 /* manifest.firefox.json in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BD32F3EB56D00F8BF65 /* manifest.firefox.json */; };
-		97BD3BE92F3EB56D00F8BF65 /* manifest.chrome.json in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BD42F3EB56D00F8BF65 /* manifest.chrome.json */; };
 		97BD3BEA2F3EB56D00F8BF65 /* shared in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BD52F3EB56D00F8BF65 /* shared */; };
 		97BD3BEB2F3EB56D00F8BF65 /* adapters in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BD62F3EB56D00F8BF65 /* adapters */; };
-		97BD3BEC2F3EB56D00F8BF65 /* package-lock.json in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BD72F3EB56D00F8BF65 /* package-lock.json */; };
-		97BD3BED2F3EB56D00F8BF65 /* package.json in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BD82F3EB56D00F8BF65 /* package.json */; };
 		97BD3BEE2F3EB56D00F8BF65 /* icons in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BD92F3EB56D00F8BF65 /* icons */; };
 		97BD3BF12F3EB56D00F8BF65 /* popup.css in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BDC2F3EB56D00F8BF65 /* popup.css */; };
-		97BD3BF22F3EB56D00F8BF65 /* content.js in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BDD2F3EB56D00F8BF65 /* content.js */; };
 		97BD3BF32F3EB56D00F8BF65 /* dompurify.js in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3BDE2F3EB56D00F8BF65 /* dompurify.js */; };
 		AA00001100000000000000AA /* FilteredWebView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000100000000000000AA /* FilteredWebView.swift */; };
 		AA00001400000000000000AA /* ChromePolyfill.js in Resources */ = {isa = PBXBuildFile; fileRef = AA00000400000000000000AA /* ChromePolyfill.js */; };
@@ -329,6 +320,7 @@
 				97BD3B792F3EB56C00F8BF65 /* Sources */,
 				97BD3B7A2F3EB56C00F8BF65 /* Frameworks */,
 				97BD3B7B2F3EB56C00F8BF65 /* Resources */,
+				PR00000100000000000000PR /* Prune desktop-only extension files */,
 				CR00000400000000000000CR /* Copy GoogleService-Info plist (optional) */,
 				CR00000300000000000000CR /* Crashlytics dSYM upload */,
 			);
@@ -424,24 +416,15 @@
 				97BD3B892F3EB56C00F8BF65 /* Main.storyboard in Resources */,
 				AA00001400000000000000AA /* ChromePolyfill.js in Resources */,
 				97BD3BE02F3EB56D00F8BF65 /* browser-polyfill.js in Resources */,
-				97BD3BE12F3EB56D00F8BF65 /* popup.js in Resources */,
-				4E3B363A2F857BE400A929AD /* iosicon.icon in Resources */,
 				97BD3BE22F3EB56D00F8BF65 /* content.css in Resources */,
-				97BD3BE32F3EB56D00F8BF65 /* background.js in Resources */,
 				97BD3BE42F3EB56D00F8BF65 /* dist in Resources */,
 				97BD3BE52F3EB56D00F8BF65 /* popup.html in Resources */,
 				4EC0EC812FEB06DD00F3FCDE /* GoogleService-Info.plist in Resources */,
-				97BD3BE72F3EB56D00F8BF65 /* build.js in Resources */,
-				97BD3BE82F3EB56D00F8BF65 /* manifest.firefox.json in Resources */,
-				97BD3BE92F3EB56D00F8BF65 /* manifest.chrome.json in Resources */,
 				EE00000200000000000000EE /* manifest.json in Resources */,
 				97BD3BEA2F3EB56D00F8BF65 /* shared in Resources */,
 				97BD3BEB2F3EB56D00F8BF65 /* adapters in Resources */,
-				97BD3BEC2F3EB56D00F8BF65 /* package-lock.json in Resources */,
-				97BD3BED2F3EB56D00F8BF65 /* package.json in Resources */,
 				97BD3BEE2F3EB56D00F8BF65 /* icons in Resources */,
 				97BD3BF12F3EB56D00F8BF65 /* popup.css in Resources */,
-				97BD3BF22F3EB56D00F8BF65 /* content.js in Resources */,
 				97BD3BF32F3EB56D00F8BF65 /* dompurify.js in Resources */,
 				AA00004000000000000000AA /* filterphrases.mp4 in Resources */,
 				DA00E3HEADRES0000000DA016 /* detector_head_e2b_v2.bin in Resources */,
@@ -513,6 +496,25 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "export NVM_DIR=\"$HOME/.nvm\"\n[ -s \"$NVM_DIR/nvm.sh\" ] && . \"$NVM_DIR/nvm.sh\"\nif ! command -v node > /dev/null 2>&1; then\n  export PATH=\"/usr/local/bin:/opt/homebrew/bin:$PATH\"\nfi\nEXT_DIR=\"${PROJECT_DIR}/../Bouncer\"\nif [ ! -d \"$EXT_DIR/node_modules\" ]; then\n  echo \"Installing npm dependencies...\"\n  cd \"$EXT_DIR\" && npm install --silent\nfi\ncd \"$EXT_DIR\"\nif [ \"$BOUNCER_ENV\" = \"DEV\" ]; then\n  if [ ! -f \".env.dev\" ]; then\n    echo \"warning: .env.dev file not found in $EXT_DIR. Consider switching target to prod.\"\n    exit 1\n  fi\n  echo \"Building extension JS (dev)...\"\n  npm run build:dev --silent\nelse\n  if [ ! -f \".env.prod\" ]; then\n    echo \"warning: .env file not found in $EXT_DIR. Consider switching target to dev.\"\n    exit 1\n  fi\n  echo \"Building extension JS (prod)...\"\n  npm run build --silent\nfi\n";
+		};
+		PR00000100000000000000PR /* Prune desktop-only extension files */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Prune desktop-only extension files";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "# The dist/ folder reference copies the whole extension build into the\n# bundle, including files only the desktop browsers use. iOS runs inference\n# through the native LiteRT-LM frameworks and loads only the *-app bundles,\n# so the wasm runtime (~21-108 MB) and the desktop service-worker bundles are\n# dead weight — strip them from the packaged app.\nset -e\nRES=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}\"\nrm -rf \"$RES/dist/litertlm-wasm\"\nrm -f \"$RES/dist/background.js\" \"$RES/dist/offscreen.js\" \"$RES/dist/popup.js\" \"$RES/dist/onboarding.js\"\necho \"[Bouncer] pruned desktop-only extension files from app bundle\"\n";
 		};
 		SF00002000000000000000SF /* Build Extension JS */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -608,7 +610,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 25;
+				CURRENT_PROJECT_VERSION = 26;
 				DEVELOPMENT_TEAM = LDDYAR29MP;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -625,7 +627,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 2.5.2;
+				MARKETING_VERSION = 2.5.3;
 				OTHER_LDFLAGS = (
 					"-framework",
 					SafariServices,
@@ -654,7 +656,7 @@
 				BOUNCER_ENV = PROD;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 25;
+				CURRENT_PROJECT_VERSION = 26;
 				DEVELOPMENT_TEAM = LDDYAR29MP;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -671,7 +673,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 2.5.2;
+				MARKETING_VERSION = 2.5.3;
 				OTHER_LDFLAGS = (
 					"-framework",
 					SafariServices,
@@ -906,7 +908,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.3.2;
+				MARKETING_VERSION = 2.3.3;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",
@@ -956,7 +958,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.3.2;
+				MARKETING_VERSION = 2.3.3;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",

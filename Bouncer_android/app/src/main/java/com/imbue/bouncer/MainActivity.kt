@@ -96,8 +96,15 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
-        if (NotificationPermissionBroker.requester != null && !isChangingConfigurations) {
-            NotificationPermissionBroker.requester = null
+        if (!isChangingConfigurations) {
+            if (NotificationPermissionBroker.requester != null) {
+                NotificationPermissionBroker.requester = null
+            }
+            // The BouncerGeckoView singleton outlives this Activity; drop its
+            // references to our GeckoView/ViewModel so the Activity graph can
+            // be collected. On a config change the refs are about to be
+            // replaced by the next create(), so leave them for continuity.
+            BouncerGeckoView.onActivityDestroyed()
         }
         if (FilePromptBroker.launcher != null && !isChangingConfigurations) {
             FilePromptBroker.launcher = null

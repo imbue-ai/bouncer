@@ -761,8 +761,14 @@ export async function loadCache(): Promise<void> {
   }
 }
 
-// Save cache to persistent storage
-export async function saveCache(): Promise<void> {
+// Save cache to persistent storage. Serializing all ~500 entries (a MB or
+// more) after every single evaluation is pure churn on a fast-scrolled feed,
+// so writes are coalesced onto a short trailing timer. Losing the last few
+// seconds of cache on a rare SW kill just means re-evaluating those posts.
+const SAVE_CACHE_DEBOUNCE_MS = 3000;
+let saveCacheTimer: ReturnType<typeof setTimeout> | null = null;
+
+async function writeCacheNow(): Promise<void> {
   try {
     const cacheObj = Object.fromEntries(evaluationCache);
     await setStorage({ evaluationCache: cacheObj });
@@ -771,7 +777,31 @@ export async function saveCache(): Promise<void> {
   }
 }
 
+// `immediate` is for explicit user mutations (overrides, single-post clears)
+// that must survive even an unlucky SW suspension.
+export async function saveCache(immediate = false): Promise<void> {
+  if (immediate) {
+    if (saveCacheTimer !== null) {
+      clearTimeout(saveCacheTimer);
+      saveCacheTimer = null;
+    }
+    await writeCacheNow();
+    return;
+  }
+  if (saveCacheTimer !== null) return;
+  saveCacheTimer = setTimeout(() => {
+    saveCacheTimer = null;
+    void writeCacheNow();
+  }, SAVE_CACHE_DEBOUNCE_MS);
+}
+
 export async function clearEvaluationCache(): Promise<void> {
+  // Cancel any pending debounced write so it can't re-persist entries that
+  // were just cleared.
+  if (saveCacheTimer !== null) {
+    clearTimeout(saveCacheTimer);
+    saveCacheTimer = null;
+  }
   evaluationCache.clear();
   await removeStorage('evaluationCache');
 }
