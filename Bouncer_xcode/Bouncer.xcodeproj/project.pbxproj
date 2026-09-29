@@ -436,25 +436,6 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
-		PR00000100000000000000PR /* Prune desktop-only extension files */ = {
-			isa = PBXShellScriptBuildPhase;
-			alwaysOutOfDate = 1;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			inputFileListPaths = (
-			);
-			inputPaths = (
-			);
-			name = "Prune desktop-only extension files";
-			outputFileListPaths = (
-			);
-			outputPaths = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-			shellPath = /bin/sh;
-			shellScript = "# The dist/ folder reference copies the whole extension build into the\n# bundle, including files only the desktop browsers use. iOS runs inference\n# through the native LiteRT-LM frameworks and loads only the *-app bundles,\n# so the wasm runtime (~21-108 MB) and the desktop service-worker bundles are\n# dead weight — strip them from the packaged app.\nset -e\nRES=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}\"\nrm -rf \"$RES/dist/litertlm-wasm\"\nrm -f \"$RES/dist/background.js\" \"$RES/dist/offscreen.js\" \"$RES/dist/popup.js\" \"$RES/dist/onboarding.js\"\necho \"[Bouncer] pruned desktop-only extension files from app bundle\"\n";
-		};
 		CR00000300000000000000CR /* Crashlytics dSYM upload */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
@@ -515,6 +496,25 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "export NVM_DIR=\"$HOME/.nvm\"\n[ -s \"$NVM_DIR/nvm.sh\" ] && . \"$NVM_DIR/nvm.sh\"\nif ! command -v node > /dev/null 2>&1; then\n  export PATH=\"/usr/local/bin:/opt/homebrew/bin:$PATH\"\nfi\nEXT_DIR=\"${PROJECT_DIR}/../Bouncer\"\nif [ ! -d \"$EXT_DIR/node_modules\" ]; then\n  echo \"Installing npm dependencies...\"\n  cd \"$EXT_DIR\" && npm install --silent\nfi\ncd \"$EXT_DIR\"\nif [ \"$BOUNCER_ENV\" = \"DEV\" ]; then\n  if [ ! -f \".env.dev\" ]; then\n    echo \"warning: .env.dev file not found in $EXT_DIR. Consider switching target to prod.\"\n    exit 1\n  fi\n  echo \"Building extension JS (dev)...\"\n  npm run build:dev --silent\nelse\n  if [ ! -f \".env.prod\" ]; then\n    echo \"warning: .env file not found in $EXT_DIR. Consider switching target to dev.\"\n    exit 1\n  fi\n  echo \"Building extension JS (prod)...\"\n  npm run build --silent\nfi\n";
+		};
+		PR00000100000000000000PR /* Prune desktop-only extension files */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Prune desktop-only extension files";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "# The dist/ folder reference copies the whole extension build into the\n# bundle, including files only the desktop browsers use. iOS runs inference\n# through the native LiteRT-LM frameworks and loads only the *-app bundles,\n# so the wasm runtime (~21-108 MB) and the desktop service-worker bundles are\n# dead weight — strip them from the packaged app.\nset -e\nRES=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}\"\nrm -rf \"$RES/dist/litertlm-wasm\"\nrm -f \"$RES/dist/background.js\" \"$RES/dist/offscreen.js\" \"$RES/dist/popup.js\" \"$RES/dist/onboarding.js\"\necho \"[Bouncer] pruned desktop-only extension files from app bundle\"\n";
 		};
 		SF00002000000000000000SF /* Build Extension JS */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -610,7 +610,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 25;
+				CURRENT_PROJECT_VERSION = 26;
 				DEVELOPMENT_TEAM = LDDYAR29MP;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -627,7 +627,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 2.5.2;
+				MARKETING_VERSION = 2.5.3;
 				OTHER_LDFLAGS = (
 					"-framework",
 					SafariServices,
@@ -656,7 +656,7 @@
 				BOUNCER_ENV = PROD;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 25;
+				CURRENT_PROJECT_VERSION = 26;
 				DEVELOPMENT_TEAM = LDDYAR29MP;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -673,7 +673,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 2.5.2;
+				MARKETING_VERSION = 2.5.3;
 				OTHER_LDFLAGS = (
 					"-framework",
 					SafariServices,
@@ -908,7 +908,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.3.2;
+				MARKETING_VERSION = 2.3.3;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",
@@ -958,7 +958,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.3.2;
+				MARKETING_VERSION = 2.3.3;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",
