@@ -28,7 +28,7 @@ import { showBouncePopup, showDemoBouncePopup, dismissBouncePopup } from './boun
 import { captureMidFrame, installFrameSources } from './frame';
 import { playSwipe, playTap, addDemoPhrase, removeDemoPhrase, clearDemoArtifacts } from './demo';
 import { railAnchoredBox, clampLeft, isNarrowViewport } from './layout';
-import { fitReels, installFitWatcher, unfit, unfitAll, fitReport, visibleHeight } from './fit';
+import { installFitWatcher, unfit, unfitAll, fitReport, visibleHeight } from './fit';
 import { installPromoDismisser } from './promo';
 import { installTopBarHider } from './topbar';
 import {
@@ -2029,10 +2029,6 @@ function scan(): void {
     // leaked through a hold timeout): shield it before it's ever offered.
     applyPendingVerdict(reel);
   }
-  // Bring any reel that stands taller than the screen back inside it. Done
-  // here because a reel is laid out when Instagram mounts it, which is the same
-  // beat that makes it discoverable. See ./fit.ts.
-  if (!DISABLE_PAGE_MUTATIONS) fitReels(orderedReels.map((r) => r.card));
   harvestDurations();
   warmDurations();
   // Which reel is on screen, re-asked on every scan.
@@ -2436,10 +2432,7 @@ async function boot(): Promise<void> {
   // that bar is the navigation, so it is put straight back.
   if (!DISABLE_PAGE_MUTATIONS) installTopBarHider(onReelsPage);
 
-  // A rotation, or iOS's own chrome sliding in and out, changes how much room a
-  // reel has — and the reel was sized for the old number.
   installFitWatcher(() => {
-    if (!DISABLE_PAGE_MUTATIONS) fitReels(orderedReels.map((r) => r.card));
     positionPanel();
   });
 
