@@ -227,6 +227,7 @@ private struct WelcomePage: View {
         "politics",
         "pessimism",
         "virtue signaling",
+        "thirst traps",
         "humblebragging",
         "engagement bait",
     ]
