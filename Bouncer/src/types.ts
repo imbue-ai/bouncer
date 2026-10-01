@@ -230,10 +230,6 @@ interface SettingsBase {
   // `${siteId}Enabled` keys (see enabledStorageKey in shared/platforms.ts);
   // this map is derived from those keys at settings-read time.
   platformEnabled: Partial<Record<SiteId, boolean>>;
-  // When true on YouTube, filtered videos are left in the grid and shown
-  // as a "Filtered by Bouncer" placeholder card (see youtube.css). Default
-  // false — remove the card outright, matching Twitter's behavior.
-  youtubeShowPlaceholder: boolean;
 }
 
 export interface Settings extends SettingsBase {
@@ -470,6 +466,13 @@ type FilteringPausedKeys = { [K in SiteId as `filteringPaused_${K}`]: boolean };
 
 export type FilteringPausedKey = `filteringPaused_${SiteId}`;
 
+/** Per-site excluded-account lists: normalized identities (see
+ *  exclusionIdentity in shared/storage.ts) whose posts skip classification
+ *  entirely — never evaluated, never hidden, never sent to a model. */
+type ExcludedAccountsKeys = { [K in SiteId as `excludedAccounts_${K}`]: string[] };
+
+export type ExcludedAccountsKey = `excludedAccounts_${SiteId}`;
+
 /** Typed schema for chrome.storage.local keys. */
 export type StorageSchema = SettingsBase & {
   authErrorApis: Record<string, boolean>;
@@ -550,7 +553,7 @@ export type StorageSchema = SettingsBase & {
   // descriptions_* namespace so the pipeline and AI-intent aggregation never
   // see the inactive list.
   linkedinInactiveModePhrases: string[];
-} & DescriptionKeys & PlatformEnabledKeys & FilteringPausedKeys;
+} & DescriptionKeys & PlatformEnabledKeys & FilteringPausedKeys & ExcludedAccountsKeys;
 
 // ==================== API Response Types ====================
 

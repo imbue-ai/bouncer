@@ -161,7 +161,10 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
         // the counterpart of the iOS sheet's .onAppear { loadFilterReplies() }.
         // Storage is the truth and JS can change it behind the native UI's
         // back (e.g. bouncing a reply flips filterReplies back on).
-        if (_state.value.isSheetPresented) callJs("__ff_loadAiSettings")
+        if (_state.value.isSheetPresented) {
+            callJs("__ff_loadAiSettings")
+            loadExcludedAccounts()
+        }
     }
 
     // platformId identifies which tab pushed this (null = the active tab). The
@@ -191,6 +194,7 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
             )
         }
         callJs("__ff_loadAiSettings")
+        loadExcludedAccounts()
     }
 
     fun onModalClosed() {
@@ -712,7 +716,47 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
         _state.update { it.copy(isSheetPresented = open) }
         callJs("__ff_setSheetClass", open)
         // Same on-appear re-sync as onShowSheet: storage is the truth.
-        if (open) callJs("__ff_loadAiSettings")
+        if (open) {
+            callJs("__ff_loadAiSettings")
+            loadExcludedAccounts()
+        }
+    }
+
+    // Excluded accounts for the active platform. Storage is the truth (the
+    // filtered-posts modal's "Never filter @x" button writes it directly);
+    // the mutate bridge re-posts the updated list once the write resolves,
+    // and the reply lands in onAiSettingsReply.
+    private fun loadExcludedAccounts() {
+        callJs("__ff_loadExcludedAccounts", _state.value.activePlatformId)
+    }
+
+    fun addExcludedAccount(text: String) {
+        val t = text.trim()
+        if (t.isEmpty()) return
+        callJs("__ff_mutateExcludedAccount", "add", _state.value.activePlatformId, t)
+    }
+
+    fun removeExcludedAccount(account: String) {
+        // Optimistic removal so the row disappears on tap; the bridge's
+        // re-post confirms (or restores) the real list.
+        _state.update { it.copy(excludedAccounts = it.excludedAccounts - account) }
+        callJs("__ff_mutateExcludedAccount", "remove", _state.value.activePlatformId, account)
+    }
+
+    // Open an excluded account's profile in the webview (the app is the
+    // browser, so in-app navigation is the native equivalent of a link).
+    // Twitter/YouTube have handle-derived profile URLs; LinkedIn stores
+    // display names with no stable URL, so the sheet renders those rows
+    // non-clickable and this is never called for them.
+    fun openExcludedAccount(account: String) {
+        val handle = account.removePrefix("@")
+        val url = when (_state.value.activePlatformId) {
+            "twitter" -> "https://x.com/$handle"
+            "youtube" -> "https://www.youtube.com/@$handle"
+            else -> return
+        }
+        setSheetPresented(false)
+        navigateTo(url)
     }
 
     fun completeOnboarding(enableAiSlop: Boolean) {
@@ -890,6 +934,9 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
                 aiDetectionOn = if (obj.has("aiDetectionOn")) obj.optBoolean("aiDetectionOn") else s.aiDetectionOn,
                 filterReplies = if (obj.has("filterReplies")) obj.optBoolean("filterReplies", s.filterReplies) else s.filterReplies,
                 aiBadgeDismissed = if (obj.has("aiBadgeDismissed")) obj.optBoolean("aiBadgeDismissed") else s.aiBadgeDismissed,
+                excludedAccounts = obj.optJSONArray("excludedAccounts")?.let { arr ->
+                    List(arr.length()) { i -> arr.optString(i) }.filter { it.isNotEmpty() }
+                } ?: s.excludedAccounts,
             )
         }
     }

@@ -36,6 +36,12 @@ data class BouncerUiState(
     // popup on posts. The sole switch for it on Android, debug and release
     // alike (see addContextMenuHandler in content/ui.ts). Defaults off.
     val debugModeEnabled: Boolean = false,
+    // The active platform's excluded accounts (display form, e.g. "@handle"),
+    // mirrored from the extension's `excludedAccounts_<siteId>` storage via
+    // __ff_loadExcludedAccounts. Posts from these accounts are never
+    // classified or hidden. Edited from the settings sheet; also grows when
+    // the user taps "Never filter @x" in the filtered-posts modal.
+    val excludedAccounts: List<String> = emptyList(),
     val hasCompletedOnboarding: Boolean = false,
     val hasLoggedIn: Boolean = false,
     // Set once we actually observe the /home timeline this session — the

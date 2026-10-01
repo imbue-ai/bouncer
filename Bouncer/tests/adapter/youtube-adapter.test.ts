@@ -18,7 +18,7 @@ function setURL(url: string) {
 }
 
 beforeEach(async () => {
-  // chrome APIs the adapter touches at construction (_initPlaceholderSetting).
+  // chrome APIs the adapter touches at construction (_initLockupExtractor).
   globalThis.chrome = {
     runtime: {
       getURL: (path: string) => `chrome-extension://test-id/${path}`,

@@ -1,6 +1,7 @@
 import type {
   AiFilterIntentState,
   DescriptionKey,
+  ExcludedAccountsKey,
   SiteId,
   StorageSchema,
 } from '../types';
@@ -82,6 +83,47 @@ async function loadMainList(siteId: SiteId): Promise<string[]> {
   return Array.isArray(data[descKey])
     ? (data[descKey] as string[]).filter((p): p is string => typeof p === 'string')
     : [];
+}
+
+export function excludedAccountsKeyFor(siteId: SiteId): ExcludedAccountsKey {
+  return `excludedAccounts_${siteId}`;
+}
+
+/** Normalize an account identity so user input, the DOM extraction path
+ *  (which keeps the leading "@") and the store path (bare userHandle) all
+ *  compare equal: trim, drop a leading "/" (YouTube's "/@channel") and "@",
+ *  lowercase. Excluded-account lists store only normalized identities. */
+export function normalizeAccountIdentity(raw: string): string {
+  let s = raw.trim();
+  if (s.startsWith('/')) s = s.slice(1);
+  if (s.startsWith('@')) s = s.slice(1);
+  return s.trim().toLowerCase();
+}
+
+/** The string an account exclusion matches against for a post: the @handle
+ *  where the platform has one, the display name on LinkedIn (its `handle`
+ *  field carries the headline, not an identity). Scoped to the top-level
+ *  post author — quoted/reposted accounts don't count. Null when the post
+ *  has no usable identity. */
+export function exclusionIdentity(
+  siteId: SiteId,
+  content: { author?: string; handle?: string }
+): string | null {
+  const raw = siteId === 'linkedin' ? content.author : content.handle;
+  const normalized = raw ? normalizeAccountIdentity(raw) : '';
+  return normalized || null;
+}
+
+export async function getExcludedAccounts(siteId: SiteId): Promise<string[]> {
+  const key = excludedAccountsKeyFor(siteId);
+  const data = await chrome.storage.local.get([key]);
+  return Array.isArray(data[key])
+    ? (data[key] as unknown[]).filter((h): h is string => typeof h === 'string')
+    : [];
+}
+
+export async function setExcludedAccounts(siteId: SiteId, accounts: string[]): Promise<void> {
+  await chrome.storage.local.set({ [excludedAccountsKeyFor(siteId)]: accounts });
 }
 
 export async function getDescriptions(descriptionsKey: DescriptionKey): Promise<string[]> {

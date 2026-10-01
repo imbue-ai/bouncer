@@ -78,6 +78,10 @@ fun FilterSheet(
     onFilterRepliesChange: (Boolean) -> Unit,
     onNotificationsEnabledChange: (Boolean) -> Unit,
     onDebugModeChange: (Boolean) -> Unit,
+    excludedAccounts: List<String>,
+    onAddExcludedAccount: (String) -> Unit,
+    onRemoveExcludedAccount: (String) -> Unit,
+    onOpenExcludedAccount: ((String) -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
     var showSettings by remember { mutableStateOf(false) }
@@ -152,6 +156,10 @@ fun FilterSheet(
                     onNotificationsEnabledChange = onNotificationsEnabledChange,
                     debugModeEnabled = debugModeEnabled,
                     onDebugModeChange = onDebugModeChange,
+                    excludedAccounts = excludedAccounts,
+                    onAddExcludedAccount = onAddExcludedAccount,
+                    onRemoveExcludedAccount = onRemoveExcludedAccount,
+                    onOpenExcludedAccount = onOpenExcludedAccount,
                 )
             } else {
                 // Only let the list participate in scroll/nested-scroll when

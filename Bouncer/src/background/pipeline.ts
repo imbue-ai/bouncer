@@ -522,7 +522,7 @@ export async function getSettings(siteId?: SiteId): Promise<Settings> {
     'customModels', 'predefinedModelKwargs', 'aiTextDetectionThreshold',
     'aiTextReplyDetectionThreshold', 'aiImageDetectionThreshold',
     'aiFilterIntent',
-    'filterReplies', 'youtubeShowPlaceholder',
+    'filterReplies',
     ...platformEnabledKeys,
   ] as const;
   const [data, descriptions, paused] = await Promise.all([
@@ -589,8 +589,7 @@ export async function getSettings(siteId?: SiteId): Promise<Settings> {
     // phrases pauses the AI detectors along with them.
     aiFilterIntentActive: paused ? false : aiIntentActiveForSite(data, descriptions),
     filterReplies: data.filterReplies !== false,
-    platformEnabled,
-    youtubeShowPlaceholder: data.youtubeShowPlaceholder === true
+    platformEnabled
   };
 }
 

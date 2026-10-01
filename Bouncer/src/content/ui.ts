@@ -15,6 +15,7 @@ import {
   getStorage, setStorage, getDescriptions, setDescriptions,
   aiIntentActiveForSite,
   getFilteringPaused, setFilteringPaused,
+  getExcludedAccounts, setExcludedAccounts, exclusionIdentity,
 } from '../shared/storage';
 import { optionalPlatforms } from '../shared/platforms';
 import { getReleaseNote, WELCOME_TIP } from './release-notes';
@@ -2878,14 +2879,86 @@ export function toggleFilteredTab(active: boolean) {
   }
 }
 
-// Builds the "Restore" button shared by every filtered-post layout. Clicking
+// Unhide a filtered post's original article in the feed (if it's still
+// mounted) and clear its filtered state so it won't re-hide without a fresh
+// evaluation. Shared by Restore and "Don't filter account".
+function unhideInFeed(postContent: PostContent): void {
+  for (const article of _deps.findPosts()) {
+    const postUrl = _deps.adapter.getPostUrl(article);
+    if (postUrl && postContent.postUrl && postUrl.includes(postContent.postUrl)) {
+      const container = _deps.adapter.getPostContainer(article);
+      container.style.display = '';
+      container.style.visibility = '';
+      delete container.dataset.filteredByExtension;
+      article.style.opacity = '';
+      article.style.transition = '';
+      _deps.processedPosts.delete(article);
+      markPostVerified(article);
+      break;
+    }
+  }
+}
+
+// Re-render the filtered-posts panel that a card action button lives in.
+function rerenderPanelAround(btn: HTMLElement): void {
+  updateFilteredTabCount();
+  const outerContainer = btn.closest('.filtered-view-container') || btn.closest('.ff-ios-filtered-modal-backdrop');
+  const innerContainer = outerContainer?.querySelector('.filtered-modal-content') || outerContainer?.querySelector('.ff-ios-filtered-modal-content');
+  if (innerContainer) renderFilteredPostsView(innerContainer);
+}
+
+// Restores every filtered post whose author is in `identities` (normalized,
+// see exclusionIdentity) — unhidden in the feed, removed from the panel —
+// then re-renders whichever filtered-posts panel is open. Run on every
+// excluded-accounts addition, whatever the source. No cache override
+// (unlike Restore): evaluatePost checks the excluded list before the cache,
+// so these stay visible while the account is excluded, and if it's
+// un-excluded later the original cached verdict hides them again without
+// another model call.
+export function restoreFilteredPostsByAccounts(identities: Set<string>): void {
+  const siteId = _deps.adapter.siteId;
+  const matching = filteredPosts.filter(p => {
+    const identity = exclusionIdentity(siteId, p.post);
+    return identity !== null && identities.has(identity);
+  });
+  if (matching.length === 0) return;
+  for (const p of matching) {
+    const key = p.post.postUrl || p.evaluationText.substring(0, 200);
+    const idx = filteredPosts.indexOf(p);
+    if (idx !== -1) filteredPosts.splice(idx, 1);
+    filteredPostKeys.delete(key);
+    unhideInFeed(p.post);
+  }
+
+  updateFilteredTabCount();
+  const openPanel = (filteredTabActive && filteredViewContainer?.querySelector('.filtered-modal-content'))
+    || document.querySelector('.ff-ios-filtered-modal-content');
+  if (openPanel) renderFilteredPostsView(openPanel);
+}
+
+// Builds the actions row shared by the filtered-post card layouts: a quiet
+// "Restore this post" first (the common, one-off action), then "Never filter
+// @handle" when the post has a usable author identity. Side by side pills on
+// desktop; stacked full-width rectangles in the mobile apps.
+function buildCardActionsRow(post: FilteredPost, postContent: PostContent): HTMLElement {
+  const actions = document.createElement('div');
+  actions.className = 'slop-post-actions';
+  actions.appendChild(createRestoreButton(post, postContent));
+  const excludeBtn = createExcludeAccountButton(post, postContent);
+  if (excludeBtn) actions.appendChild(excludeBtn);
+  return actions;
+}
+
+// Builds the "Restore this post" button shared by every filtered-post layout. Clicking
 // it reports a false positive, removes the post from the panel, unhides the
-// original article in the feed, and overrides the cache so re-evaluation keeps
-// the post visible.
+// original article in the feed, and overrides the cache so re-evaluation
+// keeps the post visible.
 function createRestoreButton(post: FilteredPost, postContent: PostContent): HTMLButtonElement {
+  const noun = _deps.adapter.siteId === 'youtube' ? 'video' : 'post';
   const restoreBtn = document.createElement('button');
-  restoreBtn.className = 'slop-restore';
-  restoreBtn.textContent = 'Restore';
+  restoreBtn.className = 'slop-restore slop-action-pill';
+  restoreBtn.textContent = `Restore this ${noun}`;
+  restoreBtn.title = `Show this ${noun} and keep it visible`;
   restoreBtn.addEventListener('click', (e) => {
     e.preventDefault();
     e.stopPropagation();
@@ -2906,20 +2979,7 @@ function createRestoreButton(post: FilteredPost, postContent: PostContent): HTML
     filteredPostKeys.delete(key);
 
     // Try to unhide original article in the feed
-    for (const article of _deps.findPosts()) {
-      const postUrl = _deps.adapter.getPostUrl(article);
-      if (postUrl && postContent.postUrl && postUrl.includes(postContent.postUrl)) {
-        const container = _deps.adapter.getPostContainer(article);
-        container.style.display = '';
-        container.style.visibility = '';
-        delete container.dataset.filteredByExtension;
-        article.style.opacity = '';
-        article.style.transition = '';
-        _deps.processedPosts.delete(article);
-        markPostVerified(article);
-        break;
-      }
-    }
+    unhideInFeed(postContent);
 
     // Override cache so re-evaluation keeps post visible
     chrome.runtime.sendMessage({
@@ -2932,12 +2992,51 @@ function createRestoreButton(post: FilteredPost, postContent: PostContent): HTML
       reasoning: 'User reported: false positive'
     }).catch(err => console.error('[Bouncer] Override cache error:', err));
 
-    updateFilteredTabCount();
-    const outerContainer = restoreBtn.closest('.filtered-view-container') || restoreBtn.closest('.ff-ios-filtered-modal-backdrop');
-    const innerContainer = outerContainer?.querySelector('.filtered-modal-content') || outerContainer?.querySelector('.ff-ios-filtered-modal-content');
-    if (innerContainer) renderFilteredPostsView(innerContainer);
+    rerenderPanelAround(restoreBtn);
   });
   return restoreBtn;
+}
+
+// "Never filter @handle" button: adds the post's author to the per-site
+// excluded-accounts list (their future posts skip classification entirely),
+// then restores every currently-filtered post from that account — unhidden in
+// the feed and removed from the panel. Null when the post has no usable
+// identity.
+function createExcludeAccountButton(post: FilteredPost, postContent: PostContent): HTMLButtonElement | null {
+  const siteId = _deps.adapter.siteId;
+  const identity = exclusionIdentity(siteId, postContent);
+  if (!identity) return null;
+
+  // Display form: the author's name on LinkedIn, the original-case @handle
+  // elsewhere (the store path may hand us a bare handle — re-add the @).
+  let display = siteId === 'linkedin' ? postContent.author : postContent.handle.replace(/^\//, '');
+  if (siteId !== 'linkedin' && !display.startsWith('@')) display = `@${display}`;
+
+  const noun = siteId === 'youtube' ? 'videos' : 'posts';
+  const btn = document.createElement('button');
+  btn.className = 'slop-exclude-account slop-action-pill';
+  btn.title = `Never filter ${noun} from ${display}`;
+  const labelSpan = document.createElement('span');
+  labelSpan.className = 'slop-exclude-account-label';
+  labelSpan.textContent = `Never filter ${display}`;
+  btn.appendChild(labelSpan);
+  btn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    (async () => {
+      // The storage listener in content/index.ts restores this author's
+      // filtered posts on the write, same as for additions from the popup
+      // or native settings. If the account was somehow already excluded
+      // (stale panel), there's no write to trigger it, so restore here.
+      const existing = await getExcludedAccounts(siteId);
+      if (existing.includes(identity)) {
+        restoreFilteredPostsByAccounts(new Set([identity]));
+      } else {
+        await setExcludedAccounts(siteId, [...existing, identity]);
+      }
+    })().catch(err => console.error('[Bouncer] Exclude account error:', err));
+  });
+  return btn;
 }
 
 // Wraps a built card in an <a> (so middle-click / ctrl-click open natively)
@@ -3057,10 +3156,7 @@ function buildYouTubeCard(post: FilteredPost): HTMLElement {
   card.appendChild(reasoning);
 
   // Actions
-  const actions = document.createElement('div');
-  actions.className = 'slop-post-actions';
-  actions.appendChild(createRestoreButton(post, postContent));
-  card.appendChild(actions);
+  card.appendChild(buildCardActionsRow(post, postContent));
 
   wrapper.appendChild(wrapInPostLink(card, postContent.postUrl));
   return wrapper;
@@ -3414,10 +3510,7 @@ function buildTwitterCard(post: FilteredPost): HTMLElement {
   body.appendChild(reasoning);
 
   // Actions row
-  const actions = document.createElement('div');
-  actions.className = 'slop-post-actions';
-  actions.appendChild(createRestoreButton(post, postContent));
-  body.appendChild(actions);
+  body.appendChild(buildCardActionsRow(post, postContent));
 
   if (isLinkedIn) {
     // linkedin adaptation: header row (avatar + meta/top) sits ABOVE the

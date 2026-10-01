@@ -770,6 +770,58 @@ class FilterSheetViewModel: ObservableObject {
         }
     }
 
+    // Excluded accounts for the selected platform — the native counterpart
+    // of the desktop popup's Excluded Accounts section. The JS bridge stores
+    // normalized identities under `excludedAccounts_<siteId>` and returns
+    // display form (leading @ on handle platforms); add/remove accept either
+    // form. Posts from these accounts skip classification entirely.
+    @MainActor
+    func getExcludedAccounts() async -> [String] {
+        guard let webView = webView else { return [] }
+        do {
+            let result = try await webView.callAsyncJavaScript(
+                "return await window.__ff_getExcludedAccounts(siteId)",
+                arguments: ["siteId": selectedPlatform],
+                in: nil,
+                contentWorld: Self.contentWorld
+            )
+            return (result as? [String]) ?? []
+        } catch {
+            print("[FeedFilter] getExcludedAccounts error: \(error)")
+            return []
+        }
+    }
+
+    @MainActor
+    func addExcludedAccount(_ text: String) async {
+        guard let webView = webView else { return }
+        do {
+            let _ = try await webView.callAsyncJavaScript(
+                "return await window.__ff_addExcludedAccount(siteId, text)",
+                arguments: ["siteId": selectedPlatform, "text": text],
+                in: nil,
+                contentWorld: Self.contentWorld
+            )
+        } catch {
+            print("[FeedFilter] addExcludedAccount error: \(error)")
+        }
+    }
+
+    @MainActor
+    func removeExcludedAccount(_ account: String) async {
+        guard let webView = webView else { return }
+        do {
+            let _ = try await webView.callAsyncJavaScript(
+                "return await window.__ff_removeExcludedAccount(siteId, account)",
+                arguments: ["siteId": selectedPlatform, "account": account],
+                in: nil,
+                contentWorld: Self.contentWorld
+            )
+        } catch {
+            print("[FeedFilter] removeExcludedAccount error: \(error)")
+        }
+    }
+
     @MainActor
     func clearModelCache() async {
         guard let webView = webView else { return }
@@ -1207,6 +1259,12 @@ struct BouncerSettingsView: View {
     @ObservedObject var viewModel: FilterSheetViewModel
     @ObservedObject private var localService = LocalInferenceService.shared
 
+    // Excluded accounts for the selected platform (display form, e.g.
+    // "@handle"). Loaded from extension storage on appear; also grows when
+    // the user taps "Never filter @x" in the filtered-posts panel.
+    @State private var excludedAccounts: [String] = []
+    @State private var newExcludedAccount = ""
+
     // The Imbue-hosted "Cloud" option requires Firebase App Check. On builds
     // shipped without a GoogleService-Info plist it is unusable, so hide it.
     private var hasImbueBackend: Bool {
@@ -1300,6 +1358,39 @@ struct BouncerSettingsView: View {
                 }
             }
 
+            // Excluded accounts for the selected platform: posts from these
+            // accounts are never classified or hidden. The list also grows
+            // from the filtered-posts panel's "Never filter @x" button;
+            // this section is where entries are reviewed and removed.
+            Section {
+                // Rows open the account's profile (tint-colored, like the
+                // Contact us links) when the platform has profile URLs;
+                // LinkedIn entries are display names, not slugs, so they
+                // render as plain text. Swipe (trailing) deletes either way.
+                // A Button loading the active webview, not a Link: Link hands
+                // the URL to the system, and x.com universal links can open
+                // the X app instead of staying in Bouncer.
+                ForEach(excludedAccounts, id: \.self) { account in
+                    if let url = excludedAccountURL(account) {
+                        Button(account) {
+                            viewModel.isPresented = false
+                            viewModel.navigateTo(urlString: url.absoluteString)
+                        }
+                    } else {
+                        Text(account)
+                    }
+                }
+                .onDelete(perform: removeExcludedAccounts)
+                TextField("Add an account to exclude", text: $newExcludedAccount)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .onSubmit(addExcludedAccount)
+            } header: {
+                Text("Excluded Accounts")
+            } footer: {
+                Text("Posts from these accounts are never filtered.")
+            }
+
             // Everything below Advanced Settings is power-user surface:
             // full model list, BYOK providers, AI-detection thresholds.
             Section {
@@ -1342,6 +1433,48 @@ struct BouncerSettingsView: View {
         .onAppear {
             viewModel.loadFilterReplies()
             viewModel.loadSelectedModel()
+            loadExcludedAccounts()
+        }
+    }
+
+    // Profile URL for an excluded account on the selected platform. Nil on
+    // LinkedIn — the stored identity there is the display name, which maps
+    // to no stable profile URL.
+    private func excludedAccountURL(_ account: String) -> URL? {
+        let handle = account.hasPrefix("@") ? String(account.dropFirst()) : account
+        guard let encoded = handle.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) else { return nil }
+        switch viewModel.selectedPlatform {
+        case "twitter": return URL(string: "https://x.com/\(encoded)")
+        case "youtube": return URL(string: "https://www.youtube.com/@\(encoded)")
+        default: return nil
+        }
+    }
+
+    private func loadExcludedAccounts() {
+        Task { @MainActor in
+            excludedAccounts = await viewModel.getExcludedAccounts()
+        }
+    }
+
+    private func addExcludedAccount() {
+        let text = newExcludedAccount.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        newExcludedAccount = ""
+        Task { @MainActor in
+            await viewModel.addExcludedAccount(text)
+            // Re-read rather than append locally — the bridge normalizes
+            // (strips @, lowercases) and dedupes, so storage is the truth.
+            excludedAccounts = await viewModel.getExcludedAccounts()
+        }
+    }
+
+    private func removeExcludedAccounts(at offsets: IndexSet) {
+        let removed = offsets.map { excludedAccounts[$0] }
+        excludedAccounts.remove(atOffsets: offsets)
+        Task { @MainActor in
+            for account in removed {
+                await viewModel.removeExcludedAccount(account)
+            }
         }
     }
 
@@ -2280,8 +2413,11 @@ private struct MainFeedView: View {
             // Padding inside the safe-area escape: the composite extends to
             // the true screen bottom, and the padding pulls the webviews'
             // bottom edge up to the bar's top edge while the bar is shown.
-            // Bar hidden → zero padding → full-bleed webview.
-            .padding(.bottom, viewModel.isNavBarHidden ? 0 : viewModel.navBarSlideDistance)
+            // Bar hidden → zero padding → full-bleed webview. The filtered
+            // posts modal unmounts the bar, so it gets full-bleed too —
+            // otherwise the reserved strip shows as a blank band under the
+            // modal's bottom sheet.
+            .padding(.bottom, viewModel.isNavBarHidden || viewModel.isFilteredModalOpen ? 0 : viewModel.navBarSlideDistance)
             .ignoresSafeArea(.container, edges: .bottom)
 
             if !viewModel.isFilteredModalOpen {
