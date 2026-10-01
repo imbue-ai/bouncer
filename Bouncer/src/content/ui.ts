@@ -588,7 +588,7 @@ async function maybeRenderUpdateBanner(container: HTMLElement): Promise<void> {
 
 // ==================== Placeholder animation ====================
 
-const PLACEHOLDER_PHRASES = ['AI slop', 'politics', 'negativity', 'pessimism', 'political outrage', 'posts written by AI', 'ragebait', 'humblebragging', 'virtue signaling', 'idolizing elites', 'Elon Musk'];
+const PLACEHOLDER_PHRASES = ['AI slop', 'politics', 'negativity', 'pessimism', 'thirst traps', 'political outrage', 'posts written by AI', 'ragebait', 'humblebragging', 'virtue signaling', 'idolizing elites', 'Elon Musk'];
 // Shown instead while LinkedIn's "Keep only" mode is active: things worth
 // keeping in a LinkedIn feed rather than things to remove. Must stay the
 // same length as PLACEHOLDER_PHRASES — the ff-placeholder-scroll keyframes

@@ -61,6 +61,7 @@ private val typewriterPhrases = listOf(
     "ragebait",
     "politics",
     "pessimism",
+    "thirst traps",
     "virtue signaling",
     "humblebragging",
     "engagement bait",
