@@ -416,6 +416,16 @@ fun BouncerApp(viewModel: BouncerViewModel = viewModel()) {
                 onFilterRepliesChange = viewModel::setFilterReplies,
                 onNotificationsEnabledChange = viewModel::setNotificationsEnabled,
                 onDebugModeChange = viewModel::setDebugMode,
+                excludedAccounts = state.excludedAccounts,
+                onAddExcludedAccount = viewModel::addExcludedAccount,
+                onRemoveExcludedAccount = viewModel::removeExcludedAccount,
+                // LinkedIn stores display names (no profile URL) — rows
+                // render non-clickable there.
+                onOpenExcludedAccount = if (state.activePlatformId == "linkedin") {
+                    null
+                } else {
+                    viewModel::openExcludedAccount
+                },
                 modifier = Modifier.imePadding(),
             )
         }

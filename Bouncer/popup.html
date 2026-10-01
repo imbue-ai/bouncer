@@ -127,9 +127,24 @@
          require editing this file. Sites other than X are gated behind
          optional host permissions; their toggle triggers the browser's
          permission prompt. -->
-    <section class="active-platforms-section">
-      <label>Active Platforms</label>
-      <div id="platformsContainer"></div>
+    <!-- Excluded accounts: per-platform lists of accounts whose posts are
+         never classified or hidden (checked in the content script before
+         anything is sent to a model). Stored as excludedAccounts_${siteId};
+         sentence-style groups are rendered by popup/index.ts. Collapsed
+         accordion reusing the api-provider chrome; the generic
+         .api-provider-header click handler wires expand/collapse. -->
+    <section class="excluded-accounts-section">
+      <div class="api-provider" id="excludedAccountsProvider">
+        <div class="api-provider-header" id="excludedAccountsHeader">
+          <span class="api-provider-name">Excluded Accounts</span>
+          <div class="api-provider-header-right">
+            <span class="api-provider-arrow">&#9662;</span>
+          </div>
+        </div>
+        <div class="api-provider-content excluded-accounts-content">
+          <div id="excludedAccountsContainer"></div>
+        </div>
+      </div>
     </section>
 
     <!-- Accent color: retheme Bouncer's in-feed UI (panel outline, buttons,
@@ -185,6 +200,12 @@
         </div>
       </div>
     </section>
+
+    <section class="active-platforms-section">
+      <label>Active Platforms</label>
+      <div id="platformsContainer"></div>
+    </section>
+
 
     <!-- Everything below is power-user surface: full model list, BYOK
          providers, AI-slop detection. Collapsed by default. -->

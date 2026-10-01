@@ -557,21 +557,42 @@
 .slop-post-actions {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: flex-start;
+  gap: 8px;
   padding: 4px 0 10px;
 }
 
-.slop-restore {
-  font-size: 13px;
+/* Filtered-card action pills ("Keep posts by @handle", "Restore"):
+   borderless chips with a soft solid fill, left-aligned under the post;
+   hover tints toward the brand accent. Theme variants set the custom
+   properties (not color/background directly) so the :hover rule always
+   outranks them regardless of selector specificity. */
+.slop-action-pill {
+  display: inline-flex;
+  align-items: center;
+  font-size: 12px;
   font-weight: 500;
-  color: #71767b;
-  background: transparent;
+  color: var(--slop-pill-color, #8b98a5);
+  background: var(--slop-pill-bg, rgba(113, 118, 123, 0.16));
   border: none;
+  border-radius: 9999px;
+  padding: 5px 12px;
   cursor: pointer;
-  padding: 2px 0;
+  white-space: nowrap;
 }
-.slop-restore:hover {
-  color: #e7e9ea;
+.slop-action-pill:hover {
+  color: rgb(var(--bouncer-brand-rgb));
+  background: rgba(var(--bouncer-brand-rgb), 0.13);
+}
+/* The handle can be arbitrarily long — ellipsize it rather than crowding
+   the Restore pill. */
+.slop-exclude-account {
+  max-width: 70%;
+}
+.slop-exclude-account-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Media container for filtered posts */
@@ -2206,8 +2227,9 @@ html.bouncer-plain-border .filter-phrases-bottom .filter-phrases-container {
   color: rgb(15, 20, 25);
 }
 
-.filtered-view-container.light-mode .slop-restore:hover {
-  color: #0f1419;
+.filtered-view-container.light-mode .slop-action-pill {
+  --slop-pill-color: #536471;
+  --slop-pill-bg: rgba(15, 20, 25, 0.06);
 }
 
 /* ======================================
@@ -3147,8 +3169,9 @@ body.ff-ios .ff-ios-page.light-mode .ff-ios-phrase-input::placeholder {
   color: rgb(15, 20, 25);
 }
 
-.ff-ios-filtered-modal-backdrop.light-mode .slop-restore:hover {
-  color: #0f1419;
+.ff-ios-filtered-modal-backdrop.light-mode .slop-action-pill {
+  --slop-pill-color: #536471;
+  --slop-pill-bg: rgba(15, 20, 25, 0.06);
 }
 
 /* iOS dark mode - default colors already match, no overrides needed */
@@ -3535,12 +3558,10 @@ body.ff-ios .ff-ios-page.dark-mode .ff-ios-page-header {
 .filtered-view-container--linkedin .slop-post-actions {
   padding: 6px 16px 12px;
 }
-.filtered-view-container--linkedin .slop-restore {
-  color: rgba(0, 0, 0, 0.55);
-  font-size: 14px;
-}
-.filtered-view-container--linkedin .slop-restore:hover {
-  color: rgba(0, 0, 0, 0.9);
+.filtered-view-container--linkedin .slop-action-pill {
+  --slop-pill-color: rgba(0, 0, 0, 0.6);
+  --slop-pill-bg: rgba(0, 0, 0, 0.05);
+  font-size: 13px;
 }
 
 /* ---- Dark-mode overrides for the LinkedIn panel ---- */
@@ -3564,11 +3585,9 @@ body.ff-ios .ff-ios-page.dark-mode .ff-ios-page-header {
   color: rgba(255, 255, 255, 0.55);
   border-left-color: rgba(255, 255, 255, 0.12);
 }
-.filtered-view-container--linkedin.dark-mode .slop-restore {
-  color: rgba(255, 255, 255, 0.55);
-}
-.filtered-view-container--linkedin.dark-mode .slop-restore:hover {
-  color: rgba(255, 255, 255, 0.9);
+.filtered-view-container--linkedin.dark-mode .slop-action-pill {
+  --slop-pill-color: rgba(255, 255, 255, 0.65);
+  --slop-pill-bg: rgba(255, 255, 255, 0.08);
 }
 .filtered-view-container--linkedin.dark-mode .slop-post-text a,
 .filtered-view-container--linkedin.dark-mode .slop-quote-text a {

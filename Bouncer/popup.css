@@ -3077,3 +3077,103 @@ body.dark-mode .cp-swatch.selected {
 body.dim-mode .cp-swatch.selected {
   box-shadow: 0 0 0 2px rgb(21, 32, 43), 0 0 0 4px #1d9bf0;
 }
+
+/* Excluded Accounts — classic Bouncer "sentence" UI per platform, mirroring
+   the in-feed filter box: "Keep posts by @a, @b, and ___". Bold names remove
+   on click (hover shows the red strikethrough); the underlined inline input
+   adds on Enter/comma/blur. */
+.excluded-accounts-group {
+  margin-bottom: 12px;
+}
+
+.excluded-accounts-group:last-child {
+  margin-bottom: 0;
+}
+
+.excluded-sentence {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 5px;
+  row-gap: 2px;
+  font-size: 14px;
+  color: #0f1419;
+}
+
+.excluded-sentence-prefix,
+.excluded-sentence-and {
+  white-space: nowrap;
+}
+
+/* Wrapper keeps each name + its trailing comma as one flex item so a comma
+   never wraps onto a new line by itself. */
+.excluded-phrase-item {
+  display: inline;
+}
+
+.excluded-phrase {
+  font-weight: 700;
+  color: #536471;
+  cursor: pointer;
+  transition: color 0.2s;
+}
+
+.excluded-phrase:hover {
+  color: #ef4444;
+  text-decoration: line-through;
+}
+
+.excluded-input-wrapper {
+  flex: 1;
+  min-width: 90px;
+}
+
+.excluded-sentence input.excluded-account-input {
+  width: 100%;
+  padding: 0 2px 2px;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid #cfd9de;
+  border-radius: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: inherit;
+  outline: none;
+  box-shadow: none;
+  transition: border-color 0.2s;
+}
+
+.excluded-sentence input.excluded-account-input:focus {
+  border-bottom-color: rgb(var(--bouncer-brand-rgb, 234, 133, 84));
+}
+
+body.dark-mode .excluded-sentence {
+  color: rgb(231, 233, 234);
+}
+
+body.dim-mode .excluded-sentence {
+  color: rgb(247, 249, 249);
+}
+
+body.dark-mode .excluded-phrase,
+body.dim-mode .excluded-phrase {
+  color: rgb(160, 165, 170);
+}
+
+body.dark-mode .excluded-phrase:hover,
+body.dim-mode .excluded-phrase:hover {
+  color: #ef4444;
+}
+
+body.dark-mode .excluded-sentence input.excluded-account-input,
+body.dim-mode .excluded-sentence input.excluded-account-input {
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid rgb(113, 118, 123);
+  color: inherit;
+}
+
+body.dark-mode .excluded-sentence input.excluded-account-input:focus,
+body.dim-mode .excluded-sentence input.excluded-account-input:focus {
+  border-bottom-color: rgb(var(--bouncer-brand-rgb, 234, 133, 84));
+}

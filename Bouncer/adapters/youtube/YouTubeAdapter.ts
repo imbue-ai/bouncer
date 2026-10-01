@@ -149,10 +149,6 @@ const BouncerYouTubeAdapter = class YouTubeAdapter implements PlatformAdapter {
 
   private _extractorReady = false;
   private _pendingStoreRequests = new Map<string, (result: StoreResult) => void>();
-  // `youtubeShowPlaceholder` mirrored locally so `hidePost` (sync) can read
-  // it without awaiting storage. Updated by `_initPlaceholderSetting` on
-  // load and on `chrome.storage.onChanged`.
-  private _showPlaceholder = false;
 
   constructor() {
     this._initLockupExtractor();
@@ -160,101 +156,6 @@ const BouncerYouTubeAdapter = class YouTubeAdapter implements PlatformAdapter {
     // mobile the iOS app surfaces everything through its native tab, so we
     // skip them (and `getFilterBoxAnchor`/`insertActionButton` no-op too).
     if (!this._mobile) this._initMiniGuideEntry();
-    this._initPlaceholderSetting();
-  }
-
-  // Read the placeholder setting and keep it current. The setting also
-  // toggles a class on <html> so `youtube.css` can gate the cover styling
-  // — CSS reads the class, JS reads the field, both stay in sync via the
-  // storage listener below.
-  private _initPlaceholderSetting(): void {
-    chrome.storage.local.get(['youtubeShowPlaceholder'])
-      .then((data) => {
-        this._showPlaceholder = (data as { youtubeShowPlaceholder?: boolean }).youtubeShowPlaceholder === true;
-        this._applyPlaceholderClass();
-      })
-      .catch(() => { /* storage unavailable — keep default (off) */ });
-
-    chrome.storage.onChanged.addListener((changes) => {
-      if (!changes.youtubeShowPlaceholder) return;
-      const next = changes.youtubeShowPlaceholder.newValue === true;
-      if (next === this._showPlaceholder) return;
-      this._showPlaceholder = next;
-      this._applyPlaceholderClass();
-      // Retroactively switch already-filtered cards to the new style.
-      // Turning the placeholder OFF: hide the card (matching the new
-      // default for fresh hides). Turning it ON: restore the slot AND
-      // inject the placeholder DOM so CSS has something to render — the
-      // page-class toggle alone isn't enough.
-      document.querySelectorAll<HTMLElement>('[data-filtered-by-extension="true"]').forEach((el) => {
-        if (this._showPlaceholder) {
-          el.style.display = '';
-          this._ensurePlaceholderElement(el);
-        } else {
-          el.style.display = 'none';
-        }
-      });
-    });
-  }
-
-  private _applyPlaceholderClass(): void {
-    // Distinct from the placeholder element's class — selecting `.bouncer-
-    // yt-placeholder` on its own would match both <html> and the element,
-    // and hiding the element with `display:none` would also hide <html>.
-    document.documentElement.classList.toggle('bouncer-yt-show-placeholder', this._showPlaceholder);
-  }
-
-  // Build the placeholder DOM and append it as a direct child of the card.
-  // Idempotent — bails if a placeholder is already attached. CSS gates
-  // visibility, so it's safe to leave the element in place when toggling
-  // the setting off; only fresh hides require an injection.
-  private _ensurePlaceholderElement(el: HTMLElement): void {
-    if (el.querySelector(':scope > .bouncer-yt-placeholder')) return;
-
-    // Shorts cards use a 2:3 thumbnail and a simpler byline (title + views,
-    // no avatar). Detect by descendant — the rich-item-renderer wraps a
-    // `ytm-shorts-lockup-view-model` in shelf items.
-    const isShort = !!el.querySelector('ytm-shorts-lockup-view-model, .shortsLockupViewModelHost');
-
-    const wrap = document.createElement('div');
-    wrap.className = isShort ? 'bouncer-yt-placeholder bouncer-yt-placeholder--short' : 'bouncer-yt-placeholder';
-
-    const thumb = document.createElement('div');
-    thumb.className = 'bouncer-yt-placeholder-thumb';
-    const logo = document.createElement('img');
-    logo.className = 'bouncer-yt-placeholder-logo';
-    logo.src = chrome.runtime.getURL('icons/icon48.png');
-    logo.alt = '';
-    logo.setAttribute('aria-hidden', 'true');
-    const label = document.createElement('span');
-    label.className = 'bouncer-yt-placeholder-label';
-    label.textContent = 'Filtered by Bouncer';
-    thumb.appendChild(logo);
-    thumb.appendChild(label);
-
-    const meta = document.createElement('div');
-    meta.className = 'bouncer-yt-placeholder-meta';
-    // Regular cards have an avatar circle; shorts don't.
-    if (!isShort) {
-      const avatar = document.createElement('div');
-      avatar.className = 'bouncer-yt-placeholder-avatar';
-      meta.appendChild(avatar);
-    }
-    const bars = document.createElement('div');
-    bars.className = 'bouncer-yt-placeholder-bars';
-    // Shorts get two short bars (title + views) instead of the regular
-    // three-line byline (title × 2 + channel + views).
-    const barVariants = isShort ? ['long', 'tiny'] : ['long', 'short', 'tiny'];
-    for (const variant of barVariants) {
-      const bar = document.createElement('div');
-      bar.className = `bouncer-yt-placeholder-bar ${variant}`;
-      bars.appendChild(bar);
-    }
-    meta.appendChild(bars);
-
-    wrap.appendChild(thumb);
-    wrap.appendChild(meta);
-    el.appendChild(wrap);
   }
 
   // ===== Mini-guide entry =====
@@ -527,29 +428,11 @@ const BouncerYouTubeAdapter = class YouTubeAdapter implements PlatformAdapter {
     return article;
   }
 
-  // Two modes, gated by the `youtubeShowPlaceholder` setting:
-  //   - off (default): remove the card outright, matching Twitter.
-  //   - on: leave the slot in the home grid and cover it with a
-  //         "Filtered by Bouncer" placeholder (see youtube.css).
-  // The watch-page sidebar is always remove-only — it's a linear list, so
-  // a placeholder row would be noise between real suggestions.
+  // Remove the card outright, matching Twitter.
   hidePost(article: HTMLElement): void {
     const el = this.getPostContainer(article);
     el.dataset.filteredByExtension = 'true';
-    // Mobile always removes the card outright — the placeholder is a
-    // desktop-only affordance (and `youtubeShowPlaceholder` is a shared
-    // setting that may be `true` from a desktop session). The watch sidebar
-    // also always removes (a placeholder row would be noise between results).
-    if (this._mobile || !this._showPlaceholder || window.location.pathname.startsWith('/watch')) {
-      el.style.display = 'none';
-      return;
-    }
-    // Clear the fade-out styles the shared hide flow applies before calling
-    // us — otherwise the just-installed cover inherits `opacity: 0` and is
-    // invisible.
-    el.style.opacity = '';
-    el.style.transition = '';
-    this._ensurePlaceholderElement(el);
+    el.style.display = 'none';
   }
 
   extractPostContent(article: HTMLElement): PostContent {
@@ -816,10 +699,6 @@ const BouncerYouTubeAdapter = class YouTubeAdapter implements PlatformAdapter {
       c.style.opacity = '1';
       c.removeAttribute('data-filtered-by-extension');
     });
-
-    // Strip any injected placeholder DOM — the panel renders the real
-    // video, so the skeleton cover would just be cruft inside the clone.
-    el.querySelectorAll('.bouncer-yt-placeholder').forEach(p => p.remove());
 
     // Strip our injected trash button — otherwise the filtered-posts panel
     // renders it inside the cloned card (e.g. inside a Short's title).

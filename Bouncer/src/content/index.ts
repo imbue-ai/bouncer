@@ -2,7 +2,7 @@
 // Entry point: post processing, observers, init, storage/message listeners
 
 import type { PlatformAdapter, PostContent, PipelineResponse, BackgroundToContentMessage, DescriptionKey, AiFilterIntentState } from '../types';
-import { getStorage, removeStorage, getDescriptions, setDescriptions, phraseSetKey, filteringPausedKeyFor } from '../shared/storage';
+import { getStorage, removeStorage, getDescriptions, setDescriptions, phraseSetKey, filteringPausedKeyFor, getExcludedAccounts, exclusionIdentity } from '../shared/storage';
 import { enabledStorageKey } from '../shared/platforms';
 import { hexToRgbChannels, hexToDarkRgbChannels, contrastTextColor } from '../shared/brand-color';
 import { FILTER_PACK_CODE_PREFIX } from '../shared/share-encoding';
@@ -340,6 +340,23 @@ import {
       markPostVerified(article);
       return;
     }
+
+    // Posts from accounts the user excluded skip classification entirely —
+    // no model call, and in cloud mode the post never leaves the browser.
+    try {
+      const excluded = await getExcludedAccounts(adapter.siteId);
+      if (excluded.length > 0) {
+        const identity = exclusionIdentity(adapter.siteId, content);
+        if (identity && excluded.includes(identity)) {
+          postReasonings.set(article, {
+            shouldHide: false,
+            reasoning: 'Author is in your excluded accounts list.'
+          });
+          markPostVerified(article);
+          return;
+        }
+      }
+    } catch { /* storage unavailable — fall through to normal evaluation */ }
 
     // Structural filter phrases ("no retweets", "quote tweets", "videos")
     // resolve deterministically from adapter-extracted post attributes — no
