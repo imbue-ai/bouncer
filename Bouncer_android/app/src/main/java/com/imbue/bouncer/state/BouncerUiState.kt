@@ -40,7 +40,7 @@ data class BouncerUiState(
     // mirrored from the extension's `excludedAccounts_<siteId>` storage via
     // __ff_loadExcludedAccounts. Posts from these accounts are never
     // classified or hidden. Edited from the settings sheet; also grows when
-    // the user taps "Keep posts by @x" in the filtered-posts modal.
+    // the user taps "Never filter @x" in the filtered-posts modal.
     val excludedAccounts: List<String> = emptyList(),
     val hasCompletedOnboarding: Boolean = false,
     val hasLoggedIn: Boolean = false,

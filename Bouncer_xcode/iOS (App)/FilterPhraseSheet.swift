@@ -1261,7 +1261,7 @@ struct BouncerSettingsView: View {
 
     // Excluded accounts for the selected platform (display form, e.g.
     // "@handle"). Loaded from extension storage on appear; also grows when
-    // the user taps "Keep posts by @x" in the filtered-posts panel.
+    // the user taps "Never filter @x" in the filtered-posts panel.
     @State private var excludedAccounts: [String] = []
     @State private var newExcludedAccount = ""
 
@@ -1360,16 +1360,22 @@ struct BouncerSettingsView: View {
 
             // Excluded accounts for the selected platform: posts from these
             // accounts are never classified or hidden. The list also grows
-            // from the filtered-posts panel's "Keep posts by @x" button;
+            // from the filtered-posts panel's "Never filter @x" button;
             // this section is where entries are reviewed and removed.
             Section {
-                // Rows link to the account's profile (tint-colored, like the
+                // Rows open the account's profile (tint-colored, like the
                 // Contact us links) when the platform has profile URLs;
                 // LinkedIn entries are display names, not slugs, so they
                 // render as plain text. Swipe (trailing) deletes either way.
+                // A Button loading the active webview, not a Link: Link hands
+                // the URL to the system, and x.com universal links can open
+                // the X app instead of staying in Bouncer.
                 ForEach(excludedAccounts, id: \.self) { account in
                     if let url = excludedAccountURL(account) {
-                        Link(account, destination: url)
+                        Button(account) {
+                            viewModel.isPresented = false
+                            viewModel.navigateTo(urlString: url.absoluteString)
+                        }
                     } else {
                         Text(account)
                     }
@@ -2407,8 +2413,11 @@ private struct MainFeedView: View {
             // Padding inside the safe-area escape: the composite extends to
             // the true screen bottom, and the padding pulls the webviews'
             // bottom edge up to the bar's top edge while the bar is shown.
-            // Bar hidden → zero padding → full-bleed webview.
-            .padding(.bottom, viewModel.isNavBarHidden ? 0 : viewModel.navBarSlideDistance)
+            // Bar hidden → zero padding → full-bleed webview. The filtered
+            // posts modal unmounts the bar, so it gets full-bleed too —
+            // otherwise the reserved strip shows as a blank band under the
+            // modal's bottom sheet.
+            .padding(.bottom, viewModel.isNavBarHidden || viewModel.isFilteredModalOpen ? 0 : viewModel.navBarSlideDistance)
             .ignoresSafeArea(.container, edges: .bottom)
 
             if !viewModel.isFilteredModalOpen {

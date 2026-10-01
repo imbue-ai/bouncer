@@ -419,8 +419,8 @@ fun BouncerApp(viewModel: BouncerViewModel = viewModel()) {
                 excludedAccounts = state.excludedAccounts,
                 onAddExcludedAccount = viewModel::addExcludedAccount,
                 onRemoveExcludedAccount = viewModel::removeExcludedAccount,
-                // LinkedIn stores display names (no profile URL) — rows
-                // render non-clickable there.
+                // LinkedIn stores display names (no profile URL) — chips
+                // do nothing on tap there.
                 onOpenExcludedAccount = if (state.activePlatformId == "linkedin") {
                     null
                 } else {

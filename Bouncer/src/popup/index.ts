@@ -63,7 +63,7 @@ function renderPlatformRows(): void {
               <input type="checkbox" id="${platformToggleId(p.id)}"${startChecked ? ' checked' : ''}>
               <span class="ts-inline-slider" aria-hidden="true"></span>
             </label>
-            ${hasSub ? '<span class="api-provider-arrow">&#9662;</span>' : ''}
+            ${hasSub ? '<span class="api-provider-arrow" aria-hidden="true"></span>' : ''}
           </div>
         </div>
         ${platformSubContentHTML(p.id)}
@@ -1120,7 +1120,7 @@ function setupAccentColorPicker() {
   initAccentColorPicker({ chip, svArea, svThumb, hueInput, hexInput, rInput, gInput, bInput, swatchesEl, resetBtn, eyedropperBtn });
 }
 
-// "Colored border on input box" toggle (below the filter-replies toggle).
+// "Colored border on input box" toggle (inside the Accent Color accordion).
 // On keeps the brand-accent outline on the in-feed filter box; off swaps it
 // for the platform's native card border. On is stored as key-absence, which
 // is how installs predating the default flip keep their colored border with

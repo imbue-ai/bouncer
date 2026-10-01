@@ -2907,20 +2907,49 @@ function rerenderPanelAround(btn: HTMLElement): void {
   if (innerContainer) renderFilteredPostsView(innerContainer);
 }
 
+// Restores every filtered post whose author is in `identities` (normalized,
+// see exclusionIdentity) — unhidden in the feed, removed from the panel —
+// then re-renders whichever filtered-posts panel is open. Run on every
+// excluded-accounts addition, whatever the source. No cache override
+// (unlike Restore): evaluatePost checks the excluded list before the cache,
+// so these stay visible while the account is excluded, and if it's
+// un-excluded later the original cached verdict hides them again without
+// another model call.
+export function restoreFilteredPostsByAccounts(identities: Set<string>): void {
+  const siteId = _deps.adapter.siteId;
+  const matching = filteredPosts.filter(p => {
+    const identity = exclusionIdentity(siteId, p.post);
+    return identity !== null && identities.has(identity);
+  });
+  if (matching.length === 0) return;
+  for (const p of matching) {
+    const key = p.post.postUrl || p.evaluationText.substring(0, 200);
+    const idx = filteredPosts.indexOf(p);
+    if (idx !== -1) filteredPosts.splice(idx, 1);
+    filteredPostKeys.delete(key);
+    unhideInFeed(p.post);
+  }
+
+  updateFilteredTabCount();
+  const openPanel = (filteredTabActive && filteredViewContainer?.querySelector('.filtered-modal-content'))
+    || document.querySelector('.ff-ios-filtered-modal-content');
+  if (openPanel) renderFilteredPostsView(openPanel);
+}
+
 // Builds the actions row shared by the filtered-post card layouts: a quiet
-// "Keep posts by @handle" text button on the left (when the post has a usable
-// author identity) and Restore on the right, both in the same understated
-// text style.
+// "Restore this post" first (the common, one-off action), then "Never filter
+// @handle" when the post has a usable author identity. Side by side pills on
+// desktop; stacked full-width rectangles in the mobile apps.
 function buildCardActionsRow(post: FilteredPost, postContent: PostContent): HTMLElement {
   const actions = document.createElement('div');
   actions.className = 'slop-post-actions';
+  actions.appendChild(createRestoreButton(post, postContent));
   const excludeBtn = createExcludeAccountButton(post, postContent);
   if (excludeBtn) actions.appendChild(excludeBtn);
-  actions.appendChild(createRestoreButton(post, postContent));
   return actions;
 }
 
-// Builds the "Restore" button shared by every filtered-post layout. Clicking
+// Builds the "Restore this post" button shared by every filtered-post layout. Clicking
 // it reports a false positive, removes the post from the panel, unhides the
 // original article in the feed, and overrides the cache so re-evaluation
 // keeps the post visible.
@@ -2928,7 +2957,7 @@ function createRestoreButton(post: FilteredPost, postContent: PostContent): HTML
   const noun = _deps.adapter.siteId === 'youtube' ? 'video' : 'post';
   const restoreBtn = document.createElement('button');
   restoreBtn.className = 'slop-restore slop-action-pill';
-  restoreBtn.textContent = 'Restore';
+  restoreBtn.textContent = `Restore this ${noun}`;
   restoreBtn.title = `Show this ${noun} and keep it visible`;
   restoreBtn.addEventListener('click', (e) => {
     e.preventDefault();
@@ -2968,11 +2997,11 @@ function createRestoreButton(post: FilteredPost, postContent: PostContent): HTML
   return restoreBtn;
 }
 
-// "Keep posts by @handle" button: adds the post's author to the per-site
+// "Never filter @handle" button: adds the post's author to the per-site
 // excluded-accounts list (their future posts skip classification entirely),
 // then restores every currently-filtered post from that account — unhidden in
-// the feed, removed from the panel, cached verdicts overridden so they stay
-// visible on re-evaluation. Null when the post has no usable identity.
+// the feed and removed from the panel. Null when the post has no usable
+// identity.
 function createExcludeAccountButton(post: FilteredPost, postContent: PostContent): HTMLButtonElement | null {
   const siteId = _deps.adapter.siteId;
   const identity = exclusionIdentity(siteId, postContent);
@@ -2989,38 +3018,22 @@ function createExcludeAccountButton(post: FilteredPost, postContent: PostContent
   btn.title = `Never filter ${noun} from ${display}`;
   const labelSpan = document.createElement('span');
   labelSpan.className = 'slop-exclude-account-label';
-  labelSpan.textContent = `Keep ${noun} by ${display}`;
+  labelSpan.textContent = `Never filter ${display}`;
   btn.appendChild(labelSpan);
   btn.addEventListener('click', (e) => {
     e.preventDefault();
     e.stopPropagation();
     (async () => {
+      // The storage listener in content/index.ts restores this author's
+      // filtered posts on the write, same as for additions from the popup
+      // or native settings. If the account was somehow already excluded
+      // (stale panel), there's no write to trigger it, so restore here.
       const existing = await getExcludedAccounts(siteId);
-      if (!existing.includes(identity)) {
+      if (existing.includes(identity)) {
+        restoreFilteredPostsByAccounts(new Set([identity]));
+      } else {
         await setExcludedAccounts(siteId, [...existing, identity]);
       }
-
-      // Restore every filtered post from this account, not just the clicked
-      // one — otherwise the exclusion looks broken until the next reload.
-      const matching = filteredPosts.filter(p => exclusionIdentity(siteId, p.post) === identity);
-      for (const p of matching) {
-        const key = p.post.postUrl || p.evaluationText.substring(0, 200);
-        const idx = filteredPosts.indexOf(p);
-        if (idx !== -1) filteredPosts.splice(idx, 1);
-        filteredPostKeys.delete(key);
-        unhideInFeed(p.post);
-        chrome.runtime.sendMessage({
-          type: 'overrideCacheEntry',
-          post: p.evaluationText,
-          imageUrls: p.post.imageUrls || [],
-          postUrl: p.post.postUrl || null,
-          siteId,
-          shouldHide: false,
-          reasoning: 'Account excluded from filtering'
-        }).catch(err => console.error('[Bouncer] Override cache error:', err));
-      }
-
-      rerenderPanelAround(btn);
     })().catch(err => console.error('[Bouncer] Exclude account error:', err));
   });
   return btn;

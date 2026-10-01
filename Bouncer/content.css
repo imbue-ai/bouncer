@@ -562,7 +562,7 @@
   padding: 4px 0 10px;
 }
 
-/* Filtered-card action pills ("Keep posts by @handle", "Restore"):
+/* Filtered-card action pills ("Restore this post", "Never filter @handle"):
    borderless chips with a soft solid fill, left-aligned under the post;
    hover tints toward the brand accent. Theme variants set the custom
    properties (not color/background directly) so the :hover rule always
@@ -3172,6 +3172,37 @@ body.ff-ios .ff-ios-page.light-mode .ff-ios-phrase-input::placeholder {
 .ff-ios-filtered-modal-backdrop.light-mode .slop-action-pill {
   --slop-pill-color: #536471;
   --slop-pill-bg: rgba(15, 20, 25, 0.06);
+  --slop-pill-border: rgb(239, 243, 244);
+}
+
+/* Native apps' modal (iOS and Android both open this one): the actions
+   stack as full-width outlined rectangles matching the quote box's border
+   and radius, so the quote box and the two buttons read as one column. The
+   desktop 12px chip is too small to read and hit on a phone. Selectors
+   carry four classes so they outrank the LinkedIn pill overrides further
+   down; colors go through the custom properties so :hover still wins. */
+.ff-ios-filtered-modal-backdrop .slop-post-actions {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+.ff-ios-filtered-modal-backdrop .ff-ios-filtered-modal .slop-post-actions .slop-action-pill {
+  --slop-pill-bg: transparent;
+  justify-content: center;
+  max-width: none;
+  min-height: 44px;
+  padding: 10px 12px;
+  font-size: 15px;
+  border: 1px solid var(--slop-pill-border, rgb(47, 51, 54));
+  border-radius: 12px;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+/* Purple (the .slop-category-tag label color) instead of the brand-orange
+   hover tint; on touch this is the pressed state. */
+.ff-ios-filtered-modal-backdrop .ff-ios-filtered-modal .slop-post-actions .slop-action-pill:hover,
+.ff-ios-filtered-modal-backdrop .ff-ios-filtered-modal .slop-post-actions .slop-action-pill:active {
+  color: #8b5cf6;
+  background: rgba(139, 92, 246, 0.13);
 }
 
 /* iOS dark mode - default colors already match, no overrides needed */

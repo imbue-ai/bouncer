@@ -2,7 +2,7 @@
 // Entry point: post processing, observers, init, storage/message listeners
 
 import type { PlatformAdapter, PostContent, PipelineResponse, BackgroundToContentMessage, DescriptionKey, AiFilterIntentState } from '../types';
-import { getStorage, removeStorage, getDescriptions, setDescriptions, phraseSetKey, filteringPausedKeyFor, getExcludedAccounts, exclusionIdentity } from '../shared/storage';
+import { getStorage, removeStorage, getDescriptions, setDescriptions, phraseSetKey, filteringPausedKeyFor, getExcludedAccounts, exclusionIdentity, excludedAccountsKeyFor } from '../shared/storage';
 import { enabledStorageKey } from '../shared/platforms';
 import { hexToRgbChannels, hexToDarkRgbChannels, contrastTextColor } from '../shared/brand-color';
 import { FILTER_PACK_CODE_PREFIX } from '../shared/share-encoding';
@@ -21,7 +21,7 @@ import {
   injectFilterPhrasesInput, injectBottomFilterBox, injectMobileFilterBox,
   injectBannerFilterBox,
   syncFilterPhrases, addFilterPhrase, removeFilterPhrase, clearFilteredPosts,
-  restoreOrRefreshFilteredPosts, restoreFilteredRepliesOnPage,
+  restoreOrRefreshFilteredPosts, restoreFilteredRepliesOnPage, restoreFilteredPostsByAccounts,
   showSettingsModal, renderFilteredPostsView,
   initModelLoadingListener,
   markPostPending, markPostVerified, getVerificationBar,
@@ -242,14 +242,13 @@ import {
     }
   }
 
-  // Re-evaluate a single post
-  async function reEvaluateSinglePost(article: HTMLElement) {
-    // Mirror evaluatePost's extraction strategy so the cache key we clear
-    // matches the one that was written. In in-app mode (Android/iOS WKWebView)
-    // evaluatePost falls back to DOM when the Redux store isn't reachable;
-    // if we don't mirror that fallback here, the cache delete misses (store
-    // text ≠ DOM text → different cache keys) or the function returns
-    // silently and the Re-evaluate button does nothing.
+  // Mirror evaluatePost's extraction strategy so a cache key we clear
+  // matches the one that was written. In in-app mode (Android/iOS WKWebView)
+  // evaluatePost falls back to DOM when the Redux store isn't reachable;
+  // if we don't mirror that fallback here, the cache delete misses (store
+  // text ≠ DOM text → different cache keys) or the caller returns silently
+  // and the Re-evaluate button does nothing.
+  async function extractForReEvaluation(article: HTMLElement): Promise<PostContent | undefined> {
     let content: PostContent | undefined;
     try {
       content = await adapter.extractPostContentFromStore(article) ?? undefined;
@@ -257,6 +256,12 @@ import {
     if (!content && isInApp) {
       content = extractPostContent(article);
     }
+    return content;
+  }
+
+  // Re-evaluate a single post
+  async function reEvaluateSinglePost(article: HTMLElement) {
+    const content = await extractForReEvaluation(article);
     if (!content) return;
 
     const hasContent = content.text.trim() || (content.imageUrls && content.imageUrls.length > 0);
@@ -272,6 +277,32 @@ import {
 
     postReasonings.delete(article);
     await evaluatePost(article);
+  }
+
+  // Accounts were removed from the excluded list: classify the visible posts
+  // by those authors, which evaluatePost had been skipping. Only their posts
+  // can change, so this is a targeted version of reEvaluateAllPosts' sweep
+  // (same skips, same deferred pending UI). Cached verdicts are reused —
+  // posts classified before the exclusion re-hide without a model call.
+  async function reEvaluatePostsByAccounts(identities: Set<string>) {
+    const skipReplies = !filterReplies && adapter.isPermalinkView();
+    for (const article of findPosts()) {
+      if (adapter.getPostContainer(article).dataset.filteredByExtension) continue;
+      if (adapter.isMainPost(article)) continue;
+      if (skipReplies) continue;
+
+      const content = await extractForReEvaluation(article);
+      if (!content) continue;
+      const identity = exclusionIdentity(adapter.siteId, content);
+      if (!identity || !identities.has(identity)) continue;
+
+      processedPosts.delete(article);
+      postReasonings.delete(article);
+      const pendingTimer = setTimeout(() => markPostPending(article), 120);
+      evaluatePost(article)
+        .catch(err => console.error('[Bouncer] evaluatePost failed:', err))
+        .finally(() => clearTimeout(pendingTimer));
+    }
   }
 
   const MAX_STORE_RETRIES = 3;
@@ -907,6 +938,27 @@ import {
             restoreOrRefreshFilteredPosts(removed, 'Filter rule removed; post no longer matches.')
               .catch(err => console.error('[Bouncer] restore after phrase removal failed:', err));
           }
+        }
+      }
+      const excludedKey = excludedAccountsKeyFor(adapter.siteId);
+      if (changes[excludedKey]) {
+        // Excluded accounts edited — via the "Never filter @x" button, the
+        // desktop popup, the native settings sheets, or another tab. Like
+        // phrase edits, this listener is the single place either direction
+        // takes effect: additions restore that author's filtered posts
+        // (evaluatePost skips them from then on); removals re-classify
+        // their visible posts.
+        const toList = (v: unknown): string[] => Array.isArray(v) ? v.filter((a): a is string => typeof a === 'string') : [];
+        const oldList = toList(changes[excludedKey].oldValue);
+        const newList = toList(changes[excludedKey].newValue);
+        const oldSet = new Set(oldList);
+        const newSet = new Set(newList);
+        const added = newList.filter(a => !oldSet.has(a));
+        const removed = oldList.filter(a => !newSet.has(a));
+        if (added.length > 0) restoreFilteredPostsByAccounts(new Set(added));
+        if (removed.length > 0) {
+          reEvaluatePostsByAccounts(new Set(removed))
+            .catch(err => console.error('[Bouncer] re-evaluation after account un-exclude failed:', err));
         }
       }
       if (changes.aiIndicatorBadgeDismissed && IS_IOS) {

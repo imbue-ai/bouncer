@@ -238,13 +238,12 @@ section:not(:nth-last-child(2)) {
 
 .model-dropdown-arrow {
   color: #536471;
-  font-size: 18px;
   margin-left: 8px;
   transition: transform 0.2s;
 }
 
 .model-dropdown.open .model-dropdown-arrow {
-  transform: rotate(180deg)  translateY(-2px);
+  transform: rotate(180deg);
 }
 
 .model-dropdown-menu {
@@ -816,15 +815,32 @@ body.dim-mode .contact-icon {
   background: #eff3f4;
 }
 
+/* `line-height: 1` keeps the right-side items from growing the header past
+ * their own boxes. The chevron, toggle and accent chip are all 18px tall, so
+ * every accordion header is the same 38px tall. */
 .api-provider-header-right {
   display: flex;
   align-items: center;
   gap: 8px;
+  line-height: 1;
+}
+
+/* Chevron-down drawn as a mask over currentColor, so the theme rules that
+   set `color` on these arrows recolor it. Shared by the accordion headers
+   and the model dropdown. */
+.api-provider-arrow,
+.model-dropdown-arrow {
+  display: block;
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  background-color: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") center / 16px 16px no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") center / 16px 16px no-repeat;
 }
 
 .api-provider-arrow {
   color: #536471;
-  font-size: 18px;
   transition: transform 0.2s;
 }
 
@@ -832,7 +848,7 @@ body.dim-mode .contact-icon {
    expanded Advanced Settings accordion must not flip the arrows of the
    collapsed accordions nested inside it. */
 .api-provider.expanded > .api-provider-header .api-provider-arrow {
-  transform: rotate(180deg)  translateY(-2px);
+  transform: rotate(180deg);
 }
 
 .api-provider-name {
@@ -1977,17 +1993,6 @@ body.dim-mode footer.pricing-disclaimer p {
   pointer-events: none;
 }
 
-/* Collapse the line-box of the header chevron next to the toggle. The
- * `▾` glyph in `.api-provider-arrow` is 18px font-size; its default
- * `line-height: normal` (~1.2) gives it a ~21px box, which `align-items:
- * center` then anchors to. The toggle is 18px tall, so the box-mismatch
- * pushes the toggle visually below the chevron. Forcing `line-height: 1`
- * collapses the chevron's box to its glyph height, putting both on the
- * same vertical center. */
-.platform-provider .api-provider-header-right {
-  line-height: 1;
-}
-
 .checkbox-label {
   display: flex;
   align-items: center;
@@ -2820,11 +2825,19 @@ body.dim-mode .model-radio-sub { color: rgb(139, 152, 165); }
   padding: 12px;
 }
 
-/* Second toggle in the filter-replies section: force it onto its own line
-   (.toggle-switch is inline-flex) with the section's usual row spacing. */
+/* Excluded Accounts and Accent Color are back-to-back accordions; stack them
+   at the usual .api-provider spacing instead of the 25px between sections. */
+section.excluded-accounts-section {
+  margin-bottom: 12px;
+}
+
+/* Border toggle below the picker inside the accent accordion: force it onto
+   its own line (.toggle-switch is inline-flex), separated from the picker. */
 .colored-border-toggle {
   display: flex;
   margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #eff3f4;
 }
 
 .color-picker {
@@ -3027,6 +3040,9 @@ body.dark-mode .accent-color-chip,
 body.dim-mode .accent-color-chip {
   border-color: rgba(255, 255, 255, 0.25);
 }
+
+body.dark-mode .colored-border-toggle { border-top-color: rgb(47, 51, 54); }
+body.dim-mode .colored-border-toggle { border-top-color: rgb(56, 68, 77); }
 
 body.dark-mode .cp-field label { color: rgb(113, 118, 123); }
 body.dim-mode .cp-field label { color: rgb(139, 152, 165); }

@@ -723,7 +723,7 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     // Excluded accounts for the active platform. Storage is the truth (the
-    // filtered-posts modal's "Keep posts by @x" button writes it directly);
+    // filtered-posts modal's "Never filter @x" button writes it directly);
     // the mutate bridge re-posts the updated list once the write resolves,
     // and the reply lands in onAiSettingsReply.
     private fun loadExcludedAccounts() {
