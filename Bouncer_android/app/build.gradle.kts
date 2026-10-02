@@ -33,8 +33,8 @@ android {
         applicationId = "com.imbue.bouncer"
         minSdk = 26
         targetSdk = 36
-        versionCode = 20
-        versionName = "1.3.4"
+        versionCode = 21
+        versionName = "1.4.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
