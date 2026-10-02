@@ -316,9 +316,19 @@ object BouncerGeckoView {
     // must be a real file the process can read (assets paths don't qualify), so
     // we write it into filesDir. Returns the absolute path, or null on failure
     // (in which case we just fall back to the normal prompt-gated permission).
+    //
+    // dom.interactive_widget_default_resizes_visual=false: when BouncerApp
+    // shrinks the GeckoView for the keyboard, shrink the page's layout viewport
+    // too (interactive-widget=resizes-content, like iOS) rather than only the
+    // visual viewport, so x.com's fixed-bottom composer bars sit right above
+    // the keyboard instead of the whole page panning up.
     private fun writeGeckoConfig(appCtx: Context): String? = runCatching {
         val cfg = java.io.File(appCtx.filesDir, "geckoview-config.yaml")
-        cfg.writeText("prefs:\n  permissions.default.desktop-notification: 1\n")
+        cfg.writeText(
+            "prefs:\n" +
+                "  permissions.default.desktop-notification: 1\n" +
+                "  dom.interactive_widget_default_resizes_visual: false\n"
+        )
         cfg.absolutePath
     }.getOrNull()
 
