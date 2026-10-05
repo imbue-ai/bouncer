@@ -2240,12 +2240,21 @@ private struct MainFeedView: View {
                 // visited platform. `.opacity` + `.allowsHitTesting` show
                 // only the active one; the rest stay hydrated in the view
                 // hierarchy so a switch back is instant.
-                ForEach(viewModel.cache.visitedPlatforms, id: \.self) { platformId in
-                    if let wv = viewModel.cache.webView(for: platformId) {
-                        let isActive = viewModel.selectedPlatform == platformId
-                        FilteredWebView(webView: wv)
-                            .opacity(isActive ? 1 : 0)
-                            .allowsHitTesting(isActive)
+                //
+                // Gated on the bar height being measured: until NavBarView's
+                // onGeometryChange delivers it, navBarSlideDistance is short
+                // by the bar's height, so a webview mounted in that window is
+                // laid out ~49pt too tall and shrinks a frame later. Instagram
+                // reads the viewport height early and bakes it into its reel
+                // sizing, so the webview's first frame must be its final one.
+                if viewModel.navBarHeight > 0 {
+                    ForEach(viewModel.cache.visitedPlatforms, id: \.self) { platformId in
+                        if let wv = viewModel.cache.webView(for: platformId) {
+                            let isActive = viewModel.selectedPlatform == platformId
+                            FilteredWebView(webView: wv)
+                                .opacity(isActive ? 1 : 0)
+                                .allowsHitTesting(isActive)
+                        }
                     }
                 }
 

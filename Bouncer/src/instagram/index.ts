@@ -30,6 +30,7 @@ import { playSwipe, playTap, addDemoPhrase, removeDemoPhrase, clearDemoArtifacts
 import { railAnchoredBox, clampLeft, isNarrowViewport } from './layout';
 import { installFitWatcher, unfit, unfitAll, fitReport, visibleHeight } from './fit';
 import { installPromoDismisser } from './promo';
+import { fitPlayersToSlots, unfitPlayers } from './playerfit';
 import { installTopBarHider } from './topbar';
 import {
   durationFor, noteDuration, probeDuration, onDurationResolved, durationReport,
@@ -829,6 +830,89 @@ function hasNativeChrome(): boolean {
     webkit?: { messageHandlers?: Record<string, unknown> };
   }).webkit?.messageHandlers;
   return typeof bridge?.feedfilterLog !== 'undefined';
+}
+
+// ==================== TEMP: reels-geometry probe ====================
+// Diagnostics for the slide-misalignment investigation: every 3s on a reels
+// page, one line with every viewport metric Instagram could be sizing slides
+// against, plus the actual scroller/slide geometry. Logs via the native
+// feedfilterLog bridge (Xcode console); falls back to console.warn on desktop.
+// Remove this whole section when the investigation closes.
+
+function geoLog(line: string): void {
+  const bridge = (window as unknown as {
+    webkit?: { messageHandlers?: { feedfilterLog?: { postMessage: (m: string) => void } } };
+  }).webkit?.messageHandlers?.feedfilterLog;
+  if (bridge) bridge.postMessage(line);
+  else console.warn(`[Bouncer IG] ${line}`);
+}
+
+let geoProbeEl: HTMLElement | null = null;
+const GEO_UNITS = ['100vh', '100dvh', '100svh', '100lvh',
+  'env(safe-area-inset-top)', 'env(safe-area-inset-bottom)'] as const;
+const GEO_UNIT_NAMES = ['vh', 'dvh', 'svh', 'lvh', 'saT', 'saB'];
+
+function cssUnitHeights(): string {
+  if (!geoProbeEl?.isConnected) {
+    geoProbeEl = document.createElement('div');
+    geoProbeEl.style.cssText =
+      'position:fixed;left:-9999px;top:0;width:1px;pointer-events:none;visibility:hidden';
+    for (const unit of GEO_UNITS) {
+      const child = document.createElement('div');
+      child.style.height = unit;
+      geoProbeEl.appendChild(child);
+    }
+    (document.body ?? document.documentElement).appendChild(geoProbeEl);
+  }
+  return Array.from(geoProbeEl.children)
+    .map((c, i) => `${GEO_UNIT_NAMES[i]}=${Math.round(c.getBoundingClientRect().height)}`)
+    .join(' ');
+}
+
+/** The nearest scrollable ancestor of the first mounted <video> — the feed
+ *  scroller, if the feed scrolls an inner element rather than the document. */
+function feedScroller(): HTMLElement | null {
+  const video = document.querySelector('video');
+  let node: HTMLElement | null = video?.parentElement ?? null;
+  while (node && node !== document.body) {
+    if (node.scrollHeight > node.clientHeight + 100) return node;
+    node = node.parentElement;
+  }
+  return null;
+}
+
+function geometryReport(): void {
+  if (!onReelsPage()) return;
+  const vv = window.visualViewport;
+  const doc = document.scrollingElement;
+  const parts = [
+    `inner=${window.innerWidth}x${window.innerHeight}`,
+    `vv=${vv ? Math.round(vv.height) : 'n/a'}${vv ? `@${Math.round(vv.offsetTop)}` : ''}`,
+    `screen=${window.screen.height}/avail=${window.screen.availHeight}`,
+    cssUnitHeights(),
+    `doc top=${doc ? Math.round(doc.scrollTop) : '?'} of ${doc?.scrollHeight ?? '?'}`,
+  ];
+  const scroller = feedScroller();
+  if (scroller) {
+    const cs = getComputedStyle(scroller);
+    parts.push(
+      `scroller client=${scroller.clientHeight}`
+      + ` top=${Math.round(scroller.scrollTop)} of ${scroller.scrollHeight}`
+      + ` snap='${cs.scrollSnapType}' snapPad='${cs.scrollPaddingTop}'`);
+    const kids = Array.from(scroller.children).slice(0, 5).map((k) => {
+      const r = k.getBoundingClientRect();
+      return `${Math.round(r.top)}+${Math.round(r.height)}`;
+    });
+    parts.push(`slides(top+h) ${kids.join(' ')} n=${scroller.children.length}`);
+  } else {
+    parts.push('scroller none — feed may be transform-paged or document-scrolled');
+  }
+  const video = document.querySelector('video');
+  if (video) {
+    const r = video.getBoundingClientRect();
+    parts.push(`video ${Math.round(r.top)}..${Math.round(r.bottom)}`);
+  }
+  geoLog(`GEO ${parts.join(' | ')}`);
 }
 
 // Collapsed panel: just the extension icon, same corner, click opens settings.
@@ -1982,6 +2066,13 @@ function evictWrapperCards(): void {
 function scan(): void {
   if (!onReelsPage()) return;   // debounced scans can fire just after nav away
 
+  // Size each reel's player to its slot rather than the screen, so Instagram's
+  // bottom tab bar can't cover the foot of the reel. Deliberately outside
+  // DISABLE_PAGE_MUTATIONS: it is one vetted `height: 100%` per box, and the
+  // scan is the beat at which a freshly loaded player first exists. See
+  // ./playerfit.ts.
+  fitPlayersToSlots();
+
   // Before anything is read: is the feed we are describing still there? See
   // feedRoot — Instagram's own navigation unmounts it wholesale.
   pruneDeadReels();
@@ -2248,6 +2339,7 @@ function removePanel(): void {
   suggestions?.teardown();
   suggestions = null;
   unfitAll();
+  unfitPlayers();
   forgetAll();
   captions.clear();
   describerActive = false;
@@ -2435,6 +2527,11 @@ async function boot(): Promise<void> {
   installFitWatcher(() => {
     positionPanel();
   });
+
+  // TEMP: reels-geometry probe for the slide-misalignment investigation.
+  // Prints through the native feedfilterLog bridge so the numbers land in the
+  // Xcode console. Remove when the investigation closes.
+  window.setInterval(geometryReport, 3000);
 
   syncForLocation();
   // Long enough for Instagram to have mounted its first screenful, short enough
