@@ -14,7 +14,7 @@
 		4EC0EC812FEB06DD00F3FCDE /* GoogleService-Info.plist in Resources */ = {isa = PBXBuildFile; fileRef = 4EC0EC802FEB06DD00F3FCDE /* GoogleService-Info.plist */; };
 		4EC0EDD330059DE400F3FCDE /* new_ios_icon_composed.icon in Resources */ = {isa = PBXBuildFile; fileRef = 4EC0EDD230059DE400F3FCDE /* new_ios_icon_composed.icon */; };
 		971D84C92FB271A2006BC538 /* FirebaseCrashlytics in Frameworks */ = {isa = PBXBuildFile; productRef = 971D84C82FB271A2006BC538 /* FirebaseCrashlytics */; };
-		974832542F91595300493A71 /* Bouncer (macOS) Extension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 974832532F91595300493A71 /* Bouncer (macOS) Extension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		974832542F91595300493A71 /* Bouncer Extension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 974832532F91595300493A71 /* Bouncer Extension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		97BD3B812F3EB56C00F8BF65 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97BD3B802F3EB56C00F8BF65 /* AppDelegate.swift */; };
 		97BD3B832F3EB56C00F8BF65 /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97BD3B822F3EB56C00F8BF65 /* SceneDelegate.swift */; };
 		97BD3B862F3EB56C00F8BF65 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97BD3B842F3EB56C00F8BF65 /* LaunchScreen.storyboard */; };
@@ -74,7 +74,7 @@
 			dstPath = "";
 			dstSubfolderSpec = 13;
 			files = (
-				974832542F91595300493A71 /* Bouncer (macOS) Extension.appex in Embed Foundation Extensions */,
+				974832542F91595300493A71 /* Bouncer Extension.appex in Embed Foundation Extensions */,
 			);
 			name = "Embed Foundation Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -89,7 +89,7 @@
 		4EC0EC802FEB06DD00F3FCDE /* GoogleService-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "GoogleService-Info.plist"; sourceTree = "<group>"; };
 		4EC0EDD230059DE400F3FCDE /* new_ios_icon_composed.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = new_ios_icon_composed.icon; sourceTree = "<group>"; };
 		9748323A2F91595100493A71 /* Bouncer.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Bouncer.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		974832532F91595300493A71 /* Bouncer (macOS) Extension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = "Bouncer (macOS) Extension.appex"; sourceTree = BUILT_PRODUCTS_DIR; };
+		974832532F91595300493A71 /* Bouncer Extension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = "Bouncer Extension.appex"; sourceTree = BUILT_PRODUCTS_DIR; };
 		97BD3B762F3EB56C00F8BF65 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		97BD3B7D2F3EB56C00F8BF65 /* Bouncer.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Bouncer.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		97BD3B802F3EB56C00F8BF65 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
@@ -197,7 +197,7 @@
 			children = (
 				97BD3B7D2F3EB56C00F8BF65 /* Bouncer.app */,
 				9748323A2F91595100493A71 /* Bouncer.app */,
-				974832532F91595300493A71 /* Bouncer (macOS) Extension.appex */,
+				974832532F91595300493A71 /* Bouncer Extension.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -309,7 +309,7 @@
 			packageProductDependencies = (
 			);
 			productName = "Bouncer (macOS) Extension";
-			productReference = 974832532F91595300493A71 /* Bouncer (macOS) Extension.appex */;
+			productReference = 974832532F91595300493A71 /* Bouncer Extension.appex */;
 			productType = "com.apple.product-type.app-extension";
 		};
 		97BD3B7C2F3EB56C00F8BF65 /* Bouncer (iOS) */ = {
@@ -719,7 +719,7 @@
 					SafariServices,
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.imbue.bouncermac.dev.Extension;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_NAME = "Bouncer Extension";
 				SDKROOT = macosx;
 				SKIP_INSTALL = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -756,7 +756,7 @@
 					SafariServices,
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.imbue.bouncermac.Extension;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_NAME = "Bouncer Extension";
 				SDKROOT = macosx;
 				SKIP_INSTALL = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
