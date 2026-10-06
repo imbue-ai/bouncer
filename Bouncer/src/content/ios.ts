@@ -1,7 +1,7 @@
 // iOS FAB, filtered modal, native sheet bridge
 
 import type { IOSDeps, DescriptionKey, SiteId } from '../types';
-import { clampThreshold, clampImageThreshold, clampReplyThreshold, getDescriptions, setDescriptions, getStorage, aiIntentActiveForSite } from '../shared/storage';
+import { clampThreshold, clampImageThreshold, clampReplyThreshold, getDescriptions, setDescriptions, getStorage, setStorage, aiIntentActiveForSite, getExcludedAccounts, setExcludedAccounts, normalizeAccountIdentity } from '../shared/storage';
 import { platformById, descriptionsStorageKey } from '../shared/platforms';
 import { parseHTML } from '../shared/utils';
 import { shareFilterPackForIOS, toggleAiDetectionViaPhrases } from './ui';
@@ -18,6 +18,12 @@ interface FFWindow {
   __ff_getPhrases?: (siteId: string) => Promise<string[]>;
   __ff_addPhraseFor?: (siteId: string, text: string) => Promise<boolean>;
   __ff_removePhraseFor?: (siteId: string, phrase: string) => Promise<void>;
+  // Platform-scoped excluded-account accessors for the native settings
+  // pages. The getter returns display form (leading @ on handle platforms);
+  // add/remove accept either form — normalizeAccountIdentity strips it.
+  __ff_getExcludedAccounts?: (siteId: string) => Promise<string[]>;
+  __ff_addExcludedAccount?: (siteId: string, text: string) => Promise<boolean>;
+  __ff_removeExcludedAccount?: (siteId: string, account: string) => Promise<void>;
   __ff_showFilteredModal?: () => void;
   // AI-detection state is driven entirely by the user's natural-language
   // filter phrases — there are no direct on/off setters, and the state is
@@ -114,6 +120,34 @@ export function initIOS(deps: IOSDeps) {
     const cur = await getDescriptions(key);
     await setDescriptions(key, cur.filter(p => p !== phrase));
     updateIOSFilteredCount();
+  };
+
+  // Excluded accounts — platform-scoped like the phrase accessors above.
+  // Backed by `excludedAccounts_<siteId>`; the content script skips
+  // classification entirely for these authors (see evaluatePost).
+  const displayAccount = (siteId: string, account: string): string =>
+    siteId === 'linkedin' ? account : `@${account}`;
+
+  w.__ff_getExcludedAccounts = async (siteId: string): Promise<string[]> => {
+    if (!platformById(siteId)) return [];
+    const accounts = await getExcludedAccounts(siteId as SiteId);
+    return accounts.map(a => displayAccount(siteId, a));
+  };
+  w.__ff_addExcludedAccount = async (siteId: string, text: string): Promise<boolean> => {
+    if (!platformById(siteId)) return false;
+    const identity = normalizeAccountIdentity(text || '');
+    if (!identity) return false;
+    const cur = await getExcludedAccounts(siteId as SiteId);
+    if (cur.includes(identity)) return false;
+    await setExcludedAccounts(siteId as SiteId, [...cur, identity]);
+    return true;
+  };
+  w.__ff_removeExcludedAccount = async (siteId: string, account: string): Promise<void> => {
+    if (!platformById(siteId)) return;
+    const identity = normalizeAccountIdentity(account || '');
+    if (!identity) return;
+    const cur = await getExcludedAccounts(siteId as SiteId);
+    await setExcludedAccounts(siteId as SiteId, cur.filter(a => a !== identity));
   };
 
   const _showFilteredModal = showIOSFilteredModal;
@@ -321,16 +355,27 @@ export function updateIOSFilteredCount(aiStateWrite = false) {
   if (!_deps) return;
   if (typeof webkit !== 'undefined' && webkit.messageHandlers?.feedfilterPhrasesUpdated) {
     const count = _deps.getFilteredPosts().length;
-    chrome.storage.local.get([_deps.descriptionsKey, 'aiFilterIntent'], (data) => {
+    chrome.storage.local.get([_deps.descriptionsKey, 'aiFilterIntent', 'aiIndicatorBadgeDismissed'], (data) => {
       const phrases = (data[_deps.descriptionsKey] as string[] | undefined) || [];
+      const aiOn = aiIntentActiveForSite(data, phrases);
+      const badgeDismissed = data.aiIndicatorBadgeDismissed === true;
+      // First activation dismisses the first-run "REMOVE AI SLOP?" badge
+      // forever — the same write refreshAiIndicatorUI does for the desktop
+      // indicator. The native apps inject no filter box, so this push path
+      // is the reliable place to persist it for mobile-only users.
+      if (aiOn && !badgeDismissed) void setStorage({ aiIndicatorBadgeDismissed: true });
       webkit.messageHandlers.feedfilterPhrasesUpdated?.postMessage(
         JSON.stringify({
           phrases,
           filteredCount: count,
           // Per-platform: on only when one of this page's own phrases
           // engages detection (aiIntentActiveForSite).
-          aiDetectionOn: aiIntentActiveForSite(data, phrases),
+          aiDetectionOn: aiOn,
           aiDetectionConfirmed: aiStateWrite,
+          // Drives the native sheet's first-run badge (shown while
+          // !aiDetectionOn && !aiBadgeDismissed) — the counterpart of the
+          // desktop indicator's `with-badge` pill.
+          aiBadgeDismissed: badgeDismissed,
         })
       );
     });

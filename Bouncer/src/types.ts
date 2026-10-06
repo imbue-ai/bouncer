@@ -239,10 +239,6 @@ interface SettingsBase {
   // `${siteId}Enabled` keys (see enabledStorageKey in shared/platforms.ts);
   // this map is derived from those keys at settings-read time.
   platformEnabled: Partial<Record<SiteId, boolean>>;
-  // When true on YouTube, filtered videos are left in the grid and shown
-  // as a "Filtered by Bouncer" placeholder card (see youtube.css). Default
-  // false — remove the card outright, matching Twitter's behavior.
-  youtubeShowPlaceholder: boolean;
 }
 
 export interface Settings extends SettingsBase {
@@ -258,7 +254,8 @@ export interface Settings extends SettingsBase {
    *  when one of that site's own phrases was judged an AI-removal request
    *  (aiIntentActiveForSite). The sole gate for the AI text/image detectors —
    *  there is no manual toggle. Always false when getSettings was called
-   *  without a siteId. */
+   *  without a siteId, and forced false while the site's filtering is paused
+   *  (the pause button pauses the phrase-engaged AI detectors too). */
   aiFilterIntentActive: boolean;
 }
 
@@ -405,7 +402,12 @@ export type ContentToBackgroundMessage =
   | { type: 'launchOpenRouterAuth' }
   // Instagram reel describer / audio filter (src/instagram/*). These bypass
   // the feed-filter pipeline and relay straight to their imbue actions.
-  | { type: 'analyzeReel'; caption: string; thumbnailUrl: string;
+  | { type: 'analyzeReel';
+      /** 'describe' writes the preview blurb; 'classify' judges the reel
+       *  against `categories`. Separate inferences with separate prompts,
+       *  given the same caption, image and audio. */
+      task: 'describe' | 'classify';
+      caption: string; thumbnailUrl: string;
       /** Bare base64 JPEG of a frame from the middle of the reel, when one
        *  could be captured (src/instagram/frame.ts). A far better summary of
        *  the reel than the cover thumbnail, which is often a title card.
@@ -429,10 +431,8 @@ export type ContentToBackgroundMessage =
        *  and extracts the soundtrack itself: no 32 KB frame cap, whole
        *  soundtrack. Ignored server-side when audioBase64 is present. */
       videoUrl?: string;
-      /** The user's Instagram filter phrases (descriptions_instagram). When
-       *  present, the SAME describe inference also classifies the reel against
-       *  them — the response then carries shouldHide/category/reasoning
-       *  alongside the description. Absent = describe only. */
+      /** The user's Instagram filter phrases (descriptions_instagram) — the
+       *  classify task's categories. Not sent with describe. */
       categories?: string[] }
   | { type: 'analyzeReelAudio'; audioBase64: string; mimeType: string; categories: string[] };
 
@@ -505,14 +505,26 @@ type PlatformEnabledKeys = { [K in SiteId as `${K}Enabled`]: boolean };
 /** Valid storage keys for site-specific descriptions. */
 export type DescriptionKey = `descriptions_${SiteId}`;
 
-/** Per-site flag for whether phrase filtering is paused. */
+/** Per-site flag for whether filtering (phrases + AI detectors) is paused. */
 type FilteringPausedKeys = { [K in SiteId as `filteringPaused_${K}`]: boolean };
 
 export type FilteringPausedKey = `filteringPaused_${SiteId}`;
 
+/** Per-site excluded-account lists: normalized identities (see
+ *  exclusionIdentity in shared/storage.ts) whose posts skip classification
+ *  entirely — never evaluated, never hidden, never sent to a model. */
+type ExcludedAccountsKeys = { [K in SiteId as `excludedAccounts_${K}`]: string[] };
+
+export type ExcludedAccountsKey = `excludedAccounts_${SiteId}`;
+
 /** Typed schema for chrome.storage.local keys. */
 export type StorageSchema = SettingsBase & {
   authErrorApis: Record<string, boolean>;
+  // Android settings sheet's "Debug mode" toggle (mirrored from native prefs
+  // via __ff_setStorage). The sole switch for the press-and-hold reasoning
+  // popup on Android, debug and release builds alike (see
+  // addContextMenuHandler in content/ui.ts). Defaults to false.
+  debugMode: boolean;
   // Inferred "user wants AI content removed" state, judged from the phrase
   // list (backend detectAiIntent route / local model) and re-checked only
   // when the list changes. The sole on/off control for AI detection — there
@@ -597,7 +609,7 @@ export type StorageSchema = SettingsBase & {
   // descriptions_* namespace so the pipeline and AI-intent aggregation never
   // see the inactive list.
   linkedinInactiveModePhrases: string[];
-} & DescriptionKeys & PlatformEnabledKeys & FilteringPausedKeys;
+} & DescriptionKeys & PlatformEnabledKeys & FilteringPausedKeys & ExcludedAccountsKeys;
 
 // ==================== API Response Types ====================
 
@@ -661,13 +673,11 @@ export interface ImbueAiImageResponse extends ImbueResponseBase {
   confidence: number;
 }
 
-/** Response from the instagramAnalyze action. `description` is the short
- *  preview blurb. When the request carried `categories` (the user's filter
- *  phrases), the same inference also classifies the reel and the verdict
- *  fields are present (worker_utils _parse_instagram_response); on a plain
- *  describe job the LLM output passes through verbatim and they are absent. */
+/** Response from the instagramAnalyze action. A describe job returns the
+ *  preview blurb as `description`; a classify job returns the verdict fields
+ *  instead (worker_utils _parse_instagram_response). */
 export interface ImbueInstagramResponse extends ImbueResponseBase {
-  description: string;
+  description?: string;
   rawResponse: string;
   shouldHide?: boolean;
   reasoning?: string | null;

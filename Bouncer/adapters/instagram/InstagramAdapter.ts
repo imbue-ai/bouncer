@@ -57,49 +57,6 @@ const BouncerInstagramAdapter = class InstagramAdapter implements PlatformAdapte
     textContent: '[dir="auto"]',
   };
 
-  constructor() {
-    this._initFilteredPostObserver();
-  }
-
-  // Mirror the Twitter/LinkedIn above-viewport fade: once a reel we've marked
-  // scrolls fully above the viewport, fade then remove it.
-  private _initFilteredPostObserver(): void {
-    const fadingOut = new Set<Element>();
-    const scrollHandler = () => {
-      for (const el of document.querySelectorAll('[data-filtered-by-extension="true"]')) {
-        if (!(el instanceof HTMLElement)) continue;
-        if (el.style.display === 'none' || fadingOut.has(el)) continue;
-        const rect = el.getBoundingClientRect();
-        if (rect.bottom < -50) {
-          fadingOut.add(el);
-          el.style.transition = 'opacity 0.3s ease';
-          el.style.opacity = '0';
-          setTimeout(() => {
-            InstagramAdapter._collapseAboveViewport(el);
-            fadingOut.delete(el);
-          }, 300);
-        }
-      }
-    };
-    window.addEventListener('scroll', scrollHandler, { passive: true, capture: true });
-  }
-
-  // Collapse a card that has scrolled above the viewport, keeping the reel in
-  // view exactly where it is. Chrome scroll-anchors that for free; WebKit has
-  // no scroll anchoring at all, so removing a reel's height above you yanked
-  // the whole feed up by one reel — a scroll nobody performed. Where anchoring
-  // is absent, the scroller is walked to and given the height back.
-  private static _collapseAboveViewport(el: HTMLElement): void {
-    const height = el.getBoundingClientRect().height;
-    el.style.display = 'none';
-    if (typeof CSS !== 'undefined' && CSS.supports?.('overflow-anchor: auto')) return;
-    if (height <= 0) return;
-    let node: HTMLElement | null = el.parentElement;
-    while (node && node.scrollHeight <= node.clientHeight + 8) node = node.parentElement;
-    const scroller = node ?? (document.scrollingElement as HTMLElement | null);
-    if (scroller) scroller.scrollTop = Math.max(0, scroller.scrollTop - height);
-  }
-
   // ===========================================================================
   // Structural helpers (cover img → card → caption)
   // ===========================================================================

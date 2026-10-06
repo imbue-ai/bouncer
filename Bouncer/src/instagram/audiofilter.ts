@@ -258,23 +258,10 @@ function makeOggPage(packets: Uint8Array[], granule: number, type: number, seq: 
 // (Uint8Array is generic over its buffer since TS 5.7; pin the backing store to
 // a plain ArrayBuffer so these bytes stay assignable to BlobPart.)
 async function transcodeToOgg(buf: ArrayBuffer, byteBudget = AUDIO_BYTE_BUDGET): Promise<{ ogg: Uint8Array<ArrayBuffer>; truncated: boolean } | null> {
-  // Which half of WebCodecs is missing or failing is the whole iOS question —
-  // this used to bail silently, leaving "no audio on device" unexplainable.
-  if (typeof AudioEncoder === 'undefined') {
-    console.warn('[Bouncer IG audio] transcode unavailable: AudioEncoder is undefined on this platform');
-    return null;
-  }
+  if (typeof AudioEncoder === 'undefined') return null;
 
   const ctx = new OfflineAudioContext(1, 1, 48000);
-  let decoded: AudioBuffer;
-  try {
-    decoded = await ctx.decodeAudioData(buf);   // resampled to 48 kHz
-  } catch (err) {
-    console.warn(
-      `[Bouncer IG audio] decodeAudioData failed on ${buf.byteLength}B input: `
-      + `${(err as Error).name}: ${(err as Error).message}`);
-    throw err;
-  }
+  const decoded = await ctx.decodeAudioData(buf);   // resampled to 48 kHz
   const totalFrames = decoded.length;
   const frames = Math.min(totalFrames, 48000 * MAX_ENCODE_SECONDS);
   const mono = new Float32Array(frames);
@@ -426,15 +413,12 @@ async function fetchClip(audioUrl: string, byteBudget = AUDIO_BYTE_BUDGET, fetch
         `source is ${Number.isFinite(len) ? `${len}B` : 'of undisclosed size'} — over the ${fetchMax}B whole-file cap`);
     }
     buf = await res.arrayBuffer();
-    console.debug(`[Bouncer IG audio] fetched ${buf.byteLength}B (whole file)`);
   } else {
     const res = await fetch(audioUrl, { headers: { Range: `bytes=0-${fetchMax - 1}` } });
     if (!res.ok) throw new Error(`audio fetch failed: HTTP ${res.status}`);
     buf = await res.arrayBuffer();
     // A 206 honouring our range returns exactly fetchMax bytes when the file
     // is bigger; anything shorter means the server ran out of file first.
-    console.debug(
-      `[Bouncer IG audio] fetched ${buf.byteLength}B (${buf.byteLength < fetchMax ? 'complete file' : `truncated at cap ${fetchMax}`})`);
   }
   if (buf.byteLength === 0) throw new Error('audio fetch returned 0 bytes');
 
@@ -454,7 +438,6 @@ async function fetchClip(audioUrl: string, byteBudget = AUDIO_BYTE_BUDGET, fetch
     const bytes = new Uint8Array(buf, 0, cleanEnd);
     return { base64: await bytesToBase64(bytes), truncated: buf.byteLength > cleanEnd, decodable: true, mimeType: 'audio/mp4' };
   }
-  console.warn(`[Bouncer IG audio] no complete fmp4 fragment fits ${byteBudget}B — arbitrary cut`);
   const bytes = new Uint8Array(buf, 0, Math.min(buf.byteLength, byteBudget, RAW_FALLBACK_BYTES));
   return { base64: await bytesToBase64(bytes), truncated: buf.byteLength > bytes.byteLength, decodable: false, mimeType: 'audio/mp4' };
 }
@@ -484,19 +467,9 @@ export async function clipForDescribe(
   timeoutMs: number,
   videoUrl?: string | null,
 ): Promise<{ base64: string; format: string } | null> {
-  // Every no-audio path says why, at warn. A describe that goes out silent is
-  // indistinguishable from the modality not being wired at all — that exact
-  // ambiguity is how a whole release shipped with audio never riding along.
   const filename = fileNameOf(thumbnailUrl);
-  if (!filename) {
-    console.warn('[Bouncer IG audio] describe skipped audio: no filename in', thumbnailUrl);
-    return null;
-  }
-  if (clipCache.has(filename)) {
-    const cached = clipCache.get(filename) ?? null;
-    if (!cached) console.warn('[Bouncer IG audio] describe skipped audio: cached as no-clip for', filename);
-    return cached;
-  }
+  if (!filename) return null;
+  if (clipCache.has(filename)) return clipCache.get(filename) ?? null;
 
   // The audio-only stream when the hook announced one; the reel's progressive
   // MP4 otherwise. The progressive file is muxed video+audio, so only the
@@ -507,15 +480,7 @@ export async function clipForDescribe(
   // was against the fragmented audio-only stream, a different container.
   const audioUrl = audioUrls.get(filename);
   const sourceUrl = audioUrl ?? videoUrl;
-  if (!sourceUrl) {
-    console.warn(
-      `[Bouncer IG audio] describe skipped audio: hook announced no soundtrack for ${filename} `
-      + `(${audioUrls.size} announced in total) and no video URL to fall back on`);
-    return null;
-  }
-  if (!audioUrl) {
-    console.warn(`[Bouncer IG audio] no announced soundtrack for ${filename} — trying the progressive video URL`);
-  }
+  if (!sourceUrl) return null;
 
   // Raced rather than awaited. Extraction is a network fetch and a WebCodecs
   // transcode, and the describer is on the critical path for what the user
@@ -542,11 +507,6 @@ export async function clipForDescribe(
       const clip = decodable
         ? { base64, format: mimeType === 'audio/ogg' ? 'ogg' : 'mp4' }
         : null;
-      if (!clip) {
-        console.warn(
-          '[Bouncer IG audio] clip not decodable — describing without audio rather '
-          + 'than sending a container that may not decode');
-      }
       clipCache.set(filename, clip);
       return clip;
     })
@@ -562,9 +522,6 @@ export async function clipForDescribe(
   ]);
   // A null here with no cache entry is the deadline, not a failure: the fetch
   // chain is still running and will cache for the next describe of this reel.
-  if (!clip && !clipCache.has(filename)) {
-    console.warn(`[Bouncer IG audio] describe skipped audio: clip missed ${timeoutMs}ms deadline for ${filename} — will ride along next time`);
-  }
   return clip;
 }
 

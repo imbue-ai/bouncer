@@ -3,7 +3,7 @@
 import { toBlob } from 'html-to-image';
 import { asyncHandler } from '../shared/async';
 import { cleanReasoning, escapeHtml, formatPostForEvaluation, parseHTML, GUEST_FILTER_LIMIT, AI_DETECTION_SEED_PHRASE, phraseAddNeedsReEvaluation, SETTINGS_DOTS_PATH } from '../shared/utils';
-import { decideFilterRemoval } from '../shared/filter-removal';
+import { decideFilterRemoval, AI_DETECTOR_CATEGORIES } from '../shared/filter-removal';
 import { init as initPopup, applySiteScopedSettings } from '../popup/index';
 import {
   encodeFilterPackCode, decodeFilterPackCode, buildFilterPackShareUrl,
@@ -15,6 +15,7 @@ import {
   getStorage, setStorage, getDescriptions, setDescriptions,
   aiIntentActiveForSite,
   getFilteringPaused, setFilteringPaused,
+  getExcludedAccounts, setExcludedAccounts, exclusionIdentity,
 } from '../shared/storage';
 import { optionalPlatforms } from '../shared/platforms';
 import { getReleaseNote, WELCOME_TIP } from './release-notes';
@@ -82,7 +83,12 @@ export { checkAuthStatus };
 
 // ==================== UI State ====================
 
-// Filtered posts storage
+// Filtered posts storage. Capped: feed tabs live for hours and each entry
+// retains a few KB of post text/HTML, so an uncapped array is the dominant
+// memory-growth term in the content process. Oldest entries are evicted
+// FIFO once the cap is hit — the panel is about recently hidden posts, not
+// a permanent archive.
+const MAX_FILTERED_POSTS = 500;
 const filteredPosts: FilteredPost[] = [];
 const filteredPostKeys = new Set<string>();
 
@@ -614,7 +620,7 @@ async function maybeRenderUpdateBanner(container: HTMLElement): Promise<void> {
 
 // ==================== Placeholder animation ====================
 
-const PLACEHOLDER_PHRASES = ['AI slop', 'politics', 'negativity', 'pessimism', 'political outrage', 'posts written by AI', 'ragebait', 'humblebragging', 'virtue signaling', 'idolizing elites', 'Elon Musk'];
+const PLACEHOLDER_PHRASES = ['AI slop', 'politics', 'negativity', 'pessimism', 'thirst traps', 'political outrage', 'posts written by AI', 'ragebait', 'humblebragging', 'virtue signaling', 'idolizing elites', 'Elon Musk'];
 // Shown instead while LinkedIn's "Keep only" mode is active: things worth
 // keeping in a LinkedIn feed rather than things to remove. Must stay the
 // same length as PLACEHOLDER_PHRASES — the ff-placeholder-scroll keyframes
@@ -1279,20 +1285,24 @@ function setupFilterBoxEventHandlers(container: HTMLElement) {
     });
   }
 
-  // Pause / play: pause masks descriptions in the background pipeline (see
-  // getSettings) and un-hides phrase-filtered posts on the page; play clears
-  // the flag and re-evaluates visible posts. The .paused class is applied to
-  // EVERY filter card (sidebar/bottom/mobile) by the storage.onChanged
-  // listener in content/index.ts so we don't need to toggle classes here.
+  // Pause / play: pause masks descriptions AND the AI-detection gate in the
+  // background pipeline (see getSettings) and un-hides filtered posts on the
+  // page; play clears the flag and re-evaluates visible posts. The .paused
+  // class is applied to EVERY filter card (sidebar/bottom/mobile) by the
+  // storage.onChanged listener in content/index.ts so we don't need to
+  // toggle classes here.
   const pauseBtn = container.querySelector<HTMLButtonElement>('.filter-pause-btn');
   if (pauseBtn) {
     pauseBtn.addEventListener('click', asyncHandler(async () => {
       const siteId = _deps.adapter.siteId;
       const descriptions = await getDescriptions(_deps.descriptionsKey);
       await setFilteringPaused(siteId, true);
-      // Un-hide posts that were hidden under phrase rules. Posts that were
-      // also flagged by the AI text filter stay hidden under that rule.
-      await restoreOrRefreshFilteredPosts(descriptions, 'Filtering paused');
+      // Un-hide everything: phrase-hidden posts (their rules are in
+      // `descriptions`) and AI-detector-hidden posts (their rules are the
+      // detector category labels). AI detection is engaged by filter
+      // phrases, so pausing the phrases pauses it too.
+      await restoreOrRefreshFilteredPosts(
+        [...descriptions, ...AI_DETECTOR_CATEGORIES], 'Filtering paused');
       // Cache pollution cleanup: restoreFilteredPost re-writes overridden
       // (shouldHide=false) entries; wipe everything so play-side re-eval is
       // fresh.
@@ -2391,6 +2401,20 @@ export async function addFilterPhrase(text: string) {
   }
 }
 
+// Undo everything hidePost left on a post's DOM: the container-level hide and
+// the fade-out residue on the article itself (opacity:0 would otherwise leave
+// a "restored" post invisible). Also forgets the article so a later rule
+// change re-evaluates it.
+function unhidePostDom(container: HTMLElement, article: HTMLElement) {
+  container.style.display = '';
+  container.style.visibility = '';
+  delete container.dataset.filteredByExtension;
+  article.style.opacity = '';
+  article.style.transition = '';
+  _deps.processedPosts.delete(article);
+  markPostVerified(article);
+}
+
 // Mirror the Restore-button effects on the filtered list, the article in the
 // feed, and the background cache. Used by the Restore button (which also
 // sends false-positive feedback) and by removeFilterPhrase's auto-restore
@@ -2405,14 +2429,7 @@ function restoreFilteredPost(fp: FilteredPost, overrideReasoning: string) {
   for (const article of _deps.findPosts()) {
     const postUrl = _deps.adapter.getPostUrl(article);
     if (postUrl && postContent.postUrl && postUrl.includes(postContent.postUrl)) {
-      const container = _deps.adapter.getPostContainer(article);
-      container.style.display = '';
-      container.style.visibility = '';
-      delete container.dataset.filteredByExtension;
-      article.style.opacity = '';
-      article.style.transition = '';
-      _deps.processedPosts.delete(article);
-      markPostVerified(article);
+      unhidePostDom(_deps.adapter.getPostContainer(article), article);
       break;
     }
   }
@@ -2512,6 +2529,41 @@ export async function restoreOrRefreshFilteredPosts(
       console.error('[Bouncer] re-evaluate after filter removal failed:', err);
     }
   }
+
+  updateFilteredTabCount();
+  if (filteredTabActive && filteredViewContainer) {
+    const content = filteredViewContainer.querySelector('.filtered-modal-content');
+    if (content) renderFilteredPostsView(content);
+  }
+}
+
+// Turning the "filter replies" setting off restores every reply hidden on the
+// current permalink page. The filter rules themselves didn't change, so unlike
+// restoreOrRefreshFilteredPosts this must leave the background verdict cache
+// alone — those verdicts are still valid, and toggling the setting back on
+// relies on them to re-hide the same replies. Only on-page replies are
+// touched: the main post and home-timeline filtering are unaffected by the
+// setting.
+export function restoreFilteredRepliesOnPage() {
+  document.querySelectorAll<HTMLElement>('[data-filtered-by-extension="true"]').forEach(cell => {
+    const article = cell.matches(_deps.adapter.selectors.post)
+      ? cell
+      : cell.querySelector<HTMLElement>(_deps.adapter.selectors.post);
+    if (!article || _deps.adapter.isMainPost(article)) return;
+
+    const postUrl = _deps.adapter.getPostUrl(article);
+    unhidePostDom(cell, article);
+
+    // Drop the matching entry so "View filtered" no longer lists a post
+    // that's visible in the thread again.
+    if (postUrl) {
+      const idx = filteredPosts.findIndex(p => p.post.postUrl && postUrl.includes(p.post.postUrl));
+      if (idx !== -1) {
+        const [fp] = filteredPosts.splice(idx, 1);
+        filteredPostKeys.delete(fp.post.postUrl || fp.evaluationText.substring(0, 200));
+      }
+    }
+  });
 
   updateFilteredTabCount();
   if (filteredTabActive && filteredViewContainer) {
@@ -3016,14 +3068,96 @@ export function toggleFilteredTab(active: boolean) {
   }
 }
 
-// Builds the "Restore" button shared by every filtered-post layout. Clicking
+// Unhide a filtered post's original article in the feed (if it's still
+// mounted) and clear its filtered state so it won't re-hide without a fresh
+// evaluation. Shared by Restore and "Don't filter account".
+// Match on the post URL where the platform has one; fall back to the
+// adapter's content key for platforms that don't (Instagram reels expose no
+// per-post URL in the feed, so URL-matching alone silently restored nothing).
+function unhideInFeed(postContent: PostContent, contentKey?: string): void {
+  for (const article of _deps.findPosts()) {
+    const postUrl = _deps.adapter.getPostUrl(article);
+    const urlMatch = !!postUrl && !!postContent.postUrl && postUrl.includes(postContent.postUrl);
+    const keyMatch = !urlMatch && !!contentKey
+      && _deps.adapter.getPostContentKey(article) === contentKey;
+    if (urlMatch || keyMatch) {
+      const container = _deps.adapter.getPostContainer(article);
+      container.style.display = '';
+      container.style.visibility = '';
+      // Instagram fades a filtered reel out on the container before removing
+      // it, so clear that too or the reel comes back invisible.
+      container.style.opacity = '';
+      container.style.transition = '';
+      delete container.dataset.filteredByExtension;
+      article.style.opacity = '';
+      article.style.transition = '';
+      _deps.processedPosts.delete(article);
+      markPostVerified(article);
+      break;
+    }
+  }
+}
+
+// Re-render the filtered-posts panel that a card action button lives in.
+function rerenderPanelAround(btn: HTMLElement): void {
+  updateFilteredTabCount();
+  const outerContainer = btn.closest('.filtered-view-container') || btn.closest('.ff-ios-filtered-modal-backdrop');
+  const innerContainer = outerContainer?.querySelector('.filtered-modal-content') || outerContainer?.querySelector('.ff-ios-filtered-modal-content');
+  if (innerContainer) renderFilteredPostsView(innerContainer);
+}
+
+// Restores every filtered post whose author is in `identities` (normalized,
+// see exclusionIdentity) — unhidden in the feed, removed from the panel —
+// then re-renders whichever filtered-posts panel is open. Run on every
+// excluded-accounts addition, whatever the source. No cache override
+// (unlike Restore): evaluatePost checks the excluded list before the cache,
+// so these stay visible while the account is excluded, and if it's
+// un-excluded later the original cached verdict hides them again without
+// another model call.
+export function restoreFilteredPostsByAccounts(identities: Set<string>): void {
+  const siteId = _deps.adapter.siteId;
+  const matching = filteredPosts.filter(p => {
+    const identity = exclusionIdentity(siteId, p.post);
+    return identity !== null && identities.has(identity);
+  });
+  if (matching.length === 0) return;
+  for (const p of matching) {
+    const key = p.post.postUrl || p.evaluationText.substring(0, 200);
+    const idx = filteredPosts.indexOf(p);
+    if (idx !== -1) filteredPosts.splice(idx, 1);
+    filteredPostKeys.delete(key);
+    unhideInFeed(p.post, p.contentKey);
+  }
+
+  updateFilteredTabCount();
+  const openPanel = (filteredTabActive && filteredViewContainer?.querySelector('.filtered-modal-content'))
+    || document.querySelector('.ff-ios-filtered-modal-content');
+  if (openPanel) renderFilteredPostsView(openPanel);
+}
+
+// Builds the actions row shared by the filtered-post card layouts: a quiet
+// "Restore this post" first (the common, one-off action), then "Never filter
+// @handle" when the post has a usable author identity. Side by side pills on
+// desktop; stacked full-width rectangles in the mobile apps.
+function buildCardActionsRow(post: FilteredPost, postContent: PostContent): HTMLElement {
+  const actions = document.createElement('div');
+  actions.className = 'slop-post-actions';
+  actions.appendChild(createRestoreButton(post, postContent));
+  const excludeBtn = createExcludeAccountButton(post, postContent);
+  if (excludeBtn) actions.appendChild(excludeBtn);
+  return actions;
+}
+
+// Builds the "Restore this post" button shared by every filtered-post layout. Clicking
 // it reports a false positive, removes the post from the panel, unhides the
-// original article in the feed, and overrides the cache so re-evaluation keeps
-// the post visible.
+// original article in the feed, and overrides the cache so re-evaluation
+// keeps the post visible.
 function createRestoreButton(post: FilteredPost, postContent: PostContent): HTMLButtonElement {
+  const noun = _deps.adapter.siteId === 'youtube' ? 'video' : 'post';
   const restoreBtn = document.createElement('button');
-  restoreBtn.className = 'slop-restore';
-  restoreBtn.textContent = 'Restore';
+  restoreBtn.className = 'slop-restore slop-action-pill';
+  restoreBtn.textContent = `Restore this ${noun}`;
+  restoreBtn.title = `Show this ${noun} and keep it visible`;
   restoreBtn.addEventListener('click', (e) => {
     e.preventDefault();
     e.stopPropagation();
@@ -3043,31 +3177,8 @@ function createRestoreButton(post: FilteredPost, postContent: PostContent): HTML
     if (idx !== -1) filteredPosts.splice(idx, 1);
     filteredPostKeys.delete(key);
 
-    // Try to unhide the original article in the feed. Match on the post URL
-    // where the platform has one; fall back to the adapter's content key for
-    // platforms that don't (Instagram reels expose no per-post URL in the
-    // feed, so URL-matching alone silently restored nothing).
-    for (const article of _deps.findPosts()) {
-      const postUrl = _deps.adapter.getPostUrl(article);
-      const urlMatch = !!postUrl && !!postContent.postUrl && postUrl.includes(postContent.postUrl);
-      const keyMatch = !urlMatch && !!post.contentKey
-        && _deps.adapter.getPostContentKey(article) === post.contentKey;
-      if (urlMatch || keyMatch) {
-        const container = _deps.adapter.getPostContainer(article);
-        container.style.display = '';
-        container.style.visibility = '';
-        // Instagram fades a filtered reel out on the container before removing
-        // it, so clear that too or the reel comes back invisible.
-        container.style.opacity = '';
-        container.style.transition = '';
-        delete container.dataset.filteredByExtension;
-        article.style.opacity = '';
-        article.style.transition = '';
-        _deps.processedPosts.delete(article);
-        markPostVerified(article);
-        break;
-      }
-    }
+    // Try to unhide original article in the feed
+    unhideInFeed(postContent, post.contentKey);
 
     // Override cache so re-evaluation keeps post visible
     chrome.runtime.sendMessage({
@@ -3080,12 +3191,51 @@ function createRestoreButton(post: FilteredPost, postContent: PostContent): HTML
       reasoning: 'User reported: false positive'
     }).catch(err => console.error('[Bouncer] Override cache error:', err));
 
-    updateFilteredTabCount();
-    const outerContainer = restoreBtn.closest('.filtered-view-container') || restoreBtn.closest('.ff-ios-filtered-modal-backdrop');
-    const innerContainer = outerContainer?.querySelector('.filtered-modal-content') || outerContainer?.querySelector('.ff-ios-filtered-modal-content');
-    if (innerContainer) renderFilteredPostsView(innerContainer);
+    rerenderPanelAround(restoreBtn);
   });
   return restoreBtn;
+}
+
+// "Never filter @handle" button: adds the post's author to the per-site
+// excluded-accounts list (their future posts skip classification entirely),
+// then restores every currently-filtered post from that account — unhidden in
+// the feed and removed from the panel. Null when the post has no usable
+// identity.
+function createExcludeAccountButton(post: FilteredPost, postContent: PostContent): HTMLButtonElement | null {
+  const siteId = _deps.adapter.siteId;
+  const identity = exclusionIdentity(siteId, postContent);
+  if (!identity) return null;
+
+  // Display form: the author's name on LinkedIn, the original-case @handle
+  // elsewhere (the store path may hand us a bare handle — re-add the @).
+  let display = siteId === 'linkedin' ? postContent.author : postContent.handle.replace(/^\//, '');
+  if (siteId !== 'linkedin' && !display.startsWith('@')) display = `@${display}`;
+
+  const noun = siteId === 'youtube' ? 'videos' : 'posts';
+  const btn = document.createElement('button');
+  btn.className = 'slop-exclude-account slop-action-pill';
+  btn.title = `Never filter ${noun} from ${display}`;
+  const labelSpan = document.createElement('span');
+  labelSpan.className = 'slop-exclude-account-label';
+  labelSpan.textContent = `Never filter ${display}`;
+  btn.appendChild(labelSpan);
+  btn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    (async () => {
+      // The storage listener in content/index.ts restores this author's
+      // filtered posts on the write, same as for additions from the popup
+      // or native settings. If the account was somehow already excluded
+      // (stale panel), there's no write to trigger it, so restore here.
+      const existing = await getExcludedAccounts(siteId);
+      if (existing.includes(identity)) {
+        restoreFilteredPostsByAccounts(new Set([identity]));
+      } else {
+        await setExcludedAccounts(siteId, [...existing, identity]);
+      }
+    })().catch(err => console.error('[Bouncer] Exclude account error:', err));
+  });
+  return btn;
 }
 
 // Wraps a built card in an <a> (so middle-click / ctrl-click open natively)
@@ -3205,10 +3355,7 @@ function buildYouTubeCard(post: FilteredPost): HTMLElement {
   card.appendChild(reasoning);
 
   // Actions
-  const actions = document.createElement('div');
-  actions.className = 'slop-post-actions';
-  actions.appendChild(createRestoreButton(post, postContent));
-  card.appendChild(actions);
+  card.appendChild(buildCardActionsRow(post, postContent));
 
   wrapper.appendChild(wrapInPostLink(card, postContent.postUrl));
   return wrapper;
@@ -3562,10 +3709,7 @@ function buildTwitterCard(post: FilteredPost): HTMLElement {
   body.appendChild(reasoning);
 
   // Actions row
-  const actions = document.createElement('div');
-  actions.className = 'slop-post-actions';
-  actions.appendChild(createRestoreButton(post, postContent));
-  body.appendChild(actions);
+  body.appendChild(buildCardActionsRow(post, postContent));
 
   if (isLinkedIn) {
     // linkedin adaptation: header row (avatar + meta/top) sits ABOVE the
@@ -3591,7 +3735,7 @@ function buildTwitterCard(post: FilteredPost): HTMLElement {
 
 // ==================== Filtered Post Storage ====================
 
-export function storeFilteredPost(article: HTMLElement, contentObj: PostContent, reasoning: string, rawResponse = '', category: string | null = null, matches: string[] | null = null) {
+export function storeFilteredPost(article: HTMLElement | null, contentObj: PostContent, reasoning: string, rawResponse = '', category: string | null = null, matches: string[] | null = null) {
   // Use postUrl or content hash as dedup key
   const evalText = formatPostForEvaluation(contentObj);
   const key = contentObj.postUrl || evalText.substring(0, 200);
@@ -3609,8 +3753,12 @@ export function storeFilteredPost(article: HTMLElement, contentObj: PostContent,
     matches,
     timestamp: Date.now(),
     // Captured while we still hold the element — restore has only the record.
-    contentKey: _deps.adapter.getPostContentKey?.(article) || undefined,
+    contentKey: (article && _deps.adapter.getPostContentKey?.(article)) || undefined,
   });
+  while (filteredPosts.length > MAX_FILTERED_POSTS) {
+    const evicted = filteredPosts.shift()!;
+    filteredPostKeys.delete(evicted.post.postUrl || evicted.evaluationText.substring(0, 200));
+  }
   updateFilteredTabCount();
 }
 
@@ -3969,7 +4117,12 @@ export function updateDetectorState(
   refreshActivePopupIfFor(article);
 }
 
-function refreshActivePopupIfFor(article: HTMLElement) {
+/** The element the reasoning popup is open on, if it sits inside `container`. */
+export function activePopupArticleWithin(container: HTMLElement): HTMLElement | null {
+  return activePopupArticle && container.contains(activePopupArticle) ? activePopupArticle : null;
+}
+
+export function refreshActivePopupIfFor(article: HTMLElement) {
   if (!activePopup || activePopupArticle !== article) return;
   const x = parseFloat(activePopup.style.left) || 0;
   const y = parseFloat(activePopup.style.top) || 0;
@@ -4063,6 +4216,24 @@ function showCategoryLimitWarning() {
 
 // ==================== Context Menu ====================
 
+// Runtime "Debug mode" setting (Android settings sheet). The native toggle
+// mirrors it into the `debugMode` storage key via __ff_setStorage, the same
+// path filterReplies takes; the onChanged listener applies flips live so
+// posts already on screen gain/lose the long-press without a reload.
+let debugModeSetting = false;
+let debugModeWatcherInstalled = false;
+function watchDebugModeSetting() {
+  if (debugModeWatcherInstalled) return;
+  debugModeWatcherInstalled = true;
+  getStorage(['debugMode']).then((data) => {
+    debugModeSetting = data.debugMode === true;
+  }).catch(err => console.error('[UI] Failed to load debugMode:', err));
+  chrome.storage.onChanged.addListener((changes: Record<string, chrome.storage.StorageChange>, areaName: string) => {
+    if (areaName !== 'local' || !changes.debugMode) return;
+    debugModeSetting = changes.debugMode.newValue === true;
+  });
+}
+
 export function addContextMenuHandler(article: HTMLElement) {
   const openPopup = (x: number, y: number) => {
     (async () => {
@@ -4087,13 +4258,16 @@ export function addContextMenuHandler(article: HTMLElement) {
   // following `click`, `contextmenu`, and `touchend` so the system callout
   // doesn't appear and Twitter doesn't navigate to the post.
   //
-  // Debug-only: dev bundles (Xcode Debug builds the extension with --dev)
-  // enable it via IS_DEV_BUILD. Android debug APKs embed the same prod
-  // bundle as release, so their debug source set sets __ff_debugBuild on
-  // the page instead (build_flag.js in the GeckoView bridge extension).
-  const isDebugNativeShell = IS_DEV_BUILD
-    || (window as Window & { __ff_debugBuild?: boolean }).__ff_debugBuild === true;
-  if (_deps.IS_IOS && isDebugNativeShell) {
+  // On Android (both build types — debug APKs embed the same prod bundle as
+  // release, so IS_DEV_BUILD is always false there) this is driven entirely
+  // by the settings sheet's "Debug mode" toggle (debugModeSetting). iOS has
+  // no such toggle; its dev bundles (Xcode Debug builds the extension with
+  // --dev) enable it via IS_DEV_BUILD. Checked per-press rather than at
+  // registration so the toggle takes effect without a reload; while off, no
+  // timer ever starts and every handler below is a no-op.
+  const isDebugNativeShell = () => IS_DEV_BUILD || debugModeSetting;
+  if (_deps.IS_IOS) {
+    watchDebugModeSetting();
     const LONG_PRESS_MS = 500;
     const MOVE_TOLERANCE_PX = 10;
     let pressTimer: number | null = null;
@@ -4109,6 +4283,7 @@ export function addContextMenuHandler(article: HTMLElement) {
     };
 
     article.addEventListener('touchstart', (e: TouchEvent) => {
+      if (!isDebugNativeShell()) return;
       if (e.touches.length !== 1) {
         cancelTimer();
         triggered = false;

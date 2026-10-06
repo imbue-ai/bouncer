@@ -216,7 +216,57 @@ object BouncerGeckoView {
             installResult = result
             bridge = b
             runtime = r
+            registerTrimCallbacks(appCtx)
         }
+    }
+
+    // ----- Memory pressure -----
+
+    @Volatile private var trimCallbacksRegistered = false
+
+    // Warm background tabs are a pure speed win while memory is plentiful, but
+    // each one is a live content process. When the system signals pressure,
+    // shed everything except the visible tab — switchToPlatform recreates a
+    // closed session lazily (it only reuses `isOpen` ones), so the cost is a
+    // one-off feed reload on the next platform switch instead of the OS
+    // killing the whole app.
+    private fun registerTrimCallbacks(appCtx: Context) {
+        if (trimCallbacksRegistered) return
+        trimCallbacksRegistered = true
+        appCtx.registerComponentCallbacks(object : android.content.ComponentCallbacks2 {
+            override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {}
+            @Deprecated("Deprecated in ComponentCallbacks")
+            override fun onLowMemory() = evictBackgroundSessions("onLowMemory")
+            override fun onTrimMemory(level: Int) {
+                if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_BACKGROUND ||
+                    level == android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL
+                ) {
+                    evictBackgroundSessions("onTrimMemory($level)")
+                }
+            }
+        })
+    }
+
+    private fun evictBackgroundSessions(reason: String) {
+        val background = sessions.filterKeys { it != activePlatformId }
+        if (background.isEmpty()) return
+        background.forEach { (id, s) ->
+            sessions.remove(id)
+            runCatching { s.setActive(false) }
+            runCatching { if (s.isOpen) s.close() }
+        }
+        Log.i(TAG, "$reason: evicted background session(s): ${background.keys}")
+    }
+
+    // Called from MainActivity.onDestroy on a real teardown (not a config
+    // change): this singleton outlives the Activity, and viewRef/vmRef — plus
+    // any off-screen push view attached to the dying window — would otherwise
+    // retain the Activity, its GeckoView, and the ViewModel until the next
+    // create() replaces them.
+    fun onActivityDestroyed() {
+        endBackgroundPushEnable()
+        viewRef = null
+        vmRef = null
     }
 
     // Gecko treats every MV3 host permission as user-optional ("origin
@@ -266,9 +316,19 @@ object BouncerGeckoView {
     // must be a real file the process can read (assets paths don't qualify), so
     // we write it into filesDir. Returns the absolute path, or null on failure
     // (in which case we just fall back to the normal prompt-gated permission).
+    //
+    // dom.interactive_widget_default_resizes_visual=false: when BouncerApp
+    // shrinks the GeckoView for the keyboard, shrink the page's layout viewport
+    // too (interactive-widget=resizes-content, like iOS) rather than only the
+    // visual viewport, so x.com's fixed-bottom composer bars sit right above
+    // the keyboard instead of the whole page panning up.
     private fun writeGeckoConfig(appCtx: Context): String? = runCatching {
         val cfg = java.io.File(appCtx.filesDir, "geckoview-config.yaml")
-        cfg.writeText("prefs:\n  permissions.default.desktop-notification: 1\n")
+        cfg.writeText(
+            "prefs:\n" +
+                "  permissions.default.desktop-notification: 1\n" +
+                "  dom.interactive_widget_default_resizes_visual: false\n"
+        )
         cfg.absolutePath
     }.getOrNull()
 
@@ -328,10 +388,14 @@ object BouncerGeckoView {
         // across an activity re-create); otherwise create the first tab.
         val warm = sessions[activePlatformId]?.takeIf { it.isOpen }
         val session = warm ?: GeckoSession().also { s ->
-            wireDelegates(s, view, r, appCtx, vm)
             s.open(r)
             sessions[activePlatformId] = s
         }
+        // (Re)wire even for a warm session: its delegates were built around the
+        // previous Activity's GeckoView, and holding those closures across an
+        // activity re-create leaks the old Activity for as long as the tab
+        // stays warm.
+        wireDelegates(session, view, r, appCtx, vm)
         bridge?.setActivePlatform(activePlatformId)
         // setSession before coverUntilFirstPaint: the cover-listener binds against
         // the GeckoView's current compositor state, and we want it bound to the
@@ -380,10 +444,12 @@ object BouncerGeckoView {
         }
         val warm = sessions[platform.id]?.takeIf { it.isOpen }
         val target = warm ?: GeckoSession().also { s ->
-            wireDelegates(s, view, r, appCtx, vm)
             s.open(r)
             sessions[platform.id] = s
         }
+        // (Re)wire even for a warm session — see create(): stale delegates
+        // retain the GeckoView (and Activity) they were built around.
+        wireDelegates(target, view, r, appCtx, vm)
         if (warm == null || url != null) target.loadUri(url ?: platform.feedUrl)
         sessions[activePlatformId]?.setActive(false)
         activePlatformId = platform.id
@@ -527,14 +593,16 @@ object BouncerGeckoView {
         offscreenView = null
         offscreenSession = null
         (viewRef ?: gv)?.post {
-            try {
-                s?.setActive(false)
-                gv?.releaseSession()
-                (gv?.parent as? ViewGroup)?.removeView(gv)
-                if (s != null && s.isOpen) s.close()
-            } catch (e: Throwable) {
-                Log.w(TAG, "endBackgroundPushEnable cleanup failed", e)
-            }
+            // Each step guarded individually: a throw in one must not orphan
+            // the off-screen view/session (a leaked content process + surface).
+            runCatching { s?.setActive(false) }
+                .onFailure { Log.w(TAG, "endBackgroundPushEnable: setActive failed", it) }
+            runCatching { gv?.releaseSession() }
+                .onFailure { Log.w(TAG, "endBackgroundPushEnable: releaseSession failed", it) }
+            runCatching { (gv?.parent as? ViewGroup)?.removeView(gv) }
+                .onFailure { Log.w(TAG, "endBackgroundPushEnable: removeView failed", it) }
+            runCatching { if (s != null && s.isOpen) s.close() }
+                .onFailure { Log.w(TAG, "endBackgroundPushEnable: close failed", it) }
             Log.i(TAG, "endBackgroundPushEnable: off-screen view removed")
         }
     }
@@ -560,7 +628,61 @@ object BouncerGeckoView {
         session.contentDelegate = contentDelegate(runtime, vm, view, appCtx)
         session.scrollDelegate = scrollDelegate(vm)
         session.permissionDelegate = permissionDelegate(appCtx)
+        session.promptDelegate = promptDelegate(appCtx)
     }
+
+    // GeckoView ships no UI for content prompts: without a PromptDelegate an
+    // <input type="file"> tap (x.com's "add image" button in the composer)
+    // resolves to nothing, so posting media is silently impossible. Only the
+    // file prompt is handled; every other prompt type keeps the no-delegate
+    // default.
+    private fun promptDelegate(appCtx: Context) =
+        object : GeckoSession.PromptDelegate {
+            override fun onFilePrompt(
+                session: GeckoSession,
+                prompt: GeckoSession.PromptDelegate.FilePrompt,
+            ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse> {
+                val multiple =
+                    prompt.type == GeckoSession.PromptDelegate.FilePrompt.Type.MULTIPLE
+                // The page's accept list (e.g. image/jpeg,video/mp4) filters the
+                // picker via EXTRA_MIME_TYPES; the base type stays */* because
+                // GET_CONTENT ignores comma lists in setType.
+                val mimeTypes = prompt.mimeTypes.orEmpty().filter { it.isNotBlank() }
+                val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type = if (mimeTypes.size == 1) mimeTypes[0] else "*/*"
+                    if (mimeTypes.isNotEmpty()) {
+                        putExtra(Intent.EXTRA_MIME_TYPES, mimeTypes.toTypedArray())
+                    }
+                    if (multiple) putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+                }
+                val result = GeckoResult<GeckoSession.PromptDelegate.PromptResponse>()
+                FilePromptBroker.pick(intent) { resultCode, data ->
+                    // Gecko can complete the prompt itself (page navigated away
+                    // while the picker was up); confirming twice throws.
+                    if (prompt.isComplete) return@pick
+                    val uris = mutableListOf<Uri>()
+                    val clip = data?.clipData
+                    if (clip != null) {
+                        for (i in 0 until clip.itemCount) {
+                            clip.getItemAt(i).uri?.let { uris.add(it) }
+                        }
+                    } else {
+                        data?.data?.let { uris.add(it) }
+                    }
+                    result.complete(
+                        if (resultCode != Activity.RESULT_OK || uris.isEmpty()) {
+                            prompt.dismiss()
+                        } else if (multiple) {
+                            prompt.confirm(appCtx, uris.toTypedArray())
+                        } else {
+                            prompt.confirm(appCtx, uris.first())
+                        },
+                    )
+                }
+                return result
+            }
+        }
 
     // x.com's "turn on push notifications" toggle requests the
     // desktop-notification content permission (also implied by

@@ -374,7 +374,7 @@ class ImbueWebSocket {
       return;
     }
 
-    request.resolve(data as ImbueAPIResponse);
+    request.resolve(data);
   }
 
   // Reject all pending requests (called on connection close/error)

@@ -33,8 +33,8 @@ android {
         applicationId = "com.imbue.bouncer"
         minSdk = 26
         targetSdk = 36
-        versionCode = 17
-        versionName = "1.3.0"
+        versionCode = 22
+        versionName = "1.4.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -42,7 +42,9 @@ android {
         buildConfigField("String", "APP_CHECK_DEBUG_TOKEN", "\"$debugToken\"")
 
         ndk {
-            abiFilters += listOf("arm64-v8a")
+            // armeabi-v7a covers 32-bit-firmware devices (e.g. Samsung A02s),
+            // which Play otherwise filters out as incompatible.
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
         }
     }
 
@@ -224,6 +226,7 @@ dependencies {
     implementation(libs.okhttp)
     implementation(libs.geckoview)
     implementation(platform(libs.firebase.bom))
+    implementation(libs.firebase.analytics)
     implementation(libs.firebase.appcheck)
     implementation(libs.firebase.appcheck.playintegrity)
     implementation(libs.firebase.appcheck.debug)

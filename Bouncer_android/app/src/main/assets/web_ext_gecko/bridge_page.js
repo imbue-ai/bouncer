@@ -463,7 +463,42 @@
         'feedfilterAiSettings',
         'filterReplies'
       );
+      // First-run "REMOVE AI SLOP?" badge: dismissed forever once AI
+      // detection has been on once (same flag the desktop indicator
+      // persists — see refreshAiIndicatorUI in content/ui.ts).
+      window.__ff_resolveAndPost(
+        window.__ff_getStorage(['aiIndicatorBadgeDismissed']).then(function (d) {
+          return !!(d && d.aiIndicatorBadgeDismissed === true);
+        }),
+        'feedfilterAiSettings',
+        'aiBadgeDismissed'
+      );
     }
+  };
+
+  // Excluded-accounts round trip for the native settings sheet. The shared
+  // accessors (__ff_getExcludedAccounts et al. in content/ios.ts) are
+  // platform-scoped; native passes the active platform id. The mutate
+  // wrapper re-posts the updated list only after the storage write
+  // resolves — callJs doesn't await bridge functions, so a bare
+  // add-then-load pair could read the stale list.
+  window.__ff_loadExcludedAccounts = function (siteId) {
+    if (typeof window.__ff_resolveAndPost !== 'function') return;
+    if (typeof window.__ff_getExcludedAccounts !== 'function') return;
+    window.__ff_resolveAndPost(
+      window.__ff_getExcludedAccounts(siteId),
+      'feedfilterAiSettings',
+      'excludedAccounts'
+    );
+  };
+  window.__ff_mutateExcludedAccount = function (op, siteId, text) {
+    var fn = op === 'add'
+      ? window.__ff_addExcludedAccount
+      : window.__ff_removeExcludedAccount;
+    if (typeof fn !== 'function') return;
+    Promise.resolve(fn(siteId, text)).then(function () {
+      window.__ff_loadExcludedAccounts(siteId);
+    }).catch(function () {});
   };
 
   // Native → MAIN dispatcher. bridge_iso.js relays each port message here

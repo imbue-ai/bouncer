@@ -184,25 +184,50 @@ const adapters = [
   { name: 'InstagramAdapter', path: path.join(__dirname, 'adapters/instagram/InstagramAdapter.ts') },
 ].filter((a) => fs.existsSync(a.path));
 
-// Copy LiteRT-LM's wasm loader + binaries into dist/litertlm-wasm/ so the
-// offscreen document can resolve them via chrome.runtime.getURL(...). The
-// runtime feature-detects relaxed-SIMD and loads either litertlm_wasm_internal
-// or litertlm_wasm_compat_internal; each .js fetches its sibling .wasm, so
-// all four files need to sit at the same URL prefix. By default the package
-// resolves these from a jsdelivr CDN URL, which the extension CSP blocks —
-// loadLiteRtLm() in the runtime points at this local directory instead.
+// Copy LiteRT-LM's wasm loader + binary into dist/litertlm-wasm/ so the
+// offscreen document can resolve them via chrome.runtime.getURL(...). By
+// default the package resolves these from a jsdelivr CDN URL, which the
+// extension CSP blocks — loadLiteRtLm() in the runtime points at this local
+// directory instead.
+//
+// The package ships four variants (±relaxed-SIMD "compat", ±JSPI "asyncify",
+// ~105 MB total) and its loader picks exactly one by feature detection, so
+// each target only needs the variants its browser can ever select:
+//   - chrome/firefox: store minimums guarantee relaxed-SIMD + JSPI
+//     (minimum_chrome_version 137, strict_min_version 145), so only the
+//     non-compat, non-asyncify pair is reachable (~21 MB vs ~105 MB).
+//   - safari (macOS extension): JSPI is still behind a flag in Safari, so
+//     the loader always falls back to the asyncify builds; relaxed-SIMD
+//     detection varies by Safari version, so ship both asyncify variants.
+//     (The iOS app strips dist/litertlm-wasm from its bundle entirely — it
+//     uses the native LiteRT-LM frameworks, never wasm.)
+const LITERTLM_WASM_BY_TARGET = {
+  chrome: ['litertlm_wasm_internal'],
+  firefox: ['litertlm_wasm_internal'],
+  safari: ['litertlm_wasm_asyncify_internal', 'litertlm_wasm_compat_asyncify_internal'],
+};
+
 function copyLitertlmAssets() {
   const srcDir = path.join(__dirname, 'node_modules/@litert-lm/core/wasm');
   const dstDir = path.join(__dirname, 'dist/litertlm-wasm');
+  // Always start clean so variants from older builds/targets don't linger in
+  // dist/ (cut.js zips dist/ wholesale).
+  fs.rmSync(dstDir, { recursive: true, force: true });
   if (!fs.existsSync(srcDir)) {
     console.warn('@litert-lm/core wasm dir not found — skipping copy');
     return;
   }
+  const names = (LITERTLM_WASM_BY_TARGET[target] ?? LITERTLM_WASM_BY_TARGET.chrome)
+    .flatMap((base) => [`${base}.js`, `${base}.wasm`]);
   fs.mkdirSync(dstDir, { recursive: true });
-  for (const name of fs.readdirSync(srcDir)) {
-    fs.copyFileSync(path.join(srcDir, name), path.join(dstDir, name));
+  for (const name of names) {
+    const src = path.join(srcDir, name);
+    if (!fs.existsSync(src)) {
+      throw new Error(`Expected LiteRT-LM wasm asset missing: ${src}`);
+    }
+    fs.copyFileSync(src, path.join(dstDir, name));
   }
-  console.log('Copied LiteRT-LM wasm assets into dist/litertlm-wasm/');
+  console.log(`Copied LiteRT-LM wasm assets for ${target} (${names.join(', ')}) into dist/litertlm-wasm/`);
 }
 
 async function build() {
@@ -213,6 +238,11 @@ async function build() {
 
   // 0. Regenerate manifest.json from manifest.base.json + manifest.<target>.json.
   generateManifest(target);
+
+  // Every file in dist/ is produced by this script, so start from empty —
+  // outputs orphaned by renames/removed entry points would otherwise linger
+  // and get swept into release zips and the app bundles.
+  fs.rmSync(path.join(__dirname, 'dist'), { recursive: true, force: true });
 
   copyLitertlmAssets();
 

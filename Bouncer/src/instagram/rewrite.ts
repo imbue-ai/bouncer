@@ -125,10 +125,21 @@ export function filterClipsPayload(root: unknown, removed: ReadonlySet<string>):
  *  and every name the reel goes by so a verdict can be matched back. */
 export interface ClipsMediaEntry {
   code?: string;
+  username?: string;
   caption: string;
   thumbnailUrl?: string;
   videoUrl?: string;
   filenames: string[];
+}
+
+/** The media object's cover image URL (largest candidate first), https only. */
+export function mediaCoverUrl(media: Record<string, unknown>): string | undefined {
+  const iv = media.image_versions2 as { candidates?: { url?: unknown }[] } | undefined;
+  const candidateUrl = iv?.candidates?.[0]?.url;
+  if (typeof candidateUrl === 'string' && candidateUrl.startsWith('https:')) return candidateUrl;
+  return typeof media.display_url === 'string' && media.display_url.startsWith('https:')
+    ? media.display_url
+    : undefined;
 }
 
 function entryFromMedia(media: Record<string, unknown>): ClipsMediaEntry | null {
@@ -137,13 +148,9 @@ function entryFromMedia(media: Record<string, unknown>): ClipsMediaEntry | null 
   const code = typeof media.code === 'string' && media.code.length > 0 ? media.code : undefined;
   const captionObj = media.caption as { text?: unknown } | null | undefined;
   const caption = typeof captionObj?.text === 'string' ? captionObj.text : '';
-  const iv = media.image_versions2 as { candidates?: { url?: unknown }[] } | undefined;
-  const candidateUrl = iv?.candidates?.[0]?.url;
-  const thumbnailUrl = typeof candidateUrl === 'string' && candidateUrl.startsWith('https:')
-    ? candidateUrl
-    : typeof media.display_url === 'string' && media.display_url.startsWith('https:')
-      ? media.display_url
-      : undefined;
+  const thumbnailUrl = mediaCoverUrl(media);
+  const user = media.user as { username?: unknown } | undefined;
+  const username = typeof user?.username === 'string' && user.username ? user.username : undefined;
   const versions = media.video_versions as { url?: unknown }[] | undefined;
   const versionUrl = Array.isArray(versions) ? versions[0]?.url : undefined;
   const videoUrl = typeof versionUrl === 'string' && versionUrl.startsWith('https:')
@@ -151,6 +158,7 @@ function entryFromMedia(media: Record<string, unknown>): ClipsMediaEntry | null 
     : undefined;
   return {
     ...(code ? { code } : {}),
+    ...(username ? { username } : {}),
     caption,
     ...(thumbnailUrl ? { thumbnailUrl } : {}),
     ...(videoUrl ? { videoUrl } : {}),

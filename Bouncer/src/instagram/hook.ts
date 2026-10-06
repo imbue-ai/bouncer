@@ -21,16 +21,23 @@
 import {
   coverFilenames,
   extractClipsEntries,
+  mediaCoverUrl,
   filterClipsPayload,
   rewriteClipsText,
   type ClipsMediaEntry,
 } from './rewrite';
+import { unrenderReels } from './unrender';
 
 const SOURCE = 'bouncer-ig-audio-hook';
 // Isolated → MAIN: reels the user deleted. Payload `keys: string[]` — reel
 // shortcodes and cover filenames, matched against every media object in feed
 // responses from then on. Must match index.ts REMOVE_REELS_SOURCE.
 const REMOVE_SOURCE = 'bouncer-ig-remove-reels';
+// Isolated → MAIN: reels to take out of the pager they're already rendered in
+// (filtered or bounced) — see ./unrender.ts. Same `keys` payload. Unlike
+// REMOVE_SOURCE this is not a kill list: future responses still carry them.
+// Must match index.ts UNRENDER_REELS_SOURCE.
+const UNRENDER_SOURCE = 'bouncer-ig-unrender';
 // The hold-and-classify handshake (all must match index.ts):
 //   MAIN → isolated: a fresh batch's reels, straight out of the JSON, asking
 //   for verdicts while the response is held.
@@ -48,8 +55,8 @@ const FILTER_ACTIVE_SOURCE = 'bouncer-ig-filter-active';
 // Instagram prefetches the next batch well before the user reaches it, so a
 // held response is normally invisible; this cap is for the fast scroller and
 // for a backend having a bad day — on expiry the batch flows through
-// unfiltered and the verdicts, when they do land, still shield those reels at
-// discovery (index.ts pendingVerdicts).
+// unfiltered and the verdicts, when they do land, still take those reels out of
+// the pager (./unrender.ts).
 const HOLD_MS = 15_000;
 
 interface HookEntry {
@@ -74,6 +81,10 @@ interface HookEntry {
    *  media object carries `code`, and the code of the reel on screen is
    *  exactly what the address bar reads. */
   code?: string;
+  /** The reel's cover image URL. The reel already playing when the page
+   *  loads never shows its cover <img>, so this is the only place the
+   *  isolated world can learn it (see discoverAddressedReel in index.ts). */
+  coverUrl?: string;
 }
 
 // Sent by a consumer once its listeners are up, asking for everything harvested
@@ -118,7 +129,7 @@ const hookStats = {
   removed: { keys: 0, batches: 0, edges: 0 },
   /** Hold-and-classify: batches held for verdicts, and how many of those
    *  expired unanswered. Rising timeouts = the classifier can't keep up with
-   *  the hold window; those reels fall back to discovery-time shields. */
+   *  the hold window; those reels fall back to removal from the pager. */
   held: { batches: 0, timeouts: 0 },
 };
 
@@ -256,8 +267,8 @@ const verdictWaiters = new Map<string, (dropKeys: readonly string[]) => void>();
 let batchSeq = 0;
 
 /** Ship a batch's reels off for classification; resolve with the keys to drop.
- *  Resolves [] on timeout — the batch then flows through unfiltered and the
- *  discovery-time shield picks up whatever the verdicts eventually say. */
+ *  Resolves [] on timeout — the batch then flows through unfiltered, and the
+ *  verdicts take those reels out of the pager when they land. */
 function requestVerdicts(entries: readonly ClipsMediaEntry[]): Promise<readonly string[]> {
   return new Promise((resolve) => {
     const batchId = `b${++batchSeq}`;
@@ -475,6 +486,7 @@ function harvest(root: unknown, via: HarvestSource): void {
           const audioUrl = trackUrlFromManifest(manifest, 'audio');
           const videoUrl = trackUrlFromManifest(manifest, 'video');
           const filenames = coverFilenames(obj);
+          const coverUrl = mediaCoverUrl(obj);
           // Worth posting if ANY field resolved: the audio filter needs
           // audioUrl, the frame grabber needs videoUrl, the length display needs
           // durationSec, and a manifest missing one shouldn't deny the others.
@@ -486,6 +498,7 @@ function harvest(root: unknown, via: HarvestSource): void {
               ...(videoUrl ? { videoUrl } : {}),
               ...(durationSec ? { durationSec } : {}),
               ...(code ? { code } : {}),
+              ...(coverUrl ? { coverUrl } : {}),
             });
             postedStreams = true;
           } else if (filenames.length === 0) {
@@ -506,7 +519,12 @@ function harvest(root: unknown, via: HarvestSource): void {
         hookStats.mediaWithDuration++;
         const filenames = coverFilenames(obj);
         if (filenames.length > 0) {
-          found.push({ filenames, audioUrl: '', durationSec, ...(code ? { code } : {}) });
+          const coverUrl = mediaCoverUrl(obj);
+          found.push({
+            filenames, audioUrl: '', durationSec,
+            ...(code ? { code } : {}),
+            ...(coverUrl ? { coverUrl } : {}),
+          });
         }
         else noteCoverless(obj);
       }
@@ -708,6 +726,14 @@ if (/(^|\.)instagram\.com$/i.test(location.hostname)) {
         }
         hookStats.removed.keys = removedKeys.size;
         expandAliases(announced);
+        // Deleted means gone from the pager too, not just from what's coming.
+        unrenderReels(removedKeys);
+        return;
+      }
+      if (data?.source === UNRENDER_SOURCE) {
+        if (Array.isArray(data.keys)) {
+          unrenderReels(data.keys.filter((k): k is string => typeof k === 'string'));
+        }
         return;
       }
       // Whether holds happen at all — flipped by the isolated world whenever
@@ -732,6 +758,9 @@ if (/(^|\.)instagram\.com$/i.test(location.hostname)) {
         if (typeof payload.batchId === 'string') {
           verdictWaiters.get(payload.batchId)?.(drops);
         }
+        // A hold that expired let the batch through: those reels are already
+        // in the pager.
+        if (drops.length > 0) unrenderReels(drops);
         return;
       }
       if (data?.source !== READY_SOURCE) return;

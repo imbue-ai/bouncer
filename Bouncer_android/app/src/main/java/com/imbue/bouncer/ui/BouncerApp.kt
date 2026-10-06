@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.imeAnimationTarget
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.navigationBars
@@ -64,6 +65,7 @@ import com.imbue.bouncer.BouncerApplication
 import com.imbue.bouncer.state.BouncerViewModel
 import com.imbue.bouncer.web.BouncerGeckoView
 import kotlinx.coroutines.MainScope
+import kotlinx.coroutines.delay
 import org.mozilla.geckoview.GeckoView
 import kotlin.math.roundToInt
 
@@ -84,6 +86,9 @@ private fun Context.findActivity(): Activity? {
 // pill / nav bar inset). Held in pixels so we can feed them into Gecko's
 // dynamic-toolbar math without round-tripping through Dp.
 private data class StaticSysBarInsets(val topPx: Int, val bottomPx: Int)
+
+// How long after ON_RESUME before the GeckoView may resize for the keyboard.
+private const val IME_RESIZE_RESUME_SETTLE_MS = 750L
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -132,10 +137,12 @@ fun BouncerApp(viewModel: BouncerViewModel = viewModel()) {
     }
 
     val lifecycleOwner = LocalLifecycleOwner.current
+    var resumed by remember { mutableStateOf(false) }
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_RESUME -> {
+                    resumed = true
                     BouncerGeckoView.setActivityForegrounded(true)
                     viewModel.setSessionActive(true)
                     viewModel.onAppForegrounded()
@@ -145,6 +152,7 @@ fun BouncerApp(viewModel: BouncerViewModel = viewModel()) {
                     BouncerGeckoView.recoverIfNeeded(geckoView, viewModel)
                 }
                 Lifecycle.Event.ON_PAUSE -> {
+                    resumed = false
                     BouncerGeckoView.setActivityForegrounded(false)
                     viewModel.setSessionActive(false)
                 }
@@ -168,8 +176,8 @@ fun BouncerApp(viewModel: BouncerViewModel = viewModel()) {
     // on resume when the GPU child process is just-thawed from the
     // cached-app freezer. See feedback_geckoview_androidview_stable_bounds.
     //
-    // IME is excluded (systemBars = statusBars + navigationBars). We don't
-    // want the keyboard to push the GeckoView up/down for the same reason.
+    // IME is excluded (systemBars = statusBars + navigationBars); the one
+    // deliberate keyboard resize is gated separately below (imeResizeArmed).
     //
     // While the snapshot is null (typically 0–2 frames at first launch),
     // the AndroidView isn't rendered; the Box background colors the
@@ -189,6 +197,27 @@ fun BouncerApp(viewModel: BouncerViewModel = viewModel()) {
             }
         }
     }
+
+    // Keyboard exception to the stable-bounds rule above. Gecko never shrinks
+    // the page for the IME on its own: MobileViewportManager sizes the viewport
+    // from the GeckoView's own bounds and only uses the reported keyboard height
+    // to add it back, so with fixed bounds x.com's composer stays under the
+    // keyboard. We therefore shrink the GeckoView while the IME is up. This is
+    // the same resize Fenix does on every keyboard show, and it's safe while the
+    // app is in active use. The ANR risk is only a resize right at resume (GPU
+    // child still thawing), e.g. Android restoring the IME on return, so the
+    // resize is held off until we've been resumed for a moment. Uses the IME
+    // animation *target* so the surface resizes once per show/hide, not every
+    // animation frame.
+    var imeResizeArmed by remember { mutableStateOf(false) }
+    LaunchedEffect(resumed) {
+        imeResizeArmed = false
+        if (resumed) {
+            delay(IME_RESIZE_RESUME_SETTLE_MS)
+            imeResizeArmed = true
+        }
+    }
+    val imeBottomPx = if (imeResizeArmed) WindowInsets.imeAnimationTarget.getBottom(density) else 0
 
     val sysNavInsetPx = staticInsets.value?.bottomPx ?: 0
     val barContentHeightPx = with(density) { NAV_BAR_CONTENT_HEIGHT.toPx() }
@@ -254,7 +283,7 @@ fun BouncerApp(viewModel: BouncerViewModel = viewModel()) {
         // but without the reactivity that causes the freeze.
         staticInsets.value?.let { ins ->
             val topDp = with(density) { ins.topPx.toDp() }
-            val bottomDp = with(density) { ins.bottomPx.toDp() }
+            val bottomDp = with(density) { maxOf(ins.bottomPx, imeBottomPx).toDp() }
             AndroidView(
                 factory = { geckoView },
                 modifier = Modifier
@@ -404,8 +433,10 @@ fun BouncerApp(viewModel: BouncerViewModel = viewModel()) {
                 filteredCount = state.filteredCount,
                 aiDetectionOn = state.aiDetectionOn,
                 aiDetectionPending = state.aiDetectionPending,
+                aiBadgeDismissed = state.aiBadgeDismissed,
                 filterReplies = state.filterReplies,
                 notificationsEnabled = state.notificationsEnabled,
+                debugModeEnabled = state.debugModeEnabled,
                 onAdd = viewModel::addPhrase,
                 onRemove = viewModel::removePhrase,
                 onViewFiltered = viewModel::openFilteredModal,
@@ -413,6 +444,17 @@ fun BouncerApp(viewModel: BouncerViewModel = viewModel()) {
                 onToggleAiDetection = viewModel::toggleAiDetection,
                 onFilterRepliesChange = viewModel::setFilterReplies,
                 onNotificationsEnabledChange = viewModel::setNotificationsEnabled,
+                onDebugModeChange = viewModel::setDebugMode,
+                excludedAccounts = state.excludedAccounts,
+                onAddExcludedAccount = viewModel::addExcludedAccount,
+                onRemoveExcludedAccount = viewModel::removeExcludedAccount,
+                // LinkedIn stores display names (no profile URL) — chips
+                // do nothing on tap there.
+                onOpenExcludedAccount = if (state.activePlatformId == "linkedin") {
+                    null
+                } else {
+                    viewModel::openExcludedAccount
+                },
                 modifier = Modifier.imePadding(),
             )
         }

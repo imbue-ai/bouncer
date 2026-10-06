@@ -2,7 +2,7 @@
 // Entry point: post processing, observers, init, storage/message listeners
 
 import type { PlatformAdapter, PostContent, PipelineResponse, BackgroundToContentMessage, DescriptionKey, AiFilterIntentState } from '../types';
-import { getStorage, removeStorage, getDescriptions, setDescriptions, phraseSetKey, filteringPausedKeyFor } from '../shared/storage';
+import { getStorage, removeStorage, getDescriptions, setDescriptions, phraseSetKey, filteringPausedKeyFor, getExcludedAccounts, exclusionIdentity, excludedAccountsKeyFor } from '../shared/storage';
 import { enabledStorageKey } from '../shared/platforms';
 import { hexToRgbChannels, hexToDarkRgbChannels, contrastTextColor } from '../shared/brand-color';
 import { FILTER_PACK_CODE_PREFIX } from '../shared/share-encoding';
@@ -21,8 +21,9 @@ import {
   injectFilterPhrasesInput, injectBottomFilterBox, injectMobileFilterBox,
   injectBannerFilterBox,
   syncFilterPhrases, addFilterPhrase, removeFilterPhrase, clearFilteredPosts,
-  restoreOrRefreshFilteredPosts,
+  restoreOrRefreshFilteredPosts, restoreFilteredRepliesOnPage, restoreFilteredPostsByAccounts,
   showSettingsModal, closeSettingsModal, renderFilteredPostsView,
+  activePopupArticleWithin,
   initModelLoadingListener,
   markPostPending, markPostVerified, getVerificationBar,
   storeFilteredPost, hidePost, showApiKeyWarning,
@@ -37,9 +38,10 @@ import {
   refreshAiIndicatorUI,
   setKeepOnlyMode,
   maybeShowPlatformOnboarding,
+  refreshActivePopupIfFor,
 } from './ui';
 
-import { formatPostForEvaluation, phraseAddNeedsReEvaluation } from '../shared/utils';
+import { escapeHtml, formatPostForEvaluation, phraseAddNeedsReEvaluation } from '../shared/utils';
 import {
   findStructuralMatch,
   structuralFilterKind,
@@ -242,14 +244,13 @@ import {
     }
   }
 
-  // Re-evaluate a single post
-  async function reEvaluateSinglePost(article: HTMLElement) {
-    // Mirror evaluatePost's extraction strategy so the cache key we clear
-    // matches the one that was written. In in-app mode (Android/iOS WKWebView)
-    // evaluatePost falls back to DOM when the Redux store isn't reachable;
-    // if we don't mirror that fallback here, the cache delete misses (store
-    // text ≠ DOM text → different cache keys) or the function returns
-    // silently and the Re-evaluate button does nothing.
+  // Mirror evaluatePost's extraction strategy so a cache key we clear
+  // matches the one that was written. In in-app mode (Android/iOS WKWebView)
+  // evaluatePost falls back to DOM when the Redux store isn't reachable;
+  // if we don't mirror that fallback here, the cache delete misses (store
+  // text ≠ DOM text → different cache keys) or the caller returns silently
+  // and the Re-evaluate button does nothing.
+  async function extractForReEvaluation(article: HTMLElement): Promise<PostContent | undefined> {
     let content: PostContent | undefined;
     try {
       content = await adapter.extractPostContentFromStore(article) ?? undefined;
@@ -257,6 +258,19 @@ import {
     if (!content && isInApp) {
       content = extractPostContent(article);
     }
+    return content;
+  }
+
+  // Re-evaluate a single post
+  async function reEvaluateSinglePost(article: HTMLElement) {
+    // Instagram reels are judged by src/instagram/index.ts; ask it to redo
+    // this one. The verdict comes back through bouncer-reel-verdict.
+    if (adapter.siteId === 'instagram') {
+      postReasonings.delete(article);
+      window.dispatchEvent(new CustomEvent('bouncer-reclassify-reel', { detail: { article } }));
+      return;
+    }
+    const content = await extractForReEvaluation(article);
     if (!content) return;
 
     const hasContent = content.text.trim() || (content.imageUrls && content.imageUrls.length > 0);
@@ -274,6 +288,32 @@ import {
     await evaluatePost(article);
   }
 
+  // Accounts were removed from the excluded list: classify the visible posts
+  // by those authors, which evaluatePost had been skipping. Only their posts
+  // can change, so this is a targeted version of reEvaluateAllPosts' sweep
+  // (same skips, same deferred pending UI). Cached verdicts are reused —
+  // posts classified before the exclusion re-hide without a model call.
+  async function reEvaluatePostsByAccounts(identities: Set<string>) {
+    const skipReplies = !filterReplies && adapter.isPermalinkView();
+    for (const article of findPosts()) {
+      if (adapter.getPostContainer(article).dataset.filteredByExtension) continue;
+      if (adapter.isMainPost(article)) continue;
+      if (skipReplies) continue;
+
+      const content = await extractForReEvaluation(article);
+      if (!content) continue;
+      const identity = exclusionIdentity(adapter.siteId, content);
+      if (!identity || !identities.has(identity)) continue;
+
+      processedPosts.delete(article);
+      postReasonings.delete(article);
+      const pendingTimer = setTimeout(() => markPostPending(article), 120);
+      evaluatePost(article)
+        .catch(err => console.error('[Bouncer] evaluatePost failed:', err))
+        .finally(() => clearTimeout(pendingTimer));
+    }
+  }
+
   const MAX_STORE_RETRIES = 3;
 
   // In-app WKWebView mode. The store extractors are injected into the page
@@ -288,6 +328,12 @@ import {
   // non-matching post keeps its existing verdict untouched (no model call,
   // no pending UI) — used when a phrase-add changed nothing the model sees.
   async function evaluatePost(article: HTMLElement, structuralOnly = false) {
+    // Instagram reels are classified by the reel-feed script
+    // (src/instagram/index.ts) through instagramAnalyze, which sees the audio.
+    // This pipeline would judge the same reel a second time from its caption
+    // alone, so it stays out — the adapter is still here for the settings
+    // modal, "View filtered" and restore.
+    if (adapter.siteId === 'instagram') return;
     console.log('[Bouncer] evaluatePost called, isInApp:', isInApp);
     // Guest trial exhausted — stop filtering until the user signs in.
     if (isGuestLimitReached()) return;
@@ -340,6 +386,23 @@ import {
       markPostVerified(article);
       return;
     }
+
+    // Posts from accounts the user excluded skip classification entirely —
+    // no model call, and in cloud mode the post never leaves the browser.
+    try {
+      const excluded = await getExcludedAccounts(adapter.siteId);
+      if (excluded.length > 0) {
+        const identity = exclusionIdentity(adapter.siteId, content);
+        if (identity && excluded.includes(identity)) {
+          postReasonings.set(article, {
+            shouldHide: false,
+            reasoning: 'Author is in your excluded accounts list.'
+          });
+          markPostVerified(article);
+          return;
+        }
+      }
+    } catch { /* storage unavailable — fall through to normal evaluation */ }
 
     // Structural filter phrases ("no retweets", "quote tweets", "videos")
     // resolve deterministically from adapter-extracted post attributes — no
@@ -738,30 +801,54 @@ import {
   // one. showSettingsModal tears down and rebuilds, so repeat clicks are safe.
   // The welcome tour drives the panel too — stepping onto the filters step
   // opens it, stepping back closes it — hence the matching close event.
+  // The pipeline's unit on Instagram is the "post" element (the cover image's
+  // parent), not the card the reel scripts track. Instagram drops the cover
+  // <img> once a reel plays, so the reel on screen no longer matches the
+  // selector — fall back to the element our verification bar sits in, or the
+  // one the reasoning popup is open on.
+  function reelArticleIn(card: HTMLElement): HTMLElement | null {
+    if (card.matches(adapter.selectors.post)) return card;
+    return card.querySelector<HTMLElement>(adapter.selectors.post)
+      ?? card.querySelector('.post-verification-bar')?.parentElement
+      ?? activePopupArticleWithin(card);
+  }
+
+  function reelPostContent(post: { caption: string; author: string; thumbnailUrl: string; code?: string }): PostContent {
+    return {
+      text: post.caption,
+      author: post.author,
+      handle: post.author ? `@${post.author}` : '',
+      avatarUrl: null,
+      timeText: null,
+      textHtml: escapeHtml(post.caption),
+      quote: null,
+      postUrl: post.code ? `https://www.instagram.com/reels/${post.code}/` : null,
+      imageUrls: [post.thumbnailUrl],
+      hasMediaContainer: true,
+    };
+  }
+
   function setupExternalSettingsBridge() {
     window.addEventListener('bouncer-open-settings', () => showSettingsModal());
     window.addEventListener('bouncer-close-settings', () => closeSettingsModal());
-    // Swiping a reel out of the describer panel offers filter phrases (see
-    // src/instagram/bounce.ts). Picking one comes back here rather than writing
-    // storage directly, so it goes through the same addFilterPhrase path as
-    // X's trash-can suggestions — dedupe, length budget, and the re-evaluation
-    // sweep that hides matching reels already on screen.
     // A reel swiped out of the describer panel is hidden by that script, but
     // the record of it lives here — file it under "View filtered" so it shows
     // up alongside classifier-filtered reels and can be restored.
     window.addEventListener('bouncer-bounce-reel', (e) => {
       const detail = (e as CustomEvent<{
-        card?: HTMLElement; reasoning?: string; category?: string | null;
+        card?: HTMLElement | null; reasoning?: string; category?: string | null;
+        post?: { caption: string; author: string; thumbnailUrl: string; code?: string };
       }>).detail;
-      const card = detail?.card;
-      if (!card) return;
-      // The pipeline's unit is the "post" element (the cover image's parent),
-      // not the card wrapper the panel tracks — find it inside.
-      const article = card.matches(adapter.selectors.post)
-        ? card
-        : card.querySelector<HTMLElement>(adapter.selectors.post);
-      if (!article) return;
-      const content = extractPostContent(article);
+      if (!detail) return;
+      // Read the card when it still shows its cover — the richest entry. The
+      // reel on screen has lost its cover <img>, and a reel dropped before it
+      // rendered has no card at all; both are filed from the data sent along.
+      const article = detail.card ? reelArticleIn(detail.card) : null;
+      const fromCard = article ? extractPostContent(article) : null;
+      const content = fromCard && fromCard.imageUrls.length > 0
+        ? fromCard
+        : detail.post ? reelPostContent(detail.post) : null;
+      if (!content) return;
       // A manual swipe sends no reasoning and gets the stock line; the
       // auto-filter sends the model's own sentence and the matched phrase.
       storeFilteredPost(article, content,
@@ -769,11 +856,29 @@ import {
         detail.category ?? null);
     });
 
-    window.addEventListener('bouncer-add-filter-phrase', (e) => {
-      const phrase = (e as CustomEvent<{ phrase?: string }>).detail?.phrase;
-      if (!phrase) return;
-      addFilterPhrase(phrase).catch(err =>
-        console.error('[Bouncer] Add filter phrase from bounce popup failed:', err));
+    // Every instagramAnalyze classify outcome for a reel, so its reasoning
+    // popup shows KEPT / HIDDEN / ERROR rather than "not yet evaluated".
+    // Hiding itself happens through bouncer-bounce-reel above.
+    window.addEventListener('bouncer-reel-verdict', (e) => {
+      const detail = (e as CustomEvent<{
+        card?: HTMLElement; shouldHide?: boolean; reasoning?: string | null;
+        category?: string | null; error?: string;
+      }>).detail;
+      const card = detail?.card;
+      if (!card) return;
+      const article = reelArticleIn(card);
+      if (!article) return;
+      processedPosts.add(article);
+      if (detail.error) {
+        postReasonings.set(article, { shouldHide: false, isApiError: true, reasoning: detail.error });
+      } else {
+        const fallback = detail.shouldHide
+          ? (detail.category ? `Matches "${detail.category}"` : 'Matched your filters')
+          : 'Does not match your filters';
+        postReasonings.set(article, { shouldHide: !!detail.shouldHide, reasoning: detail.reasoning || fallback });
+        if (!detail.shouldHide) markPostVerified(article);
+      }
+      refreshActivePopupIfFor(article);
     });
   }
 
@@ -943,6 +1048,33 @@ import {
           }
         }
       }
+      const excludedKey = excludedAccountsKeyFor(adapter.siteId);
+      if (changes[excludedKey]) {
+        // Excluded accounts edited — via the "Never filter @x" button, the
+        // desktop popup, the native settings sheets, or another tab. Like
+        // phrase edits, this listener is the single place either direction
+        // takes effect: additions restore that author's filtered posts
+        // (evaluatePost skips them from then on); removals re-classify
+        // their visible posts.
+        const toList = (v: unknown): string[] => Array.isArray(v) ? v.filter((a): a is string => typeof a === 'string') : [];
+        const oldList = toList(changes[excludedKey].oldValue);
+        const newList = toList(changes[excludedKey].newValue);
+        const oldSet = new Set(oldList);
+        const newSet = new Set(newList);
+        const added = newList.filter(a => !oldSet.has(a));
+        const removed = oldList.filter(a => !newSet.has(a));
+        if (added.length > 0) restoreFilteredPostsByAccounts(new Set(added));
+        if (removed.length > 0) {
+          reEvaluatePostsByAccounts(new Set(removed))
+            .catch(err => console.error('[Bouncer] re-evaluation after account un-exclude failed:', err));
+        }
+      }
+      if (changes.aiIndicatorBadgeDismissed && IS_IOS) {
+        // The first-run "REMOVE AI SLOP?" badge was dismissed (first
+        // activation, possibly from another platform's webview or desktop) —
+        // re-push so the native sheet's badge collapses to the sparkle.
+        updateIOSFilteredCount();
+      }
       if (changes.aiFilterIntent) {
         // Any write re-syncs the passive AI-detection indicator.
         refreshAiIndicatorUI().catch(err => console.error('[Bouncer] refreshAiIndicatorUI failed:', err));
@@ -999,16 +1131,8 @@ import {
           reEvaluateAllPosts();
         } else if (adapter.isPermalinkView()) {
           // Toggling off: undo what we'd already hidden on this permalink
-          // page so the user sees the replies they wanted without a
-          // reload. We deliberately only touch replies on this page —
-          // home-timeline filtering is unaffected by this setting.
-          document.querySelectorAll<HTMLElement>('[data-filtered-by-extension="true"]').forEach(cell => {
-            const article = cell.querySelector<HTMLElement>(adapter.selectors.post);
-            if (!article || adapter.isMainPost(article)) return;
-            cell.style.display = '';
-            delete cell.dataset.filteredByExtension;
-            processedPosts.delete(article);
-          });
+          // page so the user sees the replies they wanted without a reload.
+          restoreFilteredRepliesOnPage();
         }
       }
       const pausedKey = filteringPausedKeyFor(adapter.siteId);

@@ -267,10 +267,12 @@ export async function callImbueDetectAiIntent(
 }
 
 // Call the Imbue instagramAnalyze action via the same WebSocket gateway.
-// Sends one reel's caption + thumbnail; the server applies its hardcoded
-// five-word-phrase prompt (INSTAGRAM_SYSTEM_PROMPT) and the worker returns the
-// phrase as `description`. The caption may be empty or spam — that's expected,
-// the server prompt handles it. Only the first image URL is used server-side.
+// Sends one reel's caption + thumbnail (+ audio) for one of two tasks, each
+// with its own server-side prompt: 'describe' returns a preview blurb as
+// `description`; 'classify' judges the reel against `categories` and returns
+// shouldHide/category/reasoning. The caption may be empty or spam — that's
+// expected, the server prompts handle it. Only the first image URL is used
+// server-side.
 //
 // `frameBase64`, when present, is a still from the MIDDLE of the reel captured
 // off the already-buffered <video> (see src/instagram/frame.ts) — a much better
@@ -289,6 +291,7 @@ export async function callImbueDetectAiIntent(
 // still AWS's 32 KB WS frame — well under the server's own 120,000-char cap on
 // audioData — and the extractor's 30,000-char budget is sized for it.
 export async function callImbueInstagramAnalyze(
+  task: 'describe' | 'classify',
   caption: string,
   thumbnailUrl: string,
   frameBase64?: string,
@@ -302,11 +305,10 @@ export async function callImbueInstagramAnalyze(
     : thumbnailUrl;
   const message: Record<string, unknown> = {
     action: 'instagramAnalyze',
-    // The user's filter phrases, top-level like the audioFilter action's. When
-    // sent, the one describe inference also classifies the reel against them
-    // and the response carries shouldHide/category/reasoning. Never an empty
-    // list — the server 400s on one; no phrases means describe-only.
-    ...(categories && categories.length > 0 ? { categories } : {}),
+    task,
+    // The user's filter phrases, top-level like the audioFilter action's.
+    // Classify only — and never an empty list, which the server 400s on.
+    ...(task === 'classify' && categories && categories.length > 0 ? { categories } : {}),
     tweetData: {
       text: caption,
       imageUrls: image ? [image] : [],

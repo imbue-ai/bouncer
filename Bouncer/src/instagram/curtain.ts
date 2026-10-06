@@ -47,11 +47,8 @@
 import { isRecordComplete, type ReelRecord } from './library';
 
 const CURTAIN_ID = 'bouncer-ig-curtain';
-const SHIELD_CLASS = 'bouncer-ig-shield';
 const STYLE_ID = 'bouncer-ig-curtain-style';
 const CURTAIN_Z = 2147483630;
-/** Within the card's own stacking context — over everything the card draws. */
-const SHIELD_Z = 2147483600;
 
 const PANEL_FONT = '-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif';
 
@@ -111,8 +108,9 @@ export interface Curtain {
   close(): void;
   isOpen(): boolean;
   /** Decline a reel WITHOUT a gesture — the auto-filter's entry point. Same
-   *  consequences as a row swipe: shield up, rows drop it, journeys skip it —
-   *  including moving off it right now if it's the reel on screen. The host's
+   *  consequences as a row swipe: rows drop it, journeys skip it — including
+   *  moving off it right now if it's the reel on screen. (Taking it out of
+   *  the feed itself is the hook's job, ./unrender.ts.) The host's
    *  onDismiss is NOT invoked: that callback is the user's own verdict
    *  (it feeds the permanent feed-response kill list), and an AI verdict
    *  must stay restorable. */
@@ -457,24 +455,13 @@ function dismissRow(row: HTMLElement, dir: number): void {
   rowTimer = setTimeout(() => {
     if (!record || !host) return;
     dismissedIds.add(record.reelId);
-    console.debug(`[Bouncer IG] curtain: dismissed ${record.reelId}`);
     host.onDismiss?.(record);
-    // The shield goes on the reel's card NOW, in the same breath as the
-    // decline — attached, it scrolls with the reel and is simply already
-    // there whenever any journey brings the reel by. Raising it on arrival
-    // instead showed the declined frame for as long as settle detection took.
-    syncShields();
     if (row.dataset.curtainUnder) {
-      // The reel UNDER the sheet was declined sight unseen: same journey as
-      // arriving on a dismissed reel — cover down (its shield has the frame),
-      // no resume, next kept reel.
-      const next = firstKept();
-      if (next) {
-        hide(false);
-        host.goTo(next);
-        return;
-      }
-      // Nothing known to go to: the cover stays; the reveal gesture remains.
+      // The reel UNDER the sheet was declined sight unseen: cover down, no
+      // resume. onDismiss has it taken out of the feed, and the next reel
+      // slides into its place (./unrender.ts).
+      hide(false);
+      return;
     }
     // Refill the pinned list in place: the remaining rows keep their spots,
     // the next kept reel takes the vacant one.
@@ -667,99 +654,6 @@ function setRowTransform(row: HTMLElement, x: number, animate: boolean): void {
   row.style.opacity = String(Math.max(0.25, 1 - Math.abs(x) / w));
 }
 
-// ==================== The shield ====================
-//
-// Swiping a reel away doesn't remove it from Instagram's feed — the DOM still
-// holds it, and every journey past it would otherwise show its opening frame
-// sitting there, declined but plainly visible. The shield covers that up: an
-// OPAQUE pane (the sheet itself is deliberately glass, so it can't do this
-// job) planted INSIDE the dismissed reel's own card, so it scrolls with the
-// reel as part of it. Attached at dismissal time, not raised when the feed
-// settles — a fixed overlay driven by settle detection showed the declined
-// frame for the fraction of a second the detection took, every time.
-//
-// This is the third deliberate write to Instagram's DOM (see the module
-// comment), and the recycling hazard is the price: Instagram reuses card
-// elements, so a shield left standing could black out a reel the user KEEPS.
-// syncShields runs on every host refresh and evicts any shield whose card now
-// belongs to a different reel; a shield whose reel moved cards is replanted.
-
-/** reelId -> the shield standing on that reel's card. */
-const shields = new Map<string, HTMLElement>();
-
-function buildShield(): HTMLElement {
-  const el = document.createElement('div');
-  el.className = SHIELD_CLASS;
-  el.style.cssText = [
-    'position: absolute',
-    'inset: 0',
-    `z-index: ${SHIELD_Z}`,
-    // Opaque, which is the whole point: nothing of the declined reel — not a
-    // frame, not a silhouette — reaches the screen through it.
-    'background: linear-gradient(180deg, #0c0c12 0%, #08080c 55%, #0c0c12 100%)',
-    `font-family: ${PANEL_FONT}`,
-    'display: flex',
-    'flex-direction: column',
-    'align-items: center',
-    'justify-content: center',
-    'gap: 6px',
-    'pointer-events: none',
-  ].join(';');
-
-  const word = document.createElement('div');
-  word.textContent = 'Dismissed';
-  word.style.cssText =
-    'font-size: 15px; font-weight: 650; color: rgba(255,255,255,0.82); letter-spacing: 0.02em';
-  const line = document.createElement('div');
-  line.textContent = 'You swiped this reel away';
-  line.style.cssText = 'font-size: 13px; color: rgba(255,255,255,0.45)';
-  el.append(word, line);
-  return el;
-}
-
-/** Stand a shield on `record`'s card, once. `inset: 0` needs a positioned
- *  ancestor; a static card is nudged to relative, which changes nothing else
- *  about a box that isn't using offsets. */
-function plantShield(record: ReelRecord): void {
-  const standing = shields.get(record.reelId);
-  if (standing && standing.parentElement === record.card && record.card.isConnected) return;
-  standing?.remove();
-  shields.delete(record.reelId);
-  if (!record.card.isConnected) return;   // replanted by syncShields when it mounts
-  if (getComputedStyle(record.card).position === 'static') {
-    record.card.style.position = 'relative';
-  }
-  const el = buildShield();
-  record.card.appendChild(el);
-  shields.set(record.reelId, el);
-}
-
-/** True up every shield against what the host currently knows. Two jobs:
- *  evict shields from recycled cards (another reel lives there now — the one
- *  way a shield could wrong a KEPT reel), and make sure every dismissed reel
- *  the host can still name wears one on its current card. */
-function syncShields(): void {
-  if (!host) return;
-  const records = host.records();
-  for (const [id, el] of shields) {
-    const owner = el.parentElement;
-    if (!owner?.isConnected) { el.remove(); shields.delete(id); continue; }
-    const tenant = records.find((r) => r.card === owner);
-    if (tenant && tenant.reelId !== id) { el.remove(); shields.delete(id); }
-  }
-  for (const r of records) {
-    if (dismissedIds.has(r.reelId)) plantShield(r);
-  }
-}
-
-/** The first record the user hasn't sworn off — where a skip lands. */
-function firstKept(): ReelRecord | null {
-  for (const r of host?.records() ?? []) {
-    if (!dismissedIds.has(r.reelId) && isRecordComplete(r)) return r;
-  }
-  return null;
-}
-
 /** Whether the sheet has any journey to offer beyond revealing what is already
  *  underneath it: a kept, renderable record past the first. Mid-ride the first
  *  record may still be the reel being LEFT, which only makes this optimistic —
@@ -771,40 +665,21 @@ function hasSkipTargets(): boolean {
 }
 
 function cover(): void {
-  // A reel dismissed earlier can still scroll back under the sheet: Instagram
-  // delivered it long ago and the feed remembers it. Declined means never
-  // watched — the cover stays down (no resume for the reel underneath) and the
-  // journey continues to the next kept reel, which arrives covered like any
-  // other. Nothing here loops: the destination is kept by construction, so the
-  // next arrival covers normally.
+  // A reel dismissed after you'd passed it stays in the feed (only reels on
+  // screen or ahead are taken out — ./unrender.ts), so scrolling back can bring
+  // one under the sheet. Arriving on it is what removes it: keep it silent and
+  // stay out of the way while the next reel slides into its place.
   const records = host?.records() ?? [];
-  const kept = records.filter((r) => !dismissedIds.has(r.reelId));
-  const renderable = kept.filter(isRecordComplete);
-  console.debug(
-    `[Bouncer IG] curtain: covering — ${records.length} reel(s) offered, `
-    + `${renderable.length} renderable, showing ${Math.min(renderable.length, ROW_COUNT)} row(s)`,
-  );
   const under = records[0];
   if (under && dismissedIds.has(under.reelId)) {
-    // Its shield should already be standing (planted at dismissal), but a
-    // card that remounted since is bare — make sure before anything shows.
-    syncShields();
-    const next = firstKept();
-    if (next) {
-      console.debug(`[Bouncer IG] curtain: skipping dismissed ${under.reelId} → ${next.reelId}`);
-      pauseUnderlying();     // it may already be playing; declined reels play to nobody
-      hide(false);
-      host?.goTo(next);
-      return;
-    }
-    // Nowhere kept to send the feed: the cover still comes down, as a blocker —
-    // declined means never watched, even with no skips to offer.
+    pauseUnderlying();     // it may already be playing; declined reels play to nobody
+    hide(false);
+    return;
   } else if (!hasSkipTargets()) {
     // Nothing to skip to: a sheet whose only offer is "reveal what's already
     // underneath" is pure obstruction. Stay out of the way; the reel plays
     // uncovered. Decided once per arrival — a description landing mid-watch
     // must not drop a sheet on a reel already playing.
-    console.debug('[Bouncer IG] curtain: nothing to skip to — staying hidden');
     hide();
     return;
   }
@@ -921,7 +796,6 @@ function onPathTick(): void {
   if (path === revealedPath) { pendingPath = null; return; }
   if (pendingPath !== path) { pendingPath = path; return; }   // hold one tick
   pendingPath = null;
-  console.debug(`[Bouncer IG] curtain: covering — address ${revealedPath || '(start)'} → ${path}`);
   // The new reel is the reference now, whatever geometry this layout has.
   revealedPath = path;
   const scroller = findScroller();
@@ -946,8 +820,6 @@ function onFeedSettled(): void {
     return;
   }
   // A new reel owns the screen. It arrives covered, previews re-anchored on it.
-  console.debug(`[Bouncer IG] curtain: covering — scrolled ${Math.round(away)}px`
-    + ` (address ${revealedPath} → ${location.pathname})`);
   revealedPath = location.pathname;
   revealedTop = scroller.scrollTop;
   rowIds = [];
@@ -1096,8 +968,6 @@ function trackPagerSettle(): void {
 
   if (!pagerTouchDown && quiet > SETTLE_QUIET_MS && location.pathname !== revealedPath) {
     // A new reel owns the screen — the same commit onFeedSettled makes.
-    console.debug('[Bouncer IG] curtain: covering — pager settled'
-      + ` (address ${revealedPath} → ${location.pathname})`);
     revealedPath = location.pathname;
     const scroller = findScroller();
     revealedTop = scroller ? scroller.scrollTop : 0;
@@ -1265,9 +1135,6 @@ export function installCurtain(next: CurtainHost): Curtain {
   revealedPath = location.pathname;
   renderRows();
   pinOuterPage();
-  console.warn(`[Bouncer IG] curtain: installed — scroller ${scroller
-    ? `${Math.round(scroller.clientHeight)}h (scrollTop ${Math.round(scroller.scrollTop)})`
-    : 'NOT FOUND'}, path ${revealedPath}`);
 
   // Scroll events don't bubble; capture sees them wherever the feed lives.
   document.addEventListener('scroll', onFeedScroll, { capture: true, passive: true });
@@ -1285,10 +1152,6 @@ export function installCurtain(next: CurtainHost): Curtain {
 
   return {
     refresh(): void {
-      // Shields first: a rescan is exactly when recycled cards come to light,
-      // and a shield on a card that now holds a KEPT reel must go before
-      // anything else trusts the page.
-      syncShields();
       renderRows();
     },
     onActiveReelChanged(): void {
@@ -1303,20 +1166,14 @@ export function installCurtain(next: CurtainHost): Curtain {
     dismiss(reelId: string): void {
       if (!host || dismissedIds.has(reelId)) return;
       dismissedIds.add(reelId);
-      console.debug(`[Bouncer IG] curtain: auto-dismissed ${reelId}`);
-      // Shield first, exactly as a row swipe commits: attached to the card it
-      // rides along, so the declined frame never reaches the screen.
-      syncShields();
-      // Declined while being watched (or while sitting under the cover): same
-      // journey as arriving on a dismissed reel — on to the next kept one.
+      // Declined while being watched (or while sitting under the cover): keep
+      // it silent and get out of the way. The hook takes it out of the feed
+      // and the next reel slides into its place (./unrender.ts) — a journey
+      // from here would race that.
       const under = host.records()[0];
       if (under && under.reelId === reelId) {
-        const next = firstKept();
-        if (next) {
-          pauseUnderlying();
-          hide(false);
-          host.goTo(next);
-        }
+        pauseUnderlying();
+        hide(false);
       }
       rowIds = rowIds.filter((id) => id !== reelId);
       renderRows();
@@ -1345,8 +1202,6 @@ export function installCurtain(next: CurtainHost): Curtain {
       popped = false;
       poppedFromId = null;
       shadeEl = null;
-      for (const el of shields.values()) el.remove();
-      shields.clear();
       curtainEl?.remove();
       document.getElementById(STYLE_ID)?.remove();
       curtainEl = null;

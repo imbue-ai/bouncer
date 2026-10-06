@@ -23,7 +23,25 @@ data class BouncerUiState(
     // and the iOS sheet's `aiDetectionPending`.
     val aiDetectionOn: Boolean = false,
     val aiDetectionPending: Boolean = false,
+    // First-run badge: until AI detection turns on for the first time, the
+    // sheet's sparkle wears a "REMOVE AI SLOP?" pill — the counterpart of the
+    // desktop indicator's `with-badge` pill (content.css). Mirrors the
+    // extension's persisted `aiIndicatorBadgeDismissed` flag (written on
+    // first activation; see refreshAiIndicatorUI in content/ui.ts). Defaults
+    // to true so existing users never see a flash of the badge before the
+    // first state load.
+    val aiBadgeDismissed: Boolean = true,
     val filterReplies: Boolean = true,
+    // Settings-sheet "Debug mode" toggle: enables the press-and-hold reasoning
+    // popup on posts. The sole switch for it on Android, debug and release
+    // alike (see addContextMenuHandler in content/ui.ts). Defaults off.
+    val debugModeEnabled: Boolean = false,
+    // The active platform's excluded accounts (display form, e.g. "@handle"),
+    // mirrored from the extension's `excludedAccounts_<siteId>` storage via
+    // __ff_loadExcludedAccounts. Posts from these accounts are never
+    // classified or hidden. Edited from the settings sheet; also grows when
+    // the user taps "Never filter @x" in the filtered-posts modal.
+    val excludedAccounts: List<String> = emptyList(),
     val hasCompletedOnboarding: Boolean = false,
     val hasLoggedIn: Boolean = false,
     // Set once we actually observe the /home timeline this session — the

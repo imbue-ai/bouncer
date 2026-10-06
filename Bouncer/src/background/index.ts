@@ -249,6 +249,12 @@ async function handleMessage(
 
   switch (message.type) {
     case 'evaluatePost': {
+      // Instagram reels are classified only through instagramAnalyze (see
+      // src/instagram/index.ts), never the tweetFilter pipeline. The content
+      // script already skips them; this is the backstop.
+      if (message.siteId === 'instagram') {
+        return { shouldHide: false, reasoning: 'Instagram is classified via instagramAnalyze.' };
+      }
       console.log('[Bouncer][diag] evaluatePost received: tabId=', tabId, 'activeTabId=', activeTabId, 'sender.tab=', !!sender.tab);
       // Ensure tab is registered (re-registers after service worker restart)
       if (tabId) activeContentTabs.add(tabId);
@@ -316,6 +322,8 @@ async function handleMessage(
     }
 
     case 'suggestAnnoyingReasons': {
+      // Same backstop as evaluatePost: no Instagram post goes to tweetFilter.
+      if (message.siteId === 'instagram') return { reasons: [], hadImages: false };
       try {
         const imageUrls = message.imageUrls || [];
         const reasons = await suggestAnnoyingReasons(message.post, imageUrls, message.siteId || 'twitter', sender.tab?.id);
@@ -327,16 +335,14 @@ async function handleMessage(
     }
 
     case 'analyzeReel': {
-      // Instagram reel describer (separate from the feed filter pipeline).
-      // Forwards caption + image to the imbue instagramAnalyze action and
-      // returns the short blurb. Caption/image validation + the prompt all
-      // live server-side; we just relay. The image is a mid-reel frame when the
-      // content script could grab one, else the cover thumbnail. When the
-      // message carries the user's filter phrases, the same call also
-      // classifies the reel and the verdict rides back with the description.
+      // Instagram reels, describe or classify (separate from the feed filter
+      // pipeline). Forwards caption + image + audio to the imbue
+      // instagramAnalyze action; validation and both prompts live
+      // server-side, we just relay. The image is a mid-reel frame when the
+      // content script could grab one, else the cover thumbnail.
       try {
         const result = await callImbueInstagramAnalyze(
-          message.caption || '', message.thumbnailUrl || '', message.frameBase64,
+          message.task, message.caption || '', message.thumbnailUrl || '', message.frameBase64,
           message.audioBase64, message.audioFormat, message.videoUrl, message.categories);
         return {
           description: result.description || '',
@@ -414,7 +420,7 @@ async function handleMessage(
       const cacheKey = cacheKeyFor(message.siteId, message.post, message.imageUrls || [], message.postUrl);
       if (evaluationCache.has(cacheKey)) {
         evaluationCache.delete(cacheKey);
-        await saveCache();
+        await saveCache(true);
       }
       return { success: true };
     }
@@ -455,7 +461,7 @@ async function handleMessage(
         shouldHide: message.shouldHide,
         reasoning: message.reasoning || 'User override',
       });
-      await saveCache();
+      await saveCache(true);
       return { success: true };
     }
 

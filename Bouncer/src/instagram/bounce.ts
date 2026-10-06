@@ -1,10 +1,10 @@
 // "Remove similar content?" — the Instagram counterpart to X's trash-can button.
 //
 // On X you click the bin on a post and Bouncer asks the backend for reasons you
-// might want it gone, then offers them as one-click filter phrases. Here the
-// gesture is a swipe: drag a reel's description out of the describer panel and
-// the same `suggestAnnoyingReasons` pipeline runs against that reel's caption
-// and cover image, surfacing the same kind of suggestions.
+// might want it gone, then offers them as one-click filter phrases. The live
+// Instagram version is gone — those suggestions come from the tweetFilter route,
+// which Instagram posts are never sent to — so only the welcome tour's scripted
+// demo (showDemoBouncePopup) remains.
 //
 // The popup is deliberately non-blocking — no backdrop, nothing captured, the
 // reel keeps playing and the feed keeps scrolling behind it. It sits directly
@@ -19,7 +19,6 @@ import { railAnchoredBox } from './layout';
 
 const POPUP_ID = 'bouncer-ig-bounce';
 const PANEL_ID = 'bouncer-ig-frame';
-const ADD_PHRASE_EVENT = 'bouncer-add-filter-phrase';
 
 const PANEL_FONT = '-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif';
 const ACCENT = '#EA8554';
@@ -189,58 +188,10 @@ function chipRow(reasons: readonly string[], addEvent: string | null): HTMLEleme
   return chips;
 }
 
-export interface BounceRequest {
-  /** The swiped reel's caption — the text the backend reasons over. */
-  caption: string;
-  /** Its cover image, so image-aware models can see what the reel looks like. */
-  thumbnailUrl: string;
-}
-
 /** The tour's stand-in: the same popup with scripted suggestions and no
  *  backend round trip. Its chips only dismiss — a walk-through must not quietly
  *  add real filters to the user's list. */
 export function showDemoBouncePopup(reasons: readonly string[]): void {
   const popup = shell();
   popup.append(title('Remove similar content?'), chipRow(reasons, null), noThanks());
-}
-
-/**
- * Ask the backend why this reel might be worth filtering and offer the answers
- * as one-click filter phrases. Fire-and-forget: everything is rendered into the
- * popup as it arrives.
- */
-export function showBouncePopup(req: BounceRequest): void {
-  const popup = shell();
-
-  const loading = document.createElement('div');
-  loading.textContent = 'Looking at what you just bounced…';
-  loading.style.cssText = 'font-size: 12px; color: #8a8f98';
-  popup.append(title('Remove similar content?'), loading, noThanks('Dismiss'));
-
-  void (async () => {
-    let reasons: string[] = [];
-    try {
-      const res: { reasons?: string[] } | undefined = await chrome.runtime.sendMessage({
-        type: 'suggestAnnoyingReasons',
-        post: req.caption,
-        imageUrls: req.thumbnailUrl ? [req.thumbnailUrl] : [],
-        siteId: 'instagram',
-      });
-      reasons = Array.isArray(res?.reasons) ? res.reasons.filter(r => typeof r === 'string') : [];
-    } catch (err) {
-      console.warn('[Bouncer IG] suggestAnnoyingReasons failed:', (err as Error).message);
-    }
-
-    // The user may have moved on (or dismissed) while the request was out.
-    if (!popup.isConnected) return;
-
-    if (reasons.length === 0) {
-      loading.textContent = 'No suggestions for this one.';
-      // Nothing to choose, so don't leave it sitting there.
-      dismissTimer = window.setTimeout(dismissBouncePopup, 2600);
-      return;
-    }
-
-    popup.replaceChildren(title('Remove similar content?'), chipRow(reasons, ADD_PHRASE_EVENT), noThanks());
-  })();
 }

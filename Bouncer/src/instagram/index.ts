@@ -16,27 +16,27 @@
 // anchor on structural/semantic signals (the cover <img>'s empty alt +
 // cdninstagram host; the longest non-link dir="auto" block for the caption). If
 // IG changes its markup these heuristics are the first thing to revisit — they're
-// all collected here at the top, and reportDiscovery() below says which of them
-// stopped matching.
+// all collected here at the top.
 
 import type { ContentToBackgroundMessage } from '../types';
 import {
   clipForDescribe, installAudioFilter, installAudioHookListener, type AudioFilterController,
 } from './audiofilter';
 import { showIntro } from './intro';
-import { showBouncePopup, showDemoBouncePopup, dismissBouncePopup } from './bounce';
+import { showDemoBouncePopup, dismissBouncePopup } from './bounce';
 import { captureMidFrame, installFrameSources } from './frame';
 import { playSwipe, playTap, addDemoPhrase, removeDemoPhrase, clearDemoArtifacts } from './demo';
 import { railAnchoredBox, clampLeft, isNarrowViewport } from './layout';
-import { installFitWatcher, unfit, unfitAll, fitReport, visibleHeight } from './fit';
+import { installFitWatcher, unfit, unfitAll, visibleHeight } from './fit';
 import { installPromoDismisser } from './promo';
 import { fitPlayersToSlots, unfitPlayers } from './playerfit';
 import { installTopBarHider } from './topbar';
 import {
-  durationFor, noteDuration, probeDuration, onDurationResolved, durationReport,
+  durationFor, noteDuration, probeDuration, onDurationResolved,
   installDurationSource, requestHookReplay, rememberCardVideoUrl, videoUrlFor,
+  reelCodeFor, coverUrlForCode,
 } from './durations';
-import { buildRecords, creatorReport, forgetAll, remember, type ReelRecord } from './library';
+import { buildRecords, creatorFromCard, forgetAll, remember, type ReelRecord } from './library';
 import { installCurtain, ROW_COUNT, type Curtain } from './curtain';
 import { makeSettingsIcon } from '../shared/utils';
 import { enabledStorageKey } from '../shared/platforms';
@@ -67,6 +67,12 @@ const CLOSE_SETTINGS_EVENT = 'bouncer-close-settings';
 // "View filtered" (and let the user restore it) the same way a reel the
 // classifier removed would be.
 const BOUNCE_REEL_EVENT = 'bouncer-bounce-reel';
+// Every classify outcome — keep, hide or error — handed to content.js, which
+// owns the reasoning popup. Without it a kept reel never leaves PENDING there.
+const REEL_VERDICT_EVENT = 'bouncer-reel-verdict';
+// content.js's "Evaluate Now" / "Re-evaluate", asking for a fresh classify of
+// the reel holding `article`.
+const RECLASSIFY_REEL_EVENT = 'bouncer-reclassify-reel';
 const DESCRIBER_EVENT = 'bouncer-ig-describer';
 
 // Isolated → MAIN-world channel: the names of reels the user DELETED (swiped
@@ -75,6 +81,10 @@ const DESCRIBER_EVENT = 'bouncer-ig-describer';
 // data simply never carries the reel again, on this load or any later one.
 // Must match hook.ts REMOVE_SOURCE.
 const REMOVE_REELS_SOURCE = 'bouncer-ig-remove-reels';
+// Isolated → MAIN: reels to take out of Instagram's rendered reel list — the
+// filtered and the bounced (see ./unrender.ts). Unlike REMOVE_REELS_SOURCE
+// this is not a kill list. Must match hook.ts UNRENDER_SOURCE.
+const UNRENDER_REELS_SOURCE = 'bouncer-ig-unrender';
 // The hold-and-classify handshake with the hook (all must match hook.ts):
 // the hook holds a fresh clips batch and asks for verdicts; we classify each
 // reel straight off its payload (caption + cover + progressive-MP4 for
@@ -428,12 +438,57 @@ function activeIndex(): number {
     : orderedReels.findIndex((r) => r.reelId === activeReelId);
 }
 
+// ==================== Debug: what reaches the classifier ====================
+//
+// TEMP — answers "are images and audio actually riding along?". One line per
+// analyzeReel request naming the modalities it carries, one per outcome, and a
+// running tally so a rate is readable without counting lines. Remove once the
+// classifier inputs are confirmed.
+
+type AnalyzeReelMessage = Extract<ContentToBackgroundMessage, { type: 'analyzeReel' }>;
+type RequestSource = 'describe' | 'classify' | 'held-batch';
+const sentTally = { requests: 0, image: 0, audioClip: 0, videoUrl: 0, noAudio: 0 };
+/** When each request went out, keyed `source|reelId`, for the round-trip time. */
+const sentAt = new Map<string, number>();
+
+function logReelRequest(source: RequestSource, reelId: string, msg: AnalyzeReelMessage): void {
+  sentAt.set(`${source}|${reelId}`, performance.now());
+  sentTally.requests++;
+  if (msg.frameBase64 || msg.thumbnailUrl) sentTally.image++;
+  if (msg.audioBase64) sentTally.audioClip++;
+  else if (msg.videoUrl) sentTally.videoUrl++;
+  else sentTally.noAudio++;
+  const image = msg.frameBase64 ? 'frame' : msg.thumbnailUrl ? 'cover-url' : 'NONE';
+  const audio = msg.audioBase64
+    ? `clip ${msg.audioFormat ?? '?'} ${Math.round(msg.audioBase64.length / 1024)}KB`
+    : msg.videoUrl ? 'video-url' : 'NONE';
+  const t = sentTally;
+  console.log(`[IG classify] → ${source} ${reelId.slice(-24)}: caption=${msg.caption.length}ch `
+    + `image=${image} audio=${audio} phrases=${msg.categories?.length ?? 0} `
+    + `| tally ${t.requests} sent: ${t.image} image, ${t.audioClip} clip, `
+    + `${t.videoUrl} video-url, ${t.noAudio} no audio`);
+}
+
+function logReelResult(source: RequestSource, reelId: string, res: {
+  error?: string; shouldHide?: boolean; category?: string | null; description?: string;
+} | undefined): void {
+  const key = `${source}|${reelId}`;
+  const started = sentAt.get(key);
+  sentAt.delete(key);
+  const took = started === undefined ? '?' : `${((performance.now() - started) / 1000).toFixed(1)}s`;
+  const outcome = !res ? 'no answer (timeout)'
+    : res.error ? `error: ${res.error}`
+    : source === 'describe' ? 'described'
+    : res.shouldHide ? `HIDE (${res.category ?? '?'})` : 'keep';
+  console.log(`[IG classify] ← ${source} ${reelId.slice(-24)}: ${outcome} in ${took}`);
+}
+
 // ==================== Auto-filter (traditional Bouncer) ====================
 
-// The user's Instagram filter phrases (descriptions_instagram — the same list
-// the classic feed pipeline classifies against). When non-empty, every
-// describe request carries them and the SAME inference also classifies the
-// reel; a shouldHide verdict lands in autoFilterReel below.
+// The user's Instagram filter phrases (descriptions_instagram). When
+// non-empty, reels are classified against them with instagramAnalyze's
+// classify task — from held batches before they render, and on screen
+// alongside the describe — and a shouldHide verdict lands in autoFilterReel.
 const DESCRIPTIONS_STORAGE_KEY = 'descriptions_instagram' as const;
 let filterPhrases: string[] = [];
 
@@ -443,20 +498,17 @@ const autoFiltered = new Set<string>();
 
 /** Traditional Bouncer, reel-shaped: the describe verdict says this reel
  *  matches one of the user's filter phrases. Same treatment as a manual
- *  bounce — card hidden and filed under "View filtered" (restorable, with the
- *  model's own reasoning), panel rows skip it, curtain shields and skips it —
+ *  bounce — taken out of the feed and filed under "View filtered" (restorable,
+ *  with the model's own reasoning), panel rows and the curtain skip it —
  *  but deliberately NOT fed to the feed-response kill list: that list is
  *  permanent, and an AI verdict must stay reversible. */
 function autoFilterReel(reel: Reel, category: string | null, reasoning: string | null): void {
   if (autoFiltered.has(reel.reelId) || swipedAway.has(reel.reelId)) return;
   autoFiltered.add(reel.reelId);
-  console.debug(`[Bouncer IG] auto-filtered ${reel.reelId}`
-    + (category ? ` — category "${category}"` : ''));
   swipedAway.add(reel.reelId);
   hideReelCard(reel, reasoning ?? (category ? `Matches "${category}"` : 'Matched your filters'),
     category);
   suggestions?.dismiss(reel.reelId);
-  if (reel.reelId === activeReelId) advanceToNextReel(reel.reelId);
 }
 
 // ---- Batch classification, for the hook's held responses ----
@@ -465,13 +517,12 @@ function autoFilterReel(reel: Reel, category: string | null, reasoning: string |
  *  a DOM presence. Keyed by cover FILENAME (the last path segment — the one
  *  name shared between a payload's image candidates and a card's reelId).
  *  Covers two paths: a reel that leaked through a hold timeout gets its
- *  dismissed cover the moment scan() discovers it, and a KEPT reel gets its
- *  description for free (no second inference). */
+ *  dismissed cover the moment scan() discovers it, and a reel already judged
+ *  here is not classified a second time when it comes on screen. */
 interface PayloadVerdict {
   shouldHide: boolean;
   category: string | null;
   reasoning: string | null;
-  description: string;
 }
 const pendingVerdicts = new Map<string, PayloadVerdict>();
 
@@ -490,6 +541,7 @@ function basenameOf(reelId: string): string {
  *  ClipsMediaEntry) — revalidated here because it crossed a postMessage. */
 interface BatchEntry {
   code?: string;
+  username?: string;
   caption?: string;
   thumbnailUrl?: string;
   videoUrl?: string;
@@ -508,6 +560,7 @@ function sanitizeBatchEntries(raw: unknown): BatchEntry[] {
     if (filenames.length === 0) continue;
     entries.push({
       ...(typeof e.code === 'string' && e.code ? { code: e.code } : {}),
+      ...(typeof e.username === 'string' && e.username ? { username: e.username } : {}),
       ...(typeof e.caption === 'string' ? { caption: e.caption } : {}),
       ...(typeof e.thumbnailUrl === 'string' ? { thumbnailUrl: e.thumbnailUrl } : {}),
       ...(typeof e.videoUrl === 'string' ? { videoUrl: e.videoUrl } : {}),
@@ -522,12 +575,43 @@ function sanitizeBatchEntries(raw: unknown): BatchEntry[] {
  *  or a reel served again later). */
 function recordPayloadVerdict(entry: BatchEntry, verdict: PayloadVerdict): void {
   for (const f of entry.filenames) pendingVerdicts.set(f, verdict);
-  if (!verdict.shouldHide) return;
+  // Out of the pager by name, whether or not it's been found on the page: a
+  // verdict that missed the hold (the batch went through unfiltered) would
+  // otherwise wait for the reel to be discovered by its cover — which the reel
+  // already playing never shows.
+  if (verdict.shouldHide) {
+    window.postMessage({
+      source: UNRENDER_REELS_SOURCE,
+      keys: [...(entry.code ? [entry.code] : []), ...entry.filenames],
+    }, '*');
+  }
+  let onPage = false;
   for (const reel of orderedReels) {
     if (entry.filenames.includes(basenameOf(reel.reelId))) {
-      autoFilterReel(reel, verdict.category, verdict.reasoning);
+      onPage = true;
+      announceVerdict(reel, verdict);
+      if (verdict.shouldHide) autoFilterReel(reel, verdict.category, verdict.reasoning);
     }
   }
+  // Dropped before it ever rendered: there's no card, but it still belongs
+  // under "View filtered".
+  if (verdict.shouldHide && !onPage && entry.thumbnailUrl) {
+    fileFilteredReel(entry.filenames, null, {
+      caption: entry.caption ?? '',
+      author: entry.username ?? '',
+      thumbnailUrl: entry.thumbnailUrl,
+      ...(entry.code ? { code: entry.code } : {}),
+    }, verdict.reasoning ?? (verdict.category ? `Matches "${verdict.category}"` : 'Matched your filters'),
+    verdict.category);
+  }
+}
+
+/** Tell content.js how a reel was judged, so its reasoning popup shows the
+ *  verdict instead of "not yet evaluated". */
+function announceVerdict(reel: Reel, verdict: PayloadVerdict | { error: string }): void {
+  window.dispatchEvent(new CustomEvent(REEL_VERDICT_EVENT, {
+    detail: { card: reel.card, ...verdict },
+  }));
 }
 
 /** A newly discovered reel meets any verdict that predates it. Called from
@@ -535,9 +619,7 @@ function recordPayloadVerdict(entry: BatchEntry, verdict: PayloadVerdict): void 
 function applyPendingVerdict(reel: Reel): void {
   const verdict = pendingVerdicts.get(basenameOf(reel.reelId));
   if (!verdict) return;
-  if (verdict.description && !cache.has(reel.reelId)) {
-    cache.set(reel.reelId, { description: verdict.description });
-  }
+  announceVerdict(reel, verdict);
   if (verdict.shouldHide) autoFilterReel(reel, verdict.category, verdict.reasoning);
 }
 
@@ -554,26 +636,28 @@ async function classifyHeldBatch(batchId: string, entries: BatchEntry[]): Promis
   if (phrases.length > 0) {
     await Promise.all(entries.slice(0, MAX_BATCH_CLASSIFY).map(async (entry) => {
       const keys = [...(entry.code ? [entry.code] : []), ...entry.filenames];
-      const message: ContentToBackgroundMessage = {
+      const message: AnalyzeReelMessage = {
         type: 'analyzeReel',
+        task: 'classify',
         caption: entry.caption ?? '',
         thumbnailUrl: entry.thumbnailUrl ?? '',
         ...(entry.videoUrl ? { videoUrl: entry.videoUrl } : {}),
         categories: phrases,
       };
+      const debugId = entry.code ?? entry.filenames[0];
+      logReelRequest('held-batch', debugId, message);
       const answer: Promise<{
-        description?: string; error?: string;
-        shouldHide?: boolean; category?: string | null; reasoning?: string | null;
+        error?: string; shouldHide?: boolean; category?: string | null; reasoning?: string | null;
       } | undefined> = chrome.runtime.sendMessage(message);
-      // However late the verdict lands, it still counts — as a discovery-time
-      // shield rather than a payload drop.
+      // However late the verdict lands, it still counts — as a removal from
+      // the pager rather than a payload drop.
       answer.then((res) => {
+        logReelResult('held-batch', debugId, res);
         if (!res || res.error) return;
         recordPayloadVerdict(entry, {
           shouldHide: !!res.shouldHide,
           category: res.category ?? null,
           reasoning: res.reasoning ?? null,
-          description: (res.description ?? '').trim(),
         });
       }).catch(() => { /* unjudged; a later sighting retries */ });
       const res = await Promise.race([
@@ -586,9 +670,6 @@ async function classifyHeldBatch(batchId: string, entries: BatchEntry[]): Promis
       if (res.shouldHide) dropKeys.push(...keys);
     }));
   }
-  if (dropKeys.length > 0) {
-    console.debug(`[Bouncer IG] held batch ${batchId}: dropping ${dropKeys.length} key(s)`);
-  }
   window.postMessage({
     source: CLASSIFY_VERDICTS_SOURCE, batchId, dropKeys, judgedKeys,
   }, '*');
@@ -596,6 +677,8 @@ async function classifyHeldBatch(batchId: string, entries: BatchEntry[]): Promis
 
 /** Tell the hook whether holding is worth anything at all right now. */
 function postFilterActive(): void {
+  console.log(`[IG classify] held-batch filtering ${filterPhrases.length > 0 ? 'ON' : 'OFF'} `
+    + `(${filterPhrases.length} phrase(s))`);
   window.postMessage({ source: FILTER_ACTIVE_SOURCE, active: filterPhrases.length > 0 }, '*');
 }
 
@@ -674,11 +757,8 @@ function mountSuggestions(): void {
     },
     // The curtain already skips a dismissed reel for this page's life; the
     // feed-response filter takes it from there — a swipe-away is a DELETE,
-    // and the feed's data never carries the reel again. Logged by code so the
-    // device loop can watch dismissals land.
+    // and the feed's data never carries the reel again.
     onDismiss: (record) => {
-      console.debug(`[Bouncer IG] reel dismissed: ${record.reelId}`
-        + (record.code ? ` (/reels/${record.code}/)` : ''));
       eraseReelFromFeed(record.reelId, record.code);
     },
   });
@@ -830,89 +910,6 @@ function hasNativeChrome(): boolean {
     webkit?: { messageHandlers?: Record<string, unknown> };
   }).webkit?.messageHandlers;
   return typeof bridge?.feedfilterLog !== 'undefined';
-}
-
-// ==================== TEMP: reels-geometry probe ====================
-// Diagnostics for the slide-misalignment investigation: every 3s on a reels
-// page, one line with every viewport metric Instagram could be sizing slides
-// against, plus the actual scroller/slide geometry. Logs via the native
-// feedfilterLog bridge (Xcode console); falls back to console.warn on desktop.
-// Remove this whole section when the investigation closes.
-
-function geoLog(line: string): void {
-  const bridge = (window as unknown as {
-    webkit?: { messageHandlers?: { feedfilterLog?: { postMessage: (m: string) => void } } };
-  }).webkit?.messageHandlers?.feedfilterLog;
-  if (bridge) bridge.postMessage(line);
-  else console.warn(`[Bouncer IG] ${line}`);
-}
-
-let geoProbeEl: HTMLElement | null = null;
-const GEO_UNITS = ['100vh', '100dvh', '100svh', '100lvh',
-  'env(safe-area-inset-top)', 'env(safe-area-inset-bottom)'] as const;
-const GEO_UNIT_NAMES = ['vh', 'dvh', 'svh', 'lvh', 'saT', 'saB'];
-
-function cssUnitHeights(): string {
-  if (!geoProbeEl?.isConnected) {
-    geoProbeEl = document.createElement('div');
-    geoProbeEl.style.cssText =
-      'position:fixed;left:-9999px;top:0;width:1px;pointer-events:none;visibility:hidden';
-    for (const unit of GEO_UNITS) {
-      const child = document.createElement('div');
-      child.style.height = unit;
-      geoProbeEl.appendChild(child);
-    }
-    (document.body ?? document.documentElement).appendChild(geoProbeEl);
-  }
-  return Array.from(geoProbeEl.children)
-    .map((c, i) => `${GEO_UNIT_NAMES[i]}=${Math.round(c.getBoundingClientRect().height)}`)
-    .join(' ');
-}
-
-/** The nearest scrollable ancestor of the first mounted <video> — the feed
- *  scroller, if the feed scrolls an inner element rather than the document. */
-function feedScroller(): HTMLElement | null {
-  const video = document.querySelector('video');
-  let node: HTMLElement | null = video?.parentElement ?? null;
-  while (node && node !== document.body) {
-    if (node.scrollHeight > node.clientHeight + 100) return node;
-    node = node.parentElement;
-  }
-  return null;
-}
-
-function geometryReport(): void {
-  if (!onReelsPage()) return;
-  const vv = window.visualViewport;
-  const doc = document.scrollingElement;
-  const parts = [
-    `inner=${window.innerWidth}x${window.innerHeight}`,
-    `vv=${vv ? Math.round(vv.height) : 'n/a'}${vv ? `@${Math.round(vv.offsetTop)}` : ''}`,
-    `screen=${window.screen.height}/avail=${window.screen.availHeight}`,
-    cssUnitHeights(),
-    `doc top=${doc ? Math.round(doc.scrollTop) : '?'} of ${doc?.scrollHeight ?? '?'}`,
-  ];
-  const scroller = feedScroller();
-  if (scroller) {
-    const cs = getComputedStyle(scroller);
-    parts.push(
-      `scroller client=${scroller.clientHeight}`
-      + ` top=${Math.round(scroller.scrollTop)} of ${scroller.scrollHeight}`
-      + ` snap='${cs.scrollSnapType}' snapPad='${cs.scrollPaddingTop}'`);
-    const kids = Array.from(scroller.children).slice(0, 5).map((k) => {
-      const r = k.getBoundingClientRect();
-      return `${Math.round(r.top)}+${Math.round(r.height)}`;
-    });
-    parts.push(`slides(top+h) ${kids.join(' ')} n=${scroller.children.length}`);
-  } else {
-    parts.push('scroller none — feed may be transform-paged or document-scrolled');
-  }
-  const video = document.querySelector('video');
-  if (video) {
-    const r = video.getBoundingClientRect();
-    parts.push(`video ${Math.round(r.top)}..${Math.round(r.bottom)}`);
-  }
-  geoLog(`GEO ${parts.join(' | ')}`);
 }
 
 // Collapsed panel: just the extension icon, same corner, click opens settings.
@@ -1300,56 +1297,52 @@ let currentSwipeReel: Reel | null = null;
 // bounced what they were watching" (the offer still stands).
 let suppressBounceDismissOnce = false;
 
-/** Remove a bounced reel from the feed.
+/** What "View filtered" shows for a reel, carried as data: a reel dropped
+ *  before it rendered has no card, and the reel on screen has lost the cover
+ *  <img> content.js would otherwise read it from. */
+interface FiledReel {
+  caption: string;
+  author: string;
+  thumbnailUrl: string;
+  code?: string;
+}
+
+/** Cover filenames of every reel already filed, so the payload-time and the
+ *  on-page paths can't file the same reel twice. */
+const filedReels = new Set<string>();
+
+function fileFilteredReel(names: readonly string[], card: HTMLElement | null, post: FiledReel,
+                          reasoning?: string, category?: string | null): void {
+  if (names.some(n => filedReels.has(n))) return;
+  for (const n of names) filedReels.add(n);
+  window.dispatchEvent(new CustomEvent(BOUNCE_REEL_EVENT, {
+    detail: { card: card?.isConnected ? card : null, post, reasoning, category },
+  }));
+}
+
+/** Remove a bounced or filtered reel from the feed.
  *
- *  Uses exactly the markers the Instagram adapter's own filtering uses —
- *  `display: none` plus `data-filtered-by-extension` — so the adapter's
- *  scroll observer treats it identically to a reel the classifier removed, and
- *  the restore path in the filtered-posts panel can find and un-hide it.
+ *  Files it under "View filtered", then asks the MAIN-world hook to take it
+ *  out of Instagram's own reel list (./unrender.ts) — no edits to Instagram's
+ *  DOM. If it's the reel on screen, the next one takes its place. Named by
+ *  shortcode as well as cover filename: renditions of the same cover can carry
+ *  different filenames, and the code is what the hook can always match.
  *
  *  `reasoning`/`category` ride along to the "View filtered" entry. The manual
  *  swipe passes neither and content.js falls back to its stock line; the
  *  auto-filter passes the model's own sentence and matched phrase. */
 function hideReelCard(reel: Reel, reasoning?: string, category?: string | null): void {
-  const card = reel.card;
-  if (!card.isConnected) return;
-  card.dataset.filteredByExtension = 'true';
-  collapseWhenOffScreen(card);
-  // Hand it to content.js so it lands in "View filtered" and stays restorable.
-  window.dispatchEvent(new CustomEvent(BOUNCE_REEL_EVENT, {
-    detail: { card, reasoning, category },
-  }));
-}
-
-/** Collapse a filtered card only when doing so cannot move the reel in view.
- *
- *  `display: none` on the card being WATCHED snaps the next reel into its
- *  place with no scroll — from the device, "the reel gets forcibly replaced".
- *  And WebKit has no scroll anchoring, so collapsing one ABOVE the viewport
- *  yanks the whole feed up a reel's height. Only a card wholly below the fold
- *  can collapse invisibly, so only that collapses now; everything else keeps
- *  its space (marked, so the filtered-view plumbing still sees it) and is
- *  taken by the adapter's scroll-past fade once it is behind you. */
-function collapseWhenOffScreen(card: HTMLElement): void {
-  const rect = card.getBoundingClientRect();
-  if (rect.height < 1 || rect.top >= window.innerHeight) card.style.display = 'none';
-}
-
-/** Scroll to the first reel after `fromReelId` that's still in the feed and
- *  hasn't been bounced. Same mechanism as clicking an upcoming phrase. */
-function advanceToNextReel(fromReelId: string): void {
-  const idx = orderedReels.findIndex(r => r.reelId === fromReelId);
-  if (idx < 0) return;
-  // Stops short of the LAST discovered reel: landing on the tail of what
-  // Instagram has loaded strands its pagination (see suggestionRecords). If the
-  // only candidate is the last one, don't advance — the user scrolls there
-  // themselves, which paginates normally.
-  const next = orderedReels
-    .slice(idx + 1, orderedReels.length - 1)
-    .find(r => r.card.isConnected && !swipedAway.has(r.reelId));
-  if (!next) return;
-  suppressBounceDismissOnce = true;
-  next.card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  const filename = basenameOf(reel.reelId);
+  const code = reelCodeFor(reel.thumbnailUrl);
+  fileFilteredReel([filename], reel.card, {
+    caption: captionFromCard(reel.card) || captionFor(reel) || '',
+    author: (reel.card.isConnected ? creatorFromCard(reel.card) : null) ?? '',
+    thumbnailUrl: reel.thumbnailUrl,
+    ...(code ? { code } : {}),
+  }, reasoning, category);
+  window.postMessage({
+    source: UNRENDER_REELS_SOURCE, keys: code ? [filename, code] : [filename],
+  }, '*');
 }
 
 /** Wire a rendered row so it can be dragged out to the right. `getReel` is a
@@ -1408,16 +1401,8 @@ function makeSwipeable(row: HTMLElement, getReel: () => Reel | null): void {
     // Take the reel out of the feed, not just out of the panel. Bouncing is a
     // "don't show me this" — leaving the reel in place meant you still scrolled
     // straight into it a moment later.
+    // (If it's the one playing, the next reel takes its place — ./unrender.ts.)
     hideReelCard(reel);
-
-    // And if it's the one PLAYING, move off it: the card collapsing under the
-    // viewport would otherwise dump the user mid-way into the next reel.
-    if (reel.reelId === activeReelId) advanceToNextReel(reel.reelId);
-
-    showBouncePopup({
-      caption: captionFromCard(reel.card),
-      thumbnailUrl: reel.thumbnailUrl,
-    });
   };
 
   row.addEventListener('pointerdown', (e) => {
@@ -1637,8 +1622,9 @@ function reelIdFromUrl(url: string): string {
 // every real card in paintedCard() (an ancestor contains everything, and sorts
 // first), froze activeReelId, fed the entire page to the caption scraper, and
 // handed the feed's own container to fitReel to clamp. Multiple covers mean
-// multiple reels whether or not their videos exist yet.
-function cardFromCover(img: HTMLImageElement): HTMLElement | null {
+// multiple reels whether or not their videos exist yet. Works from any element
+// inside the reel — the cover, or (for a reel whose cover is gone) its <video>.
+function cardFromCover(img: Element): HTMLElement | null {
   let el: HTMLElement | null = img.parentElement;
   let card: HTMLElement | null = null;
   for (let i = 0; i < 20 && el; i++) {
@@ -1737,6 +1723,90 @@ function reelVideoUrl(reel: Reel): string | null {
   return videoUrlFor(reel.thumbnailUrl);
 }
 
+type ReelEvidence = Omit<AnalyzeReelMessage, 'type' | 'task' | 'categories'>;
+
+/** What both the describe and the classify request are given: the caption,
+ *  the cover (or a mid-reel frame), and the soundtrack — an extracted clip, or
+ *  the video URL for the backend to extract from. */
+async function reelEvidence(reel: Reel, caption: string): Promise<ReelEvidence> {
+  // Only reels the user ISN'T watching may be seeked — seeking the active
+  // one would visibly jump the video under them. Skipped entirely when the
+  // flag is off, so there's no capture cost and no seeking at all.
+  const frame = USE_MID_REEL_FRAME
+    ? await captureMidFrame(reel.card, {
+        allowSeek: reel.reelId !== activeReelId,
+        thumbnailUrl: reel.thumbnailUrl,
+      })
+    : null;
+  // The third modality. Raced against a short deadline rather than
+  // awaited: the backend's own guidance is to send without audio rather
+  // than delay, and a description the user is waiting to read is the wrong
+  // place to block on a CDN fetch. A clip that misses this window is still
+  // cached, so the same reel described again gets it.
+  // The progressive-MP4 URL doubles as a clip source: the client transcode
+  // gets a shot at it, and whatever it can't turn into a
+  // clip goes to the backend as a URL for server-side extraction instead.
+  const videoUrl = reelVideoUrl(reel);
+  const clip = await clipForDescribe(reel.thumbnailUrl, AUDIO_CLIP_DEADLINE_MS, videoUrl);
+
+  return {
+    caption,
+    thumbnailUrl: reel.thumbnailUrl,
+    ...(frame?.ok ? { frameBase64: frame.base64 } : {}),
+    ...(clip ? { audioBase64: clip.base64, audioFormat: clip.format } : {}),
+    ...(!clip && videoUrl ? { videoUrl } : {}),
+  };
+}
+
+/** Reels a classify request has gone out for under the current phrase list —
+ *  from here or from a held batch. Cleared when the phrases change. */
+const classifiedReels = new Set<string>();
+
+/** Judge one on-screen reel against the user's filter phrases, unless a held
+ *  batch already did (pendingVerdicts) or a request is already out. */
+function classifyReel(reel: Reel, evidence: ReelEvidence): void {
+  if (filterPhrases.length === 0) return;
+  if (classifiedReels.has(reel.reelId) || pendingVerdicts.has(basenameOf(reel.reelId))) return;
+  classifiedReels.add(reel.reelId);
+  const message: AnalyzeReelMessage = {
+    type: 'analyzeReel', task: 'classify', ...evidence, categories: [...filterPhrases],
+  };
+  logReelRequest('classify', reel.reelId, message);
+  const answer: Promise<{
+    error?: string; shouldHide?: boolean; category?: string | null; reasoning?: string | null;
+  } | undefined> = chrome.runtime.sendMessage(message);
+  answer.then((res) => {
+    logReelResult('classify', reel.reelId, res);
+    if (!res || res.error) {
+      classifiedReels.delete(reel.reelId);   // a later sighting retries
+      announceVerdict(reel, { error: res?.error ?? 'No response from the classifier' });
+      return;
+    }
+    announceVerdict(reel, {
+      shouldHide: !!res.shouldHide, category: res.category ?? null, reasoning: res.reasoning ?? null,
+    });
+    if (res.shouldHide) autoFilterReel(reel, res.category ?? null, res.reasoning ?? null);
+  }).catch((err: Error) => {
+    classifiedReels.delete(reel.reelId);
+    announceVerdict(reel, { error: err.message });
+  });
+}
+
+/** "Evaluate Now" from the reasoning popup: drop whatever verdict this reel
+ *  has (on-screen or payload-time) and classify it again. */
+function reclassifyReelHolding(article: HTMLElement): void {
+  const reel = orderedReels.find((r) => r.card.contains(article));
+  if (!reel) return;
+  if (filterPhrases.length === 0) {
+    announceVerdict(reel, { error: 'No Instagram filter phrases are set' });
+    return;
+  }
+  classifiedReels.delete(reel.reelId);
+  pendingVerdicts.delete(basenameOf(reel.reelId));
+  const caption = captionFromCard(reel.card) || captionFor(reel) || '';
+  void reelEvidence(reel, caption).then((evidence) => classifyReel(reel, evidence));
+}
+
 async function describeReel(reel: Reel): Promise<string> {
   // Nothing to ask for while captions are what's on screen. This is the line
   // that makes the switch free rather than merely invisible: no request per
@@ -1760,66 +1830,19 @@ async function describeReel(reel: Reel): Promise<string> {
 
   const pending = (async (): Promise<string> => {
     try {
-      // Only reels the user ISN'T watching may be seeked — seeking the active
-      // one would visibly jump the video under them. Skipped entirely when the
-      // flag is off, so there's no capture cost and no seeking at all.
-      const frame = USE_MID_REEL_FRAME
-        ? await captureMidFrame(reel.card, {
-            allowSeek: reel.reelId !== activeReelId,
-            thumbnailUrl: reel.thumbnailUrl,
-          })
-        : null;
-      // Falling back to the thumbnail is fine; falling back QUIETLY is not.
-      // Instagram's markup and buffering are both out of our hands, so if
-      // mid-reel capture ever stops working this is the only place it would
-      // show — say so, loudly, every time.
-      if (frame?.ok) {
-        console.debug(
-          `[Bouncer IG] mid-reel frame: ${frame.chars} b64 chars @ q${frame.quality}`,
-          reel.reelId);
-      } else if (frame) {
-        console.warn(
-          `[Bouncer IG] NO mid-reel frame (${frame.reason}) — describing `
-          + `${reel.reelId} from the cover thumbnail instead`);
-      }
-      // The third modality. Raced against a short deadline rather than
-      // awaited: the backend's own guidance is to send without audio rather
-      // than delay, and a description the user is waiting to read is the wrong
-      // place to block on a CDN fetch. A clip that misses this window is still
-      // cached, so the same reel described again gets it.
-      // The progressive-MP4 URL doubles as a clip source: the client transcode
-      // gets a shot at it (measured, not assumed, to fail on iOS — the logs
-      // say which step breaks if it does), and whatever it can't turn into a
-      // clip goes to the backend as a URL for server-side extraction instead.
-      const videoUrl = reelVideoUrl(reel);
-      const clip = await clipForDescribe(reel.thumbnailUrl, AUDIO_CLIP_DEADLINE_MS, videoUrl);
-      if (clip) {
-        console.debug(
-          `[Bouncer IG] audio: ${clip.base64.length} b64 chars (${clip.format})`,
-          reel.reelId);
-      } else if (videoUrl) {
-        console.debug('[Bouncer IG] video URL riding along for server-side audio', reel.reelId);
-      }
+      const evidence = await reelEvidence(reel, caption);
+      // Classifying is its own request with its own prompt, sent alongside
+      // rather than after: a reel that matches should be hidden as soon as
+      // possible, not once its blurb is back.
+      classifyReel(reel, evidence);
 
-      const message: ContentToBackgroundMessage = {
-        type: 'analyzeReel',
-        caption,
-        thumbnailUrl: reel.thumbnailUrl,
-        ...(frame?.ok ? { frameBase64: frame.base64 } : {}),
-        ...(clip ? { audioBase64: clip.base64, audioFormat: clip.format } : {}),
-        ...(!clip && videoUrl ? { videoUrl } : {}),
-        // The user's filter phrases turn the describe into a describe+classify
-        // — one inference, verdict handled below. Never an empty list: the
-        // backend 400s on one, and no phrases means nothing to filter anyway.
-        ...(filterPhrases.length > 0 ? { categories: [...filterPhrases] } : {}),
-      };
-      const res = await Promise.race<{
-        description?: string; error?: string;
-        shouldHide?: boolean; category?: string | null; reasoning?: string | null;
-      } | undefined>([
+      const message: AnalyzeReelMessage = { type: 'analyzeReel', task: 'describe', ...evidence };
+      logReelRequest('describe', reel.reelId, message);
+      const res = await Promise.race<{ description?: string; error?: string } | undefined>([
         chrome.runtime.sendMessage(message),
         new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), DESCRIBE_WATCHDOG_MS)),
       ]);
+      logReelResult('describe', reel.reelId, res);
       const description = (res?.description ?? '').trim();
       if (res?.error || !description) {
         // Park the entry with a cooldown so a later scroll-by retries — but
@@ -1834,12 +1857,6 @@ async function describeReel(reel: Reel): Promise<string> {
         return '';
       }
       cache.set(reel.reelId, { description });
-      // The classify half of the answer, when phrases rode along. Before the
-      // refreshes below, so the panel and curtain render this reel already
-      // hidden rather than offering it for one frame.
-      if (res?.shouldHide) {
-        autoFilterReel(reel, res.category ?? null, res.reasoning ?? null);
-      }
       // A visible slot may have been waiting on this phrase. Both surfaces:
       // refreshPanel returns early in the phone-width flow (no panel is
       // mounted there), so without the second call a chooser row that opened
@@ -1896,8 +1913,7 @@ let feedRoot: HTMLElement | null = null;
  *  Lighter than removePanel(): the panel, the chooser and the listeners all
  *  survive, because the feature is not going away — only the list it is
  *  describing is. */
-function forgetReels(reason: string): void {
-  console.warn(`[Bouncer IG] feed reset (${reason}): dropping ${orderedReels.length} tracked reel(s)`);
+function forgetReels(): void {
   observer.disconnect();
   for (const reel of orderedReels) cards.delete(reel.card);
   ratios.clear();
@@ -1921,7 +1937,7 @@ function forgetReels(reason: string): void {
  *  unmounted. */
 function pruneDeadReels(): void {
   if (feedRoot?.isConnected !== false) return;
-  forgetReels('the feed container left the document');
+  forgetReels();   // the feed container left the document
   feedRoot = null;
 }
 
@@ -2052,8 +2068,6 @@ function evictWrapperCards(): void {
     const card = reel.card;
     if (!card.isConnected) continue;
     if (card.querySelectorAll('video').length <= 1 && coverImgCount(card) <= 1) continue;
-    console.warn(
-      `[Bouncer IG] dropping a feed wrapper mistaken for a reel card (${reel.reelId})`);
     observer.unobserve(card);
     ratios.delete(card);
     cards.delete(card);
@@ -2061,6 +2075,54 @@ function evictWrapperCards(): void {
     unfit(card);
     orderedReels.splice(i, 1);
   }
+}
+
+/** Start tracking a reel found on the page. */
+function registerReel(reel: Reel): void {
+  const card = reel.card;
+  cards.add(card);
+  cardToReel.set(card, reel);
+  insertOrdered(reel);
+  observer.observe(card);
+  // Feed the same discovery to the audio filter (it prefetches + hides on a
+  // match before the reel is reached).
+  audioController?.onReelDiscovered(reel.reelId, reel.card, reel.thumbnailUrl);
+  // Read the creator off the card NOW: Instagram recycles cards as you move,
+  // so a later read may be describing a different reel, or nothing at all.
+  remember(reel);
+  // A verdict may have preceded the reel here (classified at payload time,
+  // leaked through a hold timeout): act on it before it's ever offered.
+  applyPendingVerdict(reel);
+  // Otherwise judge it now. Held batches only cover reels Instagram fetches
+  // after boot; the first screenful is rendered into the page, and the reel you
+  // land on is never a chooser row — without this it was never classified.
+  // classifyReel skips anything already judged or in flight.
+  if (filterPhrases.length > 0 && !pendingVerdicts.has(basenameOf(reel.reelId))) {
+    const caption = captionFromCard(reel.card) || captionFor(reel) || '';
+    void reelEvidence(reel, caption).then((evidence) => classifyReel(reel, evidence));
+  }
+}
+
+/** The reel already playing when the page loads never shows its cover <img> —
+ *  Instagram drops it once the video starts — so cover-based discovery never
+ *  finds it, and it goes undescribed and unclassified ("Pending" forever, with
+ *  nothing for "Evaluate Now" to act on). It's the reel the address bar names,
+ *  so its identity comes from the hook's harvest instead: shortcode → cover. */
+function discoverAddressedReel(): void {
+  const code = /^\/reels?\/([^/]+)/.exec(location.pathname)?.[1];
+  if (!code) return;
+  const coverUrl = coverUrlForCode(code);
+  if (!coverUrl) return;
+  const reelId = reelIdFromUrl(coverUrl);
+  if (orderedReels.some(r => r.reelId === reelId)) return;
+  const mid = window.innerHeight / 2;
+  const video = Array.from(document.querySelectorAll('video')).find((v) => {
+    const r = v.getBoundingClientRect();
+    return r.top <= mid && r.bottom > mid;
+  });
+  const card = video ? cardFromCover(video) : null;
+  if (!card || cards.has(card)) return;
+  registerReel({ reelId, card, thumbnailUrl: coverUrl });
 }
 
 function scan(): void {
@@ -2100,26 +2162,14 @@ function scan(): void {
   const container = best.size > 0 ? [...best.keys()][0].parentElement : null;
   if (container && feedRoot && container !== feedRoot
       && !feedRoot.contains(container) && !container.contains(feedRoot)) {
-    forgetReels('Instagram rebuilt the reels list');
+    forgetReels();   // Instagram rebuilt the reels list
   }
   if (container) feedRoot = container;
 
   for (const [card, img] of best) {
-    const reel: Reel = { reelId: reelIdFromUrl(img.src), card, thumbnailUrl: img.src };
-    cards.add(card);
-    cardToReel.set(card, reel);
-    insertOrdered(reel);
-    observer.observe(card);
-    // Feed the same discovery to the audio filter (it prefetches + hides on a
-    // match before the reel is reached).
-    audioController?.onReelDiscovered(reel.reelId, reel.card, reel.thumbnailUrl);
-    // Read the creator off the card NOW: Instagram recycles cards as you move,
-    // so a later read may be describing a different reel, or nothing at all.
-    remember(reel);
-    // A verdict may have preceded the reel here (classified at payload time,
-    // leaked through a hold timeout): shield it before it's ever offered.
-    applyPendingVerdict(reel);
+    registerReel({ reelId: reelIdFromUrl(img.src), card, thumbnailUrl: img.src });
   }
+  discoverAddressedReel();
   harvestDurations();
   warmDurations();
   // Which reel is on screen, re-asked on every scan.
@@ -2199,113 +2249,6 @@ function watchForDurations(): void {
   document.addEventListener('durationchange', onReadable, true);
 }
 
-// ==================== Diagnostics ====================
-
-// Reel discovery is heuristic all the way down: Instagram's class names are
-// hashed, so a cover image is identified by SHAPE (decorative + served from the
-// IG CDN, see isCoverImg) rather than by selector, and the card around it by
-// counting <video> descendants. When either heuristic stops matching, every
-// surface downstream goes quiet at once and the whole feature looks like it
-// simply isn't running — with nothing to say which half broke.
-//
-// So it says so itself, once per page. The iOS app forwards console.* to the
-// Xcode console (see the bridge in ChromePolyfill.js), which is the only place
-// this is readable on device.
-const DISCOVERY_REPORT_MS = 5000;
-/** When to print the lengths timing line, in ms after boot. */
-const LENGTH_REPORT_MS = [8_000, 20_000, 45_000] as const;
-let reportedDiscovery = false;
-
-/** Just the lengths, repeatedly. `durationReport` carries the wait statistics:
- *  how many rows rendered with a blank where the time goes, how long they
- *  stayed that way, and which source eventually answered. */
-function reportLengths(): void {
-  if (!onReelsPage()) return;
-  const withLength = orderedReels.filter((r) => durationFor(r.thumbnailUrl) !== null).length;
-  console.warn(
-    `[Bouncer IG] lengths: ${withLength}/${orderedReels.length} reels have one. `
-    + durationReport(orderedReels.map((r) => r.thumbnailUrl)));
-}
-
-function reportDiscovery(): void {
-  if (reportedDiscovery || !onReelsPage()) return;
-  reportedDiscovery = true;
-
-  const images = Array.from(document.images);
-  let unlabelled = 0;
-  let onCdn = 0;
-  let covers = 0;
-  let carded = 0;
-  // Unlabelled CDN images inside the audio pill: they pass the cover test and
-  // are never the cover. See coverRank.
-  let audioChips = 0;
-  const samples: string[] = [];
-  for (const img of images) {
-    // Both halves reported separately, but the verdict is isCoverImg ITSELF.
-    // This used to re-implement the test with an extra `aria-hidden="true"`
-    // clause that isCoverImg dropped long ago, so the report announced "0
-    // passed the cover test" on a page where discovery was in fact working —
-    // sending us after a discovery bug that did not exist. A diagnostic that
-    // paraphrases the thing it measures is worse than no diagnostic.
-    const isUnlabelled = (img.getAttribute('alt') ?? '') === '';
-    const isCdn = /cdninstagram\.com/.test(img.src);
-    if (isUnlabelled) unlabelled++;
-    if (isCdn) onCdn++;
-    if (isCoverImg(img)) {
-      covers++;
-      if (cardFromCover(img)) carded++;
-      if (img.closest('a[href*="/reels/audio/"]')) audioChips++;
-    }
-    // Enough of a fingerprint to tell which half of the test each image failed.
-    if (samples.length < 8 && img.src) {
-      let host = '?';
-      try { host = new URL(img.src, location.href).host; } catch { /* keep '?' */ }
-      samples.push(
-        `${host} aria-hidden=${img.getAttribute('aria-hidden') ?? '-'}`
-        + ` alt="${(img.getAttribute('alt') ?? '').slice(0, 24)}"`);
-    }
-  }
-
-  // Lengths have two independent sources — Instagram's API payloads via the
-  // hook, and mounted <video> elements — so when one is missing, which of them
-  // came up short is the whole question.
-  const withLength = orderedReels.filter((r) => durationFor(r.thumbnailUrl) !== null).length;
-  const active = activeReelId === null
-    ? null
-    : orderedReels.find((r) => r.reelId === activeReelId) ?? null;
-  const activeVideo = active?.card.querySelector('video');
-  const activeState = activeVideo instanceof HTMLVideoElement
-    ? `duration=${activeVideo.duration} readyState=${activeVideo.readyState}`
-    : 'no <video> mounted';
-
-  console.warn(
-    `[Bouncer IG] lengths: ${withLength}/${orderedReels.length} reels have one. `
-    + `${durationReport(orderedReels.map((r) => r.thumbnailUrl))}. `
-    + `Active reel's <video>: ${activeState}`);
-
-  console.warn(`[Bouncer IG] fit: ${fitReport(active?.card ?? orderedReels[0]?.card ?? null)}`);
-
-  // The byline, with its working out shown — see creatorReport.
-  const bylineCard = active?.card ?? orderedReels[0]?.card ?? null;
-  console.warn(
-    `[Bouncer IG] byline: ${bylineCard ? creatorReport(bylineCard) : 'no reel card to read'}`);
-
-  console.warn(
-    `[Bouncer IG] discovery: ${orderedReels.length} reels tracked, `
-    + `active=${activeReelId ?? 'none'}, `
-    + `${document.querySelectorAll('video').length} <video> on page. `
-    + `Of ${images.length} images — ${unlabelled} with no alt, ${onCdn} on the IG CDN, `
-    + `${covers} passed the cover test (${audioChips} were audio chips), `
-    + `${carded} resolved to a card. `
-    + `Flow: width=${window.innerWidth} narrow=${isNarrowViewport()} `
-    + `intentional=${intentionalScrolling} active=${describerActive} `
-    + `hidden=${describerHidden} path=${location.pathname}`);
-
-  if (orderedReels.length === 0) {
-    console.warn('[Bouncer IG] no reels matched. Image sample:', samples.join('  |  '));
-  }
-}
-
 let scanTimer: ReturnType<typeof setTimeout> | null = null;
 function scheduleScan(): void {
   if (scanTimer) return;
@@ -2381,12 +2324,6 @@ function syncForLocation(): void {
 }
 
 async function boot(): Promise<void> {
-  // Which JS is actually running. The app bundles Bouncer/dist at Xcode build
-  // time, so "did the fix reach the phone" has been unanswerable from the
-  // outside — this line answers it. Bump the date when behaviour changes.
-  console.warn('[Bouncer IG] bundle 2026-09-01i (outer page pinned)'
-    + (DISABLE_INSTAGRAM_OVERLAY ? ' — OVERLAY DISABLED for debugging' : ''));
-
   // Respect the Instagram master switch, same key content/index.ts gates on.
   // Without this the panel would still mount when the platform is toggled off
   // — and its gear would be dead, because content.js returns before wiring the
@@ -2477,13 +2414,11 @@ async function boot(): Promise<void> {
   // whole list on every new deletion anyway.
   void restoreRemovedReelKeys().catch(() => { /* an empty kill list, not a failure */ });
 
-  // The filter phrases, for the describe+classify calls. getDescriptions
-  // rather than a raw storage read: it owns the legacy filter-pack migration.
-  // On any change (the settings modal and the bounce popup both write this
-  // key) the phrase list refreshes AND the describe cache empties — verdicts
-  // are phrase-relative, so every reel still ahead re-describes against the
-  // new list on the next panel/curtain refresh. Already-hidden reels stay
-  // hidden; "View filtered" is their way back.
+  // The filter phrases, for the classify calls. getDescriptions rather than a
+  // raw storage read: it owns the legacy filter-pack migration. The settings
+  // modal writes this key; on any change the verdicts are re-taken against the
+  // new list. Already-hidden reels stay hidden; "View filtered" is their way
+  // back.
   void getDescriptions(DESCRIPTIONS_STORAGE_KEY).then((phrases) => {
     filterPhrases = phrases;
     postFilterActive();
@@ -2493,10 +2428,23 @@ async function boot(): Promise<void> {
     void getDescriptions(DESCRIPTIONS_STORAGE_KEY).then((phrases) => {
       filterPhrases = phrases;
       postFilterActive();
-      cache.clear();
+      // Verdicts are phrase-relative; descriptions are not. Re-judge every
+      // tracked reel against the new list and keep the blurbs.
+      classifiedReels.clear();
+      pendingVerdicts.clear();
+      for (const reel of orderedReels) {
+        if (swipedAway.has(reel.reelId)) continue;
+        const caption = captionFromCard(reel.card) || captionFor(reel) || '';
+        void reelEvidence(reel, caption).then((evidence) => classifyReel(reel, evidence));
+      }
       refreshPanel();
       suggestions?.refresh();
     });
+  });
+
+  window.addEventListener(RECLASSIFY_REEL_EVENT, (e) => {
+    const article = (e as CustomEvent<{ article?: HTMLElement }>).detail?.article;
+    if (article) reclassifyReelHolding(article);
   });
 
   // The hook's held batches, asking for verdicts. Answered even with no
@@ -2528,20 +2476,7 @@ async function boot(): Promise<void> {
     positionPanel();
   });
 
-  // TEMP: reels-geometry probe for the slide-misalignment investigation.
-  // Prints through the native feedfilterLog bridge so the numbers land in the
-  // Xcode console. Remove when the investigation closes.
-  window.setInterval(geometryReport, 3000);
-
   syncForLocation();
-  // Long enough for Instagram to have mounted its first screenful, short enough
-  // that it's still on screen when the report lands.
-  setTimeout(reportDiscovery, DISCOVERY_REPORT_MS);
-  // Lengths keep arriving long after the discovery report has printed — that is
-  // the entire subject of the complaint — so the timing line repeats. Three
-  // samples: one with the first screenful, one after a batch or two has landed,
-  // one late enough to include anything that had to be fetched or probed.
-  for (const at of LENGTH_REPORT_MS) setTimeout(reportLengths, at);
   window.addEventListener('resize', onViewportResize);
   // The rail scrolls with the reel it belongs to.
   window.addEventListener('scroll', positionPanel, { passive: true, capture: true });

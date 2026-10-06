@@ -263,12 +263,13 @@ describe('swiping a row aside on the cover', () => {
     expect(cover()?.textContent).not.toContain('Reel 2 description');
   });
 
-  it('swiping the reel underneath aside journeys to the next kept reel, still covered', async () => {
+  // The hook takes the declined reel out of the feed and the next one slides
+  // into its place; a journey from the curtain would race that.
+  it('swiping the reel underneath aside lowers the cover without a journey', async () => {
     touchSwipe(coverRows()[0], 500);
     await vi.advanceTimersByTimeAsync(250);
-    expect(goTo).toHaveBeenCalledTimes(1);
-    expect((goTo.mock.calls[0][0] as ReelRecord).reelId).toBe('reel_1');
-    // Not a reveal: the cover went down for the journey, to rise on arrival.
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+    expect(goTo).not.toHaveBeenCalled();
     expect(api!.isOpen()).toBe(false);
   });
 
@@ -279,13 +280,11 @@ describe('swiping a row aside on the cover', () => {
     expect(coverRows()).toHaveLength(2);
   });
 
-  it('a dismissed reel arriving back under the sheet is skipped, never revealed', async () => {
-    touchSwipe(coverRows()[0], 500);            // decline reel_0, journey begins
+  it('a dismissed reel arriving back under the sheet is never covered or revealed', async () => {
+    touchSwipe(coverRows()[0], 500);            // decline reel_0
     await vi.advanceTimersByTimeAsync(250);
-    goTo.mockClear();
     await coverUp();                            // the feed lands on reel_0 again
-    expect(goTo).toHaveBeenCalledTimes(1);
-    expect((goTo.mock.calls[0][0] as ReelRecord).reelId).toBe('reel_1');
+    expect(goTo).not.toHaveBeenCalled();
     expect(api!.isOpen()).toBe(false);
   });
 
@@ -421,102 +420,5 @@ describe('holding the rows steady under a finger', () => {
     await vi.advanceTimersByTimeAsync(250);
     expect(coverRows()).toHaveLength(2);        // the owed render, paid on lift
     expect(onDismiss).not.toHaveBeenCalled();
-  });
-});
-
-// Swiping a reel away doesn't remove it from Instagram's feed — the DOM still
-// holds it, and every journey past it would otherwise show its opening frame.
-// The shield is the opaque stand-in planted INSIDE the dismissed reel's own
-// card, at dismissal time — attached, it scrolls with the reel and is simply
-// already there whenever the feed brings the reel by. (A fixed overlay raised
-// on arrival showed the declined frame for as long as settle detection took.)
-describe('shielding a dismissed reel', () => {
-  let api: Curtain | null = null;
-  let goTo: ReturnType<typeof vi.fn>;
-  let onDismiss: ReturnType<typeof vi.fn>;
-  let records: ReelRecord[] = [];
-  let route = 2000;
-
-  function shieldOn(card: HTMLElement): HTMLElement | null {
-    return card.querySelector('.bouncer-ig-shield');
-  }
-
-  async function coverUp(): Promise<void> {
-    window.history.pushState({}, '', `/reels/route_${++route}/`);
-    await vi.advanceTimersByTimeAsync(600);
-  }
-
-  beforeEach(async () => {
-    vi.useFakeTimers();
-    document.body.replaceChildren();
-    window.history.pushState({}, '', `/reels/route_${++route}/`);
-    goTo = vi.fn();
-    onDismiss = vi.fn();
-    records = [record(0), record(1), record(2)];
-    api = installCurtain({ records: () => records, goTo, onDismiss });
-    await coverUp();
-  });
-
-  afterEach(() => {
-    api?.teardown();
-    api = null;
-    vi.useRealTimers();
-  });
-
-  it("plants the shield on the reel's card the moment it is dismissed", async () => {
-    touchSwipe(coverRows()[1], 500);            // decline a FUTURE reel
-    await vi.advanceTimersByTimeAsync(250);     // the exit animation's commit
-    expect(onDismiss).toHaveBeenCalledTimes(1);
-    expect(shieldOn(records[1].card)).not.toBeNull();   // attached, before any journey
-    expect(shieldOn(records[0].card)).toBeNull();
-    expect(shieldOn(records[2].card)).toBeNull();
-  });
-
-  it('shields the reel underneath before the journey away from it', async () => {
-    touchSwipe(coverRows()[0], 500);            // decline the reel underneath
-    await vi.advanceTimersByTimeAsync(250);
-    expect(goTo).toHaveBeenCalledTimes(1);
-    expect(shieldOn(records[0].card)).not.toBeNull();   // its frame never had the screen
-  });
-
-  it('keeps the shield standing when the feed lands on the reel again', async () => {
-    touchSwipe(coverRows()[0], 500);
-    await vi.advanceTimersByTimeAsync(250);
-    await coverUp();                            // the feed arrives on reel_0 anyway
-    expect(shieldOn(records[0].card)).not.toBeNull();
-  });
-
-  it('follows the reel to a replacement card', async () => {
-    touchSwipe(coverRows()[1], 500);
-    await vi.advanceTimersByTimeAsync(250);
-    const oldCard = records[1].card;
-    const newCard = document.createElement('div');
-    document.body.appendChild(newCard);
-    oldCard.remove();                           // Instagram remounts the slide
-    records[1] = { ...records[1], card: newCard };
-
-    api!.refresh();
-    expect(shieldOn(newCard)).not.toBeNull();
-  });
-
-  it('evicts a shield from a card recycled to a reel the user keeps', async () => {
-    touchSwipe(coverRows()[1], 500);
-    await vi.advanceTimersByTimeAsync(250);
-    const recycled = records[1].card;
-    // Instagram hands reel_1's element to a NEW, kept reel; reel_1 is gone
-    // from the feed the host can see.
-    records = [records[0], { ...record(9), card: recycled }, records[2]];
-
-    api!.refresh();
-    expect(shieldOn(recycled)).toBeNull();      // the kept reel is not blacked out
-  });
-
-  it('takes its shields with it on teardown', async () => {
-    touchSwipe(coverRows()[1], 500);
-    await vi.advanceTimersByTimeAsync(250);
-    const card = records[1].card;
-    api!.teardown();
-    api = null;
-    expect(shieldOn(card)).toBeNull();
   });
 });

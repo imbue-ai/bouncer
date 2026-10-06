@@ -1,4 +1,5 @@
 {
+  "_comment_min_version": "Firefox 145 guarantees wasm JSPI (139+) + relaxed SIMD by default (145+), letting the build ship only litertlm_wasm_internal.* — see copyLitertlmAssets in build.js.",
   "background": {
     "scripts": [
       "browser-polyfill.js",
@@ -8,6 +9,7 @@
   "browser_specific_settings": {
     "gecko": {
       "id": "bouncer-store@feedfilter",
+      "strict_min_version": "145.0",
       "data_collection_permissions": {
         "required": [
           "websiteContent"

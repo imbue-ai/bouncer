@@ -133,17 +133,6 @@
           <span class="toggle-switch-label">Also filter replies in threads</span>
         </span>
       </label>
-      <!-- Off swaps the in-feed filter box's accent outline for the
-           platform's native card border. Stored as `coloredBorder`
-           (absent = on; new installs are seeded false at install time);
-           the content script applies it live. -->
-      <label class="toggle-switch colored-border-toggle">
-        <input type="checkbox" id="coloredBorderToggle" checked>
-        <span class="toggle-switch-slider" aria-hidden="true"></span>
-        <span class="toggle-switch-text">
-          <span class="toggle-switch-label">Colored border on Bouncer box</span>
-        </span>
-      </label>
     </section>
 
     <!-- Active Platforms: per-site master toggle + site-specific settings.
@@ -152,9 +141,24 @@
          require editing this file. Sites other than X are gated behind
          optional host permissions; their toggle triggers the browser's
          permission prompt. -->
-    <section class="active-platforms-section">
-      <label>Active Platforms</label>
-      <div id="platformsContainer"></div>
+    <!-- Excluded accounts: per-platform lists of accounts whose posts are
+         never classified or hidden (checked in the content script before
+         anything is sent to a model). Stored as excludedAccounts_${siteId};
+         sentence-style groups are rendered by popup/index.ts. Collapsed
+         accordion reusing the api-provider chrome; the generic
+         .api-provider-header click handler wires expand/collapse. -->
+    <section class="excluded-accounts-section">
+      <div class="api-provider" id="excludedAccountsProvider">
+        <div class="api-provider-header" id="excludedAccountsHeader">
+          <span class="api-provider-name">Excluded Accounts</span>
+          <div class="api-provider-header-right">
+            <span class="api-provider-arrow" aria-hidden="true"></span>
+          </div>
+        </div>
+        <div class="api-provider-content excluded-accounts-content">
+          <div id="excludedAccountsContainer"></div>
+        </div>
+      </div>
     </section>
 
     <!-- Accent color: retheme Bouncer's in-feed UI (panel outline, buttons,
@@ -168,7 +172,7 @@
           <span class="api-provider-name">Accent Color</span>
           <div class="api-provider-header-right">
             <span class="accent-color-chip" id="accentColorChip" aria-hidden="true"></span>
-            <span class="api-provider-arrow">&#9662;</span>
+            <span class="api-provider-arrow" aria-hidden="true"></span>
           </div>
         </div>
         <div class="api-provider-content accent-color-content">
@@ -207,9 +211,26 @@
             <div class="cp-swatches" id="cpSwatches" role="listbox" aria-label="Preset colors"></div>
             <button type="button" class="cp-reset" id="cpReset">Reset to default</button>
           </div>
+          <!-- Off swaps the in-feed filter box's accent outline for the
+               platform's native card border. Stored as `coloredBorder`
+               (absent = on; new installs are seeded false at install time);
+               the content script applies it live. -->
+          <label class="toggle-switch colored-border-toggle">
+            <input type="checkbox" id="coloredBorderToggle" checked>
+            <span class="toggle-switch-slider" aria-hidden="true"></span>
+            <span class="toggle-switch-text">
+              <span class="toggle-switch-label">Colored border on Bouncer box</span>
+            </span>
+          </label>
         </div>
       </div>
     </section>
+
+    <section class="active-platforms-section">
+      <label>Active Platforms</label>
+      <div id="platformsContainer"></div>
+    </section>
+
 
     <!-- Everything below is power-user surface: full model list, BYOK
          providers, AI-slop detection. Collapsed by default. -->
@@ -218,7 +239,7 @@
         <div class="api-provider-header" id="advancedSettingsHeader">
           <span class="api-provider-name">Advanced Settings</span>
           <div class="api-provider-header-right">
-            <span class="api-provider-arrow">&#9662;</span>
+            <span class="api-provider-arrow" aria-hidden="true"></span>
           </div>
         </div>
         <div class="api-provider-content advanced-settings-content" id="advancedSettingsContent">
@@ -228,7 +249,7 @@
       <div class="model-dropdown" id="modelDropdown">
         <div class="model-dropdown-selected" id="modelDropdownSelected">
           <span class="model-dropdown-text">Imbue (Default)</span>
-          <span class="model-dropdown-arrow">&#9662;</span>
+          <span class="model-dropdown-arrow" aria-hidden="true"></span>
         </div>
         <div class="model-dropdown-menu" id="modelDropdownMenu">
           <!-- Populated by JS -->
@@ -245,7 +266,7 @@
           <span class="api-provider-name">OpenRouter</span>
           <div class="api-provider-header-right">
             <span id="openrouterStatusBadge" class="api-status-badge">Not enabled</span>
-            <span class="api-provider-arrow">&#9662;</span>
+            <span class="api-provider-arrow" aria-hidden="true"></span>
           </div>
         </div>
         <div class="api-provider-content" id="openrouterContent">
@@ -277,7 +298,7 @@
           <span class="api-provider-name">OpenAI</span>
           <div class="api-provider-header-right">
             <span id="openaiStatusBadge" class="api-status-badge">Not enabled</span>
-            <span class="api-provider-arrow">&#9662;</span>
+            <span class="api-provider-arrow" aria-hidden="true"></span>
           </div>
         </div>
         <div class="api-provider-content" id="openaiContent">
@@ -298,7 +319,7 @@
           <span class="api-provider-name">Anthropic</span>
           <div class="api-provider-header-right">
             <span id="anthropicStatusBadge" class="api-status-badge">Not enabled</span>
-            <span class="api-provider-arrow">&#9662;</span>
+            <span class="api-provider-arrow" aria-hidden="true"></span>
           </div>
         </div>
         <div class="api-provider-content" id="anthropicContent">
@@ -322,7 +343,7 @@
           <span class="api-provider-name">Gemini</span>
           <div class="api-provider-header-right">
             <span id="geminiStatusBadge" class="api-status-badge">Not enabled</span>
-            <span class="api-provider-arrow">&#9662;</span>
+            <span class="api-provider-arrow" aria-hidden="true"></span>
           </div>
         </div>
         <div class="api-provider-content" id="geminiContent">

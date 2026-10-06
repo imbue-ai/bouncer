@@ -21,6 +21,15 @@
 //     category is in the removed set; only the model can tell us whether
 //     another remaining rule would still fire.
 
+// Category labels the AI text/image detectors stamp on posts they hide
+// (current labels plus the pre-rename ones still present in old cache
+// entries and filteredPosts snapshots). Pause treats these as removed rules
+// so AI-hidden posts restore alongside phrase-hidden ones; the pipeline uses
+// the same lists to attribute cached verdicts to a detector tab.
+export const AI_TEXT_DETECTOR_CATEGORIES = ['AI-generated', 'Looks like AI text'];
+export const AI_IMAGE_DETECTOR_CATEGORIES = ['AI-generated image', 'Looks like AI image'];
+export const AI_DETECTOR_CATEGORIES = [...AI_TEXT_DETECTOR_CATEGORIES, ...AI_IMAGE_DETECTOR_CATEGORIES];
+
 export type FilterRemovalDecision =
   | { kind: 'unaffected' }
   | { kind: 'restore' }

@@ -1,5 +1,6 @@
 package com.imbue.bouncer
 
+import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.graphics.Color
 import android.os.Build
@@ -21,6 +22,7 @@ import com.imbue.bouncer.state.BouncerViewModel
 import com.imbue.bouncer.ui.BouncerApp
 import com.imbue.bouncer.ui.theme.BouncerTheme
 import com.imbue.bouncer.web.BouncerGeckoView
+import com.imbue.bouncer.web.FilePromptBroker
 import org.mozilla.geckoview.WebNotification
 
 class MainActivity : ComponentActivity() {
@@ -36,6 +38,15 @@ class MainActivity : ComponentActivity() {
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             pendingPermissionCallback?.invoke(granted)
             pendingPermissionCallback = null
+        }
+
+    // Same single-flight shape for the Gecko file prompt (<input type="file">):
+    // one picker at a time, serialized behind a user gesture in the page.
+    private var pendingFilePickCallback: ((Int, Intent?) -> Unit)? = null
+    private val filePickerLauncher =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            pendingFilePickCallback?.invoke(result.resultCode, result.data)
+            pendingFilePickCallback = null
         }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -67,6 +78,15 @@ class MainActivity : ComponentActivity() {
             pendingPermissionCallback = onResult
             notificationPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
         }
+        FilePromptBroker.launcher = { pickIntent, onResult ->
+            pendingFilePickCallback = onResult
+            try {
+                filePickerLauncher.launch(pickIntent)
+            } catch (e: ActivityNotFoundException) {
+                pendingFilePickCallback = null
+                onResult(RESULT_CANCELED, null)
+            }
+        }
         handleWebNotificationClick(intent)
     }
 
@@ -76,8 +96,18 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
-        if (NotificationPermissionBroker.requester != null && !isChangingConfigurations) {
-            NotificationPermissionBroker.requester = null
+        if (!isChangingConfigurations) {
+            if (NotificationPermissionBroker.requester != null) {
+                NotificationPermissionBroker.requester = null
+            }
+            // The BouncerGeckoView singleton outlives this Activity; drop its
+            // references to our GeckoView/ViewModel so the Activity graph can
+            // be collected. On a config change the refs are about to be
+            // replaced by the next create(), so leave them for continuity.
+            BouncerGeckoView.onActivityDestroyed()
+        }
+        if (FilePromptBroker.launcher != null && !isChangingConfigurations) {
+            FilePromptBroker.launcher = null
         }
         super.onDestroy()
     }

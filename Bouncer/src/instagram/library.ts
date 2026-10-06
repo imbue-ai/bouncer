@@ -228,28 +228,6 @@ function chooseCreatorLink(card: HTMLElement): { a: HTMLAnchorElement; handle: s
     ?? null;
 }
 
-/** Exactly what the byline scraper can see on a card, for the on-device report.
- *
- *  This extraction has been wrong twice in ways invisible from the outside —
- *  first an anchored regex that the `?igsh=` share param defeated, then caption
- *  @mentions being indistinguishable from the author by URL shape. Both times
- *  the only symptom was "by —", which says nothing about which half failed. So
- *  the report ships the evidence: every link, what the shape test made of it,
- *  whether it wraps an avatar, and its text. */
-export function creatorReport(card: HTMLElement): string {
-  const links = Array.from(card.querySelectorAll<HTMLAnchorElement>('a[href]'));
-  if (links.length === 0) return 'no <a href> in the card at all';
-  const parts = links.slice(0, 10).map((a) => {
-    const href = (a.getAttribute('href') ?? '').slice(0, 44);
-    const handle = handleFromHref(a.getAttribute('href'));
-    const avatar = a.querySelector('img') ? ' [img]' : '';
-    const prose = insideProse(a, card) ? ' [prose]' : '';
-    const text = (a.textContent ?? '').trim().slice(0, 24);
-    return `${href} → ${handle ?? 'not-a-profile'}${avatar}${prose} "${text}"`;
-  });
-  return `${links.length} links: ${parts.join('  |  ')}`;
-}
-
 /** Capture what's only readable now. Safe to call repeatedly; the first
  *  SUCCESSFUL reading wins, because later ones may be looking at a recycled
  *  card. A reading that finds nothing is not cached — see creatorFor. */

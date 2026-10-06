@@ -11,6 +11,7 @@ import android.util.Log
 import android.widget.Toast
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.imbue.bouncer.analytics.Analytics
 import com.imbue.bouncer.push.NotificationPermissionBroker
 import com.imbue.bouncer.push.PushRegistrar
 import com.imbue.bouncer.push.PushSubscriptionStore
@@ -35,6 +36,13 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
 
     private var session: GeckoSession? = null
     private var bridge: GeckoBridge? = null
+    // True only once a feedfilterAiSettings reply has actually arrived. The
+    // first onPageStop can fire before the x.com content script exists (the
+    // freshly-opened session delivers a success stop for about:blank while
+    // loadUri waits on the extension install) — a request sent then vanishes,
+    // so the flag must not latch on send or the native toggles would stay on
+    // their defaults forever (e.g. "filter replies" showing on after restart
+    // even though storage says off).
     private var aiSettingsLoaded = false
     private var popupSessionRef: GeckoSession? = null
     @Volatile private var savedState: GeckoSession.SessionState? = null
@@ -66,6 +74,13 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
             hasCompletedOnboarding = prefs.getBoolean(KEY_ONBOARDED, false),
             hasLoggedIn = prefs.getBoolean(KEY_LOGGED_IN, false),
             hasSeenBouncerTooltip = prefs.getBoolean(KEY_BOUNCER_TOOLTIP_SEEN, false),
+            // Native prefs are the display truth for this toggle. The JS-side
+            // copy lives in per-origin page localStorage behind the content
+            // script, which doesn't exist on the login flow (exclude_matches)
+            // or before a feed page loads — seeding from it left the toggle
+            // stuck on its default after every restart.
+            filterReplies = prefs.getBoolean(KEY_FILTER_REPLIES, true),
+            debugModeEnabled = prefs.getBoolean(KEY_DEBUG_MODE, false),
             // The settings toggle's state: the persisted display preference,
             // defaulting to whether a subscription already exists (so pre-existing
             // subscribers show "on").
@@ -142,6 +157,14 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
     fun onShowSheet(json: String) {
         applyPhrasesJson(null, json)
         _state.update { it.copy(isSheetPresented = !it.isSheetPresented) }
+        // Re-sync settings from storage whenever the sheet becomes visible —
+        // the counterpart of the iOS sheet's .onAppear { loadFilterReplies() }.
+        // Storage is the truth and JS can change it behind the native UI's
+        // back (e.g. bouncing a reply flips filterReplies back on).
+        if (_state.value.isSheetPresented) {
+            callJs("__ff_loadAiSettings")
+            loadExcludedAccounts()
+        }
     }
 
     // platformId identifies which tab pushed this (null = the active tab). The
@@ -171,6 +194,7 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
             )
         }
         callJs("__ff_loadAiSettings")
+        loadExcludedAccounts()
     }
 
     fun onModalClosed() {
@@ -244,6 +268,7 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
         NotificationPermissionBroker.ensurePermission(getApplication()) { granted ->
             prefs.edit().putBoolean(KEY_NOTIF_PROMPTED, true).apply()
             Log.i(tag, "notif permission (early) granted=$granted")
+            Analytics.logNotificationPermissionResult(getApplication(), "onboarding", granted)
         }
     }
 
@@ -277,6 +302,7 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
             NotificationPermissionBroker.ensurePermission(getApplication()) { granted ->
                 prefs.edit().putBoolean(KEY_NOTIF_PROMPTED, true).apply()
                 Log.i(tag, "auto-enable: POST_NOTIFICATIONS granted=$granted")
+                Analytics.logNotificationPermissionResult(getApplication(), "timeline_fallback", granted)
                 if (granted) startBackgroundPushEnable()
             }
         } else {
@@ -301,6 +327,7 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
     fun setNotificationsEnabled(on: Boolean) {
         prefs.edit().putBoolean(WebNotificationHandler.KEY_NOTIFICATIONS_ON, on).apply()
         _state.update { it.copy(notificationsEnabled = on) }
+        Analytics.logNotificationsToggled(getApplication(), on)
         if (!on) return
         val subscribed = runCatching {
             PushSubscriptionStore(getApplication()).get("https://x.com/") != null
@@ -318,6 +345,7 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
             NotificationPermissionBroker.ensurePermission(getApplication()) { granted ->
                 prefs.edit().putBoolean(KEY_NOTIF_PROMPTED, true).apply()
                 Log.i(tag, "manual enable: POST_NOTIFICATIONS granted=$granted")
+                Analytics.logNotificationPermissionResult(getApplication(), "settings", granted)
                 if (granted) startBackgroundPushEnable()
                 else debugToast("Bouncer: notifications need permission")
             }
@@ -421,6 +449,7 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
                 // (the toggle then reads "off" everywhere). Keep the tab alive for
                 // a grace period so the backend registration completes first.
                 Log.i(tag, "auto-enable: subscription registered for $scope; POST in background")
+                Analytics.logPushSubscribed(getApplication())
                 debugToast("Bouncer: notifications enabled ✓")
                 val mode = pushEnableMode
                 pushEnableMode = null
@@ -579,7 +608,23 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
         if (_state.value.loadFailed) {
             _state.update { it.copy(loadFailed = false) }
         }
+        // Stamp the persisted choice into this page's storage BEFORE the read
+        // below, so the reply reflects it.
+        syncFilterRepliesToPage()
+        syncDebugModeToPage()
         maybeLoadAiSettings()
+        if (prefs.getBoolean(KEY_PENDING_AI_SLOP_SEED, false) && isOnX(_state.value.currentUrl)) {
+            prefs.edit().remove(KEY_PENDING_AI_SLOP_SEED).apply()
+            // The onboarding "Remove AI Slop" checkbox. Planting the seed
+            // phrase engages AI detection deterministically
+            // (isAiDetectionPhrase in shared/utils.ts) — the same end state
+            // as tapping the sparkle indicator, no judge round trip needed.
+            // The badge dismissal is persisted BEFORE the phrase add,
+            // mirroring toggleAiDetection's ordering on iOS: the pushes the
+            // add triggers re-read the flag from storage.
+            callJs("__ff_setStorage", JSONObject().put("aiIndicatorBadgeDismissed", true))
+            callJs("__ff_addPhrase", "AI slop")
+        }
         if (pendingShareFilterPack && isOnX(_state.value.currentUrl)) {
             pendingShareFilterPack = false
             pendingShareTimeoutJob?.cancel()
@@ -660,6 +705,7 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
                 themeMode = theme ?: s.themeMode,
                 aiDetectionOn = if (obj.has("aiDetectionOn")) obj.optBoolean("aiDetectionOn") else s.aiDetectionOn,
                 aiDetectionPending = if (aiConfirmed) false else s.aiDetectionPending,
+                aiBadgeDismissed = if (obj.has("aiBadgeDismissed")) obj.optBoolean("aiBadgeDismissed") else s.aiBadgeDismissed,
             )
         }
     }
@@ -669,11 +715,68 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
     fun setSheetPresented(open: Boolean) {
         _state.update { it.copy(isSheetPresented = open) }
         callJs("__ff_setSheetClass", open)
+        // Same on-appear re-sync as onShowSheet: storage is the truth.
+        if (open) {
+            callJs("__ff_loadAiSettings")
+            loadExcludedAccounts()
+        }
     }
 
-    fun completeOnboarding() {
+    // Excluded accounts for the active platform. Storage is the truth (the
+    // filtered-posts modal's "Never filter @x" button writes it directly);
+    // the mutate bridge re-posts the updated list once the write resolves,
+    // and the reply lands in onAiSettingsReply.
+    private fun loadExcludedAccounts() {
+        callJs("__ff_loadExcludedAccounts", _state.value.activePlatformId)
+    }
+
+    fun addExcludedAccount(text: String) {
+        val t = text.trim()
+        if (t.isEmpty()) return
+        callJs("__ff_mutateExcludedAccount", "add", _state.value.activePlatformId, t)
+    }
+
+    fun removeExcludedAccount(account: String) {
+        // Optimistic removal so the row disappears on tap; the bridge's
+        // re-post confirms (or restores) the real list.
+        _state.update { it.copy(excludedAccounts = it.excludedAccounts - account) }
+        callJs("__ff_mutateExcludedAccount", "remove", _state.value.activePlatformId, account)
+    }
+
+    // Open an excluded account's profile in the webview (the app is the
+    // browser, so in-app navigation is the native equivalent of a link).
+    // Twitter/YouTube have handle-derived profile URLs; LinkedIn stores
+    // display names with no stable URL, so the sheet renders those rows
+    // non-clickable and this is never called for them.
+    fun openExcludedAccount(account: String) {
+        val handle = account.removePrefix("@")
+        val url = when (_state.value.activePlatformId) {
+            "twitter" -> "https://x.com/$handle"
+            "youtube" -> "https://www.youtube.com/@$handle"
+            else -> return
+        }
+        setSheetPresented(false)
+        navigateTo(url)
+    }
+
+    fun completeOnboarding(enableAiSlop: Boolean) {
         prefs.edit().putBoolean(KEY_ONBOARDED, true).apply()
-        _state.update { it.copy(hasCompletedOnboarding = true) }
+        // The extension isn't reachable yet — the GeckoView (and its content
+        // script) only mounts after onboarding — so park the intent in prefs
+        // and plant the seed phrase on the first x.com load (onPageStop).
+        if (enableAiSlop) {
+            prefs.edit().putBoolean(KEY_PENDING_AI_SLOP_SEED, true).apply()
+        }
+        // Checking the box IS the action the sparkle's first-run "REMOVE AI
+        // SLOP?" pill advertises — treat it as already tapped so the sheet
+        // opens with the plain sparkle (the storage flag is persisted
+        // alongside the seed phrase in onPageStop).
+        _state.update {
+            it.copy(
+                hasCompletedOnboarding = true,
+                aiBadgeDismissed = it.aiBadgeDismissed || enableAiSlop,
+            )
+        }
         // Pop the OS notification-permission dialog right now, before login, so the
         // one required tap is out of the way up front; the x.com subscribe then
         // happens silently once the user reaches their home timeline.
@@ -753,11 +856,41 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
         callJs("__ff_toggleAiDetection")
     }
 
-    // Same storage key the JS pipeline reads (`filterReplies`); the content
-    // script's storage.onChanged listener applies it live, including
-    // un-hiding already-filtered replies when turned off.
+    // Persist natively (display truth, survives restarts and pages where no
+    // content script is reachable), then mirror into the JS pipeline's storage
+    // key (`filterReplies`); the content script's storage.onChanged listener
+    // applies it live, including un-hiding already-filtered replies when
+    // turned off. If the mirror write is dropped (login screen, mid-load),
+    // syncFilterRepliesToPage re-applies it on the next page load.
     fun setFilterReplies(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_FILTER_REPLIES, enabled).apply()
         _state.update { it.copy(filterReplies = enabled) }
+        callJs("__ff_setStorage", JSONObject().put("filterReplies", enabled))
+    }
+
+    // Same shape as setFilterReplies: native prefs are the display truth, the
+    // `debugMode` storage key is what the content script reads to enable the
+    // press-and-hold reasoning popup (addContextMenuHandler in content/ui.ts).
+    fun setDebugMode(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_DEBUG_MODE, enabled).apply()
+        _state.update { it.copy(debugModeEnabled = enabled) }
+        callJs("__ff_setStorage", JSONObject().put("debugMode", enabled))
+    }
+
+    private fun syncDebugModeToPage() {
+        if (!prefs.contains(KEY_DEBUG_MODE)) return
+        val enabled = prefs.getBoolean(KEY_DEBUG_MODE, false)
+        callJs("__ff_setStorage", JSONObject().put("debugMode", enabled))
+    }
+
+    // Re-apply the natively persisted choice to the freshly loaded page. The
+    // JS pipeline reads page storage, which on Android is per-origin
+    // localStorage (the polyfill has no native store) — so every origin the
+    // user filters needs the value stamped in, and a toggle flipped while no
+    // content script was reachable would otherwise never take effect.
+    private fun syncFilterRepliesToPage() {
+        if (!prefs.contains(KEY_FILTER_REPLIES)) return
+        val enabled = prefs.getBoolean(KEY_FILTER_REPLIES, true)
         callJs("__ff_setStorage", JSONObject().put("filterReplies", enabled))
     }
 
@@ -786,17 +919,33 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
 
     fun onAiSettingsReply(json: String) {
         val obj = runCatching { JSONObject(json) }.getOrElse { return }
+        aiSettingsLoaded = true
+        // JS can flip this setting itself (bouncing a reply on a permalink
+        // turns it back on — ensureFilterRepliesEnabled in content/ui.ts), so
+        // follow reported page state into prefs; otherwise the next page load
+        // would stamp the stale native value back over the user's action.
+        if (obj.has("filterReplies")) {
+            prefs.edit()
+                .putBoolean(KEY_FILTER_REPLIES, obj.optBoolean("filterReplies", true))
+                .apply()
+        }
         _state.update { s ->
             s.copy(
                 aiDetectionOn = if (obj.has("aiDetectionOn")) obj.optBoolean("aiDetectionOn") else s.aiDetectionOn,
                 filterReplies = if (obj.has("filterReplies")) obj.optBoolean("filterReplies", s.filterReplies) else s.filterReplies,
+                aiBadgeDismissed = if (obj.has("aiBadgeDismissed")) obj.optBoolean("aiBadgeDismissed") else s.aiBadgeDismissed,
+                excludedAccounts = obj.optJSONArray("excludedAccounts")?.let { arr ->
+                    List(arr.length()) { i -> arr.optString(i) }.filter { it.isNotEmpty() }
+                } ?: s.excludedAccounts,
             )
         }
     }
 
+    // Re-request on every full page load until a reply lands (onAiSettingsReply
+    // sets the flag). Requests sent to a page without the content script are
+    // silently lost, so latching on send would freeze the UI on its defaults.
     private fun maybeLoadAiSettings() {
         if (aiSettingsLoaded) return
-        aiSettingsLoaded = true
         callJs("__ff_loadAiSettings")
     }
 
@@ -806,8 +955,11 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
 
     companion object {
         private const val KEY_ONBOARDED = "hasCompletedOnboarding"
+        private const val KEY_PENDING_AI_SLOP_SEED = "pendingAiSlopSeed"
         private const val KEY_LOGGED_IN = "hasLoggedIn"
         private const val KEY_BOUNCER_TOOLTIP_SEEN = "hasSeenBouncerTooltip"
+        private const val KEY_FILTER_REPLIES = "filterReplies"
+        private const val KEY_DEBUG_MODE = "debugMode"
         private const val KEY_NOTIF_PROMPTED = "hasPromptedNotifications"
         private const val PUSH_SETTINGS_URL = "https://x.com/settings/push_notifications"
         // How long to let the off-screen (background, throttled) surface try to

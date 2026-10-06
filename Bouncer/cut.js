@@ -112,6 +112,7 @@ async function main() {
     'vendor/*',
     '.git/*',
     '.gitignore',
+    '.idea/*',
     '.wrangler/*',
     'hosting/*',
     'src/*',
@@ -123,6 +124,15 @@ async function main() {
     'background.js',
     'popup.js',
     'content.js',
+    'offscreen.js',
+    'onboarding.js',
+    'litertlm-stub.js',
+    // iOS-only bundles (consumed by the Xcode project, dead weight in
+    // Chrome/Firefox zips).
+    'dist/background-app.js',
+    'dist/popup-app.js',
+    // Adapter TypeScript sources — only the built dist/<Name>.js ships.
+    'adapters/*/*.ts',
     'adapters/twitter/TwitterAdapter.ts',
     'package.json',
     'package-lock.json',

@@ -80,10 +80,6 @@ const MIN_BANNER_HEIGHT_PX = 28;
  *  a caption, a comment, or a page. */
 const MAX_BANNER_TEXT = 200;
 
-/** When to report anything still standing. Late enough that Instagram has
- *  finished putting its promos up, early enough to still be on the screen the
- *  user is looking at. */
-const PROMO_REPORT_MS = 6_000;
 
 /** Ours, and off limits. */
 const OURS = '[id^="bouncer-"], [class^="bouncer-"]';
@@ -470,14 +466,6 @@ export function installPromoDismisser(): () => void {
     if (pending) return;
     pending = window.setTimeout(sweep, 300);
   };
-
-  // Say what was left behind, once the page has settled. A promo we did not
-  // dismiss is invisible from here otherwise — dismissAppPromos returning 0 is
-  // the same number whether there was nothing to do or four tests failed.
-  setTimeout(() => {
-    const report = reportAppPromos();
-    if (!report.startsWith('nothing')) console.warn(`[Bouncer IG] promos: ${report}`);
-  }, PROMO_REPORT_MS);
 
   const observer = new MutationObserver(schedule);
   observer.observe(document.documentElement, { childList: true, subtree: true });

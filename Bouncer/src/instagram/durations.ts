@@ -45,6 +45,9 @@ const videoUrlByStem = new Map<string, string>();
 // a cover filename and everything the hook knows about that reel, exact key and
 // forgiving stem alike. See reelCodeFor.
 const codeByFilename = new Map<string, string>();
+// Shortcode -> the reel's cover URL, for the one reel no cover <img> names:
+// the one already playing when the page loads.
+const coverUrlByCode = new Map<string, string>();
 const codeByStem = new Map<string, string>();
 // Filenames already asked. One probe per reel, ever — a reel whose header we
 // couldn't read is not going to become readable by asking again.
@@ -143,13 +146,6 @@ function record(filename: string, seconds: unknown, source: DurationSource = 'un
   if (timing.resolvedAt === undefined) {
     timing.resolvedAt = performance.now();
     timing.source = source;
-    if (timing.firstAskedAt !== undefined) {
-      const waited = Math.round(timing.resolvedAt - timing.firstAskedAt);
-      console.debug(
-        `[Bouncer IG] length arrived after ${waited}ms blank `
-        + `(${timing.asks} render${timing.asks === 1 ? '' : 's'} without it, via ${source}): `
-        + filename);
-    }
   }
   scheduleAnnounce();
 }
@@ -184,6 +180,7 @@ export function installDurationSource(): void {
       via?: string;
       entries?: {
         filenames?: string[]; durationSec?: number; videoUrl?: string; code?: string;
+        coverUrl?: string;
       }[];
       stats?: HookStats;
     } | null;
@@ -209,6 +206,7 @@ export function installDurationSource(): void {
         // kept whatever else the entry carried.
         if (entry.code) rememberCode(f, entry.code);
       }
+      if (entry.code && entry.coverUrl) coverUrlByCode.set(entry.code, entry.coverUrl);
       // And if it arrived without one, go and get it NOW.
       //
       // This is the difference between a length that is there when you look and
@@ -411,6 +409,11 @@ function waitReport(): string {
 export function reelCodeFor(thumbnailUrl: string): string | null {
   const f = fileNameOf(thumbnailUrl);
   return f === null ? null : lookup(codeByFilename, codeByStem, f);
+}
+
+/** The cover URL of the reel with this shortcode, when the hook has seen it. */
+export function coverUrlForCode(code: string): string | null {
+  return coverUrlByCode.get(code) ?? null;
 }
 
 /** The reel's video URL, when the hook has posted one. Exported for tests. */

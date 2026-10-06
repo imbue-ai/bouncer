@@ -6,6 +6,7 @@ import android.content.res.Configuration
 import android.os.Build
 import android.os.Process
 import android.util.Log
+import com.imbue.bouncer.analytics.Analytics
 import com.imbue.bouncer.web.AppCheckBridge
 import com.imbue.bouncer.web.BouncerGeckoView
 import kotlinx.coroutines.CoroutineScope
@@ -31,6 +32,10 @@ class BouncerApplication : Application() {
             return
         }
         appCheck = AppCheckBridge(this).also { it.configure() }
+        Analytics.init(this)
+        // Snapshot notification enablement every launch — it drifts outside the
+        // app (system-settings mute, permission revocation).
+        Analytics.refreshNotificationStatus(this)
         if (BuildConfig.DEBUG) {
             com.imbue.bouncer.push.PushSubscriptionStore(this).dumpToLog(TAG)
         }

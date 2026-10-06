@@ -6,6 +6,19 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- firebase-analytics merges these in for ad-attribution; we only use
+         Analytics for feature telemetry, so strip them and keep the Play
+         data-safety declaration unchanged. -->
+    <uses-permission
+        android:name="com.google.android.gms.permission.AD_ID"
+        tools:node="remove" />
+    <uses-permission
+        android:name="android.permission.ACCESS_ADSERVICES_AD_ID"
+        tools:node="remove" />
+    <uses-permission
+        android:name="android.permission.ACCESS_ADSERVICES_ATTRIBUTION"
+        tools:node="remove" />
+
     <!-- Lets PushRegistrar existence-check Play Services on API 30+. -->
     <queries>
         <package android:name="com.google.android.gms" />
@@ -24,6 +37,10 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.Bouncer"
         android:usesCleartextTraffic="false">
+        <!-- Pairs with the AD_ID removal above. -->
+        <meta-data
+            android:name="google_analytics_adid_collection_enabled"
+            android:value="false" />
         <activity
             android:name=".MainActivity"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode"

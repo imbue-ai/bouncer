@@ -684,7 +684,6 @@ async function goBack(): Promise<void> {
     // replaced" looks like. A feed whose scroller has nowhere to go simply
     // stays put now.
     if (!goBackLocal()) {
-      console.debug('[Bouncer IG] back: no scroll position above to return to');
       return;
     }
     // Hold `driving` until the feed has actually stopped, exactly as arriveAt
@@ -1125,7 +1124,6 @@ async function restock(): Promise<void> {
   // has no still to hide behind, and the walk in the open is reels flashing
   // past unplayed — strictly worse than a sheet with nothing new to offer.
   if (coverWith(host?.records()[0] ?? null) === null) {
-    console.debug('[Bouncer IG] restock: no reel to cover the walk with — staying put');
     restockHome = null;
     return;
   }
@@ -1321,30 +1319,8 @@ async function holdArrival(record: ReelRecord, gen: number): Promise<void> {
   };
   const coverUntil = performance.now() + SETTLE_UNDER_COVER_MS;
 
-  // The one line that says whether picking a reel actually worked. Printed on
-  // every exit, whatever the reason — without it the log says how the journey
-  // was steered and then stops, which is the half that was never in doubt.
-  const verdict = (why: string): void => {
-    // Hit-testing first, for the same reason visibleRecord exists at all: on a
-    // stacked pager a rectangle says ON SCREEN about every reel at once, which
-    // is a verdict that cannot fail and therefore cannot be trusted. Naming
-    // the reel actually painted is what makes this line worth reading.
-    const seen = visibleRecord();
-    let where: string;
-    if (seen !== null) {
-      where = seen.reelId === record.reelId
-        ? 'ON SCREEN'
-        : `WRONG REEL — showing ${seen.reelId}`;
-    } else {
-      const rect = record.card.isConnected ? record.card.getBoundingClientRect() : null;
-      where = rect !== null && rect.height >= 1
-        ? `cannot hit-test; card at top ${Math.round(rect.top)} of ${Math.round(rect.height)}`
-        : 'cannot hit-test; card unmounted';
-    }
-    console.warn(`[Bouncer IG] pick: settled on ${record.reelId} — ${where};`
-      + ` ${why}; ${corrections} correction(s)`);
-    reveal();
-  };
+  // Every exit from the arrival hold ends here, whatever the reason.
+  const verdict = (_why: string): void => reveal();
 
   for (let waited = 0; waited < ARRIVAL_HOLD_MS; waited += ARRIVAL_POLL_MS) {
     await wait(ARRIVAL_POLL_MS);
@@ -1375,7 +1351,7 @@ async function holdArrival(record: ReelRecord, gen: number): Promise<void> {
       // a tenth of a second and is the difference between correcting a real
       // drift and chasing a frame of the pager's own animation.
       if (++wrongFor < WRONG_POLLS) continue;
-      // Measured and reported, never acted on. Acting meant navigation this
+      // Measured, never acted on. Acting meant navigation this
       // surface no longer performs (see arriveAt: scrolling only), and the
       // device logs showed the corrections themselves causing the visible
       // round trips they were meant to cure.
@@ -1395,8 +1371,6 @@ async function holdArrival(record: ReelRecord, gen: number): Promise<void> {
       verdict('drifting faster than it can be held');
       return;
     }
-    console.debug(`[Bouncer IG] pick: ${record.reelId} drifted to `
-      + `${Math.round(rect.top)}px after landing — putting it back`);
     claimScroll();
     record.card.scrollIntoView?.({ behavior: 'auto', block: 'center' });
     repin();
@@ -1648,24 +1622,6 @@ function refreshRowFacts(slot: HTMLElement, record: ReelRecord): void {
     const text = meta(record);
     if (text && time.textContent !== text) time.textContent = text;
   }
-}
-
-/** How many reels forward `record` is from the one the glass went up over,
- *  measured NOW rather than when the row was built.
- *
- *  It used to be the row's index, captured at render time and carried in the
- *  click handler. That is only the right number while the feed hasn't moved,
- *  and the feed moves — the restock walk runs while the glass is up. A stale
- *  count swipes the right number of times to the wrong place. */
-function stepsTo(record: ReelRecord): number {
-  const all = host?.records() ?? [];
-  const anchor = anchorId === null ? -1 : all.findIndex((r) => r.reelId === anchorId);
-  const target = all.findIndex((r) => r.reelId === record.reelId);
-  if (anchor >= 0 && target > anchor) return target - anchor;
-  // The reel has been recycled out of the list, so its distance can't be
-  // measured any more. Its slot is the last thing that knew.
-  const slot = slotRecords.findIndex((r) => r?.reelId === record.reelId);
-  return slot >= 0 ? slot + 1 : 1;
 }
 
 /** The reel each mounted row stands for — what a touch tap picks by. The click
@@ -2111,22 +2067,6 @@ function close(how: 'fade' | 'down' | 'up' = 'fade'): void {
 }
 
 function pick(record: ReelRecord, from: DOMRect): void {
-  const steps = stepsTo(record);
-  // What was chosen, and what it was chosen FROM. The anchor is the half that
-  // is otherwise invisible: the glass offers the reels after the one it went
-  // up over, so an anchor that is stale or unknown produces a perfectly
-  // executed journey to a reel the user did not mean — which from the outside
-  // is indistinguishable from the journey going wrong.
-  console.warn(`[Bouncer IG] pick: chose ${record.reelId}, row ${steps} of `
-    + `${windowRecords().length}, anchor=${anchorId ?? 'NONE'}, `
-    + `reachable=${record.card.isConnected}, restocking=${restockHome !== null}, `
-    // Whether this reel can be jumped to by address, or has to be swiped to.
-    // Measured on device, every pick fell back to swiping — the hook had never
-    // seen the payload for the reels actually on screen, so there was no code
-    // to jump with. Named here so that is a fact in the log rather than an
-    // absence of one.
-    + `code=${record.code ?? 'NONE'}`);
-
   endRestock(false);
   // Straight off the screen rather than animated away: the cover coming up out
   // of the row is the transition, and glass fading through it would be a second.

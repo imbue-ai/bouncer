@@ -3,7 +3,7 @@
 import type { ModelDef, LocalModelStatus, StorageSchema, SiteId } from '../types';
 import { PREDEFINED_MODELS, DEFAULT_MODEL } from '../shared/models';
 import { escapeHtml, parseHTML } from '../shared/utils';
-import { getStorage, setStorage, removeStorage, clampThreshold, clampImageThreshold, clampReplyThreshold, aiIntentAutoActive } from '../shared/storage';
+import { getStorage, setStorage, removeStorage, clampThreshold, clampImageThreshold, clampReplyThreshold, aiIntentAutoActive, getExcludedAccounts, setExcludedAccounts, normalizeAccountIdentity } from '../shared/storage';
 import {
   DEFAULT_BRAND_COLOR, BRAND_COLOR_PRESETS,
   normalizeHexColor, hexToRgb, rgbToHex, rgbToHsv, hsvToRgb,
@@ -142,17 +142,11 @@ function initAudioFilterSection(): void {
     .catch(err => console.error('[Popup] Failed to load audio filter terms:', err));
 }
 
-// Platform-specific accordion sub-content (Twitter's "Filter replies",
-// YouTube's "Show placeholder", etc.). Add an entry here when a platform
-// needs its own row-nested toggle; LinkedIn-style platforms (no sub-row)
-// just return ''.
+// Platform-specific accordion sub-content. Add a case here when a platform
+// needs its own row-nested toggle; platforms without one (currently all of
+// them) just return '', which also suppresses the row's expand arrow.
 function platformSubContentHTML(id: SiteId): string {
   switch (id) {
-    case 'youtube':
-      return '<div class="api-provider-content"><label class="checkbox-label">'
-        + '<input type="checkbox" id="enableYoutubePlaceholder">'
-        + '<span>Show "Filtered by Bouncer" placeholder instead of removing</span>'
-        + '</label></div>';
     default:
       return '';
   }
@@ -179,7 +173,7 @@ function renderPlatformRows(): void {
               <input type="checkbox" id="${platformToggleId(p.id)}"${startChecked ? ' checked' : ''}>
               <span class="ts-inline-slider" aria-hidden="true"></span>
             </label>
-            ${hasSub ? '<span class="api-provider-arrow">&#9662;</span>' : ''}
+            ${hasSub ? '<span class="api-provider-arrow" aria-hidden="true"></span>' : ''}
           </div>
         </div>
         ${platformSubContentHTML(p.id)}
@@ -427,6 +421,13 @@ function setupStorageListener() {
     if (areaName === 'local' && changes.authErrorApis) {
       loadSettings().catch(err => console.error('[Popup] loadSettings failed:', err));
     }
+    // An exclusion added from a page's filtered-posts panel ("Don't filter
+    // @handle") while the popup is open — re-render the chip lists. Also
+    // fires on the popup's own writes; renderExcludedAccounts preserves
+    // input focus, so the extra render is invisible.
+    if (areaName === 'local' && Object.keys(changes).some(k => k.startsWith('excludedAccounts_'))) {
+      renderExcludedAccounts().catch(err => console.error('[Popup] renderExcludedAccounts failed:', err));
+    }
     if (areaName === 'local' && changes.localModelStatuses) {
       localModelStatuses = (changes.localModelStatuses.newValue as Record<string, LocalModelStatus>) || {};
       updateLocalModelSectionUI();
@@ -476,11 +477,11 @@ function setupStorageListener() {
           .then(apply)
           .catch(err => console.error(`[Popup] Permission check for ${p.id} failed:`, err));
       }
-    }
-    if (areaName === 'local' && changes.youtubeShowPlaceholder) {
-      const checked = changes.youtubeShowPlaceholder.newValue === true;
-      const el = document.getElementById('enableYoutubePlaceholder') as HTMLInputElement | null;
-      if (el && el.checked !== checked) el.checked = checked;
+      // Excluded-account sentences only render for active platforms, so a
+      // master-toggle flip changes which groups exist.
+      if (PLATFORMS.some(p => changes[enabledStorageKey(p.id)])) {
+        renderExcludedAccounts().catch(err => console.error('[Popup] renderExcludedAccounts failed:', err));
+      }
     }
     if (areaName === 'local' && changes.instagramIntentionalScroll) {
       const checked = changes.instagramIntentionalScroll.newValue !== false;
@@ -538,7 +539,6 @@ async function loadSettings() {
     'aiFilterIntent',
     'pendingLocalModelSelection',
     'filterReplies',
-    'youtubeShowPlaceholder',
     'instagramIntentionalScroll',
     // Per-platform master-switch keys come from the registry.
     ...PLATFORMS.map(p => enabledStorageKey(p.id)),
@@ -580,11 +580,6 @@ async function loadSettings() {
     document.getElementById(platformRowId(p.id))?.classList.toggle('disabled', !enabled);
   }
 
-  // YouTube placeholder toggle (off by default — match Twitter's "remove"
-  // behavior unless the user opts in).
-  const ytPlaceholderEl = document.getElementById('enableYoutubePlaceholder') as HTMLInputElement | null;
-  if (ytPlaceholderEl) ytPlaceholderEl.checked = data.youtubeShowPlaceholder === true;
-
   // Intentional scrolling (Instagram) — on by default, so treat missing as true.
   const intentionalScrollEl = document.getElementById('enableIntentionalScroll') as HTMLInputElement | null;
   if (intentionalScrollEl) intentionalScrollEl.checked = data.instagramIntentionalScroll !== false;
@@ -625,6 +620,142 @@ async function loadSettings() {
 
   // Update local model section visibility
   updateLocalModelSectionVisibility();
+
+  // Excluded accounts chip lists
+  await renderExcludedAccounts();
+}
+
+// ==================== Excluded Accounts ====================
+
+// Render the per-platform excluded-account chip groups into
+// #excludedAccountsContainer. Chips remove on click; the input adds on
+// Enter/comma/blur and splits pasted comma-separated lists. Identities are
+// stored normalized (see normalizeAccountIdentity in shared/storage.ts);
+// chips re-add the "@" for display on handle platforms. Re-renders preserve
+// input focus and un-committed text, so the storage-change listener can call
+// this freely without eating keystrokes.
+async function renderExcludedAccounts(): Promise<void> {
+  const container = document.getElementById('excludedAccountsContainer');
+  if (!container) return;
+
+  // Capture focus + pending text so a re-render mid-typing is invisible.
+  const active = document.activeElement as HTMLInputElement | null;
+  const focusSite = active?.classList.contains('excluded-account-input')
+    ? active.closest('.excluded-accounts-group')?.getAttribute('data-site')
+    : null;
+  const pendingValue = focusSite && active ? active.value : '';
+
+  // Only platforms Bouncer is actually running on get a sentence — same
+  // activeness rule as the Active Platforms rows (master toggle on, and for
+  // optional platforms the host permission actually granted).
+  const enabledData = await getStorage(PLATFORMS_FOR_TARGET.map(p => enabledStorageKey(p.id)));
+  const activePlatforms: PlatformDef[] = [];
+  for (const p of PLATFORMS_FOR_TARGET) {
+    if (enabledData[enabledStorageKey(p.id)] !== false && await platformPermissionGranted(p)) {
+      activePlatforms.push(p);
+    }
+  }
+
+  const lists = await Promise.all(activePlatforms.map(p => getExcludedAccounts(p.id)));
+
+  container.replaceChildren();
+  activePlatforms.forEach((p, i) => {
+    const accounts = lists[i];
+    const isLinkedIn = p.id === 'linkedin';
+    const noun = p.id === 'youtube' ? 'videos' : 'posts';
+
+    const group = document.createElement('div');
+    group.className = 'excluded-accounts-group';
+    group.dataset.site = p.id;
+
+    // Classic Bouncer sentence, mirroring the in-feed filter box: a static
+    // prefix naming the platform, bold inline names (click to remove, Oxford
+    // commas), "and", then an underlined inline input. The first word of the
+    // display name ("X (Twitter)" → "X") keeps the sentence tight.
+    const sentence = document.createElement('div');
+    sentence.className = 'excluded-sentence';
+
+    const prefix = document.createElement('span');
+    prefix.className = 'excluded-sentence-prefix';
+    prefix.textContent = `Keep ${p.displayName.split(' ')[0]} ${noun} by`;
+    sentence.appendChild(prefix);
+
+    for (const account of accounts) {
+      const display = isLinkedIn ? account : `@${account}`;
+      // Phrase + trailing comma share one wrapper so a bare comma can never
+      // wrap onto its own line (same trick as renderPhrasesInContainer).
+      const item = document.createElement('span');
+      item.className = 'excluded-phrase-item';
+      const phrase = document.createElement('span');
+      phrase.className = 'excluded-phrase';
+      phrase.textContent = display;
+      phrase.title = 'Click to remove';
+      phrase.addEventListener('click', () => { (async () => {
+        const next = (await getExcludedAccounts(p.id)).filter(a => a !== account);
+        await setExcludedAccounts(p.id, next);
+        await renderExcludedAccounts();
+      })().catch(err => console.error('[Popup] Remove excluded account failed:', err)); });
+      item.appendChild(phrase);
+      if (accounts.length > 1) {
+        const separator = document.createElement('span');
+        separator.className = 'excluded-separator';
+        separator.textContent = ', ';
+        item.appendChild(separator);
+      }
+      sentence.appendChild(item);
+    }
+
+    if (accounts.length > 0) {
+      const and = document.createElement('span');
+      and.className = 'excluded-sentence-and';
+      and.textContent = 'and';
+      sentence.appendChild(and);
+    }
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'excluded-account-input';
+    input.autocomplete = 'off';
+    input.spellcheck = false;
+    const commit = () => { (async () => {
+      const identities = input.value.split(',').map(normalizeAccountIdentity).filter(Boolean);
+      if (identities.length === 0) return;
+      input.value = '';
+      const existing = await getExcludedAccounts(p.id);
+      const next = [...existing];
+      for (const id of identities) {
+        if (!next.includes(id)) next.push(id);
+      }
+      if (next.length !== existing.length) {
+        await setExcludedAccounts(p.id, next);
+        await renderExcludedAccounts();
+      }
+    })().catch(err => console.error('[Popup] Add excluded account failed:', err)); };
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ',') {
+        e.preventDefault();
+        commit();
+      }
+    });
+    input.addEventListener('change', commit);
+    const inputWrap = document.createElement('span');
+    inputWrap.className = 'excluded-input-wrapper';
+    inputWrap.appendChild(input);
+    sentence.appendChild(inputWrap);
+    group.appendChild(sentence);
+
+    container.appendChild(group);
+  });
+
+  if (focusSite) {
+    const el = container.querySelector<HTMLInputElement>(
+      `.excluded-accounts-group[data-site="${focusSite}"] .excluded-account-input`
+    );
+    if (el) {
+      el.value = pendingValue;
+      el.focus();
+    }
+  }
 }
 
 // Storage keys that feed the AI-detection status UI. Kept in one place so the
@@ -1012,11 +1143,6 @@ function setupEventListeners() {
     });
   }
 
-  document.getElementById('enableYoutubePlaceholder')?.addEventListener('change', (e) => { (async () => {
-    const checked = (e.target as HTMLInputElement).checked;
-    await setStorage({ youtubeShowPlaceholder: checked });
-  })().catch(err => console.error('[Popup] enableYoutubePlaceholder change failed:', err)); });
-
   document.getElementById('enableIntentionalScroll')?.addEventListener('change', (e) => { (async () => {
     const checked = (e.target as HTMLInputElement).checked;
     await setStorage({ instagramIntentionalScroll: checked });
@@ -1132,7 +1258,7 @@ function setupAccentColorPicker() {
   initAccentColorPicker({ chip, svArea, svThumb, hueInput, hexInput, rInput, gInput, bInput, swatchesEl, resetBtn, eyedropperBtn });
 }
 
-// "Colored border on input box" toggle (below the filter-replies toggle).
+// "Colored border on input box" toggle (inside the Accent Color accordion).
 // On keeps the brand-accent outline on the in-feed filter box; off swaps it
 // for the platform's native card border. On is stored as key-absence, which
 // is how installs predating the default flip keep their colored border with
