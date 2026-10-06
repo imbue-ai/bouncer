@@ -200,7 +200,10 @@ function itemNames(env: RelayEnvironment, item: ListItem): string[] {
     image_versions2: { candidates: refs.map(r => ({ url: source.get(r)?.url as string | undefined })) },
   };
   const names = mediaMatchKeys(media);
-  namesById.set(id, names);
+  // Only a complete record is worth remembering: at load the store can hold a
+  // reel before its image candidates, and caching that would leave it
+  // unmatchable by cover filename for the rest of the session.
+  if (refs.length > 0) namesById.set(id, names);
   return names;
 }
 
@@ -210,6 +213,24 @@ const pending = new Set<string>();
 const subscribed = new WeakSet<object>();
 let applying = false;
 let retryTimer: ReturnType<typeof setInterval> | null = null;
+
+/** The media pk a slide renders, read from its React subtree: the reel
+ *  components a few levels down carry it on their props (a Relay fragment key
+ *  for organic reels, a query reference for ads). Bounded walk; null if none. */
+function slidePk(slide: Element): string | null {
+  const start = fiberOf(slide);
+  const stack: (Fiber & { child?: Fiber | null; sibling?: Fiber | null })[] = start ? [start] : [];
+  for (let steps = 0; stack.length > 0 && steps < 400; steps++) {
+    const f = stack.pop()!;
+    for (const v of Object.values(f.memoizedProps ?? {})) {
+      const pk = v && typeof v === 'object' && !Array.isArray(v) ? (v as { pk?: unknown }).pk : undefined;
+      if (typeof pk === 'string' || typeof pk === 'number') return String(pk);
+    }
+    if (f !== start && f.sibling) stack.push(f.sibling);
+    if (f.child) stack.push(f.child);
+  }
+  return null;
+}
 
 /** Which slide is on screen: the one under the viewport's middle. */
 function currentIndex(scroller: HTMLElement): number {
@@ -279,23 +300,26 @@ function apply(): boolean {
   subscribe(pager);
 
   const list = pager.manager.getList();
-  // Slides are the scroller's children in list order. If they've drifted
-  // apart, or nothing sits flush with the pager (it's between reels), we
-  // can't tell what's on screen — leave it for the next change.
+  // Which list item is on screen: ask the slide under the viewport's middle
+  // which media it renders. The slide count needn't match the list — the tail
+  // renders lazily and a loading placeholder can sit at the end. Anything we
+  // can't establish yet (no slide, unidentified, between reels) is retried.
   const slides = Array.from(pager.scroller.children);
-  if (slides.length !== list.length) {
-    diag(`skipped: ${slides.length} slides but ${list.length} list items`);
-    return true;
-  }
   const current = currentIndex(pager.scroller);
   if (current < 0) {
-    diag('skipped: no slide under the middle of the viewport');
-    return true;
+    diag('waiting: no slide under the middle of the viewport');
+    return false;
   }
   const offset = slides[current].getBoundingClientRect().top - pager.scroller.getBoundingClientRect().top;
   if (Math.abs(offset) > ALIGN_PX) {
-    diag(`skipped: between reels (slide ${current} is ${Math.round(offset)}px off the pager top)`);
-    return true;
+    diag(`waiting: between reels (slide ${current} is ${Math.round(offset)}px off the pager top)`);
+    return false;
+  }
+  const onScreenPk = slidePk(slides[current]);
+  const onScreen = onScreenPk === null ? -1 : list.findIndex(item => String(item.pk) === onScreenPk);
+  if (onScreen < 0) {
+    diag(`waiting: can't tell which reel slide ${current} is (pk ${onScreenPk ?? 'unknown'}, ${list.length} listed)`);
+    return false;
   }
 
   const pks = new Set<string>();
@@ -303,14 +327,14 @@ function apply(): boolean {
   list.forEach((item, i) => {
     if (item.__typename !== 'XDTMediaDict') return;   // ads are Instagram's to hide
     if (!itemNames(pager.env, item).some(n => pending.has(n))) return;
-    if (i < current) above++;
+    if (i < onScreen) above++;
     else pks.add(String(item.pk));
   });
   if (pks.size === 0) {
     diag(`nothing to remove: ${above} pending reel(s) above the one on screen, ${pending.size} name(s) pending, ${list.length} listed`);
     return true;
   }
-  diag(`removing ${pks.size} reel(s)${pks.has(String(list[current].pk)) ? ', including the one on screen' : ''}; ${above} left above`);
+  diag(`removing ${pks.size} reel(s)${pks.has(onScreenPk!) ? ', including the one on screen' : ''}; ${above} left above`);
 
   const commit = (): void => {
     applying = true;
@@ -323,7 +347,7 @@ function apply(): boolean {
     }
   };
 
-  if (pks.has(String(list[current].pk))) {
+  if (pks.has(onScreenPk!)) {
     applying = true;
     void dipToBlack(pager.scroller).then((reveal) => {
       applying = false;
@@ -398,7 +422,9 @@ export function unrenderReels(keys: Iterable<string>): void {
       added.push(k);
     }
   }
-  if (added.length === 0) return;
-  diag(`requested: ${added.map(k => k.slice(-28)).join(', ')}`);
+  // Re-run even when every name is already pending: a repeated request (a
+  // re-evaluation, a later sighting) is how an earlier attempt that couldn't
+  // act gets another chance.
+  if (added.length > 0) diag(`requested: ${added.map(k => k.slice(-28)).join(', ')}`);
   applyOrRetry();
 }

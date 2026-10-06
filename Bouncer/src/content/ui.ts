@@ -3858,7 +3858,7 @@ export function showReasoningPopup(article: HTMLElement, x: number, y: number) {
   hideReasoningPopup();
 
   const content = _deps.extractPostContent(article);
-  const stored = _deps.postReasonings.get(article);
+  const stored = _deps.postReasonings.get(article) ?? _deps.reelReasoning?.(article);
 
   const popup = document.createElement('div');
   popup.className = 'post-filter-reasoning-popup';
@@ -4337,7 +4337,7 @@ export function addContextMenuHandler(article: HTMLElement) {
 }
 
 async function fetchReasoningIfNeeded(article: HTMLElement) {
-  if (_deps.postReasonings.has(article)) return;
+  if (_deps.postReasonings.has(article) || _deps.reelReasoning?.(article)) return;
 
   const content = _deps.extractPostContent(article);
   const hasContent = content.text.trim() || (content.imageUrls && content.imageUrls.length > 0);

@@ -1,7 +1,7 @@
 // Bouncer - Content Script
 // Entry point: post processing, observers, init, storage/message listeners
 
-import type { PlatformAdapter, PostContent, PipelineResponse, BackgroundToContentMessage, DescriptionKey, AiFilterIntentState } from '../types';
+import type { PlatformAdapter, PostContent, PostReasoning, PipelineResponse, BackgroundToContentMessage, DescriptionKey, AiFilterIntentState } from '../types';
 import { getStorage, removeStorage, getDescriptions, setDescriptions, phraseSetKey, filteringPausedKeyFor, getExcludedAccounts, exclusionIdentity, excludedAccountsKeyFor } from '../shared/storage';
 import { enabledStorageKey } from '../shared/platforms';
 import { hexToRgbChannels, hexToDarkRgbChannels, contrastTextColor } from '../shared/brand-color';
@@ -141,7 +141,10 @@ import {
   // ==================== Core State ====================
 
   const processedPosts = new WeakSet<HTMLElement>();
-  const postReasonings = new WeakMap<HTMLElement, { shouldHide: boolean; reasoning: string; rawResponse?: string | null; isApiError?: boolean }>();
+  const postReasonings = new WeakMap<HTMLElement, PostReasoning>();
+  // Instagram reel verdicts by the reel's card (see the bouncer-reel-verdict
+  // listener). Read through reelReasoning by the popup.
+  const reelVerdicts = new WeakMap<HTMLElement, PostReasoning>();
   const errorPostUrls = new Set<string>();
   const lastProcessedContent = new WeakMap<HTMLElement, string>();
   const pendingPostReeval = new Map<HTMLElement, ReturnType<typeof setTimeout>>();
@@ -189,6 +192,13 @@ import {
     processedPosts,
     postReasonings,
     pendingPosts,
+    reelReasoning: (article: HTMLElement) => {
+      for (let el: HTMLElement | null = article; el; el = el.parentElement) {
+        const stored = reelVerdicts.get(el);
+        if (stored) return stored;
+      }
+      return undefined;
+    },
   });
 
   initIOS({
@@ -866,18 +876,21 @@ import {
       }>).detail;
       const card = detail?.card;
       if (!card) return;
+      const fallback = detail.shouldHide
+        ? (detail.category ? `Matches "${detail.category}"` : 'Matched your filters')
+        : 'Does not match your filters';
+      const verdict: PostReasoning = detail.error
+        ? { shouldHide: false, isApiError: true, reasoning: detail.error }
+        : { shouldHide: !!detail.shouldHide, reasoning: detail.reasoning || fallback };
+      // Kept against the reel's card first: the element a popup opens on can
+      // lose its cover <img> (and with it every way of finding it from here)
+      // before the verdict lands. The popup looks it up through the card.
+      reelVerdicts.set(card, verdict);
       const article = reelArticleIn(card);
       if (!article) return;
       processedPosts.add(article);
-      if (detail.error) {
-        postReasonings.set(article, { shouldHide: false, isApiError: true, reasoning: detail.error });
-      } else {
-        const fallback = detail.shouldHide
-          ? (detail.category ? `Matches "${detail.category}"` : 'Matched your filters')
-          : 'Does not match your filters';
-        postReasonings.set(article, { shouldHide: !!detail.shouldHide, reasoning: detail.reasoning || fallback });
-        if (!detail.shouldHide) markPostVerified(article);
-      }
+      postReasonings.set(article, verdict);
+      if (!detail.error && !detail.shouldHide) markPostVerified(article);
       refreshActivePopupIfFor(article);
     });
   }

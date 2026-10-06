@@ -474,10 +474,16 @@ export interface PostOperations {
   reEvaluateSinglePost: (article: HTMLElement) => Promise<void>;
 }
 
+export type PostReasoning = { shouldHide: boolean; reasoning: string; rawResponse?: string | null; isApiError?: boolean };
+
 export interface PostState {
   processedPosts: WeakSet<HTMLElement>;
-  postReasonings: WeakMap<HTMLElement, { shouldHide: boolean; reasoning: string; rawResponse?: string | null; isApiError?: boolean }>;
+  postReasonings: WeakMap<HTMLElement, PostReasoning>;
   pendingPosts: Set<HTMLElement>;
+  /** A verdict kept for the reel an element belongs to rather than the element
+   *  itself (Instagram: the element a verdict was meant for can lose the
+   *  markers that identify it before the verdict lands). */
+  reelReasoning?: (article: HTMLElement) => PostReasoning | undefined;
 }
 
 export interface ContentUIDeps extends PlatformContext, IOSUICallbacks, PostOperations, PostState {}

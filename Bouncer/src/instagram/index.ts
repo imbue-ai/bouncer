@@ -503,7 +503,12 @@ const autoFiltered = new Set<string>();
  *  but deliberately NOT fed to the feed-response kill list: that list is
  *  permanent, and an AI verdict must stay reversible. */
 function autoFilterReel(reel: Reel, category: string | null, reasoning: string | null): void {
-  if (autoFiltered.has(reel.reelId) || swipedAway.has(reel.reelId)) return;
+  // Already handled: ask for its removal again (a re-evaluation is how an
+  // attempt that couldn't act gets another chance), but file it only once.
+  if (autoFiltered.has(reel.reelId) || swipedAway.has(reel.reelId)) {
+    requestUnrender(reel);
+    return;
+  }
   autoFiltered.add(reel.reelId);
   swipedAway.add(reel.reelId);
   hideReelCard(reel, reasoning ?? (category ? `Matches "${category}"` : 'Matched your filters'),
@@ -1340,6 +1345,13 @@ function hideReelCard(reel: Reel, reasoning?: string, category?: string | null):
     thumbnailUrl: reel.thumbnailUrl,
     ...(code ? { code } : {}),
   }, reasoning, category);
+  requestUnrender(reel);
+}
+
+/** Ask the MAIN-world hook to take this reel out of Instagram's list. */
+function requestUnrender(reel: Reel): void {
+  const filename = basenameOf(reel.reelId);
+  const code = reelCodeFor(reel.thumbnailUrl);
   window.postMessage({
     source: UNRENDER_REELS_SOURCE, keys: code ? [filename, code] : [filename],
   }, '*');
