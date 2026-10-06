@@ -975,7 +975,10 @@ async function processBatch(): Promise<void> {
     return;
   }
 
-  const postData = { text: item.post, imageUrls };
+  const postData = { text: item.post, imageUrls, postUrl: item.postUrl };
+  // Phrases routed to the AI detectors rather than the classifier (see
+  // effectiveDescriptions). Sent to the Imbue backend for logging only.
+  const aiCategories = settings.descriptions.filter(d => !settings.effectiveDescriptions.includes(d));
   const startTime = Date.now();
 
   // Even with no filter phrases configured, still send the tweet to our
@@ -988,7 +991,7 @@ async function processBatch(): Promise<void> {
     && !filterEnabled
     && settings.selectedModel === 'imbue'
   ) {
-    void callImbueAPI(postData, [], 'filterPost').catch(err =>
+    void callImbueAPI(postData, [], 'filterPost', aiCategories).catch(err =>
       console.warn('[Bouncer] Empty-filter tweet send failed:', (err as Error).message)
     );
   }
@@ -1045,7 +1048,7 @@ async function processBatch(): Promise<void> {
       } else if (apiConfig.apiName === 'iosLocal') {
         return await iosLocalClassify(postData, settings.effectiveDescriptions, apiConfig.modelConfig as LocalModelDef | null);
       } else if (apiConfig.apiName === 'imbue') {
-        const imbueResponse = await callImbueAPI(postData, settings.effectiveDescriptions, 'filterPost');
+        const imbueResponse = await callImbueAPI(postData, settings.effectiveDescriptions, 'filterPost', aiCategories);
         return {
           shouldHide: imbueResponse.shouldHide,
           reasoning: imbueResponse.reasoning || 'No reasoning provided',
