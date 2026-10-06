@@ -1,6 +1,6 @@
 //
 //  SafariWebExtensionHandler.swift
-//  Bouncer (macOS) Extension
+//  Bouncer Extension
 //
 //  Handles native messages from the extension's background script.
 //  Routes Sign in with Apple through the host app since the extension
