@@ -8,6 +8,10 @@ import type { ImbueAPIResponse } from '../types';
 const IMBUE_WS_URL = process.env.IMBUE_WS_URL || '';
 
 const DEFAULT_TIMEOUT_MS = 60000;
+// The gateway acks every request within about a second, even when the result
+// is slow. A socket that has said nothing at all this long after a send is
+// half-open, so it is replaced and the stranded requests are resent.
+const ACK_WATCHDOG_MS = 15000;
 
 /** Internal state for a request that has been sent but not yet fully resolved. */
 interface PendingRequest {
@@ -17,6 +21,12 @@ interface PendingRequest {
   reject: (reason: Error) => void;
   timeoutId: ReturnType<typeof setTimeout>;
   submissionTime: number | null;
+  /** The serialized request, kept so it can be resent on a fresh socket. */
+  payload: string;
+  /** When it last went out on a socket. */
+  sentAt: number;
+  /** Already resent once after a dead socket; a second death fails it. */
+  resent: boolean;
 }
 
 /** Out-of-band server push instructing the client to force a sign-in (e.g. the
@@ -110,6 +120,9 @@ class ImbueWebSocket {
   // When the current socket last delivered ANY message. Liveness signal for
   // spotting a half-open socket — see the timeout handler in send().
   lastMessageAt: number;
+  // How long a send may go without ANY reply before its socket is presumed
+  // half-open. Instance field so tests can shorten it.
+  ackWatchdogMs: number;
   // Invoked when the backend pushes a `forceLogin` message. Set by the
   // background entry point to broadcast the guest-limit gate to content tabs.
   onForceLogin: ((msg: ForceLoginMessage) => void) | null;
@@ -120,6 +133,7 @@ class ImbueWebSocket {
     this.unackedRequests = new Map();
     this.pendingRequests = new Map();
     this.lastMessageAt = 0;
+    this.ackWatchdogMs = ACK_WATCHDOG_MS;
     this.onForceLogin = null;
   }
 
@@ -230,52 +244,97 @@ class ImbueWebSocket {
 
     const requestId = crypto.randomUUID();
     message.requestId = requestId;
-    const sentAt = Date.now();
 
     return new Promise((resolve, reject) => {
-      const timeoutId = setTimeout(() => {
-        // Clean up from whichever map the request is in
-        const unacked = this.unackedRequests.get(requestId);
-        if (unacked) {
-          this.unackedRequests.delete(requestId);
-        } else {
-          // Already acked — find and remove from pendingRequests by jobId
-          for (const [jobId, pending] of this.pendingRequests) {
-            if (pending.requestId === requestId) {
-              this.pendingRequests.delete(jobId);
-              break;
-            }
-          }
-        }
-        // Nothing came back on the socket — not even the gateway's immediate
-        // ack — in the whole timeout window. On a healthy connection the ack
-        // lands within a second even when the result is slow, so total silence
-        // is the half-open-socket signature: the network path died without a
-        // close frame (device slept, network switched, the gateway idle-closed
-        // while the app was suspended), readyState still says OPEN, and every
-        // send since has been written into the void. Drop the socket so the
-        // next send — including the caller's own retry — reconnects instead of
-        // feeding the corpse forever.
-        if (this.ws && this.lastMessageAt < sentAt) {
-          console.warn('[WS Manager] No traffic since this request was sent — dropping half-open socket');
-          const dead = this.ws;
-          this.ws = null;
-          this._rejectAll(new Error('WebSocket unresponsive — reconnecting on next request'));
-          try { dead.close(); } catch { /* already dead */ }
-        }
-        reject(new Error(`Request timed out after ${Math.round(timeout / 1000)} seconds.`));
-      }, timeout);
-
-      this.unackedRequests.set(requestId, {
+      const request: PendingRequest = {
         requestId,
         jobId: null,
         resolve,
         reject,
-        timeoutId,
+        timeoutId: setTimeout(() => {
+          // Clean up from whichever map the request is in
+          if (this.unackedRequests.get(requestId) === request) {
+            this.unackedRequests.delete(requestId);
+          } else {
+            for (const [jobId, pending] of this.pendingRequests) {
+              if (pending === request) {
+                this.pendingRequests.delete(jobId);
+                break;
+              }
+            }
+          }
+          // Total silence since this went out: the socket is half-open, even
+          // if the ack watchdog hasn't fired yet (a timeout shorter than it).
+          if (this.ws && this.lastMessageAt < request.sentAt) this._replaceDeadSocket(this.ws);
+          reject(new Error(`Request timed out after ${Math.round(timeout / 1000)} seconds.`));
+        }, timeout),
         submissionTime: null,
-      });
+        payload: JSON.stringify(message),
+        sentAt: 0,
+        resent: false,
+      };
+      this.unackedRequests.set(requestId, request);
+      this._transmit(ws, request);
+    });
+  }
 
-      ws.send(JSON.stringify(message));
+  // Put a request on the wire and arm the ack watchdog for it.
+  private _transmit(ws: WebSocket, request: PendingRequest): void {
+    const sentAt = Date.now();
+    request.sentAt = sentAt;
+    ws.send(request.payload);
+    setTimeout(() => {
+      // Nothing came back on the socket — not even the gateway's immediate
+      // ack. That's the half-open signature: the network path died without a
+      // close frame (device slept, app suspended, network switched), readyState
+      // still says OPEN, and every send since has gone into the void.
+      if (this.ws === ws && this.lastMessageAt < sentAt) this._replaceDeadSocket(ws);
+    }, this.ackWatchdogMs);
+  }
+
+  // Drop a half-open socket and resend everything that was riding on it over a
+  // fresh connection. Results for jobs acked on the dead socket would be
+  // delivered to its connection id and lost, so those are resent too. A
+  // request that already survived one dead socket fails instead of looping.
+  private _replaceDeadSocket(dead: WebSocket): void {
+    console.warn('[WS Manager] No traffic since the last send — replacing half-open socket');
+    if (this.ws === dead) this.ws = null;
+    // Its late close must not reject the requests we're about to move.
+    dead.onclose = null;
+    dead.onmessage = null;
+    dead.onerror = null;
+    try { dead.close(); } catch { /* already dead */ }
+
+    const stranded = [...this.unackedRequests.values(), ...this.pendingRequests.values()];
+    this.unackedRequests.clear();
+    this.pendingRequests.clear();
+    const retry: PendingRequest[] = [];
+    for (const request of stranded) {
+      if (request.resent) {
+        clearTimeout(request.timeoutId);
+        request.reject(new Error('WebSocket unresponsive — reconnecting on next request'));
+        continue;
+      }
+      request.resent = true;
+      request.jobId = null;
+      request.submissionTime = null;
+      this.unackedRequests.set(request.requestId, request);
+      retry.push(request);
+    }
+    if (retry.length === 0) return;
+
+    this.ensureConnected().then((ws) => {
+      // Skip anything that timed out (or was settled) while we reconnected.
+      for (const request of retry) {
+        if (this.unackedRequests.get(request.requestId) === request) this._transmit(ws, request);
+      }
+    }).catch((err: Error) => {
+      for (const request of retry) {
+        if (this.unackedRequests.get(request.requestId) !== request) continue;
+        this.unackedRequests.delete(request.requestId);
+        clearTimeout(request.timeoutId);
+        request.reject(err);
+      }
     });
   }
 

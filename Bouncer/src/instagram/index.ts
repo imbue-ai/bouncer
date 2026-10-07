@@ -85,6 +85,12 @@ const REMOVE_REELS_SOURCE = 'bouncer-ig-remove-reels';
 // filtered and the bounced (see ./unrender.ts). Unlike REMOVE_REELS_SOURCE
 // this is not a kill list. Must match hook.ts UNRENDER_SOURCE.
 const UNRENDER_REELS_SOURCE = 'bouncer-ig-unrender';
+// Marks the card an unrender request is about, so the MAIN world can read the
+// media pk straight off its slide (DOM attributes are shared between worlds;
+// React fibers are not). One-shot: the hook removes it on receipt. Must match
+// unrender.ts UNRENDER_MARK_ATTR.
+const UNRENDER_MARK_ATTR = 'data-bouncer-unrender';
+let unrenderSeq = 0;
 // The hold-and-classify handshake with the hook (all must match hook.ts):
 // the hook holds a fresh clips batch and asks for verdicts; we classify each
 // reel straight off its payload (caption + cover + progressive-MP4 for
@@ -1352,8 +1358,17 @@ function hideReelCard(reel: Reel, reasoning?: string, category?: string | null):
 function requestUnrender(reel: Reel): void {
   const filename = basenameOf(reel.reelId);
   const code = reelCodeFor(reel.thumbnailUrl);
+  // The names alone miss reels the hook never saw a payload for (the code is
+  // unknown) whose cover rendition doesn't match Instagram's record — and then
+  // removal never happens at all. A mounted card lets the hook ask the slide.
+  let cardToken: string | undefined;
+  if (reel.card.isConnected) {
+    cardToken = `u${++unrenderSeq}`;
+    reel.card.setAttribute(UNRENDER_MARK_ATTR, cardToken);
+  }
   window.postMessage({
     source: UNRENDER_REELS_SOURCE, keys: code ? [filename, code] : [filename],
+    ...(cardToken ? { cardToken } : {}),
   }, '*');
 }
 

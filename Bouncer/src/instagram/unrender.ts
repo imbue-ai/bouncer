@@ -232,6 +232,21 @@ function slidePk(slide: Element): string | null {
   return null;
 }
 
+/** The media pk of the reel whose slide holds `el` (a card the isolated world
+ *  marked). The slide is the child of the nearest overflowing ancestor — the
+ *  same rule scrollerOf uses from a <video>. */
+function pkOfMountedReel(el: Element): string | null {
+  for (let n: Element = el; n.parentElement && n.parentElement !== document.body; n = n.parentElement) {
+    const parent = n.parentElement;
+    if (parent.scrollHeight > parent.clientHeight + 50) return slidePk(n);
+  }
+  return slidePk(el);
+}
+
+/** Attribute the isolated world sets on the card a request is about. Must
+ *  match index.ts UNRENDER_MARK_ATTR. */
+const UNRENDER_MARK_ATTR = 'data-bouncer-unrender';
+
 /** Which slide is on screen: the one under the viewport's middle. */
 function currentIndex(scroller: HTMLElement): number {
   const mid = window.innerHeight / 2;
@@ -414,9 +429,23 @@ function applyOrRetry(): void {
 
 /** Remove the reels these names identify (codes, pks, cover filenames) from
  *  the pager, now and whenever they turn up again this page session. */
-export function unrenderReels(keys: Iterable<string>): void {
+export function unrenderReels(keys: Iterable<string>, cardToken?: string): void {
+  const all = [...keys];
+  // Read the marked card's pk now, while the node still shows that reel —
+  // React reuses slide nodes, so the mark is consumed on the spot.
+  if (cardToken) {
+    const el = document.querySelector(`[${UNRENDER_MARK_ATTR}="${CSS.escape(cardToken)}"]`);
+    if (el) {
+      el.removeAttribute(UNRENDER_MARK_ATTR);
+      const pk = pkOfMountedReel(el);
+      if (pk) all.push(pk);
+      else diag('marked card has no readable pk');
+    } else {
+      diag('marked card not found');
+    }
+  }
   const added: string[] = [];
-  for (const k of keys) {
+  for (const k of all) {
     if (typeof k === 'string' && k.length > 0 && !pending.has(k)) {
       pending.add(k);
       added.push(k);

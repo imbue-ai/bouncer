@@ -268,14 +268,63 @@ describe('ImbueWebSocket', () => {
       expect(result.rawResponse).toBe('ok');
     });
 
-    it('rejects other in-flight requests when the socket is dropped', async () => {
+    it('resends other in-flight requests on a fresh socket when the socket is dropped', async () => {
       const fast = imbueWebSocket.send({ action: 'fast' }, { timeout: 50 });
       const slow = imbueWebSocket.send({ action: 'slow' }, { timeout: 5000 });
       await new Promise(r => setTimeout(r, 10));
 
       await expect(fast).rejects.toThrow('timed out');
-      await expect(slow).rejects.toThrow('unresponsive');
-      expect(imbueWebSocket.unackedRequests.size).toBe(0);
+      await new Promise(r => setTimeout(r, 10));
+      // The survivor went out again, same requestId, on a new connection.
+      expect(MockWebSocket.instances.length).toBe(2);
+      const fresh = MockWebSocket.instances[1];
+      expect(fresh.sentMessages).toHaveLength(1);
+      expect(fresh.sentMessages[0].action).toBe('slow');
+      const reqId = fresh.sentMessages[0].requestId;
+      fresh.onmessage!({ data: JSON.stringify({ requestId: reqId, jobId: 'j-slow' }) });
+      fresh.onmessage!({ data: JSON.stringify({ jobId: 'j-slow', rawResponse: 'ok' }) });
+      expect((await slow).rawResponse).toBe('ok');
+    });
+
+    it('replaces a silent socket after the ack watchdog and resends, without waiting for the timeout', async () => {
+      imbueWebSocket.ackWatchdogMs = 30;
+      try {
+        const acked = imbueWebSocket.send({ action: 'acked' }, { timeout: 5000 });
+        await new Promise(r => setTimeout(r, 5));
+        const dead = MockWebSocket.lastInstance!;
+        // Acked before the path died: its result would go to the dead connection.
+        const ackedId = dead.sentMessages[0].requestId;
+        dead.onmessage!({ data: JSON.stringify({ requestId: ackedId, jobId: 'j-old' }) });
+        // Liveness is judged to the millisecond; send strictly after that ack.
+        await new Promise(r => setTimeout(r, 5));
+        const silent = imbueWebSocket.send({ action: 'silent' }, { timeout: 5000 });
+
+        await new Promise(r => setTimeout(r, 60));
+        expect(MockWebSocket.instances.length).toBe(2);
+        const fresh = MockWebSocket.instances[1];
+        expect(fresh.sentMessages.map(m => m.action).sort()).toEqual(['acked', 'silent']);
+        for (const m of fresh.sentMessages) {
+          const job = `j-${String(m.action)}`;
+          fresh.onmessage!({ data: JSON.stringify({ requestId: m.requestId, jobId: job }) });
+          fresh.onmessage!({ data: JSON.stringify({ jobId: job, rawResponse: String(m.action) }) });
+        }
+        expect((await acked).rawResponse).toBe('acked');
+        expect((await silent).rawResponse).toBe('silent');
+      } finally {
+        imbueWebSocket.ackWatchdogMs = 15000;
+      }
+    });
+
+    it('fails a request whose replacement socket is silent too', async () => {
+      imbueWebSocket.ackWatchdogMs = 20;
+      try {
+        const doomed = imbueWebSocket.send({ action: 'doomed' }, { timeout: 5000 });
+        await expect(doomed).rejects.toThrow('unresponsive');
+        expect(MockWebSocket.instances.length).toBe(2);
+        expect(imbueWebSocket.unackedRequests.size).toBe(0);
+      } finally {
+        imbueWebSocket.ackWatchdogMs = 15000;
+      }
     });
 
     it('keeps the socket when traffic arrived after the timed-out request was sent', async () => {

@@ -732,7 +732,9 @@ if (/(^|\.)instagram\.com$/i.test(location.hostname)) {
       }
       if (data?.source === UNRENDER_SOURCE) {
         if (Array.isArray(data.keys)) {
-          unrenderReels(data.keys.filter((k): k is string => typeof k === 'string'));
+          const cardToken = (data as { cardToken?: unknown }).cardToken;
+          unrenderReels(data.keys.filter((k): k is string => typeof k === 'string'),
+            typeof cardToken === 'string' ? cardToken : undefined);
         }
         return;
       }

@@ -853,10 +853,12 @@ function onFeedSettled(): void {
 
 /** An upward swipe has committed once the finger travels this far. */
 const SWIPE_COVER_PX = 24;
-/** "Settled back where it started" is only believed after this much quiet —
- *  longer than SETTLE_QUIET_MS, because retreating mid-transition, a beat
- *  before the address catches up, would flash the cover off and back on. */
-const RETREAT_QUIET_MS = 400;
+/** How long a popped cover waits, once the pager is quiet, for the address to
+ *  name a new reel. Past it the cover stays up regardless — over whatever reel
+ *  is on screen — rather than retreating: a pop that drops back down reads as
+ *  the swipe not taking, and the address on this layout can lag the slide
+ *  well past the old 400ms retreat window. */
+const ADDRESS_WAIT_MS = 1500;
 
 let lastScrollEventAt = 0;
 let pagerRaf = 0;
@@ -877,6 +879,10 @@ let popped = false;
 let poppedFromId: string | null = null;
 let pagerLastTop: number | null = null;
 let pagerLastMoveAt = 0;
+/** TEMP diagnostics: where the anchor started and how far it travelled during
+ *  this pop — tells "address lagged" from "the pager never moved". */
+let pagerStartTop: number | null = null;
+let pagerTravel = 0;
 
 function onPagerTouchStart(e: TouchEvent): void {
   if (mode !== 'hidden' && mode !== 'riding') return;
@@ -938,7 +944,22 @@ function popCover(): void {
   setTransform('0px', true);
   pagerLastTop = null;
   pagerLastMoveAt = performance.now();
+  pagerStartTop = pagerAnchor?.isConnected ? pagerAnchor.getBoundingClientRect().top : null;
+  pagerTravel = 0;
   if (!pagerRaf) pagerRaf = requestAnimationFrame(trackPagerSettle);
+}
+
+/** A popped cover has settled: it becomes the cover of the reel on screen. */
+function commitPop(reason: string): void {
+  console.log(`[IG curtain] pop committed (${reason}): pager travelled ${Math.round(pagerTravel)}px, `
+    + `address ${location.pathname === revealedPath ? 'unchanged' : 'changed'}`);
+  revealedPath = location.pathname;
+  const scroller = findScroller();
+  revealedTop = scroller ? scroller.scrollTop : 0;
+  rowIds = [];
+  renderRows();
+  cover();
+  popped = false;
 }
 
 /** An abandoned swipe: the feed settled back on the reel that was already
@@ -964,21 +985,19 @@ function trackPagerSettle(): void {
     && (top === null || pagerLastTop === null || Math.abs(top - pagerLastTop) > 0.5);
   if (moved) pagerLastMoveAt = now;
   pagerLastTop = top;
+  if (top !== null && pagerStartTop !== null) {
+    pagerTravel = Math.max(pagerTravel, Math.abs(top - pagerStartTop));
+  }
   const quiet = now - pagerLastMoveAt;
 
   if (!pagerTouchDown && quiet > SETTLE_QUIET_MS && location.pathname !== revealedPath) {
     // A new reel owns the screen — the same commit onFeedSettled makes.
-    revealedPath = location.pathname;
-    const scroller = findScroller();
-    revealedTop = scroller ? scroller.scrollTop : 0;
-    rowIds = [];
-    renderRows();
-    cover();
-    popped = false;
+    commitPop('new address');
     return;
   }
-  if (!pagerTouchDown && quiet > RETREAT_QUIET_MS) {
-    retreat();
+  if (!pagerTouchDown && quiet > ADDRESS_WAIT_MS) {
+    // Stay up. Whichever reel the pager came to rest on gets the cover.
+    commitPop('address wait expired');
     return;
   }
   pagerRaf = requestAnimationFrame(trackPagerSettle);
