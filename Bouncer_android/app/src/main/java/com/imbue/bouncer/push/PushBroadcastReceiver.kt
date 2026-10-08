@@ -5,7 +5,6 @@ import android.content.Context
 import android.content.Intent
 import android.util.Base64
 import android.util.Log
-import com.imbue.bouncer.web.BouncerGeckoView
 
 /**
  * Receives Google Play Services push broadcasts (the same c2dm plumbing
@@ -15,14 +14,16 @@ import com.imbue.bouncer.web.BouncerGeckoView
  *    GMS-initiated token rotation).
  *  - RECEIVE with subtype "wp:<id>": an actual Web Push message — the raw
  *    RFC 8291-encrypted body the site's server POSTed to our
- *    fcm.googleapis.com endpoint. Decrypt and hand to Gecko, which fires the
- *    `push` event in the site's service worker.
+ *    fcm.googleapis.com endpoint. Decrypt and render it as an Android
+ *    notification via [NativePushHandler].
  *
  * Exported but sender-gated by com.google.android.c2dm.permission.SEND, which
- * only Play Services holds. Runs on the main thread in the main process,
- * where BouncerApplication.onCreate has already warmed the GeckoRuntime;
- * onPushEvent queues internally until Gecko is up, so a cold-start push
- * wakeup works with no GeckoSession open.
+ * only Play Services holds.
+ *
+ * Deliberately Gecko-free: this broadcast is what starts the process when the
+ * app isn't running, and (since the GeckoRuntime is now warmed from
+ * MainActivity rather than Application.onCreate) the only work a push costs
+ * is a decrypt, an optional icon fetch, and a notify() — not a browser boot.
  */
 class PushBroadcastReceiver : BroadcastReceiver() {
 
@@ -67,7 +68,7 @@ class PushBroadcastReceiver : BroadcastReceiver() {
         val cryptoKeyHeader = intent.getStringExtra("crypto-key")
             ?: intent.getStringExtra("crypto_key")
         val plaintext = if (body == null || body.isEmpty()) {
-            null // data-less push: fire a payload-less push event
+            null // data-less push: shows the generic fallback notification
         } else {
             try {
                 if (encryptionHeader != null && cryptoKeyHeader != null &&
@@ -100,16 +101,12 @@ class PushBroadcastReceiver : BroadcastReceiver() {
         }
         Log.i(TAG, "delivering push for $scope (${plaintext?.size ?: 0} bytes)")
         testDeliveryHook?.invoke(scope, plaintext)
-        val runtime = BouncerGeckoView.runtimeOrNull() ?: run {
-            Log.e(TAG, "no GeckoRuntime for push delivery")
-            return
-        }
-        // The scope string must go back to Gecko exactly as it was handed to
-        // onSubscribe — it reconstructs the principal from it.
-        if (plaintext != null) {
-            runtime.webPushController.onPushEvent(scope, plaintext)
-        } else {
-            runtime.webPushController.onPushEvent(scope)
+        // goAsync keeps the process alive (and the broadcast un-finished) while
+        // the icon fetch + notify run off the main thread; the handler always
+        // calls finish() exactly once.
+        val pendingResult = goAsync()
+        NativePushHandler(context.applicationContext).deliver(scope, plaintext) {
+            pendingResult.finish()
         }
     }
 

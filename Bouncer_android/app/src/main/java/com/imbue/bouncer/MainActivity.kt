@@ -16,9 +16,11 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import com.imbue.bouncer.push.NativePushHandler
 import com.imbue.bouncer.push.NotificationPermissionBroker
 import com.imbue.bouncer.push.WebNotificationHandler
 import com.imbue.bouncer.state.BouncerViewModel
+import com.imbue.bouncer.state.Platforms
 import com.imbue.bouncer.ui.BouncerApp
 import com.imbue.bouncer.ui.theme.BouncerTheme
 import com.imbue.bouncer.web.BouncerGeckoView
@@ -51,9 +53,15 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         val splash = installSplashScreen()
+        // Boot Gecko here rather than in Application.onCreate: this is the one
+        // process-start path that needs a browser (push wakeups and Firebase
+        // jobs don't, and used to pay for a full Gecko boot each time). Still
+        // the main thread, still before the first composition; the splash
+        // below covers the gap. Idempotent on activity re-creates.
+        (application as BouncerApplication).warmUpGecko()
         // Hold the system splash until the GeckoRuntime + WebExtension install
-        // resolve (kicked off in BouncerApplication.onCreate). Avoids a black,
-        // unresponsive activity during the first composition.
+        // resolve. Avoids a black, unresponsive activity during the first
+        // composition.
         splash.setKeepOnScreenCondition { !BouncerGeckoView.isReady() }
         super.onCreate(savedInstanceState)
         // Match Firefox: fully transparent system nav bar with no scrim, so the
@@ -87,12 +95,12 @@ class MainActivity : ComponentActivity() {
                 onResult(RESULT_CANCELED, null)
             }
         }
-        handleWebNotificationClick(intent)
+        handleNotificationIntent(intent)
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        handleWebNotificationClick(intent)
+        handleNotificationIntent(intent)
     }
 
     override fun onDestroy() {
@@ -112,36 +120,60 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
     }
 
-    // A tapped web notification carries the parcelable WebNotification; calling
-    // click() fires notificationclick in the site's service worker, which opens
-    // the right page via the ServiceWorkerDelegate.
-    private fun handleWebNotificationClick(intent: Intent?) {
-        if (intent?.action != WebNotificationHandler.ACTION_CLICK) return
-        intent.setExtrasClassLoader(WebNotification::class.java.classLoader)
-        val notification: WebNotification? = if (Build.VERSION.SDK_INT >= 33) {
-            intent.getParcelableExtra(
-                WebNotificationHandler.EXTRA_NOTIFICATION,
-                WebNotification::class.java,
-            )
-        } else {
-            @Suppress("DEPRECATION")
-            intent.getParcelableExtra(WebNotificationHandler.EXTRA_NOTIFICATION)
+    // Notification taps. A native push notification (NativePushHandler) carries
+    // the x.com URL to open. A Gecko-raised notification carries the parcelable
+    // WebNotification; calling click() fires notificationclick in the site's
+    // service worker, which opens the right page via the ServiceWorkerDelegate.
+    private fun handleNotificationIntent(intent: Intent?) {
+        when (intent?.action) {
+            NativePushHandler.ACTION_OPEN_URL -> {
+                val url = intent.getStringExtra(NativePushHandler.EXTRA_URL) ?: return
+                // Consume so a config change doesn't re-fire the navigation.
+                intent.removeExtra(NativePushHandler.EXTRA_URL)
+                whenSessionReady { openNotificationUrl(url) }
+            }
+            WebNotificationHandler.ACTION_CLICK -> {
+                intent.setExtrasClassLoader(WebNotification::class.java.classLoader)
+                val notification: WebNotification? = if (Build.VERSION.SDK_INT >= 33) {
+                    intent.getParcelableExtra(
+                        WebNotificationHandler.EXTRA_NOTIFICATION,
+                        WebNotification::class.java,
+                    )
+                } else {
+                    @Suppress("DEPRECATION")
+                    intent.getParcelableExtra(WebNotificationHandler.EXTRA_NOTIFICATION)
+                }
+                // Consume so a config change doesn't re-fire the click.
+                intent.removeExtra(WebNotificationHandler.EXTRA_NOTIFICATION)
+                if (notification == null) return
+                // The 5s budget between click and openWindow is enforced by
+                // Gecko on its own side.
+                whenSessionReady { notification.click() }
+            }
         }
-        // Consume so a config change doesn't re-fire the click.
-        intent.removeExtra(WebNotificationHandler.EXTRA_NOTIFICATION)
-        if (notification == null) return
-        // click() makes Gecko fire notificationclick in the site's service
-        // worker; the SW's clients.openWindow lands in our ServiceWorkerDelegate,
-        // which needs an open session. On a cold start the session is created in
-        // the first composition, so wait for it (bounded — the 5s budget between
-        // click and openWindow is enforced by Gecko on its own side).
+    }
+
+    // Route the tap into the platform's own tab (switching to it if LinkedIn
+    // is up), falling back to a plain load for URLs that map to no platform.
+    private fun openNotificationUrl(url: String) {
+        val platform = Platforms.fromUrl(url)
+        if (platform != null) {
+            BouncerGeckoView.switchToPlatform(platform, url)
+        } else {
+            viewModel.navigateTo(url)
+        }
+    }
+
+    // On a cold start the session is created in the first composition, so wait
+    // for it (bounded) before driving navigation.
+    private fun whenSessionReady(block: () -> Unit) {
         lifecycleScope.launch {
             var waited = 0L
             while (viewModel.mainSession() == null && waited < CLICK_SESSION_WAIT_MS) {
                 delay(100)
                 waited += 100
             }
-            notification.click()
+            block()
         }
     }
 

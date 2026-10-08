@@ -39,9 +39,21 @@ class BouncerApplication : Application() {
         if (BuildConfig.DEBUG) {
             com.imbue.bouncer.push.PushSubscriptionStore(this).dumpToLog(TAG)
         }
-        // Pay the GeckoRuntime cost here (still main thread, but during process
-        // startup where there's no input-dispatch deadline) instead of on the
-        // first composition. The splash screen covers the wall-clock gap.
+        // The GeckoRuntime is deliberately NOT warmed here. Application.onCreate
+        // runs for every main-process start, including the ones Android does
+        // purely to deliver a push broadcast or run a Firebase Analytics upload
+        // job. Booting Gecko (plus its gpu/socket/utility/content children) on
+        // each of those was the app's dominant background battery cost. The
+        // runtime is warmed from MainActivity.onCreate instead, so Gecko only
+        // runs when there's a screen to show; push is rendered natively
+        // (NativePushHandler) and never needs the browser.
+    }
+
+    /**
+     * Boots the GeckoRuntime (idempotent; main thread). Called from
+     * MainActivity.onCreate — the one process-start path that needs a browser.
+     */
+    fun warmUpGecko() {
         BouncerGeckoView.warmUp(applicationContext, scope, appCheck)
     }
 
