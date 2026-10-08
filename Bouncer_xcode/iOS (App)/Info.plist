@@ -4,6 +4,12 @@
 <dict>
 	<key>BouncerEnv</key>
 	<string>$(BOUNCER_ENV)</string>
+	<key>BouncerPushRelayURL</key>
+	<string>$(BOUNCER_PUSH_RELAY_URL)</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>remote-notification</string>
+	</array>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>Bouncer saves photos and videos to your photo library when you choose “Save to Photos”.</string>
 	<key>SFSafariWebExtensionConverterVersion</key>

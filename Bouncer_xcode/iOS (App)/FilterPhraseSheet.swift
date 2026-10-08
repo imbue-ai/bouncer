@@ -376,6 +376,21 @@ class FilterSheetViewModel: ObservableObject {
         webView?.reload()
     }
 
+    // Notification tap (see FilteredWebViewContainer.openPushURL): show
+    // `platform`, then load `url` in its webview. A webview that still has
+    // to be built needs a beat first — selectPlatformAndNavigate defers
+    // construction ~400ms to let any push animation commit.
+    func openPushURL(_ url: URL, platform: String) {
+        let needsCreation = cache.webView(for: platform, create: false) == nil
+        if selectedPlatform != platform || needsCreation {
+            selectPlatformAndNavigate(platform)
+        }
+        Task { @MainActor [weak self] in
+            if needsCreation { try? await Task.sleep(nanoseconds: 900_000_000) }
+            self?.navigateTo(urlString: url.absoluteString)
+        }
+    }
+
     func navigateTo(urlString: String) {
         var input = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
         if !input.contains("://") {
@@ -2311,6 +2326,19 @@ struct FilteredWebViewContainer: View {
         }
     }
 
+    // A tapped Bouncer notification wants the feed on `url`. Make sure the
+    // feed is pushed (a cold launch may still be sitting on the picker), then
+    // let the view model switch platform + navigate.
+    private func openPushURL(_ url: URL) {
+        let platform = Platforms.fromHost((url.host ?? "").lowercased())?.id ?? "twitter"
+        if navPath.isEmpty {
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) { navPath.append(platform) }
+        }
+        viewModel.openPushURL(url, platform: platform)
+    }
+
     var body: some View {
         ZStack {
             NavigationStack(path: $navPath) {
@@ -2339,6 +2367,15 @@ struct FilteredWebViewContainer: View {
             }
         }
         .onAppear(perform: restoreLastPlatformIfNeeded)
+        // Web Push taps. A warm app gets the notification directly; on a cold
+        // launch the tap arrives before this view exists, so PushRegistrar
+        // parks the URL and we collect it once mounted.
+        .onAppear {
+            if let url = PushRegistrar.shared.consumePendingOpenURL() { openPushURL(url) }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: PushRegistrar.openURLNotification)) { note in
+            if let url = note.object as? URL { openPushURL(url) }
+        }
         .animation(.easeOut(duration: 0.35), value: isOnboarded)
         // If onboarding is re-triggered (DEBUG-only via the ladybug button),
         // pop the NavigationStack back to its root so the platform picker

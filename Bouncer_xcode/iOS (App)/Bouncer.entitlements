@@ -8,5 +8,11 @@
 	<true/>
 	<key>com.apple.developer.devicecheck.appattest-environment</key>
 	<string>production</string>
+	<key>aps-environment</key>
+	<string>development</string>
+	<key>keychain-access-groups</key>
+	<array>
+		<string>$(AppIdentifierPrefix)com.imbue.xbouncer.push</string>
+	</array>
 </dict>
 </plist>

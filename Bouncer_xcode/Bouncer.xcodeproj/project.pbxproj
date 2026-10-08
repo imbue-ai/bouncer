@@ -55,6 +55,18 @@
 		SP00000100000000000000SP /* SplashIcon.png in Resources */ = {isa = PBXBuildFile; fileRef = SP00000400000000000000SP /* SplashIcon.png */; };
 		SP00000200000000000000SP /* SplashIcon@2x.png in Resources */ = {isa = PBXBuildFile; fileRef = SP00000500000000000000SP /* SplashIcon@2x.png */; };
 		SP00000300000000000000SP /* SplashIcon@3x.png in Resources */ = {isa = PBXBuildFile; fileRef = SP00000600000000000000SP /* SplashIcon@3x.png */; };
+		WP00000000000000000002WP /* WebPushCrypto.swift in Sources */ = {isa = PBXBuildFile; fileRef = WP00000000000000000001WP /* WebPushCrypto.swift */; };
+		WP00000000000000000004WP /* PushPayload.swift in Sources */ = {isa = PBXBuildFile; fileRef = WP00000000000000000003WP /* PushPayload.swift */; };
+		WP00000000000000000006WP /* PushSubscriptionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = WP00000000000000000005WP /* PushSubscriptionStore.swift */; };
+		WP00000000000000000008WP /* PushRelayClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = WP00000000000000000007WP /* PushRelayClient.swift */; };
+		WP00000000000000000010WP /* PushRegistrar.swift in Sources */ = {isa = PBXBuildFile; fileRef = WP00000000000000000009WP /* PushRegistrar.swift */; };
+		WP00000000000000000012WP /* WebPushBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = WP00000000000000000011WP /* WebPushBridge.swift */; };
+		WP00000000000000000013WP /* WebPushCrypto.swift in Sources */ = {isa = PBXBuildFile; fileRef = WP00000000000000000001WP /* WebPushCrypto.swift */; };
+		WP00000000000000000014WP /* PushPayload.swift in Sources */ = {isa = PBXBuildFile; fileRef = WP00000000000000000003WP /* PushPayload.swift */; };
+		WP00000000000000000015WP /* PushSubscriptionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = WP00000000000000000005WP /* PushSubscriptionStore.swift */; };
+		WP00000000000000000017WP /* WebPushPolyfill.js in Resources */ = {isa = PBXBuildFile; fileRef = WP00000000000000000016WP /* WebPushPolyfill.js */; };
+		WP00000000000000000019WP /* NotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = WP00000000000000000018WP /* NotificationService.swift */; };
+		WP00000000000000000025WP /* NotificationService.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = WP00000000000000000024WP /* NotificationService.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -64,6 +76,13 @@
 			proxyType = 1;
 			remoteGlobalIDString = 974832522F91595300493A71;
 			remoteInfo = "Bouncer (macOS) Extension";
+		};
+		WP00000000000000000035WP /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 97BD3B6A2F3EB56C00F8BF65 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = WP00000000000000000027WP;
+			remoteInfo = NotificationService;
 		};
 /* End PBXContainerItemProxy section */
 
@@ -75,6 +94,17 @@
 			dstSubfolderSpec = 13;
 			files = (
 				974832542F91595300493A71 /* Bouncer (macOS) Extension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		WP00000000000000000026WP /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				WP00000000000000000025WP /* NotificationService.appex in Embed Foundation Extensions */,
 			);
 			name = "Embed Foundation Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -130,6 +160,17 @@
 		SP00000400000000000000SP /* SplashIcon.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = SplashIcon.png; sourceTree = "<group>"; };
 		SP00000500000000000000SP /* SplashIcon@2x.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "SplashIcon@2x.png"; sourceTree = "<group>"; };
 		SP00000600000000000000SP /* SplashIcon@3x.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "SplashIcon@3x.png"; sourceTree = "<group>"; };
+		WP00000000000000000001WP /* WebPushCrypto.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebPushCrypto.swift; sourceTree = "<group>"; };
+		WP00000000000000000003WP /* PushPayload.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushPayload.swift; sourceTree = "<group>"; };
+		WP00000000000000000005WP /* PushSubscriptionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushSubscriptionStore.swift; sourceTree = "<group>"; };
+		WP00000000000000000007WP /* PushRelayClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushRelayClient.swift; sourceTree = "<group>"; };
+		WP00000000000000000009WP /* PushRegistrar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushRegistrar.swift; sourceTree = "<group>"; };
+		WP00000000000000000011WP /* WebPushBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebPushBridge.swift; sourceTree = "<group>"; };
+		WP00000000000000000016WP /* WebPushPolyfill.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = WebPushPolyfill.js; sourceTree = "<group>"; };
+		WP00000000000000000018WP /* NotificationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationService.swift; sourceTree = "<group>"; };
+		WP00000000000000000020WP /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		WP00000000000000000021WP /* NotificationService.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = NotificationService.entitlements; sourceTree = "<group>"; };
+		WP00000000000000000024WP /* NotificationService.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = NotificationService.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -170,6 +211,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		WP00000000000000000029WP /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -188,6 +236,7 @@
 				9748323B2F91595100493A71 /* Bouncer (macOS) */,
 				974832572F91595300493A71 /* Bouncer (macOS) Extension */,
 				4E38A4D12F721C2500496A14 /* Frameworks */,
+				WP00000000000000000023WP /* NotificationService */,
 				97BD3B7E2F3EB56C00F8BF65 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -198,6 +247,7 @@
 				97BD3B7D2F3EB56C00F8BF65 /* Bouncer.app */,
 				9748323A2F91595100493A71 /* Bouncer.app */,
 				974832532F91595300493A71 /* Bouncer (macOS) Extension.appex */,
+				WP00000000000000000024WP /* NotificationService.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -220,6 +270,8 @@
 				DA00E3HEADBIN0000000DA015 /* detector_head_e2b_v2.bin */,
 				AA00004100000000000000AA /* filterphrases.mp4 */,
 				AA00000400000000000000AA /* ChromePolyfill.js */,
+				WP00000000000000000016WP /* WebPushPolyfill.js */,
+				WP00000000000000000022WP /* WebPush */,
 				AA00000600000000000000AA /* Bouncer.entitlements */,
 				97BD3B762F3EB56C00F8BF65 /* Assets.xcassets */,
 				SP00000400000000000000SP /* SplashIcon.png */,
@@ -261,6 +313,29 @@
 			name = "Extension Resources";
 			path = ../Bouncer;
 			sourceTree = SOURCE_ROOT;
+		};
+		WP00000000000000000022WP /* WebPush */ = {
+			isa = PBXGroup;
+			children = (
+				WP00000000000000000001WP /* WebPushCrypto.swift */,
+				WP00000000000000000003WP /* PushPayload.swift */,
+				WP00000000000000000005WP /* PushSubscriptionStore.swift */,
+				WP00000000000000000007WP /* PushRelayClient.swift */,
+				WP00000000000000000009WP /* PushRegistrar.swift */,
+				WP00000000000000000011WP /* WebPushBridge.swift */,
+			);
+			path = WebPush;
+			sourceTree = "<group>";
+		};
+		WP00000000000000000023WP /* NotificationService */ = {
+			isa = PBXGroup;
+			children = (
+				WP00000000000000000018WP /* NotificationService.swift */,
+				WP00000000000000000020WP /* Info.plist */,
+				WP00000000000000000021WP /* NotificationService.entitlements */,
+			);
+			path = NotificationService;
+			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
 
@@ -320,6 +395,7 @@
 				97BD3B792F3EB56C00F8BF65 /* Sources */,
 				97BD3B7A2F3EB56C00F8BF65 /* Frameworks */,
 				97BD3B7B2F3EB56C00F8BF65 /* Resources */,
+				WP00000000000000000026WP /* Embed Foundation Extensions */,
 				PR00000100000000000000PR /* Prune desktop-only extension files */,
 				CR00000400000000000000CR /* Copy GoogleService-Info plist (optional) */,
 				CR00000300000000000000CR /* Crashlytics dSYM upload */,
@@ -327,11 +403,31 @@
 			buildRules = (
 			);
 			dependencies = (
+				WP00000000000000000034WP /* PBXTargetDependency */,
 			);
 			name = "Bouncer (iOS)";
 			productName = "Twitter For You Filter (iOS)";
 			productReference = 97BD3B7D2F3EB56C00F8BF65 /* Bouncer.app */;
 			productType = "com.apple.product-type.application";
+		};
+		WP00000000000000000027WP /* NotificationService */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = WP00000000000000000033WP /* Build configuration list for PBXNativeTarget "NotificationService" */;
+			buildPhases = (
+				WP00000000000000000028WP /* Sources */,
+				WP00000000000000000029WP /* Frameworks */,
+				WP00000000000000000030WP /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = NotificationService;
+			packageProductDependencies = (
+			);
+			productName = NotificationService;
+			productReference = WP00000000000000000024WP /* NotificationService.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -350,6 +446,9 @@
 						CreatedOnToolsVersion = 26.2;
 					};
 					97BD3B7C2F3EB56C00F8BF65 = {
+						CreatedOnToolsVersion = 26.2;
+					};
+					WP00000000000000000027WP = {
 						CreatedOnToolsVersion = 26.2;
 					};
 				};
@@ -375,6 +474,7 @@
 				97BD3B7C2F3EB56C00F8BF65 /* Bouncer (iOS) */,
 				974832392F91595100493A71 /* Bouncer (macOS) */,
 				974832522F91595300493A71 /* Bouncer (macOS) Extension */,
+				WP00000000000000000027WP /* NotificationService */,
 			);
 		};
 /* End PBXProject section */
@@ -415,6 +515,7 @@
 				SP00000300000000000000SP /* SplashIcon@3x.png in Resources */,
 				97BD3B892F3EB56C00F8BF65 /* Main.storyboard in Resources */,
 				AA00001400000000000000AA /* ChromePolyfill.js in Resources */,
+				WP00000000000000000017WP /* WebPushPolyfill.js in Resources */,
 				97BD3BE02F3EB56D00F8BF65 /* browser-polyfill.js in Resources */,
 				97BD3BE22F3EB56D00F8BF65 /* content.css in Resources */,
 				97BD3BE42F3EB56D00F8BF65 /* dist in Resources */,
@@ -430,6 +531,13 @@
 				DA00E3HEADRES0000000DA016 /* detector_head_e2b_v2.bin in Resources */,
 				4EC0EDD330059DE400F3FCDE /* new_ios_icon_composed.icon in Resources */,
 				4EC0EC652FEB068700F3FCDE /* GoogleService-Info-Dev.plist in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		WP00000000000000000030WP /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -567,6 +675,23 @@
 				AA00006000000000000000AA /* Platforms.swift in Sources */,
 				DA00LISBUILD0000000DA004 /* LocalInferenceService.swift in Sources */,
 				DA00MDBUILD000000000DA006 /* ModelDownloader.swift in Sources */,
+				WP00000000000000000002WP /* WebPushCrypto.swift in Sources */,
+				WP00000000000000000004WP /* PushPayload.swift in Sources */,
+				WP00000000000000000006WP /* PushSubscriptionStore.swift in Sources */,
+				WP00000000000000000008WP /* PushRelayClient.swift in Sources */,
+				WP00000000000000000010WP /* PushRegistrar.swift in Sources */,
+				WP00000000000000000012WP /* WebPushBridge.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		WP00000000000000000028WP /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				WP00000000000000000019WP /* NotificationService.swift in Sources */,
+				WP00000000000000000013WP /* WebPushCrypto.swift in Sources */,
+				WP00000000000000000014WP /* PushPayload.swift in Sources */,
+				WP00000000000000000015WP /* PushSubscriptionStore.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -577,6 +702,11 @@
 			isa = PBXTargetDependency;
 			target = 974832522F91595300493A71 /* Bouncer (macOS) Extension */;
 			targetProxy = 974832552F91595300493A71 /* PBXContainerItemProxy */;
+		};
+		WP00000000000000000034WP /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = WP00000000000000000027WP /* NotificationService */;
+			targetProxy = WP00000000000000000035WP /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -888,6 +1018,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
 				BOUNCER_ENV = DEV;
+				BOUNCER_PUSH_RELAY_URL = "https://zpy4um1pd4.execute-api.us-west-2.amazonaws.com";
 				CODE_SIGN_ALLOW_ENTITLEMENTS_MODIFICATION = YES;
 				CODE_SIGN_ENTITLEMENTS = "iOS (App)/Bouncer.entitlements";
 				CODE_SIGN_IDENTITY = "Apple Development";
@@ -938,6 +1069,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
 				BOUNCER_ENV = PROD;
+				BOUNCER_PUSH_RELAY_URL = "https://zpy4um1pd4.execute-api.us-west-2.amazonaws.com";
 				CODE_SIGN_ALLOW_ENTITLEMENTS_MODIFICATION = YES;
 				CODE_SIGN_ENTITLEMENTS = "iOS (App)/Bouncer.entitlements";
 				CODE_SIGN_IDENTITY = "Apple Development";
@@ -982,6 +1114,71 @@
 			};
 			name = Release;
 		};
+		WP00000000000000000031WP /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BOUNCER_ENV = DEV;
+				CODE_SIGN_ENTITLEMENTS = NotificationService/NotificationService.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = LDDYAR29MP;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = NotificationService/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Bouncer Notifications";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 2.4.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.imbue.xbouncer.dev.NotificationService;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = nonisolated;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		WP00000000000000000032WP /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BOUNCER_ENV = PROD;
+				CODE_SIGN_ENTITLEMENTS = NotificationService/NotificationService.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = LDDYAR29MP;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = NotificationService/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Bouncer Notifications";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 2.4.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.imbue.xbouncer.NotificationService;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = nonisolated;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -1017,6 +1214,15 @@
 			buildConfigurations = (
 				97BD3BC02F3EB56C00F8BF65 /* Debug */,
 				97BD3BC12F3EB56C00F8BF65 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		WP00000000000000000033WP /* Build configuration list for PBXNativeTarget "NotificationService" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				WP00000000000000000031WP /* Debug */,
+				WP00000000000000000032WP /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
