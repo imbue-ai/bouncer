@@ -732,6 +732,16 @@ struct FilteredWebView: UIViewRepresentable {
         private static let hideThreshold: CGFloat = 24
         private static let showThreshold: CGFloat = 16
 
+        // Instagram Reels: the bar is locked in the visible position. Set from
+        // the active webview's URL.
+        private var navBarLocked = false
+
+        static func isReelsViewer(_ url: URL?) -> Bool {
+            guard let url, let host = url.host?.lowercased(),
+                  host == "instagram.com" || host.hasSuffix(".instagram.com") else { return false }
+            return url.path.hasPrefix("/reels") || url.path.hasPrefix("/reel/")
+        }
+
         func activate(_ webView: WKWebView) {
             canGoBackObservation?.invalidate()
             canGoForwardObservation?.invalidate()
@@ -753,6 +763,7 @@ struct FilteredWebView: UIViewRepresentable {
                     self?.sheetViewModel.currentURL = wv.url?.absoluteString ?? ""
                 }
                 // Any navigation (links, back/forward swipe) re-shows the bar.
+                self?.navBarLocked = Self.isReelsViewer(wv.url)
                 self?.setNavBarHidden(false)
             }
 
@@ -762,6 +773,7 @@ struct FilteredWebView: UIViewRepresentable {
             lastScrollY = webView.scrollView.contentOffset.y + webView.scrollView.adjustedContentInset.top
             accumulatedDown = 0
             accumulatedUp = 0
+            navBarLocked = Self.isReelsViewer(webView.url)
             setNavBarHidden(false)
             contentOffsetObservation = webView.scrollView.observe(\.contentOffset, options: [.new]) { [weak self] sv, _ in
                 self?.handleScroll(sv)
@@ -774,6 +786,13 @@ struct FilteredWebView: UIViewRepresentable {
         private func handleScroll(_ scrollView: UIScrollView) {
             let y = scrollView.contentOffset.y + scrollView.adjustedContentInset.top
             let delta = y - lastScrollY
+
+            // Reels: locked visible — scrolling never hides the bar.
+            if navBarLocked {
+                lastScrollY = y
+                setNavBarHidden(false)
+                return
+            }
 
             // Near the top (including top rubber-band): pin the bar visible.
             if y < Self.topPin {

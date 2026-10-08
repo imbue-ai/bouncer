@@ -217,6 +217,10 @@ class FilterSheetViewModel: ObservableObject {
     // has the on-device model selected.
     @Published var selectedModel: String = ""
     @Published var filterReplies: Bool = true
+    // Instagram's "Preview next reels" curtain. Same storage key as the
+    // desktop popup's toggle (instagramIntentionalScroll); missing means on.
+    // Off: no curtain at all, and swiping between reels is Instagram's own.
+    @Published var previewNextReels: Bool = true
     // Which platform's filter phrases the sheet is currently viewing/editing.
     // Also drives which cached webview is visible / audible — the
     // FilteredWebViewContainer's ForEach reads this to pick the active mount.
@@ -459,6 +463,22 @@ class FilterSheetViewModel: ObservableObject {
         filterReplies = enabled
         Task { @MainActor in
             await setStorage(["filterReplies": enabled])
+        }
+    }
+
+    func loadPreviewNextReels() {
+        Task { @MainActor in
+            let data = await getStorage(keys: ["instagramIntentionalScroll"])
+            self.previewNextReels = (data["instagramIntentionalScroll"] as? Bool) ?? true
+        }
+    }
+
+    // Written through the active (Instagram) webview, whose storage listener
+    // tears the curtain down or puts it back live — no reload.
+    func setPreviewNextReels(_ enabled: Bool) {
+        previewNextReels = enabled
+        Task { @MainActor in
+            await setStorage(["instagramIntentionalScroll": enabled])
         }
     }
 
@@ -1415,6 +1435,19 @@ struct BouncerSettingsView: View {
                 }
             }
 
+            if viewModel.selectedPlatform == PlatformID.instagram {
+                Section {
+                    Toggle(isOn: Binding(
+                        get: { viewModel.previewNextReels },
+                        set: { viewModel.setPreviewNextReels($0) }
+                    )) {
+                        Text("Preview next reels")
+                    }
+                } footer: {
+                    Text("Each reel arrives behind a preview of what's coming up. Turn off to scroll Reels normally.")
+                }
+            }
+
             // The gate is the first thing here, not the last. It is the only
             // setting in the app that changes what happens OUTSIDE Bouncer —
             // and a feature nobody can find is off by default in the way that
@@ -1512,6 +1545,7 @@ struct BouncerSettingsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
             viewModel.loadFilterReplies()
+            viewModel.loadPreviewNextReels()
             viewModel.loadSelectedModel()
             loadExcludedAccounts()
         }
