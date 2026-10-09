@@ -1679,7 +1679,7 @@ struct AdvancedSettingsView: View {
                 Text("Providers")
             } footer: {
                 if !hasImbueBackend {
-                    Text("This build has no bundled backend. Bring your own OpenAI, Anthropic, Gemini, or OpenRouter API key to classify posts.")
+                    Text("This build has no bundled backend. Bring your own OpenAI, Anthropic, Gemini, OpenRouter, or Requesty API key to classify posts.")
                 }
             }
 
@@ -1898,6 +1898,17 @@ private let providerSpecs: [ProviderSpec] = [
         models: [
             ProviderModel(id: "nvidia/nemotron-nano-12b-v2-vl:free", display: "Nemotron Nano 12B VL (free)"),
             ProviderModel(id: "mistralai/ministral-3b-2512", display: "Ministral 3B"),
+        ]
+    ),
+    ProviderSpec(
+        id: "requesty",
+        displayName: "Requesty",
+        storageKey: "requestyApiKey",
+        placeholder: "rqsty-...",
+        helpURL: "https://app.requesty.ai/api-keys",
+        models: [
+            ProviderModel(id: "openai/gpt-4o-mini", display: "GPT-4o Mini"),
+            ProviderModel(id: "google/gemini-2.5-flash-lite", display: "Gemini 2.5 Flash Lite"),
         ]
     ),
 ]
