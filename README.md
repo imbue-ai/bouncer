@@ -6,41 +6,22 @@
 
 **Heal your feed.** Bouncer is a browser extension that uses AI to filter unwanted posts from your Twitter/X feed. Define filter topics in plain language — "crypto", "engagement bait", "rage politics" — and Bouncer classifies and hides matching posts in real time.
 
-[**Install from the Chrome Web Store**](https://chromewebstore.google.com/detail/bouncer-heal-your-feed-on/bkijmhafoocfloemhancbgadknkgdkcm)
-
-[**Install on iOS**](https://apps.apple.com/us/app/bouncer-heal-your-feed/id6759466393)
-
 <p align="center">
   <img src="appstore_assets/demo.gif" alt="Bouncer demo" />
 </p>
 
+[**Available on the app stores for Chrome, Firefox, Safari, iOS, and Android**](https://imbue.com/product/bouncer/redirect.html)
+
 ## Features
 
-- **Natural language filters** — describe what you don't want to see in your own words
-- **Multiple AI backends** — run models locally on your GPU, or use cloud APIs (OpenAI, Google Gemini, Anthropic, OpenRouter)
-- **On-device inference** — local models run entirely in your browser with zero data sent externally
-- **Image-aware filtering** — multimodal models can classify posts based on images, not just text
-- **Reasoning transparency** — see exactly why each post was filtered
-- **Theme-aware UI** — adapts to light, dim, and dark modes automatically
-
-## Supported Models
-
-| Provider | Models                                     | Requires |
-|----------|--------------------------------------------|----------|
-| **Local (WebGPU)** | Gemma 4 E4B (Instruct)                     | WebGPU-capable browser |
-| **OpenAI** | GPT-5 Nano, gpt-oss-20b                    | API key |
-| **Google Gemini** | 2.5 Flash Lite, 2.5 Flash, 3 Flash Preview | API key |
-| **Anthropic** | Claude Haiku 4.5 | API key |
-| **OpenRouter** | Nemotron Nano 12B VL (free), Ministral 3B | Account |
-| **Imbue** | Default backend | None (built-in) |
-
-Local models are downloaded once and cached in the browser's Cache Storage.
+- **Semantic filtering**: define your filters in natural language, rather than giving exact strings to remove
+- **AI detection**: remove slop text and images using our custom-trained AI detector model
+- **On-device inference**: local models run entirely in your browser with zero data sent externally
+- **Image-aware filtering**: multimodal models can classify posts based on images, not just text
+- **Multiple AI backends**: run models locally on your GPU, or use cloud APIs (OpenAI, Google Gemini, Anthropic, OpenRouter)
+- **Theme-aware UI**: adapts to light, dim, and dark modes automatically
 
 ## Quick Start
-
-### Chrome / Edge (Web Store)
-
-[**Install Bouncer**](https://chromewebstore.google.com/detail/bouncer-heal-your-feed-on/bkijmhafoocfloemhancbgadknkgdkcm) from the Chrome Web Store.
 
 ### Chrome / Edge (from source)
 
@@ -53,6 +34,20 @@ npm run build
 1. Open `chrome://extensions`
 2. Enable **Developer mode**
 3. Click **Load unpacked** and select the `Bouncer/` folder
+4. Navigate to twitter.com / x.com
+5. Click "Settings" in the Bouncer element and add your preferred provider API key (or enable local models) and select your preferred model from the dropdown.
+
+### Firefox (from source)
+
+```bash
+cd Bouncer
+npm install
+npm run build:firefox
+```
+
+1. Open `about:debugging`
+2. Click **This Firefox** on the left menu
+3. Click **Load Temporary Add-on...** and select the file `Bouncer/manifest.json`
 4. Navigate to twitter.com / x.com
 5. Click "Settings" in the Bouncer element and add your preferred provider API key (or enable local models) and select your preferred model from the dropdown.
 
