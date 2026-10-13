@@ -1077,7 +1077,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
 				BOUNCER_ENV = PROD;
-				BOUNCER_PUSH_RELAY_URL = "https://zpy4um1pd4.execute-api.us-west-2.amazonaws.com";
+				BOUNCER_PUSH_RELAY_URL = "https://x4ixdfqff8.execute-api.us-west-2.amazonaws.com";
 				CODE_SIGN_ALLOW_ENTITLEMENTS_MODIFICATION = YES;
 				CODE_SIGN_ENTITLEMENTS = "iOS (App)/Bouncer.entitlements";
 				CODE_SIGN_IDENTITY = "Apple Development";
