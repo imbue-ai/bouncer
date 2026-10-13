@@ -250,7 +250,6 @@
 			children = (
 				97BD3B7D2F3EB56C00F8BF65 /* Bouncer.app */,
 				9748323A2F91595100493A71 /* Bouncer.app */,
-				974832532F91595300493A71 /* Bouncer (macOS) Extension.appex */,
 				WP00000000000000000024WP /* NotificationService.appex */,
 				974832532F91595300493A71 /* Bouncer Extension.appex */,
 			);
@@ -1048,7 +1047,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.4.1;
+				MARKETING_VERSION = 2.5.0;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",
@@ -1099,7 +1098,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.4.1;
+				MARKETING_VERSION = 2.5.0;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",
