@@ -334,7 +334,8 @@ final class PushAutoEnabler: NSObject, WKScriptMessageHandler {
         let content = UNMutableNotificationContent()
         content.title = "Bouncer (debug)"
         content.body = message
-        content.interruptionLevel = .passive
+        // Default (active) level: passive would skip the banner entirely and
+        // only land in Notification Center.
         let request = UNNotificationRequest(identifier: "bouncer-debug-\(UUID().uuidString)", content: content, trigger: nil)
         UNUserNotificationCenter.current().add(request) { error in
             if let error { print("[WebPush] debug notification failed: \(error)") }
