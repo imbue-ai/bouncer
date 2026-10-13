@@ -109,11 +109,7 @@ struct FilteredWebView: UIViewRepresentable {
             webView.navigationDelegate = coordinator
             webView.uiDelegate = coordinator
             webView.allowsBackForwardNavigationGestures = true
-            if UIDevice.current.userInterfaceIdiom == .pad {
-                webView.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15"
-            } else {
-                webView.customUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"
-            }
+            webView.customUserAgent = userAgent()
             if #available(iOS 16.4, *) {
                 webView.isInspectable = true
             }
@@ -136,6 +132,15 @@ struct FilteredWebView: UIViewRepresentable {
             }
 
             return webView
+        }
+
+        // The Safari UA x.com is served against. Shared with the hidden
+        // push-settings view (PushAutoEnabler) so it gets the same client.
+        static func userAgent() -> String {
+            if UIDevice.current.userInterfaceIdiom == .pad {
+                return "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15"
+            }
+            return "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"
         }
 
         // MARK: - Script Injection

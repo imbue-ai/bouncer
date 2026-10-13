@@ -44,5 +44,8 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         // Catch up to anything the background URLSession did while we
         // were suspended: completed downloads, persisted pauses, etc.
         LocalInferenceService.shared.reconcileDownload()
+        // An auto-enable cut short by backgrounding (its hidden web view is
+        // throttled while we're suspended) gets another attempt.
+        PushAutoEnabler.shared.retryIfNeeded()
     }
 }

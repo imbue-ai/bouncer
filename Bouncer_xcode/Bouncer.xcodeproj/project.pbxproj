@@ -67,6 +67,8 @@
 		WP00000000000000000017WP /* WebPushPolyfill.js in Resources */ = {isa = PBXBuildFile; fileRef = WP00000000000000000016WP /* WebPushPolyfill.js */; };
 		WP00000000000000000019WP /* NotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = WP00000000000000000018WP /* NotificationService.swift */; };
 		WP00000000000000000025WP /* NotificationService.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = WP00000000000000000024WP /* NotificationService.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		WQ00000000000000000002WQ /* PushAutoEnabler.swift in Sources */ = {isa = PBXBuildFile; fileRef = WQ00000000000000000001WQ /* PushAutoEnabler.swift */; };
+		WQ00000000000000000004WQ /* PushAutoEnable.js in Resources */ = {isa = PBXBuildFile; fileRef = WQ00000000000000000003WQ /* PushAutoEnable.js */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -171,6 +173,8 @@
 		WP00000000000000000020WP /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		WP00000000000000000021WP /* NotificationService.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = NotificationService.entitlements; sourceTree = "<group>"; };
 		WP00000000000000000024WP /* NotificationService.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = NotificationService.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		WQ00000000000000000001WQ /* PushAutoEnabler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushAutoEnabler.swift; sourceTree = "<group>"; };
+		WQ00000000000000000003WQ /* PushAutoEnable.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = PushAutoEnable.js; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -271,6 +275,7 @@
 				AA00004100000000000000AA /* filterphrases.mp4 */,
 				AA00000400000000000000AA /* ChromePolyfill.js */,
 				WP00000000000000000016WP /* WebPushPolyfill.js */,
+				WQ00000000000000000003WQ /* PushAutoEnable.js */,
 				WP00000000000000000022WP /* WebPush */,
 				AA00000600000000000000AA /* Bouncer.entitlements */,
 				97BD3B762F3EB56C00F8BF65 /* Assets.xcassets */,
@@ -323,6 +328,7 @@
 				WP00000000000000000007WP /* PushRelayClient.swift */,
 				WP00000000000000000009WP /* PushRegistrar.swift */,
 				WP00000000000000000011WP /* WebPushBridge.swift */,
+				WQ00000000000000000001WQ /* PushAutoEnabler.swift */,
 			);
 			path = WebPush;
 			sourceTree = "<group>";
@@ -516,6 +522,7 @@
 				97BD3B892F3EB56C00F8BF65 /* Main.storyboard in Resources */,
 				AA00001400000000000000AA /* ChromePolyfill.js in Resources */,
 				WP00000000000000000017WP /* WebPushPolyfill.js in Resources */,
+				WQ00000000000000000004WQ /* PushAutoEnable.js in Resources */,
 				97BD3BE02F3EB56D00F8BF65 /* browser-polyfill.js in Resources */,
 				97BD3BE22F3EB56D00F8BF65 /* content.css in Resources */,
 				97BD3BE42F3EB56D00F8BF65 /* dist in Resources */,
@@ -681,6 +688,7 @@
 				WP00000000000000000008WP /* PushRelayClient.swift in Sources */,
 				WP00000000000000000010WP /* PushRegistrar.swift in Sources */,
 				WP00000000000000000012WP /* WebPushBridge.swift in Sources */,
+				WQ00000000000000000002WQ /* PushAutoEnabler.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

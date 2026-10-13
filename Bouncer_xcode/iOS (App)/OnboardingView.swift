@@ -165,6 +165,9 @@ struct OnboardingView: View {
             seedAiSlopFilterPhrase()
         }
         UserDefaults.standard.set(true, forKey: "hasCompletedOnboarding")
+        // Get the notification permission tap out of the way now, before
+        // login; the x.com subscribe itself happens silently later.
+        PushRegistrar.shared.requestAuthorizationEarly()
         withAnimation(.easeOut(duration: 0.35)) {
             isOnboarded = true
         }

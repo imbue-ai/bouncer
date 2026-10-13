@@ -33,6 +33,46 @@ final class PushRegistrar {
     private var tokenWaiters: [CheckedContinuation<String?, Never>] = []
     private var pendingOpenURL: URL?
 
+    /// Fires (on main) with the scope each time a subscription is successfully
+    /// registered. The auto-enable flow uses this as the authoritative
+    /// "notifications are on" signal — proof the site's subscribe() reached us
+    /// and got an endpoint — rather than guessing from the settings toggle.
+    var onSubscriptionRegistered: ((String) -> Void)?
+
+    static let xScope = "https://x.com/"
+    // User intent for the settings toggle. Absent = never touched (new users
+    // still auto-enable); false = explicitly turned off.
+    static let notificationsOnKey = "notificationsOn"
+    static let notificationsPromptedKey = "hasPromptedNotifications"
+
+    var isSubscribedToX: Bool { PushSubscriptionStore.get(scope: Self.xScope) != nil }
+
+    static var userOptedOut: Bool {
+        let d = UserDefaults.standard
+        return d.object(forKey: notificationsOnKey) != nil && !d.bool(forKey: notificationsOnKey)
+    }
+
+    static func setNotificationsOn(_ on: Bool) {
+        UserDefaults.standard.set(on, forKey: notificationsOnKey)
+    }
+
+    /// Ask for the OS permission early (onboarding completion), before login,
+    /// so the one required tap is out of the way and the later x.com
+    /// subscribe can happen silently. Once only.
+    func requestAuthorizationEarly() {
+        let d = UserDefaults.standard
+        guard !d.bool(forKey: Self.notificationsPromptedKey) else { return }
+        Task { @MainActor in
+            let center = UNUserNotificationCenter.current()
+            let settings = await center.notificationSettings()
+            guard settings.authorizationStatus == .notDetermined else { return }
+            let granted = (try? await center.requestAuthorization(options: [.alert, .sound, .badge])) ?? false
+            d.set(true, forKey: Self.notificationsPromptedKey)
+            print("[WebPush] notification permission (early) granted=\(granted)")
+            if granted { UIApplication.shared.registerForRemoteNotifications() }
+        }
+    }
+
     private init() {}
 
     // MARK: - App lifecycle
@@ -135,6 +175,7 @@ final class PushRegistrar {
             )
             try PushSubscriptionStore.save(record)
             print("[WebPush] subscribed \(scope) → \(endpoint)")
+            onSubscriptionRegistered?(scope)
             return record
         } catch {
             print("[WebPush] subscribe failed for \(scope): \(error)")
@@ -199,6 +240,7 @@ final class PushRegistrar {
             // The system prompt appears right where Safari would show its
             // own — when the site asks.
             let granted = (try? await center.requestAuthorization(options: [.alert, .sound, .badge])) ?? false
+            UserDefaults.standard.set(true, forKey: Self.notificationsPromptedKey)
             return granted
         default:
             return false

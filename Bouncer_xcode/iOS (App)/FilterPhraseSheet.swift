@@ -120,7 +120,16 @@ class FilterSheetViewModel: ObservableObject {
     var filteredCount: Int { filteredCounts[selectedPlatform] ?? 0 }
     @Published var canGoBack = false
     @Published var canGoForward = false
-    @Published var currentURL: String = ""
+    @Published var currentURL: String = "" {
+        didSet {
+            // Reaching the authenticated home timeline is the cue to silently
+            // enable x.com push (once per install) — see PushAutoEnabler.
+            PushAutoEnabler.shared.onURLChanged(currentURL, coordinator: cache.coordinator)
+        }
+    }
+    // The settings sheet's "Push notifications" toggle. Mirrors user intent
+    // (PushRegistrar.notificationsOnKey) and the live subscription state.
+    @Published var notificationsEnabled: Bool = PushRegistrar.shared.isSubscribedToX && !PushRegistrar.userOptedOut
     @Published var isEditingURL = false
     @Published var isFilteredModalOpen = false
     // Scroll-driven nav bar visibility: WebCoordinator's contentOffset
@@ -374,6 +383,29 @@ class FilterSheetViewModel: ObservableObject {
 
     func reload() {
         webView?.reload()
+    }
+
+    // The settings-sheet "Push notifications" toggle. ON subscribes (via the
+    // same hidden-settings flow as the silent auto-enable); OFF drops the
+    // subscription — unlike Android, iOS can't suppress a push after Apple
+    // delivers it, so "off" has to mean "unsubscribed". x.com's next attempt
+    // gets a 410 from the push service and it stops sending.
+    func refreshNotificationsEnabled() {
+        notificationsEnabled = PushRegistrar.shared.isSubscribedToX && !PushRegistrar.userOptedOut
+    }
+
+    func setNotificationsEnabled(_ on: Bool) {
+        PushRegistrar.setNotificationsOn(on)
+        notificationsEnabled = on
+        if on {
+            PushAutoEnabler.shared.enableFromSettings(coordinator: cache.coordinator) { [weak self] ok in
+                if !ok { self?.notificationsEnabled = false }
+            }
+        } else {
+            Task { @MainActor in
+                _ = await PushRegistrar.shared.unsubscribe(scope: PushRegistrar.xScope)
+            }
+        }
     }
 
     // Notification tap (see FilteredWebViewContainer.openPushURL): show
@@ -1371,6 +1403,24 @@ struct BouncerSettingsView: View {
                 )) {
                     Text("Also filter replies in threads")
                 }
+            }
+
+            // Web Push for x.com, delivered natively (see WebPush/). The
+            // toggle reflects the live subscription; turning it on runs the
+            // same silent enable flow the app attempts after login.
+            Section {
+                Toggle(isOn: Binding(
+                    get: { viewModel.notificationsEnabled },
+                    set: { viewModel.setNotificationsEnabled($0) }
+                )) {
+                    Text("Push notifications from X")
+                }
+                .onAppear { viewModel.refreshNotificationsEnabled() }
+                .onReceive(NotificationCenter.default.publisher(for: PushAutoEnabler.stateChangedNotification)) { _ in
+                    viewModel.refreshNotificationsEnabled()
+                }
+            } footer: {
+                Text("Likes, replies, mentions and messages, as X would send them to a browser.")
             }
 
             // Excluded accounts for the selected platform: posts from these
