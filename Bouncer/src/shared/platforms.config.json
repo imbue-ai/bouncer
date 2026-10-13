@@ -24,5 +24,14 @@
     "adapterScript": "dist/YouTubeAdapter.js",
     "cssPath": "adapters/youtube/youtube.css",
     "extraWebAccessible": ["adapters/youtube/lockup-extractor.js"]
+  },
+  {
+    "id": "facebook",
+    "targets": ["chrome", "firefox"],
+    "optionalTargets": ["chrome", "firefox"],
+    "manifestHost": "https://*.facebook.com/*",
+    "adapterScript": "dist/FacebookAdapter.js",
+    "cssPath": "adapters/facebook/facebook.css",
+    "extraWebAccessible": []
   }
 ]

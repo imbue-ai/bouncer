@@ -16,7 +16,7 @@ import platformsConfig from './platforms.config.json';
 /** Literal-tuple of every supported platform id. SiteId is derived from
  *  this, so adding a new platform automatically extends the union — there
  *  is no longer a separate type alias to keep in sync. */
-export const PLATFORM_IDS = ['twitter', 'youtube', 'linkedin'] as const;
+export const PLATFORM_IDS = ['twitter', 'youtube', 'linkedin', 'facebook'] as const;
 
 export type SiteId = typeof PLATFORM_IDS[number];
 
@@ -80,6 +80,11 @@ const PLATFORM_RUNTIME: Record<SiteId, PlatformRuntimeOnly> = {
     displayName: 'LinkedIn',
     hostPattern: /(^|\.)linkedin\.com$/i,
     feedUrl: 'https://www.linkedin.com/feed/',
+  },
+  facebook: {
+    displayName: 'Facebook',
+    hostPattern: /(^|\.)facebook\.com$/i,
+    feedUrl: 'https://www.facebook.com/',
   },
 };
 

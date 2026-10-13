@@ -3,7 +3,7 @@
 import type { ModelDef, LocalModelStatus, StorageSchema, SiteId } from '../types';
 import { PREDEFINED_MODELS, DEFAULT_MODEL } from '../shared/models';
 import { escapeHtml, parseHTML } from '../shared/utils';
-import { getStorage, setStorage, removeStorage, clampThreshold, clampImageThreshold, clampReplyThreshold, aiIntentAutoActive, getExcludedAccounts, setExcludedAccounts, normalizeAccountIdentity } from '../shared/storage';
+import { getStorage, setStorage, removeStorage, clampThreshold, clampImageThreshold, clampReplyThreshold, aiIntentAutoActive, getExcludedAccounts, setExcludedAccounts, normalizeAccountIdentity, identifiesAccountsByName } from '../shared/storage';
 import {
   DEFAULT_BRAND_COLOR, BRAND_COLOR_PRESETS,
   normalizeHexColor, hexToRgb, rgbToHex, rgbToHsv, hsvToRgb,
@@ -535,7 +535,7 @@ async function renderExcludedAccounts(): Promise<void> {
   container.replaceChildren();
   activePlatforms.forEach((p, i) => {
     const accounts = lists[i];
-    const isLinkedIn = p.id === 'linkedin';
+    const byName = identifiesAccountsByName(p.id);
     const noun = p.id === 'youtube' ? 'videos' : 'posts';
 
     const group = document.createElement('div');
@@ -555,7 +555,7 @@ async function renderExcludedAccounts(): Promise<void> {
     sentence.appendChild(prefix);
 
     for (const account of accounts) {
-      const display = isLinkedIn ? account : `@${account}`;
+      const display = byName ? account : `@${account}`;
       // Phrase + trailing comma share one wrapper so a bare comma can never
       // wrap onto its own line (same trick as renderPhrasesInContainer).
       const item = document.createElement('span');

@@ -15,7 +15,7 @@ import {
   getStorage, setStorage, getDescriptions, setDescriptions,
   aiIntentActiveForSite,
   getFilteringPaused, setFilteringPaused,
-  getExcludedAccounts, setExcludedAccounts, exclusionIdentity,
+  getExcludedAccounts, setExcludedAccounts, exclusionIdentity, identifiesAccountsByName,
 } from '../shared/storage';
 import { optionalPlatforms } from '../shared/platforms';
 import { getReleaseNote, WELCOME_TIP } from './release-notes';
@@ -988,6 +988,11 @@ async function injectFilterPhrasesInputImpl() {
   // right rail don't overlap the filter box.
   if (_deps.adapter.siteId === 'linkedin') {
     filterPhrasesContainer.classList.add('filter-phrases-sidebar--linkedin');
+  }
+  // facebook adaptation: see facebook.css (z-index over the right rail's
+  // ads, no Twitter gap fill, no share button).
+  if (_deps.adapter.siteId === 'facebook') {
+    filterPhrasesContainer.classList.add('filter-phrases-sidebar--facebook');
   }
 
   if (process.env.HAS_IMBUE_BACKEND === 'true' && (!isAuthenticated || guestLimitReached)) {
@@ -3007,10 +3012,11 @@ function createExcludeAccountButton(post: FilteredPost, postContent: PostContent
   const identity = exclusionIdentity(siteId, postContent);
   if (!identity) return null;
 
-  // Display form: the author's name on LinkedIn, the original-case @handle
-  // elsewhere (the store path may hand us a bare handle — re-add the @).
-  let display = siteId === 'linkedin' ? postContent.author : postContent.handle.replace(/^\//, '');
-  if (siteId !== 'linkedin' && !display.startsWith('@')) display = `@${display}`;
+  // Display form: the author's name on LinkedIn/Facebook, the original-case
+  // @handle elsewhere (the store path may hand us a bare handle — re-add the @).
+  const byName = identifiesAccountsByName(siteId);
+  let display = byName ? postContent.author : postContent.handle.replace(/^\//, '');
+  if (!byName && !display.startsWith('@')) display = `@${display}`;
 
   const noun = siteId === 'youtube' ? 'videos' : 'posts';
   const btn = document.createElement('button');

@@ -1,0 +1,61 @@
+/* facebook adaptation
+ *
+ * Facebook-specific styles for Bouncer. FacebookAdapter only reports
+ * 'light' | 'dark' (no dim theme), which the shared content.css already
+ * covers. Keep selectors scoped to Bouncer's own classes — Facebook's class
+ * names are atomic hashes that change on every deploy. */
+
+/* Filter box in the right rail. The shared in-wrapper variant is
+ * position: fixed with left/width set inline by JS, but the rail's inner
+ * scroller has `will-change: transform`, which makes IT the containing block
+ * for fixed descendants — the box would render a full rail-width off to the
+ * right. Instead pin the box with sticky positioning inside that scroller:
+ * it stays at the top of the rail while the rail's own content scrolls
+ * underneath. The inline left/width from the shared code are overridden,
+ * and the spacer (which only exists to reserve room for a fixed box) is
+ * dropped since a sticky box already takes its own space in flow.
+ * 499 keeps it above the rail's sponsored cards but below Bouncer's
+ * filtered-posts modal backdrop (z-index 10000). */
+.filter-phrases-sidebar--facebook,
+.filter-phrases-sidebar--facebook.filter-phrases-sidebar--in-wrapper {
+  position: sticky;
+  top: 8px;
+  left: auto !important;
+  width: auto !important;
+  margin: 8px 16px 12px;
+  z-index: 499;
+}
+
+.filter-phrases-sidebar--facebook + .filter-phrases-sidebar-spacer {
+  display: none;
+}
+
+/* The ::before fill masks Twitter's scrolling sidebar content behind the
+ * box. On Facebook it would paint a white block over the grey page
+ * background, so drop it. */
+.filter-phrases-sidebar--facebook::before {
+  display: none;
+}
+
+/* "Share filters" links into an X-specific flow. */
+.filter-phrases-sidebar--facebook .filter-pack-share-btn {
+  display: none;
+}
+
+/* The Bounce control replaces Facebook's "X" (Hide post) in the post header.
+ * width/height are set inline at insert time to match the native 36px round
+ * button; give it the same circular hover fill. */
+.ff-why-annoying-btn--facebook-header {
+  flex: 0 0 auto;
+  align-self: center;
+  border-radius: 50%;
+}
+
+.ff-why-annoying-btn--facebook-header:hover {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+.dark-mode .ff-why-annoying-btn--facebook-header:hover,
+html.__fb-dark-mode .ff-why-annoying-btn--facebook-header:hover {
+  background: rgba(255, 255, 255, 0.1);
+}

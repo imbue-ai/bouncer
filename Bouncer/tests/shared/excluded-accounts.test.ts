@@ -43,6 +43,10 @@ describe('exclusionIdentity', () => {
     ).toBe('jane doe');
   });
 
+  it('uses the author on Facebook (it has no handles)', () => {
+    expect(exclusionIdentity('facebook', { author: 'Jane Doe', handle: '' })).toBe('jane doe');
+  });
+
   it('normalizes YouTube channel handles', () => {
     expect(exclusionIdentity('youtube', { author: 'Some Channel', handle: '/@SomeChannel' })).toBe('somechannel');
   });

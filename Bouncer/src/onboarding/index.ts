@@ -113,7 +113,7 @@ async function init(): Promise<void> {
     const name = document.createElement('span');
     name.textContent = p.displayName;
     row.appendChild(name);
-    if (p.id === 'youtube') {
+    if (p.id === 'youtube' || p.id === 'facebook') {
       const tag = document.createElement('span');
       tag.className = 'platform-experimental';
       tag.textContent = '(experimental)';

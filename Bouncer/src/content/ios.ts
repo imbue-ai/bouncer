@@ -1,7 +1,7 @@
 // iOS FAB, filtered modal, native sheet bridge
 
 import type { IOSDeps, DescriptionKey, SiteId } from '../types';
-import { clampThreshold, clampImageThreshold, clampReplyThreshold, getDescriptions, setDescriptions, getStorage, setStorage, aiIntentActiveForSite, getExcludedAccounts, setExcludedAccounts, normalizeAccountIdentity } from '../shared/storage';
+import { clampThreshold, clampImageThreshold, clampReplyThreshold, getDescriptions, setDescriptions, getStorage, setStorage, aiIntentActiveForSite, getExcludedAccounts, setExcludedAccounts, normalizeAccountIdentity, identifiesAccountsByName } from '../shared/storage';
 import { platformById, descriptionsStorageKey } from '../shared/platforms';
 import { parseHTML } from '../shared/utils';
 import { shareFilterPackForIOS, toggleAiDetectionViaPhrases } from './ui';
@@ -126,7 +126,7 @@ export function initIOS(deps: IOSDeps) {
   // Backed by `excludedAccounts_<siteId>`; the content script skips
   // classification entirely for these authors (see evaluatePost).
   const displayAccount = (siteId: string, account: string): string =>
-    siteId === 'linkedin' ? account : `@${account}`;
+    identifiesAccountsByName(siteId) ? account : `@${account}`;
 
   w.__ff_getExcludedAccounts = async (siteId: string): Promise<string[]> => {
     if (!platformById(siteId)) return [];
