@@ -52,6 +52,7 @@ final class PushAutoEnabler: NSObject, WKScriptMessageHandler {
     // Set when backgrounding cut an attempt short; retried on foreground.
     private var interrupted = false
     private weak var lastCoordinator: FilteredWebView.WebCoordinator?
+    private var lastURL = ""
 
     private override init() {
         super.init()
@@ -65,6 +66,8 @@ final class PushAutoEnabler: NSObject, WKScriptMessageHandler {
     /// Called on every URL change of the visible web view. Reaching x.com's
     /// home timeline is proof of login, and the cue for the silent attempt.
     func onURLChanged(_ url: String, coordinator: FilteredWebView.WebCoordinator) {
+        lastURL = url
+        lastCoordinator = coordinator
         guard Self.isHome(url) else { return }
         maybeAutoEnable(coordinator: coordinator)
     }
@@ -135,6 +138,15 @@ final class PushAutoEnabler: NSObject, WKScriptMessageHandler {
             }
             self.start(coordinator: coordinator, completion: completion)
         }
+    }
+
+    /// The relay lost our subscription (see PushRegistrar.refreshRegistrations):
+    /// re-arm the once-per-session evaluation. If the home timeline is already
+    /// showing, go now; otherwise the next URL change on home picks it up.
+    func relayLostSubscription() {
+        evaluated = false
+        guard let coordinator = lastCoordinator, Self.isHome(lastURL) else { return }
+        maybeAutoEnable(coordinator: coordinator)
     }
 
     /// Foreground: an attempt interrupted by backgrounding gets another go.

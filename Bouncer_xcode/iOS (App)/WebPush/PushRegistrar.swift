@@ -115,12 +115,23 @@ final class PushRegistrar {
         guard let token = deviceTokenHex else { return }
         for record in PushSubscriptionStore.all() {
             do {
-                _ = try await PushRelayClient.register(
+                let reg = try await PushRelayClient.register(
                     subscriptionId: record.id,
                     deviceTokenHex: token,
                     environment: Self.apnsEnvironment(),
                     appServerKey: record.appServerKey
                 )
+                if reg.created {
+                    // The relay had no record of a subscription we hold: its
+                    // state was lost (Redis has no persistence). The endpoint
+                    // x.com has is dead, so forget ours and let the enable
+                    // flow subscribe afresh — the only recovery is a new
+                    // subscribe from the page.
+                    print("[WebPush] relay lost subscription \(record.scope); re-subscribing")
+                    PushSubscriptionStore.remove(scope: record.scope)
+                    try? await PushRelayClient.unregister(subscriptionId: record.id)
+                    PushAutoEnabler.shared.relayLostSubscription()
+                }
             } catch {
                 print("[WebPush] refresh failed for \(record.scope): \(error)")
             }
@@ -162,7 +173,7 @@ final class PushRegistrar {
                 deviceTokenHex: token,
                 environment: Self.apnsEnvironment(),
                 appServerKey: appServerKey
-            )
+            ).endpoint
             let record = PushSubscriptionRecord(
                 id: id,
                 scope: scope,

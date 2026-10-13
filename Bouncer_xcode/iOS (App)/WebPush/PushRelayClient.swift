@@ -31,14 +31,23 @@ enum PushRelayClient {
 
     static var isConfigured: Bool { baseURL != nil }
 
+    struct Registration {
+        let endpoint: String
+        /// True when the relay had no record of this id and created one.
+        /// For a brand-new subscription that's expected; for a refresh of an
+        /// existing one it means the relay lost its state, and the endpoint
+        /// the site holds is dead.
+        let created: Bool
+    }
+
     /// Registers (or refreshes) a subscription's device token. Returns the
-    /// endpoint URL to hand to the site.
+    /// endpoint URL to hand to the site, plus whether the relay created it.
     static func register(
         subscriptionId: String,
         deviceTokenHex: String,
         environment: String,
         appServerKey: Data?
-    ) async throws -> String {
+    ) async throws -> Registration {
         var body: [String: Any] = ["deviceToken": deviceTokenHex, "environment": environment]
         if let appServerKey { body["appServerKey"] = appServerKey.base64urlString }
         let (data, status) = try await send("PUT", path: "/push/subscriptions/\(subscriptionId)", json: body)
@@ -47,7 +56,7 @@ enum PushRelayClient {
               let endpoint = obj["endpoint"] as? String else {
             throw RelayError(description: "register failed: HTTP \(status) \(String(data: data, encoding: .utf8) ?? "")")
         }
-        return endpoint
+        return Registration(endpoint: endpoint, created: (obj["created"] as? Bool) ?? false)
     }
 
     static func unregister(subscriptionId: String) async throws {
