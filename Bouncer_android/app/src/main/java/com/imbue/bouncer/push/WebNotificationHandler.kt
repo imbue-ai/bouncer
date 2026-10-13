@@ -22,10 +22,15 @@ import org.mozilla.geckoview.WebNotificationDelegate
 import java.util.concurrent.TimeUnit
 
 /**
- * Surfaces service-worker notifications (registration.showNotification from
- * x.com's SW) as Android notifications. Clicks route back through
- * MainActivity, which calls WebNotification.click() so the site's
- * notificationclick handler runs and can open the right page.
+ * Surfaces notifications that Gecko itself raises (a page calling the
+ * Notification API, or a service worker's showNotification) as Android
+ * notifications. Clicks route back through MainActivity, which calls
+ * WebNotification.click() so the site's notificationclick handler runs and
+ * can open the right page.
+ *
+ * Web Push messages no longer come through here: the receiver renders them
+ * natively ([NativePushHandler]) so a push never has to boot Gecko. The
+ * channel / toggle / icon helpers in the companion are shared with that path.
  */
 class WebNotificationHandler(
     private val appCtx: Context,
@@ -38,7 +43,7 @@ class WebNotificationHandler(
 
     override fun onShowNotification(notification: WebNotification) {
         Log.i(TAG, "onShowNotification from ${notification.source ?: notification.origin}")
-        if (!notificationsEnabled()) {
+        if (!notificationsEnabled(appCtx)) {
             // Suppressed at the app level: keep the subscription + permission
             // intact (so x.com keeps sending), just don't surface it on Android.
             // Still ack the service worker so its showNotification bookkeeping
@@ -47,11 +52,11 @@ class WebNotificationHandler(
             scope.launch(Dispatchers.Main) { notification.show() }
             return
         }
-        ensureChannel()
+        ensureChannel(appCtx)
         // The web icon (e.g. the sender's avatar) needs a network fetch; post
         // the notification from a coroutine once that resolves either way.
         scope.launch(Dispatchers.IO) {
-            val icon = notification.imageUrl?.let { fetchBitmap(it) }
+            val icon = notification.imageUrl?.let { fetchBitmap(client, it) }
             val shown = notify(notification, icon)
             // Ack display back to content (resolves showNotification bookkeeping).
             launch(Dispatchers.Main) {
@@ -61,7 +66,7 @@ class WebNotificationHandler(
     }
 
     override fun onCloseNotification(notification: WebNotification) {
-        manager().cancel(tagFor(notification), NOTIFICATION_ID)
+        manager(appCtx).cancel(tagFor(notification), NOTIFICATION_ID)
     }
 
     private fun notify(webNotification: WebNotification, icon: Bitmap?): Boolean {
@@ -90,41 +95,16 @@ class WebNotificationHandler(
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
         icon?.let { builder.setLargeIcon(it) }
         return runCatching {
-            manager().notify(tagFor(webNotification), NOTIFICATION_ID, builder.build())
+            manager(appCtx).notify(tagFor(webNotification), NOTIFICATION_ID, builder.build())
         }.onFailure {
             // POST_NOTIFICATIONS revoked mid-flight; nothing to do.
             Log.w(TAG, "notify failed", it)
         }.isSuccess
     }
 
-    private fun fetchBitmap(url: String): Bitmap? = runCatching {
-        client.newCall(Request.Builder().url(url).build()).execute().use { response ->
-            if (!response.isSuccessful) return null
-            response.body?.bytes()?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }
-        }
-    }.onFailure { Log.w(TAG, "icon fetch failed: $url", it) }.getOrNull()
-
     // The site's tag dedupes replacement notifications (x.com reuses tags to
     // update a thread) and is stable across the show/close callback pair.
     private fun tagFor(n: WebNotification): String = n.tag ?: n.origin.orEmpty()
-
-    // App-level display switch (the settings sheet's "Push notifications" toggle).
-    // Independent of the subscription/permission — off just hides notifications.
-    private fun notificationsEnabled(): Boolean =
-        appCtx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getBoolean(KEY_NOTIFICATIONS_ON, true)
-
-    private fun manager(): NotificationManager =
-        appCtx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-
-    private fun ensureChannel() {
-        val channel = NotificationChannel(
-            CHANNEL_ID,
-            "Website notifications",
-            NotificationManager.IMPORTANCE_DEFAULT,
-        ).apply { description = "Notifications from x.com" }
-        manager().createNotificationChannel(channel)
-    }
 
     companion object {
         private const val TAG = "FF/WebNotification"
@@ -135,5 +115,31 @@ class WebNotificationHandler(
         const val ACTION_CLICK = "com.imbue.bouncer.WEB_NOTIFICATION_CLICK"
         const val EXTRA_NOTIFICATION = "web_notification"
         const val NOTIFICATION_ID = 7001
+
+        // App-level display switch (the settings sheet's "Push notifications"
+        // toggle). Independent of the subscription/permission — off just
+        // hides notifications.
+        fun notificationsEnabled(ctx: Context): Boolean =
+            ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getBoolean(KEY_NOTIFICATIONS_ON, true)
+
+        fun manager(ctx: Context): NotificationManager =
+            ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+
+        fun ensureChannel(ctx: Context) {
+            val channel = NotificationChannel(
+                CHANNEL_ID,
+                "Website notifications",
+                NotificationManager.IMPORTANCE_DEFAULT,
+            ).apply { description = "Notifications from x.com" }
+            manager(ctx).createNotificationChannel(channel)
+        }
+
+        fun fetchBitmap(client: OkHttpClient, url: String): Bitmap? = runCatching {
+            client.newCall(Request.Builder().url(url).build()).execute().use { response ->
+                if (!response.isSuccessful) return null
+                response.body?.bytes()?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }
+            }
+        }.onFailure { Log.w(TAG, "icon fetch failed: $url", it) }.getOrNull()
     }
 }

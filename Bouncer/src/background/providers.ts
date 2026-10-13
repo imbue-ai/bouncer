@@ -196,15 +196,18 @@ export async function callAnthropicAPI(messages: ChatMessage[], apiConfig: APICo
 }
 
 // Call Imbue backend via persistent WebSocket
-// tweetData is a single post object: { text: string, imageUrls: string[] }
+// tweetData is a single post object: { text, imageUrls, postUrl? }
+// aiCategories: the user's phrases that engage the AI detectors instead of
+// the classifier (e.g. "AI slop"). Logged server-side only — never classified.
 // Auth token is not sent — the WS gateway authenticates the connection itself
 // via the App Check token at handshake time.
-export async function callImbueAPI(tweetData: EvaluationPostData, categories: string[] | undefined, reason: 'filterPost' | 'validatePhrase'): Promise<ImbueFilterResponse>;
+export async function callImbueAPI(tweetData: EvaluationPostData, categories: string[] | undefined, reason: 'filterPost' | 'validatePhrase', aiCategories?: string[]): Promise<ImbueFilterResponse>;
 export async function callImbueAPI(tweetData: EvaluationPostData, categories: string[] | undefined, reason: 'suggestAnnoying'): Promise<ImbueSuggestResponse>;
 export async function callImbueAPI(
   tweetData: EvaluationPostData,
   categories: string[] | undefined,
   reason: string,
+  aiCategories?: string[],
 ): Promise<ImbueFilterResponse | ImbueSuggestResponse> {
   const message: Record<string, unknown> = {
     action: "tweetFilter",
@@ -213,6 +216,9 @@ export async function callImbueAPI(
     version: chrome.runtime.getManifest().version,
     reason: reason || 'unknown',
   };
+  if (aiCategories && aiCategories.length > 0) {
+    message.aiCategories = aiCategories;
+  }
 
   console.log('[Filter] → request:', message);
   const startedAt = Date.now();
@@ -321,7 +327,7 @@ export async function callImbueAiImageDetection(
 
 interface FeedbackMessage {
   action: string;
-  tweetData: { text: string; imageUrls: string[] };
+  tweetData: EvaluationPostData;
   categories: string[];
   version: string;
   model: string;

@@ -68,7 +68,11 @@ object BouncerGeckoView {
     private fun platformIdOf(session: GeckoSession): String? =
         sessions.entries.firstOrNull { it.value === session }?.key
 
-    /** The warm runtime, if any — used by the FCM service to deliver push events. */
+    /**
+     * The warm runtime, if any. Null whenever the process was started without
+     * the Activity (push broadcast, Firebase job) — push delivery no longer
+     * needs it; only PushRegistrar's token-rotation notice consults it.
+     */
     fun runtimeOrNull(): GeckoRuntime? = runtime
 
     // Content-process kill in the background → onKill fires off the UI thread
@@ -145,10 +149,12 @@ object BouncerGeckoView {
         }
     }
 
-    // Pay the GeckoRuntime + extension-install cost during process startup
-    // (from BouncerApplication.onCreate) so it doesn't land on the activity's
-    // first composition and trigger ANR. GeckoRuntime.create is @UiThread, so
-    // the caller must invoke this on the main thread.
+    // Pay the GeckoRuntime + extension-install cost in MainActivity.onCreate
+    // (before the first composition, under the system splash) so it doesn't
+    // land on the first composition and trigger ANR. Not from
+    // Application.onCreate: that also runs for push / job wakeups, which must
+    // not boot a browser. GeckoRuntime.create is @UiThread, so the caller
+    // must invoke this on the main thread.
     fun warmUp(appCtx: Context, scope: CoroutineScope, appCheck: AppCheckBridge) {
         if (runtime != null) return
         synchronized(this) {
@@ -363,7 +369,7 @@ object BouncerGeckoView {
         coverColor: Int,
     ): GeckoView {
         val appCtx = ctx.applicationContext
-        // Defensive: should already be warm via Application.onCreate.
+        // Defensive: should already be warm via MainActivity.onCreate.
         warmUp(appCtx, scope, appCheck)
         val r = runtime!!
         vmRef = vm

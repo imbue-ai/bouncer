@@ -1,6 +1,6 @@
 //
 //  ViewController.swift
-//  Bouncer (macOS)
+//  Bouncer
 //
 //  Created by Darren Jia on 4/16/26.
 //

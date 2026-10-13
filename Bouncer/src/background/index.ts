@@ -381,7 +381,7 @@ async function handleMessage(
 
         const feedbackMessage = {
           action: "feedback" as const,
-          tweetData: message.tweetData,
+          tweetData: { ...message.tweetData, postUrl: message.postUrl ?? null },
           categories: settings.descriptions || [],
           version: chrome.runtime?.getManifest?.()?.version || 'unknown',
           model: cached?.model || settings.selectedModel || 'unknown',

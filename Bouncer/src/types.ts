@@ -64,6 +64,8 @@ export interface EvaluationResult {
 export interface EvaluationPostData {
   text: string;
   imageUrls: string[];
+  /** Permalink of the post. Sent to the Imbue backend for logging only; never part of the prompt. */
+  postUrl?: string | null;
 }
 
 // ==================== Pipeline Response ====================
