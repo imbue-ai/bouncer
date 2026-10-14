@@ -41,8 +41,17 @@ final class PushAutoEnabler: NSObject, WKScriptMessageHandler {
     private static let subscribeTimeout: TimeInterval = 15
     private static let registerGrace: TimeInterval = 6
 
-    // Once-per-session evaluation of the silent attempt (persisted intent and
-    // subscription state do the cross-launch gating).
+    // The silent attempt runs once per login, not per session: x.com keeps
+    // each account's on/off state server-side, so it only needs checking when
+    // the account may have changed. Persisted, so a failed attempt (or a
+    // login just before the app was killed) is retried at the next launch.
+    // Absent = fresh install (or update): check once.
+    private static let checkPendingKey = "pushCheckPending"
+    private static var checkPending: Bool {
+        get { UserDefaults.standard.object(forKey: checkPendingKey) as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: checkPendingKey) }
+    }
+    // At most one attempt per session, so a failing check doesn't loop.
     private var evaluated = false
     private var hiddenView: WKWebView?
     private var timeoutTask: Task<Void, Never>?
@@ -51,6 +60,12 @@ final class PushAutoEnabler: NSObject, WKScriptMessageHandler {
     private var secondClickPending = false
     // Set when backgrounding cut an attempt short; retried on foreground.
     private var interrupted = false
+    // Set when the settings toggle sent the user to iOS Settings to allow
+    // notifications; on return with permission granted, enable right away.
+    private var awaitingSettingsGrant = false
+    // Last-seen OS permission, so a denied → granted change made in iOS
+    // Settings (from our prompt or on the user's own) re-arms the attempt.
+    private var lastAuthorizationGranted: Bool?
     private weak var lastCoordinator: FilteredWebView.WebCoordinator?
     private var lastURL = ""
 
@@ -68,19 +83,25 @@ final class PushAutoEnabler: NSObject, WKScriptMessageHandler {
     func onURLChanged(_ url: String, coordinator: FilteredWebView.WebCoordinator) {
         lastURL = url
         lastCoordinator = coordinator
+        if Self.isAuthFlow(url) {
+            // Login / logout / add-account: the next home timeline may be a
+            // different account, with its own on/off state at x.com.
+            Self.checkPending = true
+            evaluated = false
+            return
+        }
         guard Self.isHome(url) else { return }
         maybeAutoEnable(coordinator: coordinator)
     }
 
+    // No "already subscribed" shortcut: our subscription is per device, but
+    // whether x.com sends to it is per account. The hidden page shows x.com's
+    // own toggle for whoever is logged in, and is only clicked if it's off.
     private func maybeAutoEnable(coordinator: FilteredWebView.WebCoordinator) {
-        guard !evaluated else { return }
+        guard !evaluated, Self.checkPending else { return }
         evaluated = true
         if PushRegistrar.userOptedOut {
             print("[WebPush] auto-enable: user turned notifications off; skipping")
-            return
-        }
-        if PushRegistrar.shared.isSubscribedToX {
-            print("[WebPush] auto-enable: already subscribed")
             return
         }
         guard PushRelayClient.isConfigured else {
@@ -93,6 +114,7 @@ final class PushAutoEnabler: NSObject, WKScriptMessageHandler {
             switch settings.authorizationStatus {
             case .authorized, .provisional, .ephemeral:
                 // Typically granted at onboarding → no dialog, just proceed.
+                self.lastAuthorizationGranted = true
                 self.start(coordinator: coordinator, completion: nil)
             case .notDetermined:
                 // Never asked (onboarded before this feature): ask now as the
@@ -101,8 +123,11 @@ final class PushAutoEnabler: NSObject, WKScriptMessageHandler {
                 let granted = (try? await center.requestAuthorization(options: [.alert, .sound, .badge])) ?? false
                 UserDefaults.standard.set(true, forKey: PushRegistrar.notificationsPromptedKey)
                 print("[WebPush] auto-enable: permission (timeline fallback) granted=\(granted)")
+                self.lastAuthorizationGranted = granted
                 if granted { self.start(coordinator: coordinator, completion: nil) }
             default:
+                // Granting later in iOS Settings re-arms this (retryIfNeeded).
+                self.lastAuthorizationGranted = false
                 print("[WebPush] auto-enable: notifications denied in Settings; skipping")
                 debugNotify("Notifications denied in iOS Settings")
             }
@@ -141,21 +166,67 @@ final class PushAutoEnabler: NSObject, WKScriptMessageHandler {
     }
 
     /// The relay lost our subscription (see PushRegistrar.refreshRegistrations):
-    /// re-arm the once-per-session evaluation. If the home timeline is already
-    /// showing, go now; otherwise the next URL change on home picks it up.
+    /// re-arm the check. If the home timeline is already showing, go now;
+    /// otherwise the next URL change on home picks it up.
     func relayLostSubscription() {
+        Self.checkPending = true
         evaluated = false
         guard let coordinator = lastCoordinator, Self.isHome(lastURL) else { return }
         maybeAutoEnable(coordinator: coordinator)
     }
 
-    /// Foreground: an attempt interrupted by backgrounding gets another go.
+    /// The settings toggle found notifications denied and is sending the user
+    /// to iOS Settings. The system prompt can't be shown again, so this is the
+    /// only way back; retryIfNeeded finishes the job when they return.
+    func enableAfterSettingsGrant(coordinator: FilteredWebView.WebCoordinator) {
+        lastCoordinator = coordinator
+        awaitingSettingsGrant = true
+        lastAuthorizationGranted = false
+    }
+
+    /// Foreground: an attempt interrupted by backgrounding gets another go,
+    /// and so does one blocked on a permission the user has since granted in
+    /// iOS Settings.
     func retryIfNeeded() {
-        guard interrupted, let coordinator = lastCoordinator else { return }
-        interrupted = false
-        guard !PushRegistrar.userOptedOut, !PushRegistrar.shared.isSubscribedToX else { return }
-        print("[WebPush] auto-enable: retrying after foreground")
-        start(coordinator: coordinator, completion: nil)
+        Task { @MainActor in
+            let granted = await PushRegistrar.authorization() == .granted
+            let newlyGranted = granted && self.lastAuthorizationGranted == false
+            self.lastAuthorizationGranted = granted
+            // Permission may have changed either way; let the toggle re-read.
+            NotificationCenter.default.post(name: Self.stateChangedNotification, object: nil)
+
+            let fromSettings = self.awaitingSettingsGrant
+            let wasInterrupted = self.interrupted
+            if granted { self.awaitingSettingsGrant = false }
+            self.interrupted = false
+            guard granted, wasInterrupted || newlyGranted,
+                  !PushRegistrar.userOptedOut,
+                  PushRelayClient.isConfigured,
+                  let coordinator = self.lastCoordinator else { return }
+            let loggedIn = await Self.isLoggedInToX()
+            if wasInterrupted || (fromSettings && loggedIn) {
+                print("[WebPush] auto-enable: retrying after foreground")
+                self.start(coordinator: coordinator, completion: nil)
+            } else {
+                // Granted in iOS Settings on their own, or before logging in:
+                // same cue as a fresh session — go now if on home, else at the
+                // next home visit.
+                print("[WebPush] auto-enable: permission granted in Settings; re-arming")
+                self.relayLostSubscription()
+            }
+        }
+    }
+
+    /// True while the hidden settings view is working on a subscription.
+    var isEnabling: Bool { hiddenView != nil }
+
+    /// Whether the shared web view store holds an x.com session: x.com's
+    /// session cookie exists (only its presence is read). The hidden settings
+    /// view is pointless without one, since the page redirects to login.
+    static func isLoggedInToX() async -> Bool {
+        await WKWebsiteDataStore.default().httpCookieStore.allCookies().contains {
+            $0.name == "auth_token" && ($0.domain == "x.com" || $0.domain.hasSuffix(".x.com"))
+        }
     }
 
     // MARK: - The hidden settings view
@@ -302,6 +373,7 @@ final class PushAutoEnabler: NSObject, WKScriptMessageHandler {
     private func finish(ok: Bool, reason: String) {
         guard hiddenView != nil else { return }
         print("[WebPush] auto-enable finished: ok=\(ok) (\(reason))")
+        if ok { Self.checkPending = false }
         teardown()
         let done = completion
         completion = nil
@@ -357,6 +429,13 @@ final class PushAutoEnabler: NSObject, WKScriptMessageHandler {
 
     private static func isHome(_ url: String) -> Bool {
         url.contains("x.com/home") || url.contains("twitter.com/home")
+    }
+
+    /// x.com's login, signup, SSO and add-account flows live under /i/flow/;
+    /// /login and /logout are the plain entry points.
+    private static func isAuthFlow(_ url: String) -> Bool {
+        guard let path = URL(string: url)?.path else { return false }
+        return path.hasPrefix("/i/flow/") || path == "/login" || path == "/logout"
     }
 
     private static func keyWindow() -> UIWindow? {

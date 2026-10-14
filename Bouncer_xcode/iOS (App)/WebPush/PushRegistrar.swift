@@ -56,6 +56,19 @@ final class PushRegistrar {
         UserDefaults.standard.set(on, forKey: notificationsOnKey)
     }
 
+    /// OS notification permission as the settings toggle needs it: granted
+    /// (delivery can work), denied (only iOS Settings can change it — the
+    /// system prompt never reappears), or not yet asked.
+    enum Authorization { case granted, denied, notDetermined }
+
+    static func authorization() async -> Authorization {
+        switch await UNUserNotificationCenter.current().notificationSettings().authorizationStatus {
+        case .authorized, .provisional, .ephemeral: return .granted
+        case .notDetermined: return .notDetermined
+        default: return .denied
+        }
+    }
+
     /// Ask for the OS permission early (onboarding completion), before login,
     /// so the one required tap is out of the way and the later x.com
     /// subscribe can happen silently. Once only.
@@ -63,14 +76,20 @@ final class PushRegistrar {
         let d = UserDefaults.standard
         guard !d.bool(forKey: Self.notificationsPromptedKey) else { return }
         Task { @MainActor in
-            let center = UNUserNotificationCenter.current()
-            let settings = await center.notificationSettings()
-            guard settings.authorizationStatus == .notDetermined else { return }
-            let granted = (try? await center.requestAuthorization(options: [.alert, .sound, .badge])) ?? false
-            d.set(true, forKey: Self.notificationsPromptedKey)
+            guard await Self.authorization() == .notDetermined else { return }
+            let granted = await requestAuthorization()
             print("[WebPush] notification permission (early) granted=\(granted)")
-            if granted { UIApplication.shared.registerForRemoteNotifications() }
         }
+    }
+
+    /// Show the system permission prompt (a no-op answer once decided) and,
+    /// on grant, start fetching the APNs token.
+    func requestAuthorization() async -> Bool {
+        let granted = (try? await UNUserNotificationCenter.current()
+            .requestAuthorization(options: [.alert, .sound, .badge])) ?? false
+        UserDefaults.standard.set(true, forKey: Self.notificationsPromptedKey)
+        if granted { UIApplication.shared.registerForRemoteNotifications() }
+        return granted
     }
 
     private init() {}
@@ -160,9 +179,19 @@ final class PushRegistrar {
             return nil
         }
 
-        // A re-subscribe replaces the old record; the site treats the new
-        // endpoint as authoritative once it posts it to its backend.
+        // Like a browser, subscribe() with the key we already hold returns
+        // the existing subscription: one endpoint per site, shared by every
+        // x.com account that turns notifications on (x.com's backend tracks
+        // which accounts send to it, and drops them at logout). Replacing it
+        // would cut off another still-logged-in account. A different key
+        // replaces the old record; the site treats the new endpoint as
+        // authoritative once it posts it to its backend.
         if let old = PushSubscriptionStore.get(scope: scope) {
+            if old.appServerKey == appServerKey {
+                print("[WebPush] subscribe \(scope): returning existing subscription")
+                onSubscriptionRegistered?(scope)
+                return old
+            }
             try? await PushRelayClient.unregister(subscriptionId: old.id)
         }
         let id = Self.newSubscriptionId()
