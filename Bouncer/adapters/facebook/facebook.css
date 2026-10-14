@@ -59,3 +59,24 @@
 html.__fb-dark-mode .ff-why-annoying-btn--facebook-header:hover {
   background: rgba(255, 255, 255, 0.1);
 }
+
+/* Hidden feed slots. hidePost also sets inline display:none, but the mobile
+ * html-renderer rewrites a unit's inline style when it re-measures it; this
+ * attribute rule keeps the slot hidden regardless. */
+[data-ff-fb-hidden] {
+  display: none !important;
+}
+
+/* Mobile (m.facebook.com) header control. Absolutely positioned just left of
+ * the "…" button; left/top are set inline by FacebookAdapter. */
+.ff-why-annoying-btn--facebook-mobile {
+  /* The renderer's layout containers are pointer-events: none (only its own
+   * controls opt back in); without this, taps fall through to the post. */
+  pointer-events: auto;
+  position: absolute;
+  width: 32px;
+  height: 32px;
+  margin-left: 0;
+  border-radius: 50%;
+  z-index: 1;
+}

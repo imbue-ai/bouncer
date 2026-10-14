@@ -27,7 +27,7 @@
   },
   {
     "id": "facebook",
-    "targets": ["chrome", "firefox"],
+    "targets": ["chrome", "firefox", "safari"],
     "optionalTargets": ["chrome", "firefox"],
     "manifestHost": "https://*.facebook.com/*",
     "adapterScript": "dist/FacebookAdapter.js",

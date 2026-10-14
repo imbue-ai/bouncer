@@ -448,9 +448,10 @@ fun BouncerApp(viewModel: BouncerViewModel = viewModel()) {
                 excludedAccounts = state.excludedAccounts,
                 onAddExcludedAccount = viewModel::addExcludedAccount,
                 onRemoveExcludedAccount = viewModel::removeExcludedAccount,
-                // LinkedIn stores display names (no profile URL) — chips
-                // do nothing on tap there.
-                onOpenExcludedAccount = if (state.activePlatformId == "linkedin") {
+                // LinkedIn and Facebook store display names (no profile
+                // URL) — chips do nothing on tap there.
+                onOpenExcludedAccount = if (state.activePlatformId == "linkedin" ||
+                    state.activePlatformId == "facebook") {
                     null
                 } else {
                     viewModel::openExcludedAccount

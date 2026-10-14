@@ -15,7 +15,7 @@ import Foundation
 
 struct PlatformDef {
     /// Canonical id — matches the SiteId values used on the JS side
-    /// ("twitter", "youtube", "linkedin"). Stored as String so the existing
+    /// ("twitter", "youtube", "linkedin", "facebook"). Stored as String so the existing
     /// FilterSheetViewModel.selectedPlatform: String contract is unchanged.
     let id: String
 
@@ -102,6 +102,20 @@ enum Platforms {
             hostRoots: [
                 "linkedin.com", "licdn.com",
                 "static.licdn.com", "media.licdn.com",
+            ]
+        ),
+        // The iPhone user agent gets redirected to m.facebook.com (the
+        // mobile-web layout FacebookAdapter handles alongside desktop).
+        PlatformDef(
+            id: "facebook",
+            displayName: "Facebook",
+            feedURL: "https://m.facebook.com/",
+            loginURL: nil,
+            adapterScriptName: "FacebookAdapter",
+            cssFile: "facebook",
+            cssSubdir: "adapters/facebook",
+            hostRoots: [
+                "facebook.com", "fb.com", "fbcdn.net", "fbsbx.com",
             ]
         ),
     ]

@@ -1,6 +1,20 @@
 // facebook adaptation
 //
-// Facebook platform adapter for the desktop web feed (www.facebook.com).
+// Facebook platform adapter supporting BOTH of Facebook's feed layouts:
+//
+//   1. Desktop web (www.facebook.com, the "Comet" React UI) — the Chrome /
+//      Firefox / macOS Safari extensions, and iPad (which the app serves a
+//      Mac user agent).
+//   2. Mobile web (m.facebook.com) — what the iPhone app's WKWebView and the
+//      Android app's GeckoView get, since both send a phone user agent.
+//      Facebook renders it with its server-driven "html-renderer": every node
+//      is a `data-mcomponent` (MContainer / TextArea / ImageArea / MVideo)
+//      with inline sizes, and there are no links or ad-rendering roles.
+//
+// The two layouts have disjoint post selectors, so the post selector is a
+// union and each method dispatches on `_isMobilePost(article)`.
+//
+// ---- Desktop ----
 //
 // Facebook's class names are atomic CSS hashes that churn on every deploy, so
 // everything here anchors on the few semantic hooks the Comet UI keeps stable
@@ -30,8 +44,30 @@
 // null so no Bounce control is injected.
 //
 // Facebook obfuscates the timestamp and "Sponsored" label text (characters
-// are shuffled in the DOM and re-ordered visually), so timeText is left null
-// rather than surfacing garbage.
+// are shuffled in the DOM and re-ordered visually), so desktop timeText is
+// left null rather than surfacing garbage.
+//
+// ---- Mobile ----
+//
+// Verified against m.facebook.com with an iPhone user agent, October 2026:
+//
+//   - Feed units are the direct children of the `[data-type="vscroller"]`
+//     list that carry `data-tracking-duration-id`. They sit in normal flow
+//     with inline heights, so hiding one collapses cleanly. Thin separator
+//     containers between units have no tracking id and are left alone.
+//   - An authored post is three blocks: a header (avatar, name, time, and a
+//     "More options for <Name>" button), the body (text, photos, video
+//     thumbnail, shared-post content), then a footer of reaction controls
+//     ("…like, double tap and hold for more reactions"). Some posts add a
+//     reason row ("Suggested for you") above the header.
+//   - The avatar is labelled "<Name> Profile Picture" — the cleanest name.
+//     "More options for …" sometimes carries an activity sentence instead
+//     ("Jane Doe shared a memory.", "Jane Doe is at The Place."). The time
+//     element is labelled "6 hours ago, Public", so mobile gets a timeText.
+//   - Text nodes embed private-use-area glyphs (Facebook's icon font) and
+//     LTR marks; they are stripped.
+//   - Units without a "More options for" header (suggested groups, people
+//     carousels) are skipped, as on desktop.
 
 import type { PlatformAdapter, PlatformSelectors, PostContent, QuoteContent } from '../../src/types';
 // NOTE: adapters are built with esbuild bundle:false (standalone IIFE per
@@ -44,11 +80,37 @@ import type { PlatformAdapter, PlatformSelectors, PostContent, QuoteContent } fr
  *  other `[data-virtualized]` region in [role="main"], above the feed. */
 const POST_SELECTOR = '[role="main"] h3 ~ div [data-virtualized="false"] > div';
 
+/** Mobile feed unit (m.facebook.com html-renderer). */
+const MOBILE_POST_SELECTOR = '[data-type="vscroller"] > [data-tracking-duration-id]';
+const MORE_OPTIONS_SELECTOR = '[aria-label^="More options for "]';
+const PROFILE_PICTURE_SELECTOR = '[aria-label$=" Profile Picture"]';
+const MOBILE_TEXT_SELECTOR = '[data-mcomponent="TextArea"], [data-mcomponent="ServerTextArea"]';
+/** Footer reaction control — marks where a mobile post's body ends. */
+const MOBILE_REACTION_SELECTOR = '[aria-label*="double tap"]';
+/** Class on the mobile Bounce button; the tap shield keys off it. */
+const MOBILE_BUTTON_CLASS = 'ff-why-annoying-btn--facebook-mobile';
+/** Activates a Bounce button without a DOM click. Must match
+ *  BOUNCE_ACTIVATE_EVENT in src/content/ui.ts. */
+const BOUNCE_ACTIVATE_EVENT = 'ff-bounce-activate';
+/** Press events the tap shield keeps away from Facebook's listeners. */
+const SHIELDED_EVENTS = [
+  'touchstart', 'touchmove', 'touchend', 'touchcancel',
+  'pointerdown', 'pointerup', 'pointercancel',
+  'mousedown', 'mouseup', 'click', 'contextmenu',
+];
+let tapShieldInstalled = false;
+
+/** Facebook's icon-font glyphs (private use areas) and directional marks. */
+const MOBILE_GLYPH_RE = /[\uE000-\uF8FF\u{F0000}-\u{10FFFF}\u200E\u200F]/gu;
+
 const ACTIONS_BUTTON_SELECTOR = '[aria-label^="Actions for this post by "]';
 const HIDE_BUTTON_SELECTOR = '[aria-label^="Hide post by "]';
 const MESSAGE_SELECTOR = '[data-ad-preview="message"]';
 const PROFILE_NAME_SELECTOR = '[data-ad-rendering-role="profile_name"]';
 const COMMENT_SELECTOR = '[role="article"]';
+
+/** How long extraction waits for a video's first-frame image to appear. */
+const VIDEO_FRAME_WAIT_MS = 2500;
 
 /** Paths that show Facebook's main News Feed. */
 const FEED_PATHS = new Set(['/', '/home.php']);
@@ -60,7 +122,7 @@ const BouncerFacebookAdapter = class FacebookAdapter implements PlatformAdapter 
   siteId = 'facebook' as const;
 
   selectors: PlatformSelectors = {
-    post: POST_SELECTOR,
+    post: `${POST_SELECTOR}, ${MOBILE_POST_SELECTOR}`,
     // Right-hand rail ("Sponsored", "Friend requests", "Contacts"). It is a
     // sticky, viewport-tall box whose content scrolls inside an inner
     // overflow container; sidebarContent targets that scroller's content so
@@ -75,12 +137,44 @@ const BouncerFacebookAdapter = class FacebookAdapter implements PlatformAdapter 
     bottomBar: '',
     // Post body text — a re-render here inside a still-mounted post triggers
     // a content-key check (see getPostContentKey).
-    mutations: MESSAGE_SELECTOR,
-    textContent: MESSAGE_SELECTOR,
+    // Video players mount lazily inside already-processed posts; their
+    // arrival re-checks the content key (which includes the first frame).
+    mutations: `${MESSAGE_SELECTOR}, ${MOBILE_TEXT_SELECTOR}, video`,
+    textContent: `${MESSAGE_SELECTOR}, ${MOBILE_TEXT_SELECTOR}`,
   };
 
   constructor() {
     this._initFilteredPostObserver();
+    this._installMobileTapShield();
+  }
+
+  /** m.facebook.com routes taps with listeners that run before anything on
+   *  our button can react: a tap on the Bounce button inside a post opened
+   *  the post. So intercept press events at the earliest point of their
+   *  path — a window capture listener — whenever they target the mobile
+   *  Bounce button, and stop them there so no Facebook listener (capture,
+   *  bubble, or on* property) ever sees them. The click is then turned into
+   *  BOUNCE_ACTIVATE_EVENT, which Bouncer's button handler also answers.
+   *  No preventDefault on touch events, so the browser still synthesizes the
+   *  click and scrolling that starts on the button still works. */
+  private _installMobileTapShield() {
+    if (tapShieldInstalled) return;
+    tapShieldInstalled = true;
+    const shield = (e: Event) => {
+      const target = e.target;
+      const btn = target instanceof Element
+        ? target.closest<HTMLElement>(`.${MOBILE_BUTTON_CLASS}`)
+        : null;
+      if (!btn) return;
+      e.stopPropagation();
+      if (e.type === 'click') {
+        e.preventDefault();
+        btn.dispatchEvent(new CustomEvent(BOUNCE_ACTIVATE_EVENT));
+      }
+    };
+    for (const type of SHIELDED_EVENTS) {
+      window.addEventListener(type, shield, { capture: true, passive: type !== 'click' });
+    }
   }
 
   // Fade filtered posts once scrolled fully above the viewport (posts hidden
@@ -98,7 +192,7 @@ const BouncerFacebookAdapter = class FacebookAdapter implements PlatformAdapter 
           el.style.transition = 'opacity 0.3s ease';
           el.style.opacity = '0';
           setTimeout(() => {
-            el.style.display = 'none';
+            this._setHidden(el, true);
             fadingOut.delete(el);
           }, 300);
         }
@@ -110,6 +204,21 @@ const BouncerFacebookAdapter = class FacebookAdapter implements PlatformAdapter 
   // ===========================================================================
   // Extraction
   // ===========================================================================
+
+  /** Mobile posts are html-renderer feed units; everything else is desktop. */
+  private _isMobilePost(el: HTMLElement): boolean {
+    return el.matches(MOBILE_POST_SELECTOR) || el.closest(MOBILE_POST_SELECTOR) !== null;
+  }
+
+  /** Hide/unhide a feed slot. The inline display covers the desktop feed;
+   *  the attribute (backed by a display:none !important rule in
+   *  facebook.css) survives the mobile renderer rewriting a unit's inline
+   *  style when it re-measures it. */
+  private _setHidden(el: HTMLElement, hidden: boolean): void {
+    el.style.display = hidden ? 'none' : '';
+    if (hidden) el.setAttribute('data-ff-fb-hidden', '');
+    else el.removeAttribute('data-ff-fb-hidden');
+  }
 
   /** True for posts with an author header — excludes carousels and
    *  suggestion units, which share the feed list. */
@@ -163,6 +272,12 @@ const BouncerFacebookAdapter = class FacebookAdapter implements PlatformAdapter 
   }
 
   extractPostContent(article: HTMLElement): PostContent {
+    return this._isMobilePost(article)
+      ? this._extractMobileContent(article)
+      : this._extractDesktopContent(article);
+  }
+
+  private _extractDesktopContent(article: HTMLElement): PostContent {
     if (!this._isAuthoredPost(article)) return this._emptyContent();
 
     const messages = this._queryOutsideComments<HTMLElement>(article, MESSAGE_SELECTOR);
@@ -188,6 +303,7 @@ const BouncerFacebookAdapter = class FacebookAdapter implements PlatformAdapter 
   /** "Hide post by Jane Doe" / "Actions for this post by Jane Doe" → "Jane
    *  Doe". Falls back to the header's profile link text. */
   private _extractAuthor(article: HTMLElement): string {
+    if (this._isMobilePost(article)) return this._extractMobileAuthor(article);
     for (const sel of [HIDE_BUTTON_SELECTOR, ACTIONS_BUTTON_SELECTOR]) {
       const label = article.querySelector(sel)?.getAttribute('aria-label') ?? '';
       const name = label.replace(/^.*?\bby\s+/i, '').trim();
@@ -223,27 +339,154 @@ const BouncerFacebookAdapter = class FacebookAdapter implements PlatformAdapter 
     };
   }
 
-  /** Post media: photos (fbcdn <img>, skipping emoji and tiny UI glyphs),
-   *  link-preview images, and video poster frames. */
+  /** Post media for the classifiers: the first frame of each video first
+   *  (the backend checks at most four images, and a video's frame is the
+   *  post's main visual), then photos and link-preview images. */
   private _extractImageUrls(article: HTMLElement): string[] {
-    const urls: string[] = [];
-    const add = (u: string) => {
-      if (u && !u.startsWith('data:') && !urls.includes(u)) urls.push(u);
-    };
+    const urls = this._videoFrameUrls(this._queryOutsideComments<HTMLVideoElement>(article, 'video'));
     for (const img of this._queryOutsideComments<HTMLImageElement>(article, 'img')) {
-      const src = img.currentSrc || img.src;
-      if (!src || src.startsWith('data:')) continue;
-      if (!/(^|\.)fbcdn\.net$/i.test(this._host(src))) continue;
-      if (src.includes('/images/emoji.php')) continue;
-      // Rendered size filters reaction glyphs and inline icons; photos are
-      // hundreds of px. Fall back to intrinsic size before layout.
-      const w = img.width || img.naturalWidth;
-      const h = img.height || img.naturalHeight;
-      if (w && h && (w < 64 || h < 64)) continue;
-      add(src);
+      const src = this._contentImageSrc(img);
+      if (src && !urls.includes(src)) urls.push(src);
     }
-    for (const v of this._queryOutsideComments<HTMLVideoElement>(article, 'video[poster]')) {
-      add(v.poster || v.getAttribute('poster') || '');
+    return urls;
+  }
+
+  /** First-frame image of each video: its poster, which Facebook generates
+   *  from the opening frame and serves from its photo CDN. Videos without a
+   *  usable poster yet are skipped here; extractPostContentFromStore waits
+   *  briefly for one to appear. */
+  private _videoFrameUrls(videos: HTMLVideoElement[]): string[] {
+    const urls: string[] = [];
+    for (const v of videos) {
+      const poster = v.getAttribute('poster') || v.poster || '';
+      if (this._isPhotoCdnUrl(poster) && !urls.includes(poster)) urls.push(poster);
+    }
+    return urls;
+  }
+
+  /** An <img>'s URL when it is post content: on Facebook's photo CDN and
+   *  photo-sized (reaction glyphs and inline icons are tiny; fall back to
+   *  intrinsic size before layout). Null otherwise. */
+  private _contentImageSrc(img: HTMLImageElement): string | null {
+    const src = img.currentSrc || img.src;
+    if (!this._isPhotoCdnUrl(src)) return null;
+    const w = img.width || img.naturalWidth;
+    const h = img.height || img.naturalHeight;
+    if (w && h && (w < 64 || h < 64)) return null;
+    return src;
+  }
+
+  /** Facebook photo CDN: the `scontent…` hosts under fbcdn.net. Must match
+   *  the backend's allowlist (is_allowed_image_host in the backend's
+   *  lambda/shared.py) — other fbcdn hosts serve UI assets and are rejected
+   *  there, which fails the whole AI-image request when no URL survives. */
+  private _isPhotoCdnUrl(url: string): boolean {
+    if (!url.startsWith('https://')) return false;
+    const host = this._host(url).toLowerCase();
+    return host.endsWith('.fbcdn.net') && host.split('.', 1)[0].startsWith('scontent');
+  }
+
+  // ===========================================================================
+  // Mobile-web extraction
+  // ===========================================================================
+
+  private _mobileText(el: Element | null): string {
+    return this._cleanText((el?.textContent ?? '').replace(MOBILE_GLYPH_RE, ''));
+  }
+
+  /** The unit's direct-child blocks split into header and body. Null when
+   *  the unit has no authored-post header (suggestion carousels etc.). */
+  private _mobileParts(article: HTMLElement): { header: HTMLElement; body: HTMLElement[] } | null {
+    const more = article.querySelector(MORE_OPTIONS_SELECTOR);
+    if (!more) return null;
+    const blocks = Array.from(article.children).filter((c): c is HTMLElement => c instanceof HTMLElement);
+    const hi = blocks.findIndex(b => b.contains(more));
+    if (hi < 0) return null;
+    const body: HTMLElement[] = [];
+    for (const b of blocks.slice(hi + 1)) {
+      if (b.querySelector(MOBILE_REACTION_SELECTOR)) break;
+      body.push(b);
+    }
+    return { header: blocks[hi], body };
+  }
+
+  private _extractMobileContent(article: HTMLElement): PostContent {
+    const parts = this._mobileParts(article);
+    if (!parts) return this._emptyContent();
+
+    // Body text: each text node's cleaned text, in order. Facebook's
+    // "… See more" expander is a trailing text run; drop it.
+    const lines = parts.body
+      .flatMap(b => Array.from(b.querySelectorAll<HTMLElement>(MOBILE_TEXT_SELECTOR)))
+      .map(t => this._mobileText(t).replace(/(?:\.\.\.|…)?\s*See more$/i, '').trim())
+      .filter(Boolean);
+    const text = lines.join('\n');
+    // Panel snapshot: plain paragraphs built from text, never page markup.
+    const textHtml = lines.map(l => `<p>${this._escapeHtml(l)}</p>`).join('');
+
+    const imageUrls = this._extractMobileImageUrls(parts.body);
+    const hasVideo = article.querySelector('[data-mcomponent="MVideo"], video') !== null;
+
+    return {
+      text,
+      author: this._extractMobileAuthor(article),
+      handle: '',
+      avatarUrl: this._extractMobileAvatarUrl(parts.header),
+      timeText: this._extractMobileTime(parts.header),
+      textHtml,
+      quote: null,
+      postUrl: null,
+      imageUrls,
+      hasMediaContainer: imageUrls.length > 0 || hasVideo,
+      hasVideo,
+    };
+  }
+
+  private _escapeHtml(s: string): string {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  /** "<Name> Profile Picture" when present; otherwise the "More options for"
+   *  label, cut before an activity sentence ("Jane Doe is at The Place."). */
+  private _extractMobileAuthor(article: HTMLElement): string {
+    const pic = article.querySelector(PROFILE_PICTURE_SELECTOR)?.getAttribute('aria-label') ?? '';
+    const fromPic = pic.replace(/\s+Profile Picture$/, '').trim();
+    if (fromPic) return fromPic;
+    let label = (article.querySelector(MORE_OPTIONS_SELECTOR)?.getAttribute('aria-label') ?? '')
+      .replace(/^More options for\s+/, '').trim();
+    if (label.endsWith('.')) {
+      label = label.replace(/\s+(?:is|was|shared|added|updated|changed|in|at|with|feeling|and)\s.*$/, '');
+    }
+    return this._cleanText(label.replace(MOBILE_GLYPH_RE, ''));
+  }
+
+  private _extractMobileAvatarUrl(header: HTMLElement): string | null {
+    const img = header.querySelector<HTMLImageElement>(`${PROFILE_PICTURE_SELECTOR} img`)
+      ?? header.querySelector<HTMLImageElement>('img');
+    const src = img?.currentSrc || img?.src || '';
+    return src && !src.startsWith('data:') ? src : null;
+  }
+
+  /** "6 hours ago, Public" / "Jane Doe, 2 days ago, Public group" → the
+   *  "… ago" segment. Older posts show a date with no "ago" label; null. */
+  private _extractMobileTime(header: HTMLElement): string | null {
+    for (const el of header.querySelectorAll('[aria-label]')) {
+      const seg = (el.getAttribute('aria-label') ?? '').split(',')
+        .map(x => x.trim()).find(x => /\bago$/.test(x));
+      if (seg) return seg;
+    }
+    return null;
+  }
+
+  /** Body media: each video's first frame first (the poster of a playing
+   *  <video>; before autoplay the MVideo shows the same frame as an <img>),
+   *  then photos and thumbnails. */
+  private _extractMobileImageUrls(body: HTMLElement[]): string[] {
+    const urls = this._videoFrameUrls(body.flatMap(b => Array.from(b.querySelectorAll<HTMLVideoElement>('video'))));
+    for (const img of body.flatMap(b => Array.from(b.querySelectorAll<HTMLImageElement>('img')))) {
+      const src = this._contentImageSrc(img);
+      if (src && !urls.includes(src)) urls.push(src);
     }
     return urls;
   }
@@ -303,12 +546,23 @@ const BouncerFacebookAdapter = class FacebookAdapter implements PlatformAdapter 
     // author + the start of the body is a sufficient identity for detecting
     // an in-place re-render with different content.
     const author = this._extractAuthor(article);
+    // The first image is part of the key so a video player that mounts after
+    // the post was evaluated (bringing its first-frame poster) triggers a
+    // re-evaluation instead of leaving the post judged without an image.
+    const firstImage = this.extractPostContent(article).imageUrls[0] ?? '';
+    if (this._isMobilePost(article)) {
+      return `${author}|${this.extractPostContent(article).text.substring(0, 200)}|${firstImage}`;
+    }
     const msg = this._queryOutsideComments<HTMLElement>(article, MESSAGE_SELECTOR)[0];
     const body = this._messageText(msg ?? null).substring(0, 200);
-    return this.getPostUrl(article) || `${author}|${body}`;
+    return `${this.getPostUrl(article) || `${author}|${body}`}|${firstImage}`;
   }
 
   getPostContainer(article: HTMLElement): HTMLElement {
+    // Mobile: the feed unit itself is the list child.
+    if (this._isMobilePost(article)) {
+      return article.closest<HTMLElement>(MOBILE_POST_SELECTOR) ?? article;
+    }
     // Hide the whole virtualization slot — the feed list's direct child — so
     // no card margin is left behind. The list is the element whose parent
     // also holds the "Feed posts" <h3>.
@@ -329,7 +583,7 @@ const BouncerFacebookAdapter = class FacebookAdapter implements PlatformAdapter 
     const rect = element.getBoundingClientRect();
     element.dataset.filteredByExtension = 'true';
     if (rect.bottom > 0) {
-      element.style.display = 'none';
+      this._setHidden(element, true);
     }
     // If entirely above the viewport, the scroll handler fades it later so
     // the feed doesn't jump under the reader.
@@ -338,7 +592,7 @@ const BouncerFacebookAdapter = class FacebookAdapter implements PlatformAdapter 
   showPost(article: HTMLElement): void {
     const element = this.getPostContainer(article);
     delete element.dataset.filteredByExtension;
-    element.style.display = '';
+    this._setHidden(element, false);
     element.style.visibility = '';
     element.style.opacity = '';
     element.style.transition = '';
@@ -363,7 +617,22 @@ const BouncerFacebookAdapter = class FacebookAdapter implements PlatformAdapter 
   async extractPostContentFromStore(article: HTMLElement): Promise<PostContent | null> {
     // No client-side store hook; the DOM is the source of truth. Never return
     // null — the content script would retry and then give up on the post.
-    return Promise.resolve(this.extractPostContent(article));
+    let content = this.extractPostContent(article);
+    // A video's frame can lag the post: the player mounts lazily and the
+    // poster is set after it. Evaluating now would classify the post with
+    // no image at all, so give the frame a moment to arrive.
+    const deadline = Date.now() + VIDEO_FRAME_WAIT_MS;
+    while (this._awaitingVideoFrame(article, content) && Date.now() < deadline && article.isConnected) {
+      await new Promise(resolve => setTimeout(resolve, 150));
+      content = this.extractPostContent(article);
+    }
+    return content;
+  }
+
+  /** True while the post shows a video but no frame image has been found. */
+  private _awaitingVideoFrame(article: HTMLElement, content: PostContent): boolean {
+    if (!content.author || content.imageUrls.length > 0) return false;
+    return article.querySelector('video, [data-mcomponent="MVideo"]') !== null;
   }
 
   cleanupFilteredPostHtml(postContent: HTMLElement, imageUrls: string[]): void {
@@ -402,14 +671,20 @@ const BouncerFacebookAdapter = class FacebookAdapter implements PlatformAdapter 
 
   getShareButton(article: HTMLElement): HTMLElement | null {
     // Anchor on the header's "…" menu. Only authored posts have the
-    // "…by <Name>" variant, so carousels never get a Bounce control.
-    return article.querySelector<HTMLElement>(ACTIONS_BUTTON_SELECTOR);
+    // "…by <Name>" / "More options for <Name>" variants, so carousels never
+    // get a Bounce control.
+    return article.querySelector<HTMLElement>(ACTIONS_BUTTON_SELECTOR)
+      ?? article.querySelector<HTMLElement>(MORE_OPTIONS_SELECTOR);
   }
 
   insertActionButton(article: HTMLElement, button: HTMLElement): void {
     const actions = this.getShareButton(article);
     if (!actions) {
       article.appendChild(button);
+      return;
+    }
+    if (this._isMobilePost(article)) {
+      this._insertMobileActionButton(actions, button);
       return;
     }
     const actionsCell = this._headerCell(actions);
@@ -425,6 +700,38 @@ const BouncerFacebookAdapter = class FacebookAdapter implements PlatformAdapter 
     }
     if (hide) this._headerCell(hide).style.display = 'none';
     actionsCell.insertAdjacentElement('afterend', button);
+  }
+
+  /** Mobile header row: the renderer lays it out as a column flexbox and
+   *  places every child with inline margins, so inserting into its flow
+   *  would shift Facebook's own controls. The button is absolutely
+   *  positioned (the row is position: relative) directly below the "…"
+   *  button, centered on it — the space under "…" is empty, whereas the
+   *  spot beside it is often taken ("Name … · Follow" runs right up to it
+   *  on phone-width screens). Re-placed whenever the "…" button is laid out
+   *  or resized — posts are often processed before layout.
+   *
+   *  The renderer also sets `pointer-events: none` on its layout containers
+   *  (only its own controls opt back in), which the button would inherit —
+   *  taps would fall through to the post and open it. facebook.css restores
+   *  `pointer-events: auto`; it is set inline too so the button stays
+   *  tappable even if the stylesheet loads late. */
+  private _insertMobileActionButton(more: HTMLElement, button: HTMLElement): void {
+    const row = more.parentElement;
+    if (!row) return;
+    button.classList.add(MOBILE_BUTTON_CLASS);
+    button.style.pointerEvents = 'auto';
+    const place = () => {
+      if (!more.offsetWidth) return;
+      const size = button.offsetWidth || 32;
+      button.style.left = `${more.offsetLeft + (more.offsetWidth - size) / 2}px`;
+      button.style.top = `${more.offsetTop + more.offsetHeight}px`;
+    };
+    // Taps on the button are kept from Facebook by the window-level tap
+    // shield (see _installMobileTapShield).
+    row.appendChild(button);
+    place();
+    new ResizeObserver(place).observe(more);
   }
 
   getSearchForm(): HTMLElement | null {

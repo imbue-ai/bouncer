@@ -4223,6 +4223,11 @@ function buildQuoteToggleRow(): HTMLElement {
 }
 
 // Add inline "why annoying" button next to Share post button
+/** Fired on a Bounce button to activate it without a DOM click. Must match
+ *  the literal in adapters that dispatch it (adapters are standalone
+ *  bundles and can't import this). */
+export const BOUNCE_ACTIVATE_EVENT = 'ff-bounce-activate';
+
 export function addWhyAnnoyingButton(article: HTMLElement) {
   if (!_deps.adapter.getShareButton(article)) {
     return;
@@ -4243,7 +4248,10 @@ export function addWhyAnnoyingButton(article: HTMLElement) {
   // Track tooltip reference on the button element
   let btnTooltip: HTMLElement | null = null;
 
-  btn.addEventListener('click', (e) => {
+  // Also answers BOUNCE_ACTIVATE_EVENT: an adapter that must swallow the real
+  // click before the page sees it (Facebook's mobile renderer routes taps in
+  // the capture phase) activates the button through that event instead.
+  const onActivate = (e: Event) => {
     e.preventDefault();
     e.stopPropagation();
 
@@ -4521,7 +4529,9 @@ export function addWhyAnnoyingButton(article: HTMLElement) {
     // Reposition after content change (height may differ from spinner)
     requestAnimationFrame(positionTooltip);
     })().catch(err => console.error('[UI] annoying reasons tooltip failed:', err));
-  });
+  };
+  btn.addEventListener('click', onActivate);
+  btn.addEventListener(BOUNCE_ACTIVATE_EVENT, onActivate);
 
   // Outside-click tooltip dismissal is handled by a single module-level
   // listener registered via setupAnnoyingTooltipCloser — do NOT register a

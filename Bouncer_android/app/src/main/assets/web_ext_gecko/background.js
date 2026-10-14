@@ -26,6 +26,7 @@
       if (h === "x.com" || h.endsWith(".x.com") ||
           h === "twitter.com" || h.endsWith(".twitter.com")) return "twitter";
       if (h === "linkedin.com" || h.endsWith(".linkedin.com")) return "linkedin";
+      if (h === "facebook.com" || h.endsWith(".facebook.com")) return "facebook";
     } catch (e) {}
     return null;
   }

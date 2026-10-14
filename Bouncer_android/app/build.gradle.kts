@@ -122,7 +122,7 @@ abstract class CopyExtensionAssetsTask : org.gradle.api.DefaultTask() {
         if (root.exists()) root.deleteRecursively()
         val out = root.resolve("web_ext_gecko")
         out.mkdirs()
-        listOf("background-app.js", "content.js", "TwitterAdapter.js", "LinkedInAdapter.js", "popup-app.js").forEach { name ->
+        listOf("background-app.js", "content.js", "TwitterAdapter.js", "LinkedInAdapter.js", "FacebookAdapter.js", "popup-app.js").forEach { name ->
             bouncer.resolve("dist/$name").copyTo(out.resolve("dist/$name").also { it.parentFile.mkdirs() }, overwrite = true)
         }
         listOf("dompurify.js", "content.css", "popup.html", "popup.css").forEach { name ->
@@ -138,6 +138,10 @@ abstract class CopyExtensionAssetsTask : org.gradle.api.DefaultTask() {
         )
         bouncer.resolve("adapters/linkedin/linkedin.css").copyTo(
             out.resolve("adapters/linkedin/linkedin.css").also { it.parentFile.mkdirs() },
+            overwrite = true,
+        )
+        bouncer.resolve("adapters/facebook/facebook.css").copyTo(
+            out.resolve("adapters/facebook/facebook.css").also { it.parentFile.mkdirs() },
             overwrite = true,
         )
         iosShell.resolve("ChromePolyfill.js").copyTo(out.resolve("ChromePolyfill.js"), overwrite = true)

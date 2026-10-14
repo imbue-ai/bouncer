@@ -38,6 +38,14 @@ object Platforms {
             feedUrl = "https://www.linkedin.com/feed/",
             hostRoots = listOf("linkedin.com"),
         ),
+        // GeckoView's mobile user agent is redirected to m.facebook.com,
+        // the mobile-web layout FacebookAdapter handles.
+        Platform(
+            id = "facebook",
+            displayName = "Facebook",
+            feedUrl = "https://m.facebook.com/",
+            hostRoots = listOf("facebook.com"),
+        ),
     )
 
     fun byId(id: String): Platform? = all.firstOrNull { it.id == id }
