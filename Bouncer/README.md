@@ -35,7 +35,7 @@ src/
     pipeline.ts          # Post evaluation queue, batching, caching, error state
     local-model.ts       # WebLLM engine lifecycle, inference, preemption
     inference-queue.ts   # Serial priority queue for local model tasks
-    providers.ts         # API calls (OpenAI, Gemini, Anthropic, Imbue, OpenRouter)
+    providers.ts         # API calls (OpenAI, Gemini, Anthropic, Imbue, OpenRouter, Requesty)
     auth.ts              # Google OAuth, token management
     ws-manager.ts        # WebSocket connection to Imbue backend
   content/

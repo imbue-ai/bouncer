@@ -70,6 +70,10 @@ export const PREDEFINED_MODELS: PredefinedModelsMap = {
     { name: "nvidia/nemotron-nano-12b-v2-vl:free", display: "Nemotron Nano 12B 2 VL", isFree: true },
     { name: "mistralai/ministral-3b-2512", display: "Ministral 3B", isFree: false }
   ],
+  requesty: [
+    { name: "openai/gpt-4o-mini", display: "GPT-4o Mini" },
+    { name: "google/gemini-2.5-flash-lite", display: "Gemini 2.5 Flash Lite" }
+  ],
   openai: [
     { name: 'gpt-5-nano', display: 'GPT-5 Nano', apiKwargs: { reasoning_effort: "minimal" } },
   ],
@@ -107,6 +111,7 @@ export const API_DISPLAY_NAMES: Record<string, string> = {
   gemini: 'Gemini',
   anthropic: 'Anthropic',
   openrouter: 'OpenRouter',
+  requesty: 'Requesty',
   imbue: 'Imbue',
   local: 'Local',
   iosLocal: 'On-device (iOS)'
@@ -115,6 +120,7 @@ export const API_DISPLAY_NAMES: Record<string, string> = {
 export const API_BASE_URLS: Record<string, string> = {
   openai: 'https://api.openai.com/v1',
   openrouter: 'https://openrouter.ai/api/v1',
+  requesty: 'https://router.requesty.ai/v1',
   gemini: 'https://generativelanguage.googleapis.com/v1beta/openai',
   anthropic: 'https://api.anthropic.com/v1'
 };

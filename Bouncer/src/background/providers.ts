@@ -6,7 +6,7 @@ import { imbueWebSocket } from './ws-manager';
 import type { ChatMessage, APIConfig, DirectAPIResponse, ImbueFilterResponse, ImbueSuggestResponse, ImbueAiTextResponse, ImbueAiImageResponse, ImbueDetectAiIntentResponse, EvaluationPostData } from '../types';
 
 // Call an OpenAI-compatible API directly from the extension via fetch
-// Used for OpenAI, OpenRouter, and Gemini models
+// Used for OpenAI, OpenRouter, Requesty, and Gemini models
 export async function callDirectAPI(messages: ChatMessage[], apiConfig: APIConfig): Promise<string> {
   const baseUrl = apiConfig.apiBase
     ? apiConfig.apiBase.replace(/\/+$/, '')
@@ -26,6 +26,12 @@ export async function callDirectAPI(messages: ChatMessage[], apiConfig: APIConfi
 
   // OpenRouter extra headers
   if (apiConfig.apiName === 'openrouter') {
+    headers['HTTP-Referer'] = 'https://bouncer.app';
+    headers['X-Title'] = 'Bouncer';
+  }
+
+  // Requesty extra headers
+  if (apiConfig.apiName === 'requesty') {
     headers['HTTP-Referer'] = 'https://bouncer.app';
     headers['X-Title'] = 'Bouncer';
   }

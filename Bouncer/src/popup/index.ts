@@ -81,6 +81,7 @@ const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
   ...(process.env.HAS_IMBUE_BACKEND === 'true' ? { imbue: 'Imbue (Default)' } : {}),
   local: 'On-Device',
   openrouter: 'OpenRouter',
+  requesty: 'Requesty',
   openai: 'OpenAI',
   anthropic: 'Anthropic',
   gemini: 'Gemini'
@@ -406,6 +407,7 @@ async function loadSettings() {
     'selectedModel',
     'customModels',
     'openrouterApiKey',
+    'requestyApiKey',
     'openaiApiKey',
     'openaiApiBase',
     'geminiApiKey',
@@ -433,6 +435,7 @@ async function loadSettings() {
   (document.getElementById('openaiApiKey') as HTMLInputElement).value = data.openaiApiKey || '';
   (document.getElementById('openaiApiBase') as HTMLInputElement).value = data.openaiApiBase || '';
   (document.getElementById('geminiApiKey') as HTMLInputElement).value = data.geminiApiKey || '';
+  (document.getElementById('requestyApiKey') as HTMLInputElement).value = data.requestyApiKey || '';
   (document.getElementById('anthropicApiKey') as HTMLInputElement).value = data.anthropicApiKey || '';
   updateAnthropicEnabledUI(!!data.anthropicApiKey);
 
@@ -693,6 +696,7 @@ function updateApiProviderStates(data: Partial<StorageSchema>) {
   // the iOS radio's on-device selection to the default on every popup open.
   dropdownState.authenticatedApis = {
     openrouter: !!data.openrouterApiKey,
+    requesty: !!data.requestyApiKey,
     openai: !!data.openaiApiKey,
     gemini: !!data.geminiApiKey,
     anthropic: !!data.anthropicApiKey,
@@ -714,6 +718,19 @@ function updateApiProviderStates(data: Partial<StorageSchema>) {
     openrouterBadge.classList.add('connected');
   } else {
     openrouterBadge.textContent = 'Not enabled';
+  }
+
+  // Update Requesty badge
+  const requestyBadge = document.getElementById('requestyStatusBadge')!;
+  requestyBadge.classList.remove('connected', 'auth-error');
+  if (authErrorApis.requesty && data.requestyApiKey) {
+    requestyBadge.textContent = 'Auth error';
+    requestyBadge.classList.add('auth-error');
+  } else if (data.requestyApiKey) {
+    requestyBadge.textContent = 'Enabled';
+    requestyBadge.classList.add('connected');
+  } else {
+    requestyBadge.textContent = 'Not enabled';
   }
 
   // Update OpenAI badge
@@ -793,7 +810,7 @@ function setupEventListeners() {
   document.getElementById('openaiApiKey')!.addEventListener('change', (e) => { (async () => {
     const key = (e.target as HTMLInputElement).value.trim();
     await setStorage({ openaiApiKey: key });
-    const data = await getStorage(['openrouterApiKey', 'openaiApiKey', 'openaiApiBase', 'geminiApiKey', 'anthropicApiKey', 'customModels', 'selectedModel', 'authErrorApis']);
+    const data = await getStorage(['openrouterApiKey', 'requestyApiKey', 'openaiApiKey', 'openaiApiBase', 'geminiApiKey', 'anthropicApiKey', 'customModels', 'selectedModel', 'authErrorApis']);
     updateApiProviderStates(data);
     renderModelDropdown(data.customModels || [], data.selectedModel || DEFAULT_MODEL);
   })().catch(err => console.error('[Popup] openaiApiKey change failed:', err)); });
@@ -864,7 +881,7 @@ function setupEventListeners() {
             await setStorage({ authErrorApis: authErrors429 });
           }
           await setStorage({ anthropicApiKey: key });
-          const data = await getStorage(['openrouterApiKey', 'openaiApiKey', 'geminiApiKey', 'anthropicApiKey', 'customModels', 'selectedModel', 'authErrorApis']);
+          const data = await getStorage(['openrouterApiKey', 'requestyApiKey', 'openaiApiKey', 'geminiApiKey', 'anthropicApiKey', 'customModels', 'selectedModel', 'authErrorApis']);
           updateApiProviderStates(data);
           updateAnthropicEnabledUI(true);
           renderModelDropdown(data.customModels || [], data.selectedModel || DEFAULT_MODEL);
@@ -882,7 +899,7 @@ function setupEventListeners() {
         }
         // Success — save the key
         await setStorage({ anthropicApiKey: key });
-        const data = await getStorage(['openrouterApiKey', 'openaiApiKey', 'geminiApiKey', 'anthropicApiKey', 'customModels', 'selectedModel', 'authErrorApis']);
+        const data = await getStorage(['openrouterApiKey', 'requestyApiKey', 'openaiApiKey', 'geminiApiKey', 'anthropicApiKey', 'customModels', 'selectedModel', 'authErrorApis']);
         updateApiProviderStates(data);
         updateAnthropicEnabledUI(true);
         renderModelDropdown(data.customModels || [], data.selectedModel || DEFAULT_MODEL);
@@ -903,7 +920,7 @@ function setupEventListeners() {
     await removeStorage('anthropicApiKey');
     anthropicKeyInput.value = '';
     updateAnthropicEnabledUI(false);
-    const data = await getStorage(['openrouterApiKey', 'openaiApiKey', 'geminiApiKey', 'anthropicApiKey', 'customModels', 'selectedModel', 'authErrorApis']);
+    const data = await getStorage(['openrouterApiKey', 'requestyApiKey', 'openaiApiKey', 'geminiApiKey', 'anthropicApiKey', 'customModels', 'selectedModel', 'authErrorApis']);
     updateApiProviderStates(data);
     renderModelDropdown(data.customModels || [], data.selectedModel || DEFAULT_MODEL);
   })().catch(err => console.error('[Popup] Anthropic disable failed:', err)); });
@@ -912,10 +929,19 @@ function setupEventListeners() {
   document.getElementById('geminiApiKey')!.addEventListener('change', (e) => { (async () => {
     const key = (e.target as HTMLInputElement).value.trim();
     await setStorage({ geminiApiKey: key });
-    const data = await getStorage(['openrouterApiKey', 'openaiApiKey', 'geminiApiKey', 'anthropicApiKey', 'customModels', 'selectedModel', 'authErrorApis']);
+    const data = await getStorage(['openrouterApiKey', 'requestyApiKey', 'openaiApiKey', 'geminiApiKey', 'anthropicApiKey', 'customModels', 'selectedModel', 'authErrorApis']);
     updateApiProviderStates(data);
     renderModelDropdown(data.customModels || [], data.selectedModel || DEFAULT_MODEL);
   })().catch(err => console.error('[Popup] geminiApiKey change failed:', err)); });
+
+  // Requesty API key
+  document.getElementById('requestyApiKey')!.addEventListener('change', (e) => { (async () => {
+    const key = (e.target as HTMLInputElement).value.trim();
+    await setStorage({ requestyApiKey: key });
+    const data = await getStorage(['openrouterApiKey', 'requestyApiKey', 'openaiApiKey', 'geminiApiKey', 'anthropicApiKey', 'customModels', 'selectedModel', 'authErrorApis']);
+    updateApiProviderStates(data);
+    renderModelDropdown(data.customModels || [], data.selectedModel || DEFAULT_MODEL);
+  })().catch(err => console.error('[Popup] requestyApiKey change failed:', err)); });
 
   // OpenRouter: Safari has no chrome.identity, so launchWebAuthFlow throws.
   // Show the API-key paste input instead and hide the OAuth button. The
@@ -1382,6 +1408,7 @@ const dropdownState: DropdownState = {
   selectedModel: DEFAULT_MODEL,
   authenticatedApis: {
     openrouter: false,
+    requesty: false,
     openai: false,
     gemini: false,
     anthropic: false
@@ -1602,7 +1629,7 @@ function renderModelDropdown(customModels: ModelDef[], selectedModel: string) {
   }
 
   // Count how many alternative APIs are configured and have models
-  const providers = ['openai', 'anthropic', 'gemini', 'openrouter'];
+  const providers = ['openai', 'anthropic', 'gemini', 'openrouter', 'requesty'];
   const configuredProviders = providers.filter(api => {
     if (!dropdownState.authenticatedApis[api]) return false;
     const { predefined, custom } = getModelsForProvider(api);
@@ -1980,7 +2007,7 @@ async function startOpenRouterOAuth() {
 
 // Update the UI to show OpenRouter connection status
 async function updateOpenRouterStatus() {
-  const data = await getStorage(['openrouterApiKey', 'openaiApiKey', 'geminiApiKey', 'anthropicApiKey', 'customModels', 'selectedModel', 'authErrorApis']);
+  const data = await getStorage(['openrouterApiKey', 'requestyApiKey', 'openaiApiKey', 'geminiApiKey', 'anthropicApiKey', 'customModels', 'selectedModel', 'authErrorApis']);
   const signedOutSection = document.getElementById('openrouterSignedOut')!;
   const signedInSection = document.getElementById('openrouterSignedIn')!;
 

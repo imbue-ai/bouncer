@@ -17,7 +17,7 @@
 ## Features
 
 - **Natural language filters** — describe what you don't want to see in your own words
-- **Multiple AI backends** — run models locally on your GPU, or use cloud APIs (OpenAI, Google Gemini, Anthropic, OpenRouter)
+- **Multiple AI backends** — run models locally on your GPU, or use cloud APIs (OpenAI, Google Gemini, Anthropic, OpenRouter, Requesty)
 - **On-device inference** — local models run entirely in your browser with zero data sent externally
 - **Image-aware filtering** — multimodal models can classify posts based on images, not just text
 - **Reasoning transparency** — see exactly why each post was filtered
@@ -32,6 +32,7 @@
 | **Google Gemini** | 2.5 Flash Lite, 2.5 Flash, 3 Flash Preview | API key |
 | **Anthropic** | Claude Haiku 4.5 | API key |
 | **OpenRouter** | Nemotron Nano 12B VL (free), Ministral 3B | Account |
+| **Requesty** | GPT-4o Mini, Gemini 2.5 Flash Lite | API key |
 | **Imbue** | Default backend | None (built-in) |
 
 Local models are downloaded once and cached in the browser's Cache Storage.
