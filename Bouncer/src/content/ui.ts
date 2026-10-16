@@ -695,10 +695,20 @@ export function updateTheme() {
 
 // ==================== Sidebar Filter ====================
 
+// Whether the filter cards should stay on the page. X's composer (opened by
+// Share filters, bounce-quote, or the user) routes to /compose/... while
+// rendering as a modal over the feed, so the card stays put there instead of
+// flickering out until the composer closes. Post processing still follows
+// shouldProcessCurrentPage alone.
+function shouldKeepFilterUI(): boolean {
+  return _deps.adapter.shouldProcessCurrentPage()
+    || window.location.pathname.startsWith('/compose/');
+}
+
 function updateSidebarFilterVisibility() {
   if (!filterPhrasesContainer || !filterPhrasesContainer.isConnected) return;
 
-  if (!_deps.adapter.shouldProcessCurrentPage()) {
+  if (!shouldKeepFilterUI()) {
     filterPhrasesContainer.remove();
     filterPhrasesContainer = null;
   }
@@ -1358,7 +1368,7 @@ function updateBottomFilterPosition() {
 function updateBottomFilterVisibility() {
   if (!bottomFilterContainer || !bottomFilterContainer.isConnected) return;
 
-  if (!_deps.adapter.shouldProcessCurrentPage()) {
+  if (!shouldKeepFilterUI()) {
     bottomFilterContainer.remove();
     bottomFilterContainer = null;
   }
@@ -1457,7 +1467,7 @@ async function injectBottomFilterBoxImpl() {
 function updateMobileFilterVisibility() {
   if (!mobileFilterContainer || !mobileFilterContainer.isConnected) return;
 
-  if (!_deps.adapter.shouldProcessCurrentPage()) {
+  if (!shouldKeepFilterUI()) {
     mobileFilterContainer.remove();
     mobileFilterContainer = null;
   }
