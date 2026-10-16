@@ -62,8 +62,10 @@ html.__fb-dark-mode .ff-why-annoying-btn--facebook-header:hover {
 
 /* Hidden feed slots. hidePost also sets inline display:none, but the mobile
  * html-renderer rewrites a unit's inline style when it re-measures it; this
- * attribute rule keeps the slot hidden regardless. */
-[data-ff-fb-hidden] {
+ * attribute rule keeps the slot hidden regardless. It also requires the
+ * shared filtered marker, because the content script's restore paths clear
+ * that marker and the inline display but don't know about this attribute. */
+[data-ff-fb-hidden][data-filtered-by-extension="true"] {
   display: none !important;
 }
 

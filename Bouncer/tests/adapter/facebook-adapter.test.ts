@@ -352,6 +352,126 @@ describe('Facebook mobile-web (m.facebook.com) adapter', () => {
     expect(post.style.display).toBe('');
   });
 
+  // The renderer rebuilds runs of units as fresh elements with new tracking
+  // ids (observed live, October 2026), filtered ones included.
+  function rebuild(old: HTMLElement, id: number, header: string): HTMLElement {
+    const tpl = document.createElement('template');
+    tpl.innerHTML = mobileUnit({ id, header, body }).trim();
+    const fresh = tpl.content.firstElementChild as HTMLElement;
+    old.replaceWith(fresh);
+    return fresh;
+  }
+
+  it('keeps a filtered post hidden when the renderer rebuilds it', async () => {
+    const header = mobileHeader({ pic: 'K', more: 'K' });
+    const [post, other] = mountMobileFeed([
+      mobileUnit({ id: 1, header, body }),
+      mobileUnit({ id: 2, header: mobileHeader({ pic: 'J', more: 'J' }), body }),
+    ]);
+    post.getBoundingClientRect = () => ({ bottom: 100 } as DOMRect);
+    adapter.hidePost(post);
+    const fresh = rebuild(post, 40, header);
+    const freshOther = rebuild(other, 41, mobileHeader({ pic: 'J', more: 'J' }));
+    await Promise.resolve();
+    expect(fresh.hasAttribute('data-ff-fb-hidden')).toBe(true);
+    expect(fresh.dataset.filteredByExtension).toBe('true');
+    expect(freshOther.dataset.filteredByExtension).toBeUndefined();
+  });
+
+  it('carries a marked-only (above viewport) post across a rebuild without hiding it', async () => {
+    // Distinct author per test: adapters from earlier tests keep observing.
+    const header = mobileHeader({ pic: 'M', more: 'M' });
+    const [post] = mountMobileFeed([mobileUnit({ id: 1, header, body })]);
+    post.getBoundingClientRect = () => ({ top: -700, bottom: -10, width: 400, height: 690 } as DOMRect);
+    adapter.hidePost(post);
+    const fresh = rebuild(post, 40, header);
+    await Promise.resolve();
+    expect(fresh.dataset.filteredByExtension).toBe('true');
+    expect(fresh.hasAttribute('data-ff-fb-hidden')).toBe(false);
+  });
+
+  it("records a hidden unit as collapsed and zero-height for the renderer, and restores it", async () => {
+    const [post] = mountMobileFeed([
+      mobileUnit({ id: 1, header: mobileHeader({ pic: 'E', more: 'E' }), body }),
+    ]);
+    post.setAttribute('data-actual-height', '694');
+    post.style.height = '694px';
+    post.getBoundingClientRect = () => ({ bottom: 100, width: 400, height: 600 } as DOMRect);
+    adapter.hidePost(post);
+    expect(post.classList.contains('displayed')).toBe(false);
+    expect(post.getAttribute('data-actual-height')).toBe('0');
+    expect(post.style.height).toBe('0px');
+    // The renderer rewrites its record as the unit nears the viewport.
+    post.classList.add('displayed');
+    post.setAttribute('data-actual-height', '694');
+    await Promise.resolve();
+    expect(post.classList.contains('displayed')).toBe(false);
+    expect(post.getAttribute('data-actual-height')).toBe('0');
+    // Content-script restore: clears the marker and inline display only.
+    delete post.dataset.filteredByExtension;
+    post.style.display = '';
+    await Promise.resolve();
+    expect(post.classList.contains('displayed')).toBe(true);
+    expect(post.getAttribute('data-actual-height')).toBe('694');
+    expect(post.style.height).toBe('694px');
+  });
+
+  it('hides a post the renderer has collapsed, wherever it is', () => {
+    const [post] = mountMobileFeed([
+      mobileUnit({ id: 1, header: mobileHeader({ pic: 'C', more: 'C' }), body }),
+    ]);
+    // Collapsed by the renderer (display:none until the reader is close):
+    // an all-zero rect, which reads as "above the viewport".
+    post.getBoundingClientRect = () => ({ top: 0, bottom: 0, width: 0, height: 0 } as DOMRect);
+    adapter.hidePost(post);
+    expect(post.hasAttribute('data-ff-fb-hidden')).toBe(true);
+  });
+
+  it('hides a marked post once the renderer collapses it', () => {
+    const [post] = mountMobileFeed([
+      mobileUnit({ id: 1, header: mobileHeader({ pic: 'D', more: 'D' }), body }),
+    ]);
+    post.getBoundingClientRect = () => ({ top: -700, bottom: -10, width: 400, height: 690 } as DOMRect);
+    adapter.hidePost(post);
+    expect(post.hasAttribute('data-ff-fb-hidden')).toBe(false);
+    post.getBoundingClientRect = () => ({ top: 0, bottom: 0, width: 0, height: 0 } as DOMRect);
+    document.dispatchEvent(new Event('scroll'));
+    expect(post.hasAttribute('data-ff-fb-hidden')).toBe(true);
+  });
+
+  it('re-hides a filtered post the renderer re-mounts long after dropping it', async () => {
+    const header = mobileHeader({ pic: 'L', more: 'L' });
+    const [post] = mountMobileFeed([mobileUnit({ id: 1, header, body })]);
+    post.getBoundingClientRect = () => ({ bottom: 100 } as DOMRect);
+    adapter.hidePost(post);
+    const scroller = post.parentElement!;
+    post.remove();
+    await Promise.resolve();
+    await new Promise(r => setTimeout(r, 10));
+    const tpl = document.createElement('template');
+    tpl.innerHTML = mobileUnit({ id: 70, header, body }).trim();
+    const fresh = tpl.content.firstElementChild as HTMLElement;
+    scroller.prepend(fresh);
+    await Promise.resolve();
+    expect(fresh.hasAttribute('data-ff-fb-hidden')).toBe(true);
+  });
+
+  it('does not re-hide a restored post when the renderer rebuilds it', async () => {
+    // Distinct author: earlier tests' filtered units are torn down by the
+    // next mount, which the guard sees as removals.
+    const header = mobileHeader({ pic: 'R', more: 'R' });
+    const [post] = mountMobileFeed([mobileUnit({ id: 1, header, body })]);
+    post.getBoundingClientRect = () => ({ bottom: 100 } as DOMRect);
+    adapter.hidePost(post);
+    // The content script's restore path clears the marker and inline display.
+    delete post.dataset.filteredByExtension;
+    post.style.display = '';
+    const fresh = rebuild(post, 40, header);
+    await Promise.resolve();
+    expect(fresh.dataset.filteredByExtension).toBeUndefined();
+    expect(fresh.hasAttribute('data-ff-fb-hidden')).toBe(false);
+  });
+
   it('adds the Bounce control to the header row without entering its flow', () => {
     const [post] = mountMobileFeed([
       mobileUnit({ id: 1, header: mobileHeader({ pic: 'K', more: 'K' }), body }),

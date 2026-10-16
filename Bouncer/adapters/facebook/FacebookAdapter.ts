@@ -111,6 +111,14 @@ const COMMENT_SELECTOR = '[role="article"]';
 
 /** How long extraction waits for a video's first-frame image to appear. */
 const VIDEO_FRAME_WAIT_MS = 2500;
+/** Cap on remembered filtered mobile posts (see _installMobileRerenderGuard). */
+const MAX_FILTERED_IDENTITIES = 1000;
+/** Mobile renderer class on units it currently draws; see _syncRendererRecord. */
+const RENDERER_DISPLAYED_CLASS = 'displayed';
+/** Renderer state we overrode on a hidden unit, restored on unhide. */
+const SAVED_DISPLAYED_ATTR = 'data-ff-fb-undisplayed';
+const SAVED_ACTUAL_HEIGHT_ATTR = 'data-ff-fb-actual-height';
+const SAVED_HEIGHT_ATTR = 'data-ff-fb-height';
 
 /** Paths that show Facebook's main News Feed. */
 const FEED_PATHS = new Set(['/', '/home.php']);
@@ -146,6 +154,84 @@ const BouncerFacebookAdapter = class FacebookAdapter implements PlatformAdapter 
   constructor() {
     this._initFilteredPostObserver();
     this._installMobileTapShield();
+    this._installMobileRerenderGuard();
+  }
+
+  /** The mobile renderer drops feed units and later inserts brand-new
+   *  elements for the same posts (new tracking id, none of our attributes):
+   *  it rebuilds whole runs of units in place, and re-mounts units it
+   *  dropped long ago when the reader scrolls back up. A filtered post would
+   *  come back full height — shoving the feed down — and since it's usually
+   *  above the viewport, the cached verdict's hidePost would only mark it,
+   *  leaving it visible. So remember every filtered post by identity, for as
+   *  long as it stays filtered, and re-apply its state to any new copy from
+   *  a MutationObserver callback, which runs before the browser paints.
+   *  The record mirrors the DOM: it's written when a unit gains the
+   *  filtered marker and dropped when a unit loses it (the content
+   *  script's restore paths clear the marker), so restored posts come back
+   *  visible. */
+  private _installMobileRerenderGuard() {
+    const filtered = new Map<string, { hidden: boolean }>();
+    const remember = (unit: HTMLElement) => {
+      const key = this._mobileIdentity(unit);
+      if (!key) return;
+      filtered.delete(key); // re-insert so the cap evicts the oldest
+      filtered.set(key, { hidden: unit.hasAttribute('data-ff-fb-hidden') });
+      if (filtered.size > MAX_FILTERED_IDENTITIES) {
+        filtered.delete(filtered.keys().next().value!);
+      }
+    };
+    const units = (node: Node): HTMLElement[] => {
+      if (!(node instanceof HTMLElement)) return [];
+      if (node.matches(MOBILE_POST_SELECTOR)) return [node];
+      return Array.from(node.querySelectorAll<HTMLElement>(MOBILE_POST_SELECTOR));
+    };
+    new MutationObserver(records => {
+      for (const record of records) {
+        if (record.type === 'attributes') {
+          const unit = record.target;
+          // Not MOBILE_POST_SELECTOR: the unit may already be detached by
+          // the time this batch is delivered, and its final state still counts.
+          if (!(unit instanceof HTMLElement) || !unit.hasAttribute('data-tracking-duration-id')) continue;
+          // The renderer rewrites its record of a unit (class, measured
+          // height, inline style) as it nears the viewport, and restore paths
+          // clear our marker without unhiding through us.
+          this._syncRendererRecord(unit);
+          if (record.attributeName !== 'data-filtered-by-extension' && record.attributeName !== 'data-ff-fb-hidden') continue;
+          if (unit.dataset.filteredByExtension === 'true') {
+            remember(unit);
+          } else if (record.attributeName === 'data-filtered-by-extension') {
+            const key = this._mobileIdentity(unit);
+            if (key) filtered.delete(key);
+          }
+          continue;
+        }
+        if (filtered.size === 0) continue;
+        for (const node of record.addedNodes) {
+          for (const unit of units(node)) {
+            if (unit.dataset.filteredByExtension) continue;
+            const key = this._mobileIdentity(unit);
+            const entry = key ? filtered.get(key) : undefined;
+            if (!entry) continue;
+            unit.dataset.filteredByExtension = 'true';
+            if (entry.hidden) this._setHidden(unit, true);
+          }
+        }
+      }
+    }).observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['data-filtered-by-extension', 'data-ff-fb-hidden', 'class', 'style', 'data-actual-height'],
+    });
+  }
+
+  /** Author + start of the body: stable across the renderer rebuilding a
+   *  unit (which reassigns its tracking id and re-renders reaction counts).
+   *  Kept short so a "See more" expansion doesn't change it. */
+  private _mobileIdentity(unit: HTMLElement): string | null {
+    const content = this._extractMobileContent(unit);
+    return content.author ? `${content.author}|${content.text.substring(0, 100)}` : null;
   }
 
   /** m.facebook.com routes taps with listeners that run before anything on
@@ -177,8 +263,10 @@ const BouncerFacebookAdapter = class FacebookAdapter implements PlatformAdapter 
     }
   }
 
-  // Fade filtered posts once scrolled fully above the viewport (posts hidden
-  // while visible are display:none'd immediately in hidePost).
+  // Posts filtered while entirely above the viewport are only marked by
+  // hidePost: collapsing them there would yank the feed up under the reader
+  // (WebKit has no scroll anchoring to compensate). They fade out once the
+  // reader scrolls back up to them, matching the Twitter adapter.
   private _initFilteredPostObserver() {
     const fadingOut = new Set<Element>();
     const scrollHandler = () => {
@@ -187,7 +275,13 @@ const BouncerFacebookAdapter = class FacebookAdapter implements PlatformAdapter 
         if (!(el instanceof HTMLElement)) continue;
         if (el.style.display === 'none' || fadingOut.has(el)) continue;
         const rect = el.getBoundingClientRect();
-        if (rect.bottom < -50) {
+        // The renderer collapsed it (scrolled far away): hiding it now moves
+        // nothing, and keeps it from expanding visible later.
+        if (!this._isRendered(rect)) {
+          this._setHidden(el, true);
+          continue;
+        }
+        if (rect.top >= 100) {
           fadingOut.add(el);
           el.style.transition = 'opacity 0.3s ease';
           el.style.opacity = '0';
@@ -198,7 +292,9 @@ const BouncerFacebookAdapter = class FacebookAdapter implements PlatformAdapter 
         }
       }
     };
-    window.addEventListener('scroll', scrollHandler, { passive: true });
+    // Capture so an inner scroller's scroll events count too, not just the
+    // window's.
+    document.addEventListener('scroll', scrollHandler, { capture: true, passive: true });
   }
 
   // ===========================================================================
@@ -218,6 +314,50 @@ const BouncerFacebookAdapter = class FacebookAdapter implements PlatformAdapter 
     el.style.display = hidden ? 'none' : '';
     if (hidden) el.setAttribute('data-ff-fb-hidden', '');
     else el.removeAttribute('data-ff-fb-hidden');
+    this._syncRendererRecord(el);
+  }
+
+  /** The mobile renderer sizes the feed from its own record of each unit:
+   *  the `displayed` class (drawn or collapsed), and the height it measured,
+   *  kept in `data-actual-height` and the inline height. A hidden unit still
+   *  recorded at full height makes the feed jump by that height when the
+   *  renderer collapses it (once the post below it scrolls off the top), and
+   *  back again on the way up. So while a unit is hidden, record it as a
+   *  collapsed, zero-height unit, re-applying that whenever the renderer
+   *  rewrites it; the originals are restored on unhide. */
+  private _syncRendererRecord(el: HTMLElement): void {
+    if (!el.hasAttribute('data-tracking-duration-id')) return;
+    const hidden = el.hasAttribute('data-ff-fb-hidden') && el.dataset.filteredByExtension === 'true';
+    if (hidden) {
+      if (el.classList.contains(RENDERER_DISPLAYED_CLASS)) {
+        el.classList.remove(RENDERER_DISPLAYED_CLASS);
+        el.setAttribute(SAVED_DISPLAYED_ATTR, '');
+      }
+      const actual = el.getAttribute('data-actual-height');
+      if (actual !== null && actual !== '0') {
+        el.setAttribute(SAVED_ACTUAL_HEIGHT_ATTR, actual);
+        el.setAttribute('data-actual-height', '0');
+      }
+      if (el.style.height && el.style.height !== '0px') {
+        el.setAttribute(SAVED_HEIGHT_ATTR, el.style.height);
+        el.style.height = '0px';
+      }
+      return;
+    }
+    if (el.hasAttribute(SAVED_DISPLAYED_ATTR)) {
+      el.removeAttribute(SAVED_DISPLAYED_ATTR);
+      el.classList.add(RENDERER_DISPLAYED_CLASS);
+    }
+    const actual = el.getAttribute(SAVED_ACTUAL_HEIGHT_ATTR);
+    if (actual !== null) {
+      el.removeAttribute(SAVED_ACTUAL_HEIGHT_ATTR);
+      el.setAttribute('data-actual-height', actual);
+    }
+    const height = el.getAttribute(SAVED_HEIGHT_ATTR);
+    if (height !== null) {
+      el.removeAttribute(SAVED_HEIGHT_ATTR);
+      el.style.height = height;
+    }
   }
 
   /** True for posts with an author header — excludes carousels and
@@ -582,11 +722,19 @@ const BouncerFacebookAdapter = class FacebookAdapter implements PlatformAdapter 
     const element = this.getPostContainer(article);
     const rect = element.getBoundingClientRect();
     element.dataset.filteredByExtension = 'true';
-    if (rect.bottom > 0) {
+    // Hide now unless the post is drawn entirely above the viewport. A post
+    // the mobile renderer has collapsed (display:none until the reader gets
+    // close) has an all-zero rect; collapsing it moves nothing, and leaving
+    // it merely marked let it expand visible later, scrolled past or above.
+    if (rect.bottom > 0 || !this._isRendered(rect)) {
       this._setHidden(element, true);
     }
-    // If entirely above the viewport, the scroll handler fades it later so
-    // the feed doesn't jump under the reader.
+    // If drawn entirely above the viewport, the scroll handler fades it later
+    // so the feed doesn't jump under the reader.
+  }
+
+  private _isRendered(rect: DOMRect): boolean {
+    return rect.width > 0 || rect.height > 0;
   }
 
   showPost(article: HTMLElement): void {
