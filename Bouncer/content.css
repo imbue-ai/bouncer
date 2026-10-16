@@ -2658,7 +2658,7 @@ html.bouncer-plain-border .filter-phrases-bottom .filter-phrases-container {
 }
 
 .settings-modal-iframe {
-  width: 320px;
+  width: 500px;
   height: 470px;
   max-width: 90vw;
   max-height: 85vh;
