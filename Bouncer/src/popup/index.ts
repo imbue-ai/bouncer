@@ -203,6 +203,9 @@ export async function init() {
   // Detect if we're in an iframe (modal mode)
   if (isModal) {
     document.body.classList.add('modal-mode');
+    // The iframe's root is the scroller; without this, scrolling past the
+    // bottom (or top) of Settings chains into the page behind the modal.
+    document.documentElement.style.overscrollBehavior = 'contain';
 
     // Set up close buttons to message parent
     for (const btn of document.querySelectorAll('.modal-close-btn')) {
@@ -312,7 +315,11 @@ export async function init() {
   // selected (checked radios don't re-fire change).
   if (window.location.hash === '#local') {
     const localRadio = document.getElementById('modelRadioLocal') as HTMLInputElement | null;
-    if (localRadio && !localRadio.checked) localRadio.click();
+    if (localRadio?.disabled) {
+      document.getElementById('downloadLocalModel')?.scrollIntoView({ block: 'center' });
+    } else if (localRadio && !localRadio.checked) {
+      localRadio.click();
+    }
   }
 
   console.log('[Popup] init() completed successfully');
@@ -336,6 +343,7 @@ function setupStorageListener() {
     if (areaName === 'local' && changes.localModelStatuses) {
       localModelStatuses = (changes.localModelStatuses.newValue as Record<string, LocalModelStatus>) || {};
       updateLocalDownloadButton();
+      updateModelRadioUI();
       refreshModelDropdownWithLocal().catch(err => console.error('[Popup] refreshModelDropdownWithLocal failed:', err));
     }
     // Parked On-Device choice set/cleared (possibly by the background flipping
@@ -1697,8 +1705,15 @@ function updateModelRadioUI() {
   const localSupported = isInAppMode
     ? (IOS_LOCAL_MODEL?.isSupportedOnThisDevice ?? false)
     : webgpuSupported;
-  localRadio.disabled = !localSupported;
-  document.getElementById('modelRadioLocalRow')?.classList.toggle('disabled', !localSupported);
+  // Outside the iOS app, On-Device stays greyed until its model is
+  // downloaded (the row's Download button is the way in). Never grey it
+  // while it's the active selection.
+  const notDownloaded = localSupported && !isInAppMode
+    && !localRadioModelDownloaded() && !localRadio.checked;
+  localRadio.disabled = !localSupported || notDownloaded;
+  const localRow = document.getElementById('modelRadioLocalRow');
+  localRow?.classList.toggle('disabled', !localSupported);
+  localRow?.classList.toggle('not-downloaded', notDownloaded);
   const localNote = document.getElementById('modelRadioLocalNote');
   if (localNote) {
     if (!localSupported) {
@@ -2140,17 +2155,28 @@ async function autoInitializeCachedModel(modelId: string) {
   }
 }
 
-// Drive the On-Device row's download button from the selected local model's
+// The model the On-Device row's download button acts on: the selected (or
+// parked) local model, else the On-Device radio's model so the button is
+// there from the start. In the iOS app the native sheet owns downloads, so
+// there's no fallback.
+function getDownloadTargetModel(): ModelDef | null {
+  const selected = getSelectedLocalModel();
+  if (selected || isInAppMode) return selected;
+  const radioModelName = LOCAL_RADIO_MODEL_KEY.split(':')[1];
+  return PREDEFINED_MODELS.local.find(m => m.name === radioModelName) ?? null;
+}
+
+// Drive the On-Device row's download button from the target local model's
 // status. The button doubles as the status readout: download, progress,
-// loading, and retry-on-error. Hidden when no local model is chosen, the
-// hardware can't run it, or it's ready.
+// loading, and retry-on-error. Hidden when the hardware can't run it or it's
+// ready.
 function updateLocalDownloadButton() {
   const downloadBtn = document.getElementById('downloadLocalModel') as HTMLButtonElement | null;
   if (!downloadBtn) return;
   downloadBtn.style.display = 'none';
   downloadBtn.removeAttribute('title');
 
-  const selectedLocalModel = getSelectedLocalModel();
+  const selectedLocalModel = getDownloadTargetModel();
   const inAppLocalSupported = isInAppMode && (IOS_LOCAL_MODEL?.isSupportedOnThisDevice ?? false);
   if (!selectedLocalModel || (isInAppMode ? !inAppLocalSupported : !webgpuSupported)) return;
 
@@ -2163,6 +2189,9 @@ function updateLocalDownloadButton() {
 
   switch (status.state || 'not_downloaded') {
     case 'cached':
+      // Downloaded but not selected: nothing to show — the radio is now
+      // enabled and selecting it loads the model.
+      if (!getSelectedLocalModel()) break;
       // Model is cached but not loaded - auto-initialize it
       show('Loading...', true);
       autoInitializeCachedModel(selectedLocalModel.name).catch(err => console.error('[LocalModel] autoInitializeCachedModel failed:', err));
@@ -2199,10 +2228,18 @@ function setupLocalModelListeners() {
 
   if (downloadBtn) {
     downloadBtn.addEventListener('click', () => { (async () => {
-      const selectedLocalModel = getSelectedLocalModel();
+      const selectedLocalModel = getDownloadTargetModel();
       if (!selectedLocalModel) {
         console.error('No local model selected');
         return;
+      }
+      // Downloading from the start (nothing local chosen yet) means "use
+      // On-Device": park it so the background switches over once the
+      // download finishes, same as picking the radio used to.
+      if (!getSelectedLocalModel()) {
+        pendingLocalSelection = LOCAL_RADIO_MODEL_KEY;
+        await setStorage({ pendingLocalModelSelection: LOCAL_RADIO_MODEL_KEY });
+        updateModelRadioUI();
       }
 
       console.log('[Popup] Download button clicked, model:', selectedLocalModel.name);

@@ -507,7 +507,7 @@ export type StorageSchema = SettingsBase & {
   openrouterCodeVerifier: string;
   lastSeenVersion: string;
   // "Quote tweet" toggle in the why-annoying tooltip (bounce-quote flow).
-  // Default true; persisted so the choice sticks across posts and sessions.
+  // Default false; persisted so the choice sticks across posts and sessions.
   bounceQuoteEnabled: boolean;
   // Set by onInstalled on a fresh install; drives the one-time "Welcome to
   // Bouncer" banner and is cleared when that banner is dismissed.

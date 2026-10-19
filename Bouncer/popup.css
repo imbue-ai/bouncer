@@ -469,6 +469,13 @@ label {
   margin-bottom: 6px;
 }
 
+/* Section headings ("Filtering Mode", "Active Platforms", ...) sit one step
+   above the 14px row titles. */
+section > label {
+  font-size: 15px;
+  font-weight: 600;
+}
+
 .input-group {
   display: flex;
   gap: 8px;
@@ -519,7 +526,7 @@ input[type="password"]:focus {
 }
 
 .hint {
-  font-size: 12px;
+  font-size: 13px;
   color: #536471;
   margin-top: 6px;
 }
@@ -688,7 +695,7 @@ footer.contact-footer p {
   text-align: center;
   margin: 0;
   line-height: 1.4;
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .contact-footer-text {
@@ -853,7 +860,7 @@ body.dim-mode .contact-icon {
 
 .api-provider-name {
   font-weight: 500;
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .api-status-badge {
@@ -901,7 +908,7 @@ body.dim-mode .contact-icon {
 
 .api-field label {
   display: block;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 500;
   margin-bottom: 4px;
   color: #536471;
@@ -1750,7 +1757,10 @@ body.dim-mode footer.pricing-disclaimer p {
   border: 1px solid rgba(0, 0, 0, 0.12);
   border-radius: 9999px;
   color: rgb(15, 20, 25);
-  font-size: 12px;
+  /* Same typography as the in-feed "View filtered" button (.filtered-toggle-btn
+     inherits X's font stack). Buttons don't inherit font-family by default. */
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 13px;
   font-weight: 500;
   line-height: 1;
   white-space: nowrap;
@@ -1990,13 +2000,13 @@ body.dim-mode .platform-excluded-content > * + * { border-top-color: rgb(56, 68,
   display: flex;
   justify-content: space-between;
   align-items: center;
-  font-size: 13px;
+  font-size: 14px;
   color: #0f1419;
 }
 .ai-text-threshold-value {
   color: #536471;
   font-variant-numeric: tabular-nums;
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .ai-text-threshold-block input[type="range"] {
@@ -2621,7 +2631,7 @@ body.dim-mode .checkbox-label {
   padding: 10px 12px;
   margin-bottom: 0;
   cursor: pointer;
-  font-size: 13px;
+  font-size: 14px;
   user-select: none;
 }
 
@@ -2648,6 +2658,19 @@ body.dim-mode .checkbox-label {
   cursor: default;
 }
 
+/* On-Device before its model is downloaded: grey the radio and its text but
+   not the Download button in the same row, which is how you enable it. */
+.model-radio.not-downloaded {
+  cursor: default;
+}
+
+.model-radio.not-downloaded input[type="radio"],
+.model-radio.not-downloaded .model-radio-label,
+.model-radio.not-downloaded .model-radio-sub {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .model-radio-text {
   display: flex;
   flex-direction: column;
@@ -2660,7 +2683,7 @@ body.dim-mode .checkbox-label {
 }
 
 .model-radio-sub {
-  font-size: 12px;
+  font-size: 13px;
   font-weight: normal;
   color: #536471;
   line-height: 1.35;
