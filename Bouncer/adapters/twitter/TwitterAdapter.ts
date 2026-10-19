@@ -33,6 +33,17 @@ interface StoreResult {
   error?: string;
 }
 
+// First path segments X reserves for its own pages, so /<segment> is never a
+// profile. Lowercase; handles are matched case-insensitively.
+const RESERVED_TOP_LEVEL_PATHS = new Set([
+  'home', 'explore', 'search', 'notifications', 'messages', 'settings', 'i',
+  'compose', 'login', 'logout', 'signup', 'tos', 'privacy', 'rules', 'jobs',
+  'premium', 'premium_sign_up', 'account', 'hashtag', 'intent', 'share',
+  'download', 'flow', 'bookmarks', 'lists', 'communities', 'grok', 'chat',
+  'about', 'display', 'keyboard_shortcuts', 'topics', 'personalization',
+  'verified-choose', 'who_to_follow', 'connect_people', 'oauth', 'jf',
+]);
+
 // Assigned to `window.BouncerAdapter` only when running on an X/Twitter host
 // (see the guarded assignment at the bottom of this file). On iOS both the
 // Twitter and YouTube adapters are injected into every page, so each must
@@ -256,6 +267,12 @@ const BouncerTwitterAdapter = class TwitterAdapter implements PlatformAdapter {
   }
 
   shouldProcessCurrentPage() {
+    return this._isCorePage() || this.isExtendedPage();
+  }
+
+  /** The pages filtering originally ran on: Home (For you / Following),
+   *  permalinks, Explore and Search. Governed by the core pause flag. */
+  private _isCorePage() {
     const path = window.location.pathname;
 
     if ((path === '/home' || path === '/') && this._isHomeTab()) {
@@ -271,6 +288,39 @@ const BouncerTwitterAdapter = class TwitterAdapter implements PlatformAdapter {
     }
 
     return false;
+  }
+
+  /** Other tweet timelines — profiles, lists, bookmarks, communities, mentions,
+   *  and pinned list/community tabs on Home. They share the extended pause
+   *  flag, which defaults to paused. */
+  isExtendedPage() {
+    if (this._isCorePage()) return false;
+    const path = window.location.pathname.replace(/\/+$/, '') || '/';
+
+    if (path === '/home' || path === '/') return this._selectedHomeTabIndex() >= 2;
+    if (path === '/i/bookmarks' || path === '/notifications/mentions') return true;
+    // X now redirects bookmarks to its History page; cover its tabs too.
+    if (/^\/i\/history(?:\/[a-z_]+)?$/.test(path)) return true;
+    if (/^\/i\/lists\/\d+$/.test(path)) return true;
+    if (/^\/i\/communities\/\d+$/.test(path)) return true;
+
+    // Profile timelines: /<handle> and its tweet tabs. /media is a thumbnail
+    // grid with no tweet cells, so it's left out.
+    const m = path.match(/^\/([A-Za-z0-9_]{1,15})(?:\/(with_replies|highlights|articles|likes))?$/);
+    return !!m && !RESERVED_TOP_LEVEL_PATHS.has(m[1].toLowerCase());
+  }
+
+  /** Index of the selected tab in Home's tablist, or -1 when it isn't
+   *  rendered yet. See _isHomeTab for why dialog tablists are skipped. */
+  private _selectedHomeTabIndex() {
+    const tabBar = Array.from(document.querySelectorAll('[role="tablist"]'))
+      .find(el => !el.closest('[role="dialog"]'));
+    if (!tabBar) return -1;
+    const tabs = tabBar.querySelectorAll('[role="tab"]');
+    for (let i = 0; i < tabs.length; i++) {
+      if (tabs[i].getAttribute('aria-selected') === 'true') return i;
+    }
+    return -1;
   }
 
   private _isHomeTab() {

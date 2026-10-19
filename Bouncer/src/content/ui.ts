@@ -10,7 +10,7 @@ import {
   FILTER_PACK_SHARE_URL_REGEX, FILTER_PACK_SHARE_URL_BASE, FILTER_PACK_CODE_PREFIX,
   type SharedFilterPack,
 } from '../shared/share-encoding';
-import type { BackgroundToContentMessage, ContentUIDeps, FilteredPost, PipelineResponse, PostContent, LocalModelStatus } from '../types';
+import type { BackgroundToContentMessage, ContentUIDeps, FilteredPost, PipelineResponse, PostContent, LocalModelStatus, PauseScope } from '../types';
 import {
   getStorage, setStorage, getDescriptions, setDescriptions,
   aiIntentActiveForSite,
@@ -589,8 +589,10 @@ async function maybeRenderUpdateBanner(container: HTMLElement): Promise<void> {
       + `<ul class="bouncer-update-banner-bullets">${bulletsHTML}</ul>`;
   }
 
+  if (welcome) startWelcomeTipCounting();
+  const bannerClass = welcome ? 'bouncer-update-banner bouncer-update-banner--welcome' : 'bouncer-update-banner';
   const html = `
-    <div class="bouncer-update-banner" role="status">
+    <div class="${bannerClass}" role="status">
       <button type="button" class="bouncer-update-banner-close" aria-label="Dismiss">×</button>
       ${bodyHTML}
     </div>
@@ -602,6 +604,36 @@ async function maybeRenderUpdateBanner(container: HTMLElement): Promise<void> {
     await setStorage(welcome ? { showWelcomeBanner: false } : { lastSeenVersion: current });
     document.querySelectorAll('.bouncer-update-banner').forEach(el => el.remove());
   }));
+}
+
+// The welcome tip also auto-dismisses after WELCOME_TIP_POST_LIMIT processed
+// tweets. A deliberately naive count: re-processed tweets count again and
+// concurrent writes can drop increments, which only nudges when it expires.
+const WELCOME_TIP_POST_LIMIT = 300;
+let welcomeTipCounting = false;
+
+function startWelcomeTipCounting() {
+  welcomeTipCounting = true;
+}
+
+/** Called for each processed tweet. No-op unless the tip is showing. */
+export async function noteTweetSeenForWelcomeTip(): Promise<void> {
+  if (!welcomeTipCounting) return;
+  const { welcomeTipPostsSeen = 0 } = await getStorage(['welcomeTipPostsSeen']);
+  const next = Math.min(WELCOME_TIP_POST_LIMIT, welcomeTipPostsSeen + 1);
+  if (next >= WELCOME_TIP_POST_LIMIT) {
+    welcomeTipCounting = false;
+    // The storage listener in content/index.ts removes the tip from every tab.
+    await setStorage({ welcomeTipPostsSeen: WELCOME_TIP_POST_LIMIT, showWelcomeBanner: false });
+  } else {
+    await setStorage({ welcomeTipPostsSeen: next });
+  }
+}
+
+/** showWelcomeBanner was cleared (dismissed or auto-expired, in any tab). */
+export function removeWelcomeTip() {
+  welcomeTipCounting = false;
+  document.querySelectorAll('.bouncer-update-banner--welcome').forEach(el => el.remove());
 }
 
 // ==================== Placeholder animation ====================
@@ -719,6 +751,27 @@ export function updateTheme() {
 // removal: X re-renders the page behind the composer (e.g. when the "Discard
 // post?" sheet opens), detaching the card, so it must be able to re-inject
 // on /compose/. Post processing still follows shouldProcessCurrentPage alone.
+/** Which pause flag governs the current page (see PlatformAdapter.isExtendedPage). */
+export function currentPauseScope(): PauseScope {
+  return _deps.adapter.isExtendedPage?.() ? 'extended' : 'core';
+}
+
+/** Scope whose paused state the filter cards currently show. Tracked so SPA
+ *  navigation between a core and an extended page — which keeps the same card
+ *  mounted — can repaint the card's .paused class. */
+let renderedPauseScope: PauseScope | null = null;
+
+/** Repaint every filter card's .paused class from the current page's scope. */
+export async function syncPausedClassToPage(): Promise<void> {
+  const scope = currentPauseScope();
+  renderedPauseScope = scope;
+  const paused = await getFilteringPaused(_deps.adapter.siteId, scope);
+  if (currentPauseScope() !== scope) return; // navigated again mid-read
+  document.querySelectorAll('.filter-phrases-header').forEach(el => {
+    (el as HTMLElement).classList.toggle('paused', paused);
+  });
+}
+
 function shouldKeepFilterUI(): boolean {
   return _deps.adapter.shouldProcessCurrentPage()
     || window.location.pathname.startsWith('/compose/');
@@ -944,9 +997,11 @@ interface FilterCardInitialState {
 }
 async function loadFilterCardInitialState(): Promise<FilterCardInitialState> {
   const siteId = _deps.adapter.siteId;
+  const scope = currentPauseScope();
+  renderedPauseScope = scope;
   const [descriptions, paused] = await Promise.all([
     getDescriptions(_deps.descriptionsKey),
-    getFilteringPaused(siteId),
+    getFilteringPaused(siteId, scope),
   ]);
   return { descriptions, paused };
 }
@@ -1289,7 +1344,7 @@ function setupFilterBoxEventHandlers(container: HTMLElement) {
     pauseBtn.addEventListener('click', asyncHandler(async () => {
       const siteId = _deps.adapter.siteId;
       const descriptions = await getDescriptions(_deps.descriptionsKey);
-      await setFilteringPaused(siteId, true);
+      await setFilteringPaused(siteId, true, currentPauseScope());
       // Un-hide everything: phrase-hidden posts (their rules are in
       // `descriptions`) and AI-detector-hidden posts (their rules are the
       // detector category labels). AI detection is engaged by filter
@@ -1307,7 +1362,7 @@ function setupFilterBoxEventHandlers(container: HTMLElement) {
   if (playBtn) {
     playBtn.addEventListener('click', asyncHandler(async () => {
       const siteId = _deps.adapter.siteId;
-      await setFilteringPaused(siteId, false);
+      await setFilteringPaused(siteId, false, currentPauseScope());
       // Any evaluations that ran while paused — e.g. a phrase added mid-pause,
       // or new posts that streamed in — cached shouldHide=false because the
       // pipeline masked descriptions to []. Wipe so play-side re-eval actually
@@ -4598,6 +4653,10 @@ export function setupSearchBarHide() {
 }
 
 export function handleDOMMutation() {
+  if (renderedPauseScope !== null && renderedPauseScope !== currentPauseScope()
+      && _deps.adapter.shouldProcessCurrentPage()) {
+    void syncPausedClassToPage();
+  }
   // Check if containers were disconnected
   if (filterPhrasesContainer && !filterPhrasesContainer.isConnected) {
     filterPhrasesContainer = null;
