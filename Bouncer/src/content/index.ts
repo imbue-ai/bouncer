@@ -2,7 +2,7 @@
 // Entry point: post processing, observers, init, storage/message listeners
 
 import type { PlatformAdapter, PostContent, PipelineResponse, BackgroundToContentMessage, DescriptionKey, AiFilterIntentState } from '../types';
-import { getStorage, removeStorage, getDescriptions, setDescriptions, phraseSetKey, filteringPausedKeyFor, getExcludedAccounts, exclusionIdentity, excludedAccountsKeyFor } from '../shared/storage';
+import { getStorage, removeStorage, getDescriptions, setDescriptions, phraseSetKey, filteringPausedKeyFor, isPausedValue, getFilteringPaused, getExcludedAccounts, exclusionIdentity, excludedAccountsKeyFor } from '../shared/storage';
 import { enabledStorageKey } from '../shared/platforms';
 import { hexToRgbChannels, hexToDarkRgbChannels, contrastTextColor } from '../shared/brand-color';
 import { FILTER_PACK_CODE_PREFIX } from '../shared/share-encoding';
@@ -30,6 +30,7 @@ import {
   addWhyAnnoyingButton,
   processImportCodeInPost,
   handleDOMMutation,
+  currentPauseScope,
   setupSearchBarHide,
   initDetectorStates,
   updateDetectorState,
@@ -37,6 +38,8 @@ import {
   refreshAiIndicatorUI,
   setKeepOnlyMode,
   maybeShowPlatformOnboarding,
+  noteTweetSeenForWelcomeTip,
+  removeWelcomeTip,
 } from './ui';
 
 import { formatPostForEvaluation, phraseAddNeedsReEvaluation } from '../shared/utils';
@@ -393,10 +396,14 @@ import {
     // resolve deterministically from adapter-extracted post attributes — no
     // model call, zero false positives. getSettings() mirrors this by
     // excluding them from the category list the model sees.
+    // Like the model path, they're suspended while this page's scope is paused.
+    const pauseScope = currentPauseScope();
     let structuralMatch: { phrase: string; kind: StructuralKind } | null = null;
     if (STRUCTURAL_FILTER_SITES.has(adapter.siteId)) {
       try {
-        structuralMatch = findStructuralMatch(await getDescriptions(descriptionsKey), content);
+        if (!await getFilteringPaused(adapter.siteId, pauseScope)) {
+          structuralMatch = findStructuralMatch(await getDescriptions(descriptionsKey), content);
+        }
       } catch { /* storage unavailable — fall through to the model */ }
     }
     if (structuralOnly && !structuralMatch) return;
@@ -423,6 +430,7 @@ import {
           imageUrls: content.imageUrls || [],
           postUrl: content.postUrl || null,
           siteId: adapter.siteId,
+          pauseScope,
           // On a permalink page everything below the main post is a
           // reply/comment — the pipeline applies the reply-specific
           // AI-text threshold to these.
@@ -596,6 +604,7 @@ import {
     // Track post identity via URL (lightweight - avoids full DOM extraction)
     const contentKey = adapter.getPostContentKey(article);
     lastProcessedContent.set(article, contentKey);
+    noteTweetSeenForWelcomeTip().catch(err => console.error('[Bouncer] welcome tip count failed:', err));
 
     addContextMenuHandler(article);
 
@@ -961,6 +970,9 @@ import {
             .catch(err => console.error('[Bouncer] re-evaluation after account un-exclude failed:', err));
         }
       }
+      if (changes.showWelcomeBanner && changes.showWelcomeBanner.newValue !== true) {
+        removeWelcomeTip();
+      }
       if (changes.aiIndicatorBadgeDismissed && IS_IOS) {
         // The first-run "REMOVE AI SLOP?" badge was dismissed (first
         // activation, possibly from another platform's webview or desktop) —
@@ -1027,12 +1039,14 @@ import {
           restoreFilteredRepliesOnPage();
         }
       }
-      const pausedKey = filteringPausedKeyFor(adapter.siteId);
+      // Only the flag for the page's current scope affects what's on screen.
+      const pauseScope = currentPauseScope();
+      const pausedKey = filteringPausedKeyFor(adapter.siteId, pauseScope);
       if (changes[pausedKey]) {
         // Apply the .paused class to every filter card (sidebar, bottom,
         // mobile) so a second tab — or this tab after a settings-side toggle
         // — reflects the new state immediately.
-        const isPaused = changes[pausedKey].newValue === true;
+        const isPaused = isPausedValue(changes[pausedKey].newValue, pauseScope);
         document.querySelectorAll('.filter-phrases-header').forEach(el => {
           (el as HTMLElement).classList.toggle('paused', isPaused);
         });

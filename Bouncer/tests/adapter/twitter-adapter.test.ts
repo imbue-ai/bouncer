@@ -266,14 +266,15 @@ describe('shouldProcessCurrentPage', () => {
     expect(adapter.shouldProcessCurrentPage()).toBe(true);
   });
 
-  it('returns false on /home with no matching tab selected', () => {
+  it('treats a pinned list tab on /home as an extended page', () => {
     setPath('/home');
     addTabList([
       { text: 'For you', selected: false },
       { text: 'Following', selected: false },
       { text: 'Lists', selected: true },
     ]);
-    expect(adapter.shouldProcessCurrentPage()).toBe(false);
+    expect(adapter.shouldProcessCurrentPage()).toBe(true);
+    expect(adapter.isExtendedPage!()).toBe(true);
   });
 
   it('returns true on /home with a localized For You tab selected (Korean)', () => {
@@ -294,14 +295,15 @@ describe('shouldProcessCurrentPage', () => {
     expect(adapter.shouldProcessCurrentPage()).toBe(true);
   });
 
-  it('returns false on /home with a localized pinned list tab selected', () => {
+  it('treats a localized pinned list tab on /home as an extended page', () => {
     setPath('/home');
     addTabList([
       { text: '추천', selected: false },
       { text: '팔로잉', selected: false },
       { text: '내 리스트', selected: true },
     ]);
-    expect(adapter.shouldProcessCurrentPage()).toBe(false);
+    expect(adapter.shouldProcessCurrentPage()).toBe(true);
+    expect(adapter.isExtendedPage!()).toBe(true);
   });
 
   it('returns false on /home with no tablist', () => {
@@ -324,8 +326,28 @@ describe('shouldProcessCurrentPage', () => {
     expect(adapter.shouldProcessCurrentPage()).toBe(true);
   });
 
-  it('returns false on profile pages', () => {
-    setPath('/someuser');
+  it.each([
+    '/someuser', '/someuser/', '/Some_User/with_replies', '/someuser/highlights',
+    '/someuser/articles', '/someuser/likes', '/i/lists/123', '/i/bookmarks', '/i/history', '/i/history/bookmarks',
+    '/i/communities/456', '/notifications/mentions',
+  ])('treats %s as an extended page', (path) => {
+    setPath(path);
+    expect(adapter.shouldProcessCurrentPage()).toBe(true);
+    expect(adapter.isExtendedPage!()).toBe(true);
+  });
+
+  it.each(['/home', '/someuser/status/1', '/explore', '/search?q=x'])(
+    'keeps %s in the core scope', (path) => {
+      setPath(path);
+      addTabList([{ text: 'For you', selected: true }]);
+      expect(adapter.isExtendedPage!()).toBe(false);
+    });
+
+  it.each([
+    '/someuser/media', '/someuser/followers', '/messages', '/settings/account',
+    '/i/lists/123/members', '/compose/post', '/explore/tabs/trending',
+  ])('returns false on %s', (path) => {
+    setPath(path);
     expect(adapter.shouldProcessCurrentPage()).toBe(false);
   });
 

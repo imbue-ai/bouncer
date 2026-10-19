@@ -2,6 +2,7 @@ import type {
   AiFilterIntentState,
   DescriptionKey,
   ExcludedAccountsKey,
+  PauseScope,
   SiteId,
   StorageSchema,
 } from '../types';
@@ -35,20 +36,29 @@ function descriptionsKeyFor(siteId: SiteId): DescriptionKey {
   return `descriptions_${siteId}`;
 }
 
-export function filteringPausedKeyFor(siteId: SiteId): `filteringPaused_${SiteId}` {
-  return `filteringPaused_${siteId}`;
+export function filteringPausedKeyFor(siteId: SiteId, scope: PauseScope = 'core'):
+    `filteringPaused_${SiteId}` | `filteringPausedExtended_${SiteId}` {
+  return scope === 'extended' ? `filteringPausedExtended_${siteId}` : `filteringPaused_${siteId}`;
 }
 
-/** Read whether filtering (phrases + AI detectors) is paused for this site. */
-export async function getFilteringPaused(siteId: SiteId): Promise<boolean> {
-  const key = filteringPausedKeyFor(siteId);
+/** Interpret a raw stored pause value for a scope. The core flag defaults to
+ *  unpaused; the extended flag defaults to paused until the user presses play. */
+export function isPausedValue(value: unknown, scope: PauseScope): boolean {
+  return scope === 'extended' ? value !== false : value === true;
+}
+
+/** Read whether filtering (phrases + AI detectors) is paused for this site
+ *  and pause scope. */
+export async function getFilteringPaused(siteId: SiteId, scope: PauseScope = 'core'): Promise<boolean> {
+  const key = filteringPausedKeyFor(siteId, scope);
   const data = await chrome.storage.local.get([key]);
-  return data[key] === true;
+  return isPausedValue(data[key], scope);
 }
 
-/** Persist whether filtering (phrases + AI detectors) is paused for this site. */
-export async function setFilteringPaused(siteId: SiteId, paused: boolean): Promise<void> {
-  const key = filteringPausedKeyFor(siteId);
+/** Persist whether filtering (phrases + AI detectors) is paused for this
+ *  site and pause scope. */
+export async function setFilteringPaused(siteId: SiteId, paused: boolean, scope: PauseScope = 'core'): Promise<void> {
+  const key = filteringPausedKeyFor(siteId, scope);
   await chrome.storage.local.set({ [key]: paused });
 }
 

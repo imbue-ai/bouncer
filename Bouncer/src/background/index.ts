@@ -242,7 +242,8 @@ async function handleMessage(
       // Posts always flow through processBatch so the popup gets a consistent
       // two-tab dispatch (filter + aiText), even when neither is configured.
       // The detectors then mark themselves skipped with appropriate reasons.
-      const settings = await getSettings(message.siteId);
+      const pauseScope = message.pauseScope ?? 'core';
+      const settings = await getSettings(message.siteId, pauseScope);
 
       // Check if local model is selected but not ready
       const isLocalModel = settings.selectedModel?.startsWith('local:');
@@ -263,8 +264,9 @@ async function handleMessage(
       const imageUrls = message.imageUrls || [];
       const cacheKey = cacheKeyFor(message.siteId, message.post, imageUrls, message.postUrl);
 
-      // Check main cache
-      if (evaluationCache.has(cacheKey)) {
+      // Check main cache. Skipped while paused: a verdict cached on an
+      // unpaused page must not hide the post on a paused one.
+      if (!settings.filteringPaused && evaluationCache.has(cacheKey)) {
         const cached = evaluationCache.get(cacheKey)!;
         if (tabId !== undefined) replayDetectorStates(tabId, message.evaluationId, cached);
         return { ...cached, cached: true };
@@ -273,7 +275,7 @@ async function handleMessage(
       // Check if already in queue - add another resolver for this item
       if (tabId !== undefined && isKeyPending(tabId, cacheKey)) {
         return new Promise(resolve => {
-          const item = { evaluationId: message.evaluationId, post: message.post, rawText: message.rawText, imageUrls, resolve, cacheKey, tabId, postUrl: message.postUrl, siteId: message.siteId, isReply: message.isReply === true };
+          const item = { evaluationId: message.evaluationId, post: message.post, rawText: message.rawText, imageUrls, resolve, cacheKey, tabId, postUrl: message.postUrl, siteId: message.siteId, isReply: message.isReply === true, pauseScope };
           enqueuePost(tabId, item);
         });
       }
@@ -281,7 +283,7 @@ async function handleMessage(
       // Queue for batch processing
       // processBatch will prioritize posts closest to viewport center for local models
       const resultPromise = new Promise(resolve => {
-        const item = { evaluationId: message.evaluationId, post: message.post, rawText: message.rawText, imageUrls, resolve, cacheKey, tabId, postUrl: message.postUrl, siteId: message.siteId, isReply: message.isReply === true };
+        const item = { evaluationId: message.evaluationId, post: message.post, rawText: message.rawText, imageUrls, resolve, cacheKey, tabId, postUrl: message.postUrl, siteId: message.siteId, isReply: message.isReply === true, pauseScope };
         enqueuePost(tabId!, item);
       });
       console.log('[Bouncer][diag] evaluatePost enqueued for tab', tabId);
