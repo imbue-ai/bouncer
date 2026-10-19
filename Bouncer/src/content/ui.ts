@@ -423,6 +423,9 @@ function showGuestLimitPopup() {
 // ==================== First-install platform onboarding ====================
 
 let platformOnboardingBackdrop: HTMLElement | null = null;
+// Floor for the iframe height; matches the CSS placeholder's ballpark so a
+// tiny reported height can't fold the card away.
+const ONBOARDING_MIN_HEIGHT = 200;
 
 // One-time popup shown right after install (onInstalled opens x.com, sets
 // `showPlatformOnboarding`, and designates that tab), asking whether to also
@@ -437,8 +440,8 @@ let platformOnboardingBackdrop: HTMLElement | null = null;
 // extension context, and a gesture doesn't survive a message hop to the
 // background — a click inside the iframe satisfies both (same trick as the
 // settings modal below). The popup never closes itself — granting platforms
-// leaves it up. Only an explicit dismissal (the Done button or a backdrop
-// click) clears the flag so it never comes back.
+// leaves it up. Only an explicit user dismissal (the Done/Skip button or a
+// backdrop click) removes it and clears the flag so it never comes back.
 export async function maybeShowPlatformOnboarding(): Promise<void> {
   if (_deps.IS_IOS || chrome._polyfilled) return; // extension-only UI
   if (optionalPlatforms().length === 0) return;   // nothing to offer on this target
@@ -455,9 +458,6 @@ export async function maybeShowPlatformOnboarding(): Promise<void> {
   const theme = _deps.adapter.getThemeMode();
   const backdrop = document.createElement('div');
   backdrop.className = `bouncer-onboarding-backdrop ${theme}-mode`;
-  // Invisible until the iframe reports its height: the grey layer must never
-  // be on screen without a live, sized popup card in it.
-  backdrop.style.visibility = 'hidden';
   const iframe = document.createElement('iframe');
   iframe.className = 'bouncer-onboarding-iframe';
   iframe.src = chrome.runtime.getURL('onboarding.html') + `?theme=${theme}`;
@@ -465,63 +465,32 @@ export async function maybeShowPlatformOnboarding(): Promise<void> {
   document.body.appendChild(backdrop);
   platformOnboardingBackdrop = backdrop;
 
-  let lifeline: chrome.runtime.Port | null = null;
-  // Remove the overlay without touching storage — used when the popup can't
-  // or shouldn't conclude the onboarding (iframe never loaded, extension
-  // reloaded), so a later page load can try again.
-  const teardown = () => {
+  // The ONLY way this popup goes away is a user action: the Done/Skip button
+  // inside the iframe or a click on the backdrop. There is deliberately no
+  // load timeout, no extension-reload lifeline, and nothing that can shrink
+  // the card — every such mechanism has at some point fired on a fresh
+  // install and folded the popup out from under the user.
+  const close = () => {
     window.removeEventListener('message', messageHandler);
-    clearTimeout(loadTimer);
-    try { lifeline?.disconnect(); } catch { /* runtime already gone */ }
-    lifeline = null;
     backdrop.remove();
     platformOnboardingBackdrop = null;
-  };
-  const close = () => {
-    teardown();
     setStorage({ showPlatformOnboarding: false }).catch(err =>
       console.error('[Bouncer] Failed to clear platform onboarding flag:', err));
   };
-  // If the iframe never reports in (failed to load, dead extension frame),
-  // fold the overlay instead of leaving an inert layer over the page.
-  const loadTimer = setTimeout(teardown, 10_000);
   const messageHandler = (event: MessageEvent<{ type?: string; height?: number }>) => {
     if (event.source !== iframe.contentWindow || !event.data) return;
     if (event.data.type === 'bouncerOnboardingDone') {
       close();
     } else if (event.data.type === 'bouncerOnboardingResize' && typeof event.data.height === 'number') {
-      iframe.style.height = `${event.data.height}px`;
-      // The card is alive and sized — now the backdrop may show.
-      backdrop.style.visibility = '';
-      clearTimeout(loadTimer);
+      // Fit to the content, floored so a bogus/early measurement can never
+      // collapse the card.
+      iframe.style.height = `${Math.max(event.data.height, ONBOARDING_MIN_HEIGHT)}px`;
     }
   };
   window.addEventListener('message', messageHandler);
   backdrop.addEventListener('click', (e) => {
     if (e.target === backdrop) close();
   });
-
-  // Lifeline to the background: no traffic, but its onDisconnect is the only
-  // signal an orphaned content script gets when the extension is reloaded or
-  // removed. Without it the extension iframe dies (blank card) while this
-  // plain-DOM backdrop lives on as an unexplained grey layer.
-  const connectLifeline = () => {
-    try {
-      lifeline = chrome.runtime.connect({ name: 'platform-onboarding' });
-      lifeline.onDisconnect.addListener(() => {
-        // The MV3 worker idling also drops the port; tear down only when the
-        // extension is actually gone (runtime.id vanishes for orphans).
-        if (chrome.runtime?.id && backdrop.isConnected) {
-          connectLifeline();
-          return;
-        }
-        teardown();
-      });
-    } catch {
-      teardown();
-    }
-  };
-  connectLifeline();
 }
 
 // Wire up the sign-in button click handler inside a container.

@@ -222,20 +222,6 @@ async function migrateStaleLocalSelection(): Promise<void> {
   }
 })().catch(err => console.error('[Background] Startup error:', err));
 
-// Lifeline ports held open by content-script overlays (the platform
-// onboarding popup). No traffic flows over them — their only job is that
-// port.onDisconnect fires in the content script when this extension is
-// reloaded or removed, so the overlay can take its backdrop down instead of
-// lingering as an orphaned grey layer over the page.
-//
-// MUST stay guarded: in the mobile apps this bundle runs as a page script
-// against ChromePolyfill, whose chrome.runtime historically lacked onConnect.
-// An unguarded call here threw at top level and killed the whole background
-// script BEFORE the message handler below registered — every sendMessage in
-// both apps then resolved undefined via the polyfill's no-listener timeout
-// (no suggestions, no classification, no visible error).
-chrome.runtime.onConnect?.addListener(() => { /* held open, nothing to do */ });
-
 // ==================== Message handler ====================
 
 // Async message handler — each case returns the response object.
