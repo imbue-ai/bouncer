@@ -485,12 +485,9 @@ describe('Facebook mobile-web (m.facebook.com) adapter', () => {
     expect(row.querySelector('[aria-label^="More options for"]')!.nextElementSibling).toBe(btn);
   });
 
-  it('sits directly below the … button, centered on it', () => {
-    const [post] = mountMobileFeed([
-      mobileUnit({ id: 1, header: mobileHeader({ pic: 'K', more: 'K' }), body }),
-    ]);
-    // happy-dom has no layout: give the "…" button and our button the live
-    // header's boxes ("…" at x=408, y=4, 28x33; button 32x32).
+  // happy-dom has no layout: give the "…" button and our button the live
+  // header's boxes ("…" at x=408, y=4, 28x33; button 32x32).
+  function layOutHeader(post: HTMLElement): HTMLElement {
     const more = post.querySelector<HTMLElement>('[aria-label^="More options for"]')!;
     Object.defineProperties(more, {
       offsetLeft: { value: 408 }, offsetTop: { value: 4 },
@@ -498,6 +495,27 @@ describe('Facebook mobile-web (m.facebook.com) adapter', () => {
     });
     const btn = document.createElement('div');
     Object.defineProperty(btn, 'offsetWidth', { value: 32 });
+    return btn;
+  }
+
+  it('sits just left of the … button, level with it', () => {
+    const [post] = mountMobileFeed([
+      mobileUnit({ id: 1, header: mobileHeader({ pic: 'K', more: 'K' }), body }),
+    ]);
+    const btn = layOutHeader(post);
+    adapter.insertActionButton(post, btn);
+    expect(btn.style.left).toBe('372px');   // 408 - 32 - 4
+    expect(btn.style.top).toBe('4.5px');    // 4 + (33 - 32) / 2
+  });
+
+  it('goes below the … button when the name line reaches into that spot', () => {
+    const [post] = mountMobileFeed([
+      mobileUnit({ id: 1, header: mobileHeader({ pic: 'K', more: 'K' }), body }),
+    ]);
+    const btn = layOutHeader(post);
+    // The name runs up to x=380 on the first line.
+    const name = post.querySelector<HTMLElement>('.row [data-mcomponent="TextArea"]')!;
+    name.getBoundingClientRect = () => ({ left: 63, top: 6, width: 317, height: 21 } as DOMRect);
     adapter.insertActionButton(post, btn);
     expect(btn.style.left).toBe('406px');   // 408 + (28 - 32) / 2
     expect(btn.style.top).toBe('37px');     // 4 + 33

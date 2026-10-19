@@ -89,6 +89,8 @@ const MOBILE_TEXT_SELECTOR = '[data-mcomponent="TextArea"], [data-mcomponent="Se
 const MOBILE_REACTION_SELECTOR = '[aria-label*="double tap"]';
 /** Class on the mobile Bounce button; the tap shield keys off it. */
 const MOBILE_BUTTON_CLASS = 'ff-why-annoying-btn--facebook-mobile';
+/** Space kept between the mobile button and the "…" button / header text. */
+const MOBILE_BUTTON_GAP = 4;
 /** Activates a Bounce button without a DOM click. Must match
  *  BOUNCE_ACTIVATE_EVENT in src/content/ui.ts. */
 const BOUNCE_ACTIVATE_EVENT = 'ff-bounce-activate';
@@ -853,11 +855,14 @@ const BouncerFacebookAdapter = class FacebookAdapter implements PlatformAdapter 
   /** Mobile header row: the renderer lays it out as a column flexbox and
    *  places every child with inline margins, so inserting into its flow
    *  would shift Facebook's own controls. The button is absolutely
-   *  positioned (the row is position: relative) directly below the "…"
-   *  button, centered on it — the space under "…" is empty, whereas the
-   *  spot beside it is often taken ("Name … · Follow" runs right up to it
-   *  on phone-width screens). Re-placed whenever the "…" button is laid out
-   *  or resized — posts are often processed before layout.
+   *  positioned (the row is position: relative) just left of the "…" button,
+   *  level with it. The renderer lays out text itself, as fixed-width pieces
+   *  ("Name", " · ", "Follow") inside a name column that runs right up to
+   *  "…", so nothing can be made to wrap around the button: when a long
+   *  name line reaches into that spot (common at phone widths), the button
+   *  goes directly below "…" instead, where the row is always empty.
+   *  Re-placed whenever the row or "…" is laid out or resized — posts are
+   *  often processed before layout.
    *
    *  The renderer also sets `pointer-events: none` on its layout containers
    *  (only its own controls opt back in), which the button would inherit —
@@ -872,6 +877,13 @@ const BouncerFacebookAdapter = class FacebookAdapter implements PlatformAdapter 
     const place = () => {
       if (!more.offsetWidth) return;
       const size = button.offsetWidth || 32;
+      const left = more.offsetLeft - size - MOBILE_BUTTON_GAP;
+      const top = more.offsetTop + (more.offsetHeight - size) / 2;
+      if (!this._mobileTextIntrudes(row, more, left, top, size)) {
+        button.style.left = `${left}px`;
+        button.style.top = `${top}px`;
+        return;
+      }
       button.style.left = `${more.offsetLeft + (more.offsetWidth - size) / 2}px`;
       button.style.top = `${more.offsetTop + more.offsetHeight}px`;
     };
@@ -879,7 +891,28 @@ const BouncerFacebookAdapter = class FacebookAdapter implements PlatformAdapter 
     // shield (see _installMobileTapShield).
     row.appendChild(button);
     place();
-    new ResizeObserver(place).observe(more);
+    const observer = new ResizeObserver(place);
+    observer.observe(more);
+    observer.observe(row);
+  }
+
+  /** Whether any of the header's text pieces (other than the "…" glyph)
+   *  overlaps a size×size box at (left, top) in the row, with a gap's margin
+   *  on the left so text never butts against the button. */
+  private _mobileTextIntrudes(row: HTMLElement, more: HTMLElement, left: number, top: number, size: number): boolean {
+    const origin = row.getBoundingClientRect();
+    for (const text of row.querySelectorAll<HTMLElement>(MOBILE_TEXT_SELECTOR)) {
+      if (more.contains(text)) continue;
+      const r = text.getBoundingClientRect();
+      if (!r.width || !r.height) continue;
+      const x = r.left - origin.left;
+      const y = r.top - origin.top;
+      if (x < left + size && x + r.width > left - MOBILE_BUTTON_GAP
+        && y < top + size && y + r.height > top) {
+        return true;
+      }
+    }
+    return false;
   }
 
   getSearchForm(): HTMLElement | null {
