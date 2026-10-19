@@ -45,95 +45,32 @@
           <input type="radio" name="modelChoice" id="modelRadioImbue" value="imbue">
           <span class="model-radio-text">
             <span class="model-radio-label">Cloud <span class="free-badge">recommended</span></span>
-            <span class="model-radio-sub">Fast and free.</span>
+            <span class="model-radio-sub">Fast and free</span>
           </span>
         </label>
         <label class="model-radio" id="modelRadioLocalRow">
           <input type="radio" name="modelChoice" id="modelRadioLocal" value="local">
           <span class="model-radio-text">
             <span class="model-radio-label">On-Device</span>
-            <span class="model-radio-sub">Nothing leaves your computer.</span>
-            <span class="model-radio-note hint" id="modelRadioLocalNote" style="display: none;"></span>
+            <span class="model-radio-sub">Nothing leaves your computer</span>
+            <button id="downloadLocalModel" class="local-model-download-btn" style="display: none;">Download Model</button>
           </span>
         </label>
       </div>
       <p class="hint model-radio-advanced-note" id="modelRadioAdvancedNote" style="display: none;"></p>
     </section>
 
-    <!-- On-device model section (only shown when an on-device model is selected) -->
-    <section id="localModelSection" class="local-model-section" style="display: none;">
-      <div class="local-model-header">
-        <span class="local-model-title">On-Device Model</span>
-        <span id="localModelStatusBadge" class="api-status-badge">Checking...</span>
-      </div>
-      <p id="localModelNoImageWarning" class="hint local-model-no-image-warning" style="display: none;">Can't see images — photo and video posts are filtered less accurately.</p>
-      <div id="localModelContent">
-        <div id="localModelUnsupported" style="display: none;">
-          <p class="hint">This browser can't run the on-device model. Use Chrome 113 or newer.</p>
-        </div>
-        <div id="localModelNotDownloaded" style="display: none;">
-          <p class="hint" id="localModelDownloadHint">Choose an on-device model in Advanced Settings.</p>
-          <button id="downloadLocalModel" class="local-model-download-btn">
-            <span class="download-icon">&#8595;</span>
-            Download Model
-          </button>
-        </div>
-        <div id="localModelDownloading" style="display: none;">
-          <div class="local-model-progress">
-            <div id="localProgressFill" class="local-model-progress-fill" style="width: 0%"></div>
-          </div>
-          <div class="local-model-download-row">
-            <span id="localProgressText" class="hint">Initializing...</span>
-            <button id="cancelLocalModelDownload" class="local-model-cancel-btn" title="Cancel download">✕</button>
-          </div>
-        </div>
-        <div id="localModelReady" style="display: none;">
-          <p class="hint" id="localModelReadyHint">Model ready.</p>
-        </div>
-        <div id="localModelError" style="display: none;">
-          <p class="hint local-model-error-text" id="localModelErrorText">An error occurred.</p>
-          <button id="retryLocalModel" class="local-model-retry-btn">Retry</button>
-        </div>
-      </div>
-    </section>
-
-    <!-- Filter replies: headline toggle. Same storage key the content
-         script and pipeline already read; the id matches the handler in
-         popup/index.ts (previously rendered inside the Twitter row). -->
-    <section class="filter-replies-section">
-      <label class="toggle-switch">
-        <input type="checkbox" id="enableFilterReplies" checked>
-        <span class="toggle-switch-slider" aria-hidden="true"></span>
-        <span class="toggle-switch-text">
-          <span class="toggle-switch-label">Also filter replies in threads</span>
-        </span>
-      </label>
-    </section>
-
-    <!-- Active Platforms: per-site master toggle + site-specific settings.
+    <!-- Active Platforms: per-site master toggle + excluded accounts.
          Rows are rendered by popup/index.ts from
          src/shared/platforms.config.json — adding a new platform doesn't
          require editing this file. Sites other than X are gated behind
          optional host permissions; their toggle triggers the browser's
-         permission prompt. -->
-    <!-- Excluded accounts: per-platform lists of accounts whose posts are
-         never classified or hidden (checked in the content script before
-         anything is sent to a model). Stored as excludedAccounts_${siteId};
-         sentence-style groups are rendered by popup/index.ts. Collapsed
-         accordion reusing the api-provider chrome; the generic
-         .api-provider-header click handler wires expand/collapse. -->
-    <section class="excluded-accounts-section">
-      <div class="api-provider" id="excludedAccountsProvider">
-        <div class="api-provider-header" id="excludedAccountsHeader">
-          <span class="api-provider-name">Excluded Accounts</span>
-          <div class="api-provider-header-right">
-            <span class="api-provider-arrow" aria-hidden="true"></span>
-          </div>
-        </div>
-        <div class="api-provider-content excluded-accounts-content">
-          <div id="excludedAccountsContainer"></div>
-        </div>
-      </div>
+         permission prompt. Each active row expands to show its
+         excluded-accounts sentence: accounts whose posts are never
+         classified or hidden (stored as excludedAccounts_${siteId}). -->
+    <section class="active-platforms-section">
+      <label>Active Platforms</label>
+      <div id="platformsContainer"></div>
     </section>
 
     <!-- Accent color: retheme Bouncer's in-feed UI (panel outline, buttons,
@@ -199,11 +136,6 @@
           </label>
         </div>
       </div>
-    </section>
-
-    <section class="active-platforms-section">
-      <label>Active Platforms</label>
-      <div id="platformsContainer"></div>
     </section>
 
 

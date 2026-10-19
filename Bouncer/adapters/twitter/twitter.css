@@ -7,6 +7,29 @@ div[data-testid="BottomBar"] {
   opacity: 1 !important;
 }
 
+.ff-why-annoying-wrapper--x {
+  display: flex;
+  align-items: center;
+}
+
+/* Trash ("Bounce this tweet") button in the action bar: white icon on a
+   filled accent-color circle. */
+.ff-why-annoying-btn.ff-why-annoying-btn--x {
+  width: 34.75px;
+  height: 34.75px;
+  border-radius: 21px;
+  background-color: rgb(var(--bouncer-brand-rgb));
+  color: white;
+}
+
+.ff-why-annoying-btn.ff-why-annoying-btn--x:hover {
+  opacity: 0.9;
+}
+
+.ff-why-annoying-btn.ff-why-annoying-btn--x svg {
+  stroke-width: 2;
+}
+
 
 /* ==============================================
    Dim mode styles — unique to Twitter

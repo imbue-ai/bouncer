@@ -712,10 +712,22 @@ export function updateTheme() {
 
 // ==================== Sidebar Filter ====================
 
+// Whether the filter cards should stay on the page. X's composer (opened by
+// Share filters, bounce-quote, or the user) routes to /compose/... while
+// rendering as a modal over the feed, so the card stays put there instead of
+// flickering out until the composer closes. Gates injection as well as
+// removal: X re-renders the page behind the composer (e.g. when the "Discard
+// post?" sheet opens), detaching the card, so it must be able to re-inject
+// on /compose/. Post processing still follows shouldProcessCurrentPage alone.
+function shouldKeepFilterUI(): boolean {
+  return _deps.adapter.shouldProcessCurrentPage()
+    || window.location.pathname.startsWith('/compose/');
+}
+
 function updateSidebarFilterVisibility() {
   if (!filterPhrasesContainer || !filterPhrasesContainer.isConnected) return;
 
-  if (!_deps.adapter.shouldProcessCurrentPage()) {
+  if (!shouldKeepFilterUI()) {
     filterPhrasesContainer.remove();
     filterPhrasesContainer = null;
   }
@@ -966,7 +978,7 @@ async function injectFilterPhrasesInputImpl() {
   console.log('[Bouncer] injectFilterPhrasesInput: will create new box (DOM count before=', existingInDom, ')');
 
   // Don't inject on non-applicable pages
-  if (!_deps.adapter.shouldProcessCurrentPage()) return;
+  if (!shouldKeepFilterUI()) return;
 
   const sidebar = document.querySelector(_deps.adapter.selectors.sidebar);
   if (!sidebar) return;
@@ -1375,7 +1387,7 @@ function updateBottomFilterPosition() {
 function updateBottomFilterVisibility() {
   if (!bottomFilterContainer || !bottomFilterContainer.isConnected) return;
 
-  if (!_deps.adapter.shouldProcessCurrentPage()) {
+  if (!shouldKeepFilterUI()) {
     bottomFilterContainer.remove();
     bottomFilterContainer = null;
   }
@@ -1398,7 +1410,7 @@ async function injectBottomFilterBoxImpl() {
   }
 
   // Don't inject on non-applicable pages
-  if (!_deps.adapter.shouldProcessCurrentPage()) return;
+  if (!shouldKeepFilterUI()) return;
 
   // Create the bottom filter container - just the pill itself
   bottomFilterContainer = document.createElement('div');
@@ -1474,7 +1486,7 @@ async function injectBottomFilterBoxImpl() {
 function updateMobileFilterVisibility() {
   if (!mobileFilterContainer || !mobileFilterContainer.isConnected) return;
 
-  if (!_deps.adapter.shouldProcessCurrentPage()) {
+  if (!shouldKeepFilterUI()) {
     mobileFilterContainer.remove();
     mobileFilterContainer = null;
   }
@@ -1497,7 +1509,7 @@ async function injectMobileFilterBoxImpl() {
   }
 
   // Don't inject on non-applicable pages
-  if (!_deps.adapter.shouldProcessCurrentPage()) return;
+  if (!shouldKeepFilterUI()) return;
 
   // Find the navigation element
   const nav = document.querySelector(_deps.adapter.selectors.nav);
@@ -2555,6 +2567,8 @@ export function showSettingsModal(section?: 'local') {
     container.className = 'settings-modal-iframe';
     container.replaceChildren(parseHTML(popup.html));
     container.style.overflow = 'auto';
+    // Don't chain scroll into the page behind the modal at the ends.
+    container.style.overscrollBehavior = 'contain';
 
     // Show close button (modal mode)
     const closeBtnEl = container.querySelector<HTMLElement>('.modal-close-btn');
@@ -4209,7 +4223,7 @@ async function ensureFilterRepliesEnabled(article: HTMLElement) {
 }
 
 // Build the "Quote tweet" toggle row appended at the bottom of the why-annoying
-// tooltip. State is persisted under `bounceQuoteEnabled` (default true).
+// tooltip. State is persisted under `bounceQuoteEnabled` (default false).
 function buildQuoteToggleRow(): HTMLElement {
   const row = document.createElement('label');
   row.className = 'ff-bounce-quote-row';
@@ -4217,7 +4231,7 @@ function buildQuoteToggleRow(): HTMLElement {
   const input = document.createElement('input');
   input.type = 'checkbox';
   input.className = 'ff-bounce-quote-toggle';
-  input.checked = true; // optimistic default; corrected by storage read below
+  input.checked = false; // default; corrected by storage read below
 
   const text = document.createElement('span');
   text.textContent = 'Quote tweet';
@@ -4226,7 +4240,7 @@ function buildQuoteToggleRow(): HTMLElement {
   row.appendChild(text);
 
   getStorage(['bounceQuoteEnabled']).then(data => {
-    input.checked = data.bounceQuoteEnabled !== false;
+    input.checked = data.bounceQuoteEnabled === true;
   }).catch(err => console.error('[UI] Failed to load bounceQuoteEnabled:', err));
 
   input.addEventListener('click', e => e.stopPropagation());

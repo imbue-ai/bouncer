@@ -279,7 +279,13 @@ const BouncerTwitterAdapter = class TwitterAdapter implements PlatformAdapter {
       return false;
     }
 
-    const tabBar = document.querySelector('[role="tablist"]');
+    // Skip tablists inside dialogs: while the composer is open it renders an
+    // empty tablist that precedes the home one in document order. Closing the
+    // composer briefly routes to /home before X's "Save post?" sheet pushes
+    // /compose/post back, and matching the dialog's tablist there would tear
+    // down the filter UI.
+    const tabBar = Array.from(document.querySelectorAll('[role="tablist"]'))
+      .find(el => !el.closest('[role="dialog"]'));
     if (!tabBar) return false;
 
     // The "For you" and "Following" tabs are always the first two in the
@@ -636,11 +642,16 @@ const BouncerTwitterAdapter = class TwitterAdapter implements PlatformAdapter {
   insertActionButton(article: HTMLElement, button: HTMLElement): void {
     const shareBtn = this.getShareButton(article);
     if (!shareBtn) return;
+    button.classList.add('ff-why-annoying-btn--x');
+    // Flex wrapper vertically centers the button within the action bar.
+    const wrapper = document.createElement('div');
+    wrapper.className = 'ff-why-annoying-wrapper--x';
+    wrapper.appendChild(button);
 
     if (shareBtn.closest('[role="group"], [data-testid="tweet"]')) {
-      shareBtn.parentElement?.parentElement?.insertAdjacentElement('afterend', button);
+      shareBtn.parentElement?.parentElement?.insertAdjacentElement('afterend', wrapper);
     } else {
-      shareBtn.insertAdjacentElement('afterend', button);
+      shareBtn.insertAdjacentElement('afterend', wrapper);
     }
   }
 

@@ -32,41 +32,62 @@ async function platformPermissionGranted(p: PlatformDef): Promise<boolean> {
   }
 }
 
-// Platform-specific accordion sub-content. Add a case here when a platform
-// needs its own row-nested toggle; platforms without one (currently all of
-// them) just return '', which also suppresses the row's expand arrow.
-function platformSubContentHTML(id: SiteId): string {
+// Flip a platform row between active and inactive. The row's body holds the
+// platform's excluded-accounts sentence, so expansion tracks activeness
+// rather than header clicks: active rows show the sentence, inactive rows
+// collapse to just the header + toggle.
+function setPlatformRowActive(id: SiteId, active: boolean): void {
+  const row = document.getElementById(platformRowId(id));
+  row?.classList.toggle('disabled', !active);
+  row?.classList.toggle('expanded', active);
+}
+
+// Platform-specific settings shown at the top of a row's body, above the
+// excluded-accounts sentence. Ids must match the handlers wired in init().
+function platformSettingsHTML(id: SiteId): string {
   switch (id) {
+    case 'twitter':
+      return `
+        <label class="platform-setting">
+          <span>Filter replies</span>
+          <span class="ts-inline">
+            <input type="checkbox" id="enableFilterReplies" checked>
+            <span class="ts-inline-slider" aria-hidden="true"></span>
+          </span>
+        </label>`;
     default:
       return '';
   }
 }
 
-// Render the per-platform master-toggle rows into #platformsContainer. The
-// accordion expand/collapse handler in this file targets data-platform, so
-// the rendered DOM exposes that attribute on each row's header.
+// Render the per-platform master-toggle rows into #platformsContainer. Each
+// row's body holds any platform-specific settings plus an empty
+// .excluded-accounts-group that renderExcludedAccounts fills;
+// setPlatformRowActive drives expand/collapse.
 function renderPlatformRows(): void {
   const container = document.getElementById('platformsContainer');
   if (!container) return;
   const html = PLATFORMS_FOR_TARGET.map(p => {
-    const hasSub = platformSubContentHTML(p.id).length > 0;
     // Optional platforms render off (and dimmed) until loadSettings confirms
-    // the host permission is actually granted; X stays on by default so
-    // existing installs see no change.
+    // the host permission is actually granted. X is always on, so its row
+    // has no master toggle.
     const startChecked = !isOptionalPlatform(p);
+    const toggle = startChecked ? '' : `
+            <label class="ts-inline" title="Enable Bouncer on ${escapeHtml(p.displayName)}">
+              <input type="checkbox" id="${platformToggleId(p.id)}">
+              <span class="ts-inline-slider" aria-hidden="true"></span>
+            </label>`;
     return `
-      <div class="api-provider platform-provider${startChecked ? '' : ' disabled'}" id="${platformRowId(p.id)}">
+      <div class="api-provider platform-provider${startChecked ? ' expanded' : ' disabled'}" id="${platformRowId(p.id)}">
         <div class="api-provider-header" data-platform="${p.id}">
           <span class="api-provider-name">${escapeHtml(p.displayName)}</span>
-          <div class="api-provider-header-right">
-            <label class="ts-inline" title="Enable Bouncer on ${escapeHtml(p.displayName)}">
-              <input type="checkbox" id="${platformToggleId(p.id)}"${startChecked ? ' checked' : ''}>
-              <span class="ts-inline-slider" aria-hidden="true"></span>
-            </label>
-            ${hasSub ? '<span class="api-provider-arrow" aria-hidden="true"></span>' : ''}
+          <div class="api-provider-header-right">${toggle}
           </div>
         </div>
-        ${platformSubContentHTML(p.id)}
+        <div class="api-provider-content platform-excluded-content">
+          ${platformSettingsHTML(p.id)}
+          <div class="excluded-accounts-group" data-site="${p.id}"></div>
+        </div>
       </div>
     `;
   }).join('');
@@ -182,6 +203,9 @@ export async function init() {
   // Detect if we're in an iframe (modal mode)
   if (isModal) {
     document.body.classList.add('modal-mode');
+    // The iframe's root is the scroller; without this, scrolling past the
+    // bottom (or top) of Settings chains into the page behind the modal.
+    document.documentElement.style.overscrollBehavior = 'contain';
 
     // Set up close buttons to message parent
     for (const btn of document.querySelectorAll('.modal-close-btn')) {
@@ -291,7 +315,11 @@ export async function init() {
   // selected (checked radios don't re-fire change).
   if (window.location.hash === '#local') {
     const localRadio = document.getElementById('modelRadioLocal') as HTMLInputElement | null;
-    if (localRadio && !localRadio.checked) localRadio.click();
+    if (localRadio?.disabled) {
+      document.getElementById('downloadLocalModel')?.scrollIntoView({ block: 'center' });
+    } else if (localRadio && !localRadio.checked) {
+      localRadio.click();
+    }
   }
 
   console.log('[Popup] init() completed successfully');
@@ -314,7 +342,8 @@ function setupStorageListener() {
     }
     if (areaName === 'local' && changes.localModelStatuses) {
       localModelStatuses = (changes.localModelStatuses.newValue as Record<string, LocalModelStatus>) || {};
-      updateLocalModelSectionUI();
+      updateLocalDownloadButton();
+      updateModelRadioUI();
       refreshModelDropdownWithLocal().catch(err => console.error('[Popup] refreshModelDropdownWithLocal failed:', err));
     }
     // Parked On-Device choice set/cleared (possibly by the background flipping
@@ -322,8 +351,7 @@ function setupStorageListener() {
     if (areaName === 'local' && changes.pendingLocalModelSelection) {
       pendingLocalSelection = (changes.pendingLocalModelSelection.newValue as string) || null;
       updateModelRadioUI();
-      updateLocalModelSectionVisibility();
-      updateLocalModelSectionUI();
+      updateLocalDownloadButton();
     }
     // The inferred AI-removal intent changed — re-sync the passive
     // AI-detection indicator from storage.
@@ -353,18 +381,13 @@ function setupStorageListener() {
         const apply = (checked: boolean) => {
           const el = document.getElementById(platformToggleId(p.id)) as HTMLInputElement | null;
           if (el && el.checked !== checked) el.checked = checked;
-          document.getElementById(platformRowId(p.id))?.classList.toggle('disabled', !checked);
+          setPlatformRowActive(p.id, checked);
         };
         const checked = change.newValue !== false;
         if (!checked) { apply(false); continue; }
         platformPermissionGranted(p)
           .then(apply)
           .catch(err => console.error(`[Popup] Permission check for ${p.id} failed:`, err));
-      }
-      // Excluded-account sentences only render for active platforms, so a
-      // master-toggle flip changes which groups exist.
-      if (PLATFORMS.some(p => changes[enabledStorageKey(p.id)])) {
-        renderExcludedAccounts().catch(err => console.error('[Popup] renderExcludedAccounts failed:', err));
       }
     }
     if (areaName === 'local' && changes.aiTextDetectionThreshold) {
@@ -451,11 +474,16 @@ async function loadSettings() {
   // additionally gated on their host permission being granted, so a revoke
   // via browser settings reads back as "off" here.
   for (const p of PLATFORMS) {
-    const enabled = data[enabledStorageKey(p.id)] !== false
-      && await platformPermissionGranted(p);
+    // Non-optional platforms (X) can't be turned off from the popup anymore;
+    // repair installs that switched X off back when it had a toggle.
+    if (!isOptionalPlatform(p) && data[enabledStorageKey(p.id)] === false) {
+      await setStorage({ [enabledStorageKey(p.id)]: true });
+    }
+    const enabled = !isOptionalPlatform(p)
+      || (data[enabledStorageKey(p.id)] !== false && await platformPermissionGranted(p));
     const el = document.getElementById(platformToggleId(p.id)) as HTMLInputElement | null;
     if (el) el.checked = enabled;
-    document.getElementById(platformRowId(p.id))?.classList.toggle('disabled', !enabled);
+    setPlatformRowActive(p.id, enabled);
   }
 
   // Passive AI-detection indicator + threshold sliders. On/off state is
@@ -492,24 +520,24 @@ async function loadSettings() {
   // Model selection
   renderModelDropdown(data.customModels || [], data.selectedModel || DEFAULT_MODEL);
 
-  // Update local model section visibility
-  updateLocalModelSectionVisibility();
 
-  // Excluded accounts chip lists
+  // Excluded-account sentences inside the platform rows
   await renderExcludedAccounts();
 }
 
 // ==================== Excluded Accounts ====================
 
-// Render the per-platform excluded-account chip groups into
-// #excludedAccountsContainer. Chips remove on click; the input adds on
+// Render each platform's excluded-account sentence into the
+// .excluded-accounts-group inside its Active Platforms row. Every platform
+// gets one; the row collapses when the platform is inactive, so only active
+// platforms show theirs. Names remove on click; the input adds on
 // Enter/comma/blur and splits pasted comma-separated lists. Identities are
 // stored normalized (see normalizeAccountIdentity in shared/storage.ts);
-// chips re-add the "@" for display on handle platforms. Re-renders preserve
+// names re-add the "@" for display on handle platforms. Re-renders preserve
 // input focus and un-committed text, so the storage-change listener can call
 // this freely without eating keystrokes.
 async function renderExcludedAccounts(): Promise<void> {
-  const container = document.getElementById('excludedAccountsContainer');
+  const container = document.getElementById('platformsContainer');
   if (!container) return;
 
   // Capture focus + pending text so a re-render mid-typing is invisible.
@@ -519,39 +547,26 @@ async function renderExcludedAccounts(): Promise<void> {
     : null;
   const pendingValue = focusSite && active ? active.value : '';
 
-  // Only platforms Bouncer is actually running on get a sentence — same
-  // activeness rule as the Active Platforms rows (master toggle on, and for
-  // optional platforms the host permission actually granted).
-  const enabledData = await getStorage(PLATFORMS_FOR_TARGET.map(p => enabledStorageKey(p.id)));
-  const activePlatforms: PlatformDef[] = [];
-  for (const p of PLATFORMS_FOR_TARGET) {
-    if (enabledData[enabledStorageKey(p.id)] !== false && await platformPermissionGranted(p)) {
-      activePlatforms.push(p);
-    }
-  }
+  const lists = await Promise.all(PLATFORMS_FOR_TARGET.map(p => getExcludedAccounts(p.id)));
 
-  const lists = await Promise.all(activePlatforms.map(p => getExcludedAccounts(p.id)));
-
-  container.replaceChildren();
-  activePlatforms.forEach((p, i) => {
+  PLATFORMS_FOR_TARGET.forEach((p, i) => {
+    const group = container.querySelector<HTMLElement>(`.excluded-accounts-group[data-site="${p.id}"]`);
+    if (!group) return;
     const accounts = lists[i];
     const isLinkedIn = p.id === 'linkedin';
     const noun = p.id === 'youtube' ? 'videos' : 'posts';
-
-    const group = document.createElement('div');
-    group.className = 'excluded-accounts-group';
-    group.dataset.site = p.id;
+    group.replaceChildren();
 
     // Classic Bouncer sentence, mirroring the in-feed filter box: a static
-    // prefix naming the platform, bold inline names (click to remove, Oxford
-    // commas), "and", then an underlined inline input. The first word of the
-    // display name ("X (Twitter)" → "X") keeps the sentence tight.
+    // prefix (the enclosing platform row already names the site), bold inline
+    // names (click to remove, Oxford commas), "and", then an underlined
+    // inline input.
     const sentence = document.createElement('div');
     sentence.className = 'excluded-sentence';
 
     const prefix = document.createElement('span');
     prefix.className = 'excluded-sentence-prefix';
-    prefix.textContent = `Keep ${p.displayName.split(' ')[0]} ${noun} by`;
+    prefix.textContent = `Keep ${noun} by`;
     sentence.appendChild(prefix);
 
     for (const account of accounts) {
@@ -617,8 +632,6 @@ async function renderExcludedAccounts(): Promise<void> {
     inputWrap.appendChild(input);
     sentence.appendChild(inputWrap);
     group.appendChild(sentence);
-
-    container.appendChild(group);
   });
 
   if (focusSite) {
@@ -777,13 +790,12 @@ function setupEventListeners() {
   // Model dropdown
   setupModelDropdown();
 
-  // API provider + platform collapsible headers. Both reuse the same
-  // accordion classes. Clicks that originate inside the inline platform
-  // toggle (`.ts-inline`) must not bubble up to the header — otherwise
-  // toggling on/off would also collapse/expand the row.
+  // API provider collapsible headers. Platform rows reuse the accordion
+  // classes but their expansion follows the master toggle
+  // (setPlatformRowActive), so their headers are skipped here.
   document.querySelectorAll('.api-provider-header').forEach(header => {
-    header.addEventListener('click', (e) => {
-      if ((e.target as HTMLElement | null)?.closest('.ts-inline')) return;
+    if (header.hasAttribute('data-platform')) return;
+    header.addEventListener('click', () => {
       const provider = header.closest('.api-provider');
       provider?.classList.toggle('expanded');
     });
@@ -999,7 +1011,7 @@ function setupEventListeners() {
             return;
           }
         }
-        document.getElementById(platformRowId(p.id))?.classList.toggle('disabled', !checked);
+        setPlatformRowActive(p.id, checked);
         await setStorage({ [enabledStorageKey(p.id)]: checked });
         if (checked && isOptionalPlatform(p)) {
           await chrome.runtime.sendMessage({ type: 'syncOptionalPlatforms' })
@@ -1347,7 +1359,7 @@ function setupModelRadios() {
     // Only switch outright when the model is already on disk (or in the iOS
     // app, where the native sheet owns the download flow). Otherwise park
     // the choice: Cloud stays selected and filtering, and the download
-    // panel appears below.
+    // button appears in the On-Device row.
     if (isInAppMode || localRadioModelDownloaded()) {
       await selectModel(LOCAL_RADIO_MODEL_KEY);
       return;
@@ -1355,8 +1367,7 @@ function setupModelRadios() {
     pendingLocalSelection = LOCAL_RADIO_MODEL_KEY;
     await setStorage({ pendingLocalModelSelection: LOCAL_RADIO_MODEL_KEY });
     updateModelRadioUI();
-    updateLocalModelSectionVisibility();
-    updateLocalModelSectionUI();
+    updateLocalDownloadButton();
   }));
 
   // The Imbue option doesn't exist on open-source builds with no Imbue
@@ -1439,9 +1450,8 @@ async function selectModel(modelKey: string) {
   // Clear auto-init tracking when switching models to allow re-initialization
   autoInitTriggered.clear();
 
-  // Update local model section visibility and UI when selection changes
-  updateLocalModelSectionVisibility();
-  updateLocalModelSectionUI();
+  // Update the On-Device download button when selection changes
+  updateLocalDownloadButton();
 
   // Remove rate limit alert if switching away from OpenRouter or if alert exists
   const alert = document.querySelector('.rate-limit-alert');
@@ -1451,16 +1461,6 @@ async function selectModel(modelKey: string) {
       alert.remove();
     }
   }
-}
-
-// Show/hide the local model section based on whether a local model is
-// selected — or parked as the pending choice, so its download panel is
-// reachable before the switch actually happens.
-function updateLocalModelSectionVisibility() {
-  const localModelSection = document.getElementById('localModelSection')!;
-  const isLocalModelSelected = dropdownState.selectedModel?.startsWith('local:')
-    || pendingLocalSelection?.startsWith('local:');
-  localModelSection.style.display = isLocalModelSelected ? 'block' : 'none';
 }
 
 async function removeModel(modelKey: string, e: Event) {
@@ -1705,8 +1705,15 @@ function updateModelRadioUI() {
   const localSupported = isInAppMode
     ? (IOS_LOCAL_MODEL?.isSupportedOnThisDevice ?? false)
     : webgpuSupported;
-  localRadio.disabled = !localSupported;
-  document.getElementById('modelRadioLocalRow')?.classList.toggle('disabled', !localSupported);
+  // Outside the iOS app, On-Device stays greyed until its model is
+  // downloaded (the row's Download button is the way in). Never grey it
+  // while it's the active selection.
+  const notDownloaded = localSupported && !isInAppMode
+    && !localRadioModelDownloaded() && !localRadio.checked;
+  localRadio.disabled = !localSupported || notDownloaded;
+  const localRow = document.getElementById('modelRadioLocalRow');
+  localRow?.classList.toggle('disabled', !localSupported);
+  localRow?.classList.toggle('not-downloaded', notDownloaded);
   const localNote = document.getElementById('modelRadioLocalNote');
   if (localNote) {
     if (!localSupported) {
@@ -2103,13 +2110,13 @@ async function updateLocalModelStatus() {
   // Always update UI, even on error. webgpuSupported resolves async, so the
   // radio's disabled state must be refreshed here too, not just from
   // renderModelDropdown.
-  updateLocalModelSectionUI();
+  updateLocalDownloadButton();
   updateModelRadioUI();
 }
 
 // Get the currently selected local model (if any)
 function getSelectedLocalModel(): ModelDef | null {
-  // A parked pending choice counts: the download panel below the radios
+  // A parked pending choice counts: the download button in the On-Device row
   // must describe/drive the model the user asked for before it's selected.
   const modelKey = dropdownState.selectedModel?.startsWith('local:')
     ? dropdownState.selectedModel
@@ -2148,157 +2155,96 @@ async function autoInitializeCachedModel(modelId: string) {
   }
 }
 
-// Update the local model section UI based on selected model and its status
-function updateLocalModelSectionUI() {
-  const badge = document.getElementById('localModelStatusBadge')!;
-  const unsupported = document.getElementById('localModelUnsupported')!;
-  const notDownloaded = document.getElementById('localModelNotDownloaded')!;
-  const downloading = document.getElementById('localModelDownloading')!;
-  const ready = document.getElementById('localModelReady')!;
-  const errorDiv = document.getElementById('localModelError')!;
-  const progressFill = document.getElementById('localProgressFill')!;
-  const progressText = document.getElementById('localProgressText')!;
-  const errorText = document.getElementById('localModelErrorText')!;
-  const downloadHint = document.getElementById('localModelDownloadHint');
-  const readyHint = document.getElementById('localModelReadyHint');
-  const noImageWarning = document.getElementById('localModelNoImageWarning');
+// The model the On-Device row's download button acts on: the selected (or
+// parked) local model, else the On-Device radio's model so the button is
+// there from the start. In the iOS app the native sheet owns downloads, so
+// there's no fallback.
+function getDownloadTargetModel(): ModelDef | null {
+  const selected = getSelectedLocalModel();
+  if (selected || isInAppMode) return selected;
+  const radioModelName = LOCAL_RADIO_MODEL_KEY.split(':')[1];
+  return PREDEFINED_MODELS.local.find(m => m.name === radioModelName) ?? null;
+}
 
-  // Hide all states first
-  unsupported.style.display = 'none';
-  notDownloaded.style.display = 'none';
-  downloading.style.display = 'none';
-  ready.style.display = 'none';
-  errorDiv.style.display = 'none';
-  if (noImageWarning) noImageWarning.style.display = 'none';
+// Drive the On-Device row's download button from the target local model's
+// status. The button doubles as the status readout: download, progress,
+// loading, and retry-on-error. Hidden when the hardware can't run it or it's
+// ready.
+function updateLocalDownloadButton() {
+  const downloadBtn = document.getElementById('downloadLocalModel') as HTMLButtonElement | null;
+  if (!downloadBtn) return;
+  downloadBtn.style.display = 'none';
+  downloadBtn.removeAttribute('title');
 
-  // Reset badge classes
-  badge.classList.remove('connected', 'downloading', 'ready', 'error', 'auth-error');
-
-  // Check if a local model is selected
-  const selectedLocalModel = getSelectedLocalModel();
-
+  const selectedLocalModel = getDownloadTargetModel();
   const inAppLocalSupported = isInAppMode && (IOS_LOCAL_MODEL?.isSupportedOnThisDevice ?? false);
-  if (isInAppMode ? !inAppLocalSupported : !webgpuSupported) {
-    // Hardware can't run the local model (no WebGPU on desktop; not enough
-    // device RAM in the iOS app) - show unsupported message
-    badge.textContent = 'Unsupported';
-    badge.classList.add('error');
-    unsupported.style.display = 'block';
-    if (isInAppMode) {
-      const hint = unsupported.querySelector('.hint');
-      if (hint) {
-        hint.textContent =
-          `Local inference isn't available on this iPhone — it requires ${IOS_LOCAL_MODEL?.requiredRAMDisplay ?? '6 GB'}+ RAM.`;
-      }
-    }
-    return;
-  }
+  if (!selectedLocalModel || (isInAppMode ? !inAppLocalSupported : !webgpuSupported)) return;
 
-  if (!selectedLocalModel) {
-    // No local model selected - show hint to select one
-    badge.textContent = 'Select a model';
-    notDownloaded.style.display = 'block';
-    if (downloadHint) {
-      downloadHint.textContent = 'Choose an on-device model in Advanced Settings.';
-    }
-    document.getElementById('downloadLocalModel')!.style.display = 'none';
-    return;
-  }
-
-  // Check if the model supports images and show warning if not
-  if (noImageWarning && !selectedLocalModel.supportsImages) {
-    noImageWarning.style.display = 'block';
-  }
-
-  // Get status for the selected model
   const status = localModelStatuses[selectedLocalModel.name] || { state: 'not_downloaded' };
-  const state = status.state || 'not_downloaded';
+  const show = (text: string, disabled: boolean) => {
+    downloadBtn.style.display = 'inline-flex';
+    downloadBtn.textContent = text;
+    downloadBtn.disabled = disabled;
+  };
 
-  switch (state) {
-    case 'unsupported':
-      badge.textContent = 'Unsupported';
-      badge.classList.add('error');
-      unsupported.style.display = 'block';
-      break;
-
+  switch (status.state || 'not_downloaded') {
     case 'cached':
+      // Downloaded but not selected: nothing to show — the radio is now
+      // enabled and selecting it loads the model.
+      if (!getSelectedLocalModel()) break;
       // Model is cached but not loaded - auto-initialize it
-      badge.textContent = 'Loading...';
-      badge.classList.add('downloading');
-      downloading.style.display = 'block';
-      progressFill.style.width = '0%';
-      progressText.textContent = 'Loading cached model...';
-      // Trigger auto-initialization (async, don't await)
+      show('Loading...', true);
       autoInitializeCachedModel(selectedLocalModel.name).catch(err => console.error('[LocalModel] autoInitializeCachedModel failed:', err));
       break;
 
-    case 'not_downloaded': {
-      badge.textContent = 'Not downloaded';
-      notDownloaded.style.display = 'block';
-      if (downloadHint) {
-        const sizeText = selectedLocalModel.sizeGB ? ` (~${selectedLocalModel.sizeGB}GB)` : '';
-        downloadHint.textContent = `One-time download${sizeText}.`;
-      }
-      const downloadBtn = document.getElementById('downloadLocalModel') as HTMLButtonElement;
-      downloadBtn.style.display = 'inline-flex';
-      downloadBtn.disabled = false;
-      downloadBtn.replaceChildren(parseHTML('<span class="download-icon">&#8595;</span> Download Model'));
-      break;
-    }
-
     case 'initializing':
-    case 'downloading': {
-      badge.textContent = 'Downloading...';
-      badge.classList.add('downloading');
-      downloading.style.display = 'block';
-      const progress = status.progress || 0;
-      progressFill.style.width = `${(progress * 100).toFixed(1)}%`;
-      progressText.textContent = status.text || `${(progress * 100).toFixed(1)}%`;
-      break;
-    }
-
-    case 'ready':
-      badge.textContent = 'Ready';
-      badge.classList.add('ready');
-      ready.style.display = 'block';
-      if (readyHint) {
-        readyHint.textContent = 'Model ready.';
-      }
+    case 'downloading':
+      show(`Downloading... ${Math.round((status.progress || 0) * 100)}%`, true);
       break;
 
     case 'error': {
-      badge.textContent = 'Error';
-      badge.classList.add('error');
-      errorDiv.style.display = 'block';
+      show('Retry Download', false);
       const friendlyError = getUserFriendlyError(status.error);
-      const hintText = friendlyError.hint ? ` ${friendlyError.hint}` : '';
-      errorText.textContent = (friendlyError.display || 'An error occurred') + hintText;
+      downloadBtn.title = [friendlyError.display || 'An error occurred', friendlyError.hint].filter(Boolean).join(' ');
+      break;
+    }
+
+    case 'not_downloaded': {
+      const sizeText = selectedLocalModel.sizeGB ? ` (~${selectedLocalModel.sizeGB}GB)` : '';
+      show(`Download Model${sizeText}`, false);
       break;
     }
 
     default:
-      badge.textContent = 'Unknown';
-      notDownloaded.style.display = 'block';
+      // 'ready' and 'unsupported' need no button.
+      break;
   }
 }
 
 // Set up event listeners for local model UI
 function setupLocalModelListeners() {
   const downloadBtn = document.getElementById('downloadLocalModel') as HTMLButtonElement | null;
-  const retryBtn = document.getElementById('retryLocalModel') as HTMLButtonElement | null;
-  console.log('[Popup] setupLocalModelListeners: downloadBtn=', !!downloadBtn, 'retryBtn=', !!retryBtn);
+  console.log('[Popup] setupLocalModelListeners: downloadBtn=', !!downloadBtn);
 
   if (downloadBtn) {
     downloadBtn.addEventListener('click', () => { (async () => {
-      const selectedLocalModel = getSelectedLocalModel();
+      const selectedLocalModel = getDownloadTargetModel();
       if (!selectedLocalModel) {
         console.error('No local model selected');
         return;
       }
+      // Downloading from the start (nothing local chosen yet) means "use
+      // On-Device": park it so the background switches over once the
+      // download finishes, same as picking the radio used to.
+      if (!getSelectedLocalModel()) {
+        pendingLocalSelection = LOCAL_RADIO_MODEL_KEY;
+        await setStorage({ pendingLocalModelSelection: LOCAL_RADIO_MODEL_KEY });
+        updateModelRadioUI();
+      }
 
       console.log('[Popup] Download button clicked, model:', selectedLocalModel.name);
       downloadBtn.disabled = true;
-      downloadBtn.replaceChildren(parseHTML('<span class="download-icon">&#8987;</span> Starting...'));
+      downloadBtn.textContent = 'Starting...';
 
       try {
         console.log('[Popup] Sending initializeLocalModel message for:', selectedLocalModel.name);
@@ -2306,52 +2252,9 @@ function setupLocalModelListeners() {
         console.log('[Popup] initializeLocalModel response:', result);
       } catch (err) {
         console.error('[Popup] Failed to start model download:', err);
-        downloadBtn.disabled = false;
-        downloadBtn.replaceChildren(parseHTML('<span class="download-icon">&#8595;</span> Download Model'));
+        updateLocalDownloadButton();
       }
     })().catch(err => console.error('[Popup] download click failed:', err)); });
-  }
-
-  if (retryBtn) {
-    retryBtn.addEventListener('click', () => { (async () => {
-      const selectedLocalModel = getSelectedLocalModel();
-      if (!selectedLocalModel) {
-        console.error('No local model selected');
-        return;
-      }
-
-      retryBtn.disabled = true;
-      retryBtn.textContent = 'Retrying...';
-
-      try {
-        await chrome.runtime.sendMessage({ type: 'initializeLocalModel', modelId: selectedLocalModel.name });
-      } catch (err) {
-        console.error('Failed to retry model download:', err);
-        retryBtn.disabled = false;
-        retryBtn.textContent = 'Retry';
-      }
-    })().catch(err => console.error('[Popup] retry click failed:', err)); });
-  }
-
-  const cancelBtn = document.getElementById('cancelLocalModelDownload') as HTMLButtonElement | null;
-  if (cancelBtn) {
-    cancelBtn.addEventListener('click', () => { (async () => {
-      const selectedLocalModel = getSelectedLocalModel();
-      if (!selectedLocalModel) return;
-
-      cancelBtn.disabled = true;
-      try {
-        await chrome.runtime.sendMessage({ type: 'cancelLocalModelDownload', modelId: selectedLocalModel.name });
-        // Cancelling also un-parks a pending "On-Device, once downloaded" choice
-        // — otherwise the radio would stay grey-checked with nothing coming.
-        await clearPendingLocalSelection();
-        updateModelRadioUI();
-        updateLocalModelSectionVisibility();
-      } catch (err) {
-        console.error('Failed to cancel download:', err);
-      }
-      cancelBtn.disabled = false;
-    })().catch(err => console.error('[Popup] cancel download failed:', err)); });
   }
 }
 
