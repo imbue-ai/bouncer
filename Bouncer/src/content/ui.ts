@@ -470,12 +470,19 @@ export async function maybeShowPlatformOnboarding(): Promise<void> {
   // load timeout, no extension-reload lifeline, and nothing that can shrink
   // the card — every such mechanism has at some point fired on a fresh
   // install and folded the popup out from under the user.
+  let closing = false;
   const close = () => {
+    if (closing) return;
+    closing = true;
     window.removeEventListener('message', messageHandler);
-    backdrop.remove();
-    platformOnboardingBackdrop = null;
     setStorage({ showPlatformOnboarding: false }).catch(err =>
       console.error('[Bouncer] Failed to clear platform onboarding flag:', err));
+    // Fly the card into the Bouncer box (same flight as importing a filter
+    // pack) so it's clear where to go next, then drop the overlay.
+    void flyOnboardingIntoBouncer(backdrop, iframe).finally(() => {
+      backdrop.remove();
+      platformOnboardingBackdrop = null;
+    });
   };
   const messageHandler = (event: MessageEvent<{ type?: string; height?: number }>) => {
     if (event.source !== iframe.contentWindow || !event.data) return;
@@ -491,6 +498,47 @@ export async function maybeShowPlatformOnboarding(): Promise<void> {
   backdrop.addEventListener('click', (e) => {
     if (e.target === backdrop) close();
   });
+}
+
+// Dismissal animation for the platform-onboarding popup: the card shrinks
+// into the Bouncer box while the grey backdrop fades, then the box pulses.
+// With no Bouncer box on screen it just fades out.
+async function flyOnboardingIntoBouncer(backdrop: HTMLElement, card: HTMLElement): Promise<void> {
+  // The page is usable again the moment the user dismisses.
+  backdrop.style.pointerEvents = 'none';
+  const flightMs = 700;
+  const easing = 'cubic-bezier(0.22, 0.61, 0.36, 1)';
+  const fade = backdrop.animate(
+    [{ backgroundColor: 'rgba(0, 0, 0, 0.6)' }, { backgroundColor: 'rgba(0, 0, 0, 0)' }],
+    { duration: flightMs, easing, fill: 'forwards' },
+  );
+
+  const destEl = pickBouncerFlightTarget();
+  const sourceRect = card.getBoundingClientRect();
+  const destRect = destEl?.getBoundingClientRect();
+  let flight: Animation;
+  if (destEl && destRect && destRect.width >= 4 && sourceRect.width >= 4) {
+    const dx = destRect.left - sourceRect.left;
+    const dy = destRect.top - sourceRect.top;
+    const sx = destRect.width / sourceRect.width;
+    const sy = destRect.height / sourceRect.height;
+    card.style.transformOrigin = 'top left';
+    flight = card.animate(
+      [
+        { transform: 'translate(0, 0) scale(1, 1)', opacity: 1, filter: 'blur(0px)' },
+        // Lift slightly off the straight path, as in the import flight.
+        { transform: `translate(${dx * 0.5}px, ${dy * 0.5 - Math.min(40, Math.abs(dy) * 0.2)}px) scale(${(1 + sx) / 2}, ${(1 + sy) / 2})`, opacity: 0.95, filter: 'blur(0px)', offset: 0.55 },
+        { transform: `translate(${dx}px, ${dy}px) scale(${sx}, ${sy})`, opacity: 0, filter: 'blur(2px)' },
+      ],
+      { duration: flightMs, easing, fill: 'forwards' },
+    );
+  } else {
+    flight = card.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 200, fill: 'forwards' });
+  }
+
+  // Canceled animations (navigation mid-flight) still fall through to cleanup.
+  await Promise.all([flight.finished, fade.finished]).catch(() => {});
+  if (destEl?.isConnected) pulseLandingTarget(destEl);
 }
 
 // Wire up the sign-in button click handler inside a container.
@@ -2048,6 +2096,29 @@ export function pickVisibleBouncerLayout(): HTMLElement | null {
   return null;
 }
 
+// The element a "fly into Bouncer" animation should land on. Three layout
+// variants live in the DOM simultaneously (sidebar, bottom, mobile); media
+// queries display:none all but the active one, so pick the visible variant —
+// querySelectorAll('.filter-phrases-container') would return the first in
+// document order, which is often a hidden one with a zero-size rect. Within
+// it, use the container when it has real dimensions; otherwise the layout
+// pill (.filter-phrases-bottom collapses its inner container to max-height:
+// 0, but the outer pill is still on screen and is what the user perceives as
+// "the Bouncer UI").
+function pickBouncerFlightTarget(): HTMLElement | null {
+  const visibleLayout = pickVisibleBouncerLayout();
+  const container = visibleLayout?.querySelector<HTMLElement>('.filter-phrases-container') ?? null;
+  const rect = container?.getBoundingClientRect();
+  const useContainer = container && rect && rect.height >= 24 && rect.width >= 24;
+  return useContainer ? container : visibleLayout;
+}
+
+// Brief pulse on a flight's destination so the eye lands on the Bouncer box.
+function pulseLandingTarget(destEl: HTMLElement): void {
+  destEl.classList.add('bouncer-import-landing');
+  setTimeout(() => destEl.classList.remove('bouncer-import-landing'), 700);
+}
+
 // Animate the tweet's screenshot image flying into the user's Bouncer box,
 // then run the actual import. The flight takes ~700ms; we kick the storage
 // writes off in parallel so the new phrases land in the box right as the
@@ -2061,30 +2132,14 @@ async function flyScreenshotAndImport(
   const runImport = () => confirmAndImportPack(phrases);
   console.log('[Bouncer/import-anim] click', { hasArticle: !!article, phraseCount: phrases.length, named: !!pack.name });
 
-  // Three layout variants live in the DOM simultaneously (sidebar, bottom,
-  // mobile); media queries display:none all but the active one. Pick the
-  // visible variant via offsetParent — querySelectorAll('.filter-phrases-
-  // container') would return the first in document order, which is often a
-  // hidden one with a zero-size rect.
-  const visibleLayout = pickVisibleBouncerLayout();
-  const containerInLayout = visibleLayout?.querySelector<HTMLElement>('.filter-phrases-container') ?? null;
-  // Use the container when it has real dimensions; otherwise the layout pill
-  // (.filter-phrases-bottom collapses its inner container to max-height: 0,
-  // but the outer pill is still on screen and is what the user perceives as
-  // "the Bouncer UI").
-  const containerRect = containerInLayout?.getBoundingClientRect();
-  const useContainer = containerInLayout && containerRect && containerRect.height >= 24 && containerRect.width >= 24;
-  const destEl: HTMLElement | null = useContainer ? containerInLayout : visibleLayout;
+  const destEl = pickBouncerFlightTarget();
 
   const tweetPhotoImg = article?.querySelector<HTMLImageElement>('[data-testid="tweetPhoto"] img') ?? null;
   const twimgImg = article?.querySelector<HTMLImageElement>('img[src*="pbs.twimg.com/media"]') ?? null;
   const tweetImg = tweetPhotoImg ?? twimgImg;
 
   console.log('[Bouncer/import-anim] lookups', {
-    visibleLayoutClass: visibleLayout?.className,
-    containerInLayoutFound: !!containerInLayout,
-    containerRect: containerRect ? { w: containerRect.width, h: containerRect.height } : null,
-    chosenDestKind: destEl === containerInLayout ? 'container' : destEl ? 'layout-pill' : 'none',
+    destClass: destEl?.className,
     tweetPhotoImgFound: !!tweetPhotoImg,
     twimgImgFound: !!twimgImg,
     tweetImgSrc: tweetImg?.src,
@@ -2184,10 +2239,8 @@ async function flyScreenshotAndImport(
   flier.remove();
   tweetImg.style.visibility = originalSourceVis;
 
-  // Brief pulse on the destination so the user's eye lands on the place where
-  // the new pack just appeared.
-  destEl.classList.add('bouncer-import-landing');
-  setTimeout(() => destEl.classList.remove('bouncer-import-landing'), 700);
+  // The user's eye should land where the new pack just appeared.
+  pulseLandingTarget(destEl);
 
   // Make sure storage writes are surfaced before we return so callers see real
   // failures and not a silently-completed flight.
