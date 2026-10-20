@@ -1,5 +1,6 @@
 // WebPushPolyfill.js — injected into the PAGE world at document start on
-// x.com. WKWebView has no Push API and no Notification API, so x.com's
+// x.com and www.facebook.com (the push sites, PushSite in PushPayload.swift).
+// WKWebView has no Push API and no Notification API, so x.com's
 // "turn on push notifications" flow would bail before it ever subscribes.
 // This gives the page the two objects it feature-detects and routes the one
 // call that matters — pushManager.subscribe() — to the native side
@@ -8,7 +9,7 @@
 // to x.com's backend exactly as it would in Chrome, and every later push is
 // delivered by APNs and decrypted natively; the service worker's own push
 // handler is never involved.
-var BOUNCER_PUSH_POLYFILL_VERSION = 5; // bump on every change; logged natively and in-page
+var BOUNCER_PUSH_POLYFILL_VERSION = 6; // bump on every change; logged natively and in-page
 (function () {
   'use strict';
   if (window.__bouncerPushPolyfilled) return;
@@ -16,7 +17,9 @@ var BOUNCER_PUSH_POLYFILL_VERSION = 5; // bump on every change; logged natively 
   window.__bouncerPushPolyfillVersion = BOUNCER_PUSH_POLYFILL_VERSION;
 
   var host = location.hostname;
-  if (!/(^|\.)x\.com$|(^|\.)twitter\.com$/.test(host)) return;
+  // Facebook only on www: its push setting lives on the desktop site (the
+  // hidden enable view loads it as desktop Chrome); m.facebook.com has none.
+  if (!/(^|\.)x\.com$|(^|\.)twitter\.com$|^www\.facebook\.com$/.test(host)) return;
   var native = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.bouncerPush;
   if (!native) return;
 

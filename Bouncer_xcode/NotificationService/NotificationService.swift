@@ -3,7 +3,8 @@
 //  NotificationService
 //
 //  Notification Service Extension: turns a relayed Web Push message into the
-//  notification x.com meant to show, without the app running.
+//  notification the site (x.com or Facebook) meant to show, without the app
+//  running.
 //
 //  The relay (twitter-filter-backend lambda/push_relay.py) forwards x.com's
 //  still-encrypted message as an APNs alert push with mutable-content=1, a
@@ -53,6 +54,12 @@ final class NotificationService: UNNotificationServiceExtension {
             return
         }
 
+        let site = PushSite.forScope(record.scope) ?? .x
+        // The relay's generic alert names X; name the site that actually sent,
+        // and send a tap on it to that site's notifications page.
+        content.title = site.fallbackTitle
+        content.userInfo[Self.urlKey] = PushPayload.resolveClickURL(nil, site: site).absoluteString
+
         let plaintext: Data?
         do {
             plaintext = try decrypt(wp, record: record)
@@ -62,12 +69,24 @@ final class NotificationService: UNNotificationServiceExtension {
             return
         }
 
-        let payload = PushPayload.parse(plaintext) ?? PushPayload.fallback
-        NSLog("[WebPush NSE] decrypted %d bytes; parsed=%@ title=\"%@\"",
-              plaintext?.count ?? 0, PushPayload.parse(plaintext) == nil ? "no (fallback)" : "yes", payload.title)
-        let tag = payload.tag ?? record.scope
+        let parsed = PushPayload.parse(plaintext, site: site)
+        let payload = parsed ?? PushPayload.fallback(site)
+        NSLog("[WebPush NSE] decrypted %d bytes (%@); parsed=%@ title=\"%@\"",
+              plaintext?.count ?? 0, site.rawValue, parsed == nil ? "no (fallback)" : "yes", payload.title)
+        #if DEBUG
+        if site != .x {
+            // Facebook's schema is inferred from its worker, not from a
+            // captured message; log real ones to confirm it.
+            NSLog("[WebPush NSE] plaintext: %@", plaintext.flatMap { String(data: $0, encoding: .utf8) } ?? "-")
+        }
+        #endif
+        // X keeps its bare tags; other sites are namespaced so their tags
+        // (e.g. a shared "default") never replace one another's notifications.
+        let rawTag = payload.tag ?? record.scope
+        let tag = site == .x ? rawTag : "\(site.platformId):\(rawTag)"
 
-        // Same-tag bundling as x.com's worker: count what's already showing
+        // Same-tag bundling as x.com's worker (Facebook tags are per
+        // notification, so they never bundle): count what's already showing
         // under this tag and re-render with the multi_* templates.
         UNUserNotificationCenter.current().getDeliveredNotifications { delivered in
             let open = delivered.first { $0.request.content.threadIdentifier == tag }
@@ -79,7 +98,7 @@ final class NotificationService: UNNotificationServiceExtension {
             content.body = rendered.body ?? ""
             content.threadIdentifier = tag
             var userInfo = content.userInfo
-            userInfo[Self.urlKey] = PushPayload.resolveClickURL(rendered.uri).absoluteString
+            userInfo[Self.urlKey] = PushPayload.resolveClickURL(rendered.uri, site: site).absoluteString
             userInfo[Self.countKey] = count
             content.userInfo = userInfo
             if payload.silent {

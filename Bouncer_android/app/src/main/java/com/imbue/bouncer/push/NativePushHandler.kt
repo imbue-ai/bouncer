@@ -17,7 +17,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 /**
- * Turns a decrypted x.com Web Push message into an Android notification
+ * Turns a decrypted Web Push message (x.com or Facebook) into an Android notification
  * directly, so a push never has to boot Gecko.
  *
  * Previously the receiver handed the plaintext to GeckoRuntime, whose only job
@@ -32,7 +32,7 @@ import java.util.concurrent.TimeUnit
  *  - same-tag bundling: the n-th open notification under a tag re-renders
  *    with the multi_* ICU templates; the running count rides along in the
  *    notification extras so it survives us being restarted between pushes
- *  - tap → the resolved x.com URL, opened in the X tab by [MainActivity]
+ *  - tap → the resolved site URL, opened in that platform's tab by [MainActivity]
  *
  * Icon fetch + post run off the main thread under the receiver's goAsync()
  * window, so the caller must invoke the completion callback exactly once.
@@ -56,9 +56,15 @@ class NativePushHandler(private val appCtx: Context) {
     }
 
     private fun deliverBlocking(scope: String, plaintext: ByteArray?) {
-        val payload = PushPayload.parse(plaintext) ?: run {
+        val site = PushSite.forScope(scope) ?: PushSite.X
+        if (com.imbue.bouncer.BuildConfig.DEBUG && site != PushSite.X) {
+            // Facebook's schema is inferred from its worker, not from a
+            // captured message; log real ones to confirm it.
+            Log.i(TAG, "plaintext for $scope: ${plaintext?.toString(Charsets.UTF_8)}")
+        }
+        val payload = PushPayload.parse(plaintext, site) ?: run {
             Log.w(TAG, "unparseable push payload (${plaintext?.size ?: 0} bytes); showing generic")
-            PushPayload.FALLBACK
+            PushPayload.fallback(site)
         }
         if (payload.silent) {
             Log.i(TAG, "silent push for $scope; not displaying")
@@ -70,13 +76,15 @@ class NativePushHandler(private val appCtx: Context) {
             return
         }
         WebNotificationHandler.ensureChannel(appCtx)
-        val tag = payload.tag ?: scope
+        // X keeps its bare tags; other sites are namespaced so their tags
+        // (e.g. a shared "default") never replace one another's notifications.
+        val tag = (payload.tag ?: scope).let { if (site == PushSite.X) it else "${site.platformId}:$it" }
         val count = openCount(tag) + 1
         val rendered = payload.render(count) { template, others, total ->
             formatTemplate(template, payload.lang, others, total)
         }
         val icon = payload.iconUrl?.let { WebNotificationHandler.fetchBitmap(client, it) }
-        val clickUrl = PushPayload.resolveClickUrl(rendered.uri)
+        val clickUrl = PushPayload.resolveClickUrl(rendered.uri, site)
         Log.i(TAG, "posting notification tag=$tag count=$count url=$clickUrl icon=${icon != null}")
         post(tag, rendered, icon, clickUrl, count)
     }

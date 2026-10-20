@@ -15,8 +15,55 @@
 //  Foundation has no ICU MessageFormat, so `ICUMessage` below implements the
 //  small subset those templates use.
 //
+//  Facebook's messages are a different shape, mapped onto the same fields by
+//  `parseFacebook`. `PushSite` says which site a subscription belongs to.
+//
 
 import Foundation
+
+/// The sites whose Web Push we turn on, and what differs between them. The
+/// mechanism is the same for each (PushAutoEnabler clicks the site's own
+/// toggle; pushes are decrypted and rendered natively). Mirrors Android's
+/// PushSite.kt. LinkedIn isn't here: its web client has no Web Push at all.
+enum PushSite: String, CaseIterable {
+    case x
+    case facebook
+
+    /// Matches the Platforms id of the tab this site's feed lives in.
+    var platformId: String {
+        switch self {
+        case .x: return "twitter"
+        case .facebook: return "facebook"
+        }
+    }
+
+    /// Service-worker scope the page subscribes under (the polyfill's default).
+    var scope: String { origin + "/" }
+
+    /// Origin taps resolve against (payload URIs never leave it).
+    var origin: String {
+        switch self {
+        case .x: return "https://x.com"
+        case .facebook: return "https://www.facebook.com"
+        }
+    }
+
+    /// Shown when a push can't be decrypted or parsed.
+    var fallbackTitle: String {
+        switch self {
+        case .x: return "X"
+        case .facebook: return "Facebook"
+        }
+    }
+
+    static let defaultURI = "/notifications"
+
+    /// By host, so a worker registered under a sub-path scope still maps back.
+    static func forScope(_ scope: String) -> PushSite? {
+        guard let host = URL(string: scope)?.host?.lowercased() else { return nil }
+        return allCases.first { URL(string: $0.origin)?.host == host }
+    }
+}
 
 struct PushPayload {
     let title: String
@@ -36,20 +83,20 @@ struct PushPayload {
         let uri: String?
     }
 
-    static let origin = "https://x.com"
-    static let defaultURI = "/notifications"
+    /// What the site's worker shows when a message doesn't parse.
+    static func fallback(_ site: PushSite = .x) -> PushPayload {
+        PushPayload(
+            title: site.fallbackTitle, body: "New notification", tag: "default", iconURL: nil,
+            uri: PushSite.defaultURI, silent: false, lang: nil, multiTitle: nil, multiBody: nil, multiUri: nil
+        )
+    }
 
-    /// What sw.js shows when a message doesn't parse.
-    static let fallback = PushPayload(
-        title: "X", body: "New notification", tag: "default", iconURL: nil,
-        uri: defaultURI, silent: false, lang: nil, multiTitle: nil, multiBody: nil, multiUri: nil
-    )
-
-    /// nil when the plaintext isn't the x.com shape (caller shows `fallback`).
-    static func parse(_ plaintext: Data?) -> PushPayload? {
+    /// nil when the plaintext isn't the site's shape (caller shows `fallback`).
+    static func parse(_ plaintext: Data?, site: PushSite = .x) -> PushPayload? {
         guard let plaintext, !plaintext.isEmpty,
-              let obj = (try? JSONSerialization.jsonObject(with: plaintext)) as? [String: Any],
-              let title = obj["title"] as? String else { return nil }
+              let obj = (try? JSONSerialization.jsonObject(with: plaintext)) as? [String: Any] else { return nil }
+        if site == .facebook { return parseFacebook(obj) }
+        guard let title = obj["title"] as? String else { return nil }
         let data = obj["data"] as? [String: Any]
         return PushPayload(
             title: title,
@@ -79,10 +126,39 @@ struct PushPayload {
         )
     }
 
-    /// The page a tap opens. Mirrors sw.js W(): resolve `uri` against x.com
-    /// and keep only path + query, so a payload can never steer the tap
-    /// off-origin, and an unparseable one lands on /notifications.
-    static func resolveClickURL(_ uri: String?) -> URL {
+    /// Facebook's worker (ServiceWorkerPushEvent in its /sw?s=push bundle)
+    /// renders a message inline only when it carries a `type`:
+    ///
+    ///   { type, title?, message?, href?, ppu? | pic?, i? | t? (notif id),
+    ///     params?: { t_n? }, … }
+    ///
+    /// Anything else is a content-less "tickle" its worker resolves with a
+    /// cookie-authenticated fetch, which the extension can't make — so those
+    /// get the fallback, as its worker does when that fetch fails. Each
+    /// notification id is its own tag, so pushes stack rather than replace.
+    private static func parseFacebook(_ obj: [String: Any]) -> PushPayload? {
+        guard obj["type"] is String else { return nil }
+        let params = obj["params"] as? [String: Any]
+        let title = (obj["title"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            ?? (params?["t_n"] as? String)
+            ?? PushSite.facebook.fallbackTitle
+        let id = [obj["i"], obj["t"]].compactMap { $0 }.first { !($0 is NSNull) }.map { "\($0)" }
+        return PushPayload(
+            title: title,
+            body: obj["message"] as? String,
+            tag: id.map { "fb_" + $0 },
+            iconURL: (obj["ppu"] as? String) ?? (obj["pic"] as? String),
+            uri: obj["href"] as? String,
+            silent: false, lang: nil, multiTitle: nil, multiBody: nil, multiUri: nil
+        )
+    }
+
+    /// The page a tap opens. Mirrors sw.js W(): resolve `uri` against the
+    /// site's origin and keep only path + query, so a payload can never steer
+    /// the tap off-origin, and an unparseable one lands on /notifications.
+    static func resolveClickURL(_ uri: String?, site: PushSite = .x) -> URL {
+        let origin = site.origin
+        let defaultURI = PushSite.defaultURI
         let fallbackURL = URL(string: origin + defaultURI)!
         let target = uri?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !target.isEmpty,

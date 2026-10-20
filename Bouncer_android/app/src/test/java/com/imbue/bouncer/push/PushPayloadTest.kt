@@ -137,4 +137,54 @@ class PushPayloadTest {
         assertEquals("Alice liked your post", r2.title)
         assertEquals("hello world", r2.body)
     }
+
+    // Field names from Facebook's worker (ServiceWorkerPushEvent); values invented.
+    @Test
+    fun parsesFacebookInlinePayload() {
+        val p = PushPayload.parse(
+            bytes(
+                """{"type":"comment","title":"Bob commented on your post","message":"nice!",
+                    "href":"https://www.facebook.com/permalink.php?story_fbid=1&id=2",
+                    "ppu":"https://scontent.xx.fbcdn.net/bob.jpg","pic":"https://x/pic.jpg",
+                    "i":12345,"time":1700000000}""",
+            ),
+            PushSite.FACEBOOK,
+        )!!
+        assertEquals("Bob commented on your post", p.title)
+        assertEquals("nice!", p.body)
+        assertEquals("fb_12345", p.tag)
+        assertEquals("https://scontent.xx.fbcdn.net/bob.jpg", p.iconUrl)
+        assertFalse(p.silent)
+        assertEquals(
+            "https://www.facebook.com/permalink.php?story_fbid=1&id=2",
+            PushPayload.resolveClickUrl(p.uri, PushSite.FACEBOOK),
+        )
+    }
+
+    @Test
+    fun facebookTitleFallsBackToParamsThenSiteName() {
+        val fromParams = PushPayload.parse(
+            bytes("""{"type":"cm","title":"","params":{"t_n":"Group chat"}}"""),
+            PushSite.FACEBOOK,
+        )!!
+        assertEquals("Group chat", fromParams.title)
+        val bare = PushPayload.parse(bytes("""{"type":"x"}"""), PushSite.FACEBOOK)!!
+        assertEquals("Facebook", bare.title)
+        assertNull(bare.tag)
+    }
+
+    @Test
+    fun facebookTickleWithoutTypeIsNotInline() {
+        // No `type`: its worker would fetch the content with cookies.
+        assertNull(PushPayload.parse(bytes("""{"title":"t","message":"m"}"""), PushSite.FACEBOOK))
+        assertEquals("Facebook", PushPayload.fallback(PushSite.FACEBOOK).title)
+        assertEquals(
+            "https://www.facebook.com/notifications",
+            PushPayload.resolveClickUrl(null, PushSite.FACEBOOK),
+        )
+        assertEquals(
+            "https://www.facebook.com/x",
+            PushPayload.resolveClickUrl("https://evil.example/x", PushSite.FACEBOOK),
+        )
+    }
 }

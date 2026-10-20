@@ -131,7 +131,7 @@ class WebNotificationHandler(
                 CHANNEL_ID,
                 "Website notifications",
                 NotificationManager.IMPORTANCE_DEFAULT,
-            ).apply { description = "Notifications from x.com" }
+            ).apply { description = "Notifications from X and Facebook" }
             manager(ctx).createNotificationChannel(channel)
         }
 

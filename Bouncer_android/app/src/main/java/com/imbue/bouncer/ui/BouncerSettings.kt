@@ -77,7 +77,7 @@ fun BouncerSettings(
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
         )
 
-        // App-level display switch. On subscribes (if needed) and shows X
+        // App-level display switch. On subscribes (if needed) and shows X and Facebook
         // notifications; off just suppresses display — the subscription and OS
         // permission stay in place (see WebNotificationHandler / BouncerViewModel).
         ListItem(

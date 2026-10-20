@@ -12,6 +12,7 @@ import android.widget.FrameLayout
 import androidx.browser.customtabs.CustomTabsIntent
 import com.imbue.bouncer.push.BouncerPushDelegate
 import com.imbue.bouncer.push.NotificationPermissionBroker
+import com.imbue.bouncer.push.PushSite
 import com.imbue.bouncer.push.WebNotificationHandler
 import com.imbue.bouncer.state.BouncerViewModel
 import com.imbue.bouncer.state.Platform
@@ -23,6 +24,7 @@ import org.mozilla.geckoview.GeckoResult
 import org.mozilla.geckoview.GeckoRuntime
 import org.mozilla.geckoview.GeckoRuntimeSettings
 import org.mozilla.geckoview.GeckoSession
+import org.mozilla.geckoview.GeckoSessionSettings
 import org.mozilla.geckoview.GeckoView
 import org.mozilla.geckoview.WebExtension
 import org.mozilla.geckoview.WebRequestError
@@ -32,7 +34,11 @@ object BouncerGeckoView {
     private const val EXT_LOCATION = "resource://android/assets/web_ext_gecko/"
     private const val EXT_ID = "bouncer@imbue.com"
     private const val PORT_NAME = "bouncer"
-    private const val PUSH_SETTINGS_URL = "https://x.com/settings/push_notifications"
+    // Desktop Chrome, for push-settings pages only served to desktop browsers
+    // (PushSite.desktopSettingsPage).
+    private const val DESKTOP_CHROME_UA =
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
+            "(KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36"
 
     private val ALLOWED_HOSTS = setOf(
         "x.com", "twitter.com", "t.co",
@@ -469,7 +475,7 @@ object BouncerGeckoView {
         target.setActive(true)
     }
 
-    // ----- Push auto-enable: x.com's settings page as a real tab, under a cover -----
+    // ----- Push auto-enable: a site's settings page as a real tab, under a cover -----
     //
     // A background GeckoSession that's never attached to the GeckoView has no
     // compositor surface, and Gecko won't fully render x.com's settings SPA cold
@@ -480,11 +486,12 @@ object BouncerGeckoView {
     // toggle renders, JS clicks it (bridge_page.js __ff_autoEnablePush); x.com then
     // subscribes AND registers with its backend, our WebPushDelegate captures the
     // endpoint, and we swap back to the warm home tab and drop the cover.
-    // activePlatformId stays "twitter" so bridge routing follows the settings tab.
+    // activePlatformId is unchanged; the VM addresses the settings tab by its
+    // site's platform (callJsOn), so it is reached from any tab.
     @Volatile private var pushSettingsSession: GeckoSession? = null
     @Volatile private var pushHomeSession: GeckoSession? = null
 
-    fun showPushSettingsCovered() {
+    fun showPushSettingsCovered(site: PushSite) {
         val view = viewRef ?: return
         val r = runtime ?: return
         val vm = vmRef ?: return
@@ -492,7 +499,7 @@ object BouncerGeckoView {
         val home = sessions[activePlatformId] ?: return
         if (pushSettingsSession != null) return
         pushHomeSession = home
-        val s = GeckoSession()
+        val s = pushSettingsSessionFor(site)
         wireDelegates(s, view, r, appCtx, vm)
         s.open(r)
         pushSettingsSession = s
@@ -507,8 +514,8 @@ object BouncerGeckoView {
             if (coverColor != 0) view.coverUntilFirstPaint(coverColor)
             vm.attachSession(s)
             s.setActive(true)
-            s.loadUri(PUSH_SETTINGS_URL)
-            Log.i(TAG, "showPushSettingsCovered: settings tab displayed under cover")
+            s.loadUri(site.settingsUrl)
+            Log.i(TAG, "showPushSettingsCovered: ${site.name} settings tab displayed under cover")
         }
     }
 
@@ -558,7 +565,7 @@ object BouncerGeckoView {
     @Volatile private var offscreenView: GeckoView? = null
     @Volatile private var offscreenSession: GeckoSession? = null
 
-    fun beginBackgroundPushEnable() {
+    fun beginBackgroundPushEnable(site: PushSite) {
         val mainView = viewRef ?: return
         val r = runtime ?: return
         val vm = vmRef ?: return
@@ -571,7 +578,7 @@ object BouncerGeckoView {
         mainView.post {
             val root = activity.window.decorView as? ViewGroup ?: return@post
             val gv = GeckoView(activity)
-            val s = GeckoSession()
+            val s = pushSettingsSessionFor(site)
             wireDelegates(s, gv, r, appCtx, vm)
             s.open(r)
             gv.setSession(s)
@@ -589,9 +596,21 @@ object BouncerGeckoView {
             offscreenView = gv
             offscreenSession = s
             s.setActive(true)
-            s.loadUri(PUSH_SETTINGS_URL)
-            Log.i(TAG, "beginBackgroundPushEnable: off-screen settings view attached")
+            s.loadUri(site.settingsUrl)
+            Log.i(TAG, "beginBackgroundPushEnable: off-screen ${site.name} settings view attached")
         }
+    }
+
+    // A desktop-only settings page gets a desktop Chrome session; the rest use
+    // the default mobile session the site's own tab has.
+    private fun pushSettingsSessionFor(site: PushSite): GeckoSession {
+        if (!site.desktopSettingsPage) return GeckoSession()
+        return GeckoSession(
+            GeckoSessionSettings.Builder()
+                .userAgentOverride(DESKTOP_CHROME_UA)
+                .viewportMode(GeckoSessionSettings.VIEWPORT_MODE_DESKTOP)
+                .build(),
+        )
     }
 
     fun endBackgroundPushEnable() {
