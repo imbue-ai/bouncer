@@ -21,7 +21,7 @@ export { DEFAULT_AI_TEXT_DETECTION_THRESHOLD, DEFAULT_AI_IMAGE_DETECTION_THRESHO
 import type {
   EvaluationResult, PipelineResponse, PipelineError, PendingEvaluation,
   ErrorState, Settings, APIConfig, ChatMessage, BackgroundToContentMessage, LocalModelDef,
-  SiteId, DetectorSnapshot,
+  SiteId, DetectorSnapshot, PauseScope,
 } from '../types';
 
 // ==================== Constants ====================
@@ -510,8 +510,9 @@ function broadcastToTabs(message: BackgroundToContentMessage): void {
 // ==================== Settings helper ====================
 
 // Get user settings
-// siteId is optional - if provided, fetches site-specific descriptions
-export async function getSettings(siteId?: SiteId): Promise<Settings> {
+// siteId is optional - if provided, fetches site-specific descriptions.
+// pauseScope picks which of the site's pause flags masks them.
+export async function getSettings(siteId?: SiteId, pauseScope: PauseScope = 'core'): Promise<Settings> {
   const descriptionsKey = siteId ? `descriptions_${siteId}` as const : undefined;
   // Per-platform `${id}Enabled` storage keys come from the registry — no
   // need to extend this list when a new platform is added.
@@ -528,7 +529,7 @@ export async function getSettings(siteId?: SiteId): Promise<Settings> {
   const [data, descriptions, paused] = await Promise.all([
     getStorage([...settingsKeys]),
     descriptionsKey ? getDescriptions(descriptionsKey) : Promise.resolve([] as string[]),
-    siteId ? getFilteringPaused(siteId) : Promise.resolve(false)
+    siteId ? getFilteringPaused(siteId, pauseScope) : Promise.resolve(false)
   ]);
   const platformEnabled: Partial<Record<SiteId, boolean>> = {};
   for (const p of PLATFORMS) {
@@ -589,7 +590,8 @@ export async function getSettings(siteId?: SiteId): Promise<Settings> {
     // phrases pauses the AI detectors along with them.
     aiFilterIntentActive: paused ? false : aiIntentActiveForSite(data, descriptions),
     filterReplies: data.filterReplies !== false,
-    platformEnabled
+    platformEnabled,
+    filteringPaused: paused
   };
 }
 
@@ -915,7 +917,7 @@ async function processBatch(): Promise<void> {
 
   inFlightBatches++;
 
-  const settings = await getSettings(pendingEvaluations[0]?.siteId);
+  const settings = await getSettings(pendingEvaluations[0]?.siteId, pendingEvaluations[0]?.pauseScope);
   const isLocalModel = settings.selectedModel?.startsWith('local:');
   const isIosLocalModel = settings.selectedModel?.startsWith('iosLocal:');
 
@@ -966,7 +968,7 @@ async function processBatch(): Promise<void> {
   // recomputing — for YouTube that key is video-id based, not text+image.
   const imageUrls = item.imageUrls || [];
   const cacheKey = item.cacheKey;
-  if (evaluationCache.has(cacheKey)) {
+  if (!settings.filteringPaused && evaluationCache.has(cacheKey)) {
     const cached = evaluationCache.get(cacheKey)!;
     replayDetectorStates(batchTabId, item.evaluationId, cached);
     resolveWithDuplicates(batchTabId, item, { ...cached, cached: true });
@@ -1136,11 +1138,14 @@ async function processBatch(): Promise<void> {
       detectorStates: buildDetectorStates(tabPlan, snapshots),
     };
 
-    // Update cache
-    evaluationCache.set(cacheKey, evalResult);
-    if (evaluationCache.size > CACHE_SIZE) {
-      const firstKey = evaluationCache.keys().next().value;
-      if (firstKey !== undefined) evaluationCache.delete(firstKey);
+    // Update cache — but not with verdicts computed against paused (masked)
+    // settings, which would leak "don't hide" onto pages that aren't paused.
+    if (!settings.filteringPaused) {
+      evaluationCache.set(cacheKey, evalResult);
+      if (evaluationCache.size > CACHE_SIZE) {
+        const firstKey = evaluationCache.keys().next().value;
+        if (firstKey !== undefined) evaluationCache.delete(firstKey);
+      }
     }
 
     // Update stats

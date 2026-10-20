@@ -221,7 +221,7 @@ export async function applyBounceAction(opts: {
   reasoning: string;
 }): Promise<void> {
   const { article, content, tooltip, phrase, reasoning } = opts;
-  const quoteEnabled = tooltip.querySelector<HTMLInputElement>('.ff-bounce-quote-toggle')?.checked ?? true;
+  const quoteEnabled = tooltip.querySelector<HTMLInputElement>('.ff-bounce-quote-toggle')?.checked ?? false;
   console.log('[Bouncer/bounce-quote] applyBounceAction start', { phrase, quoteEnabled, reasoning });
   tooltip.remove();
   if (phrase !== null) {

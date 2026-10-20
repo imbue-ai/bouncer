@@ -222,20 +222,6 @@ async function migrateStaleLocalSelection(): Promise<void> {
   }
 })().catch(err => console.error('[Background] Startup error:', err));
 
-// Lifeline ports held open by content-script overlays (the platform
-// onboarding popup). No traffic flows over them — their only job is that
-// port.onDisconnect fires in the content script when this extension is
-// reloaded or removed, so the overlay can take its backdrop down instead of
-// lingering as an orphaned grey layer over the page.
-//
-// MUST stay guarded: in the mobile apps this bundle runs as a page script
-// against ChromePolyfill, whose chrome.runtime historically lacked onConnect.
-// An unguarded call here threw at top level and killed the whole background
-// script BEFORE the message handler below registered — every sendMessage in
-// both apps then resolved undefined via the polyfill's no-listener timeout
-// (no suggestions, no classification, no visible error).
-chrome.runtime.onConnect?.addListener(() => { /* held open, nothing to do */ });
-
 // ==================== Message handler ====================
 
 // Async message handler — each case returns the response object.
@@ -256,7 +242,8 @@ async function handleMessage(
       // Posts always flow through processBatch so the popup gets a consistent
       // two-tab dispatch (filter + aiText), even when neither is configured.
       // The detectors then mark themselves skipped with appropriate reasons.
-      const settings = await getSettings(message.siteId);
+      const pauseScope = message.pauseScope ?? 'core';
+      const settings = await getSettings(message.siteId, pauseScope);
 
       // Check if local model is selected but not ready
       const isLocalModel = settings.selectedModel?.startsWith('local:');
@@ -277,8 +264,9 @@ async function handleMessage(
       const imageUrls = message.imageUrls || [];
       const cacheKey = cacheKeyFor(message.siteId, message.post, imageUrls, message.postUrl);
 
-      // Check main cache
-      if (evaluationCache.has(cacheKey)) {
+      // Check main cache. Skipped while paused: a verdict cached on an
+      // unpaused page must not hide the post on a paused one.
+      if (!settings.filteringPaused && evaluationCache.has(cacheKey)) {
         const cached = evaluationCache.get(cacheKey)!;
         if (tabId !== undefined) replayDetectorStates(tabId, message.evaluationId, cached);
         return { ...cached, cached: true };
@@ -287,7 +275,7 @@ async function handleMessage(
       // Check if already in queue - add another resolver for this item
       if (tabId !== undefined && isKeyPending(tabId, cacheKey)) {
         return new Promise(resolve => {
-          const item = { evaluationId: message.evaluationId, post: message.post, rawText: message.rawText, imageUrls, resolve, cacheKey, tabId, postUrl: message.postUrl, siteId: message.siteId, isReply: message.isReply === true };
+          const item = { evaluationId: message.evaluationId, post: message.post, rawText: message.rawText, imageUrls, resolve, cacheKey, tabId, postUrl: message.postUrl, siteId: message.siteId, isReply: message.isReply === true, pauseScope };
           enqueuePost(tabId, item);
         });
       }
@@ -295,7 +283,7 @@ async function handleMessage(
       // Queue for batch processing
       // processBatch will prioritize posts closest to viewport center for local models
       const resultPromise = new Promise(resolve => {
-        const item = { evaluationId: message.evaluationId, post: message.post, rawText: message.rawText, imageUrls, resolve, cacheKey, tabId, postUrl: message.postUrl, siteId: message.siteId, isReply: message.isReply === true };
+        const item = { evaluationId: message.evaluationId, post: message.post, rawText: message.rawText, imageUrls, resolve, cacheKey, tabId, postUrl: message.postUrl, siteId: message.siteId, isReply: message.isReply === true, pauseScope };
         enqueuePost(tabId!, item);
       });
       console.log('[Bouncer][diag] evaluatePost enqueued for tab', tabId);

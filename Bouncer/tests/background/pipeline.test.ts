@@ -355,6 +355,21 @@ describe('getSettings effectiveDescriptions', () => {
     expect(settings.aiFilterIntentActive).toBe(false);
   });
 
+  it('extended scope is paused by default and independent of the core flag', async () => {
+    store.descriptions_twitter = ['politics'];
+
+    const unset = await getSettings('twitter', 'extended');
+    expect(unset.filteringPaused).toBe(true);
+    expect(unset.descriptions).toEqual([]);
+    expect((await getSettings('twitter')).filteringPaused).toBe(false);
+
+    store.filteringPausedExtended_twitter = false;
+    store.filteringPaused_twitter = true;
+    const resumed = await getSettings('twitter', 'extended');
+    expect(resumed.filteringPaused).toBe(false);
+    expect(resumed.descriptions).toEqual(['politics']);
+  });
+
   it('AI-detection gate is on for the same state when not paused', async () => {
     store.descriptions_twitter = ['posts written by AI', 'politics'];
     store.selectedModel = 'iosLocal:gemma-4-e2b-detector-v2';

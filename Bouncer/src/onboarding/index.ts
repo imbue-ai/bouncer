@@ -92,9 +92,15 @@ async function init(): Promise<void> {
   // Checking a platform's box fires the browser's permission prompt right
   // then — the change event is the user gesture, so the request must be the
   // handler's first await (same pattern as the settings toggles in
-  // popup/index.ts). Granting never closes the popup — only the Done button
+  // popup/index.ts). Granting never closes the popup — only the Done/Skip button
   // (or, in the iframe host, a backdrop click handled by the parent) does.
   const list = document.getElementById('platformList')!;
+  // The dismiss button reads "Skip" until at least one platform is active,
+  // then "Done".
+  const doneBtn = document.getElementById('doneBtn')!;
+  let anyGranted = grantedFlags.some(Boolean);
+  const updateDoneLabel = () => { doneBtn.textContent = anyGranted ? 'Done' : 'Skip'; };
+  updateDoneLabel();
   candidates.forEach((p, i) => {
     const alreadyGranted = grantedFlags[i];
     const row = document.createElement('label');
@@ -138,6 +144,8 @@ async function init(): Promise<void> {
         }
         // Granted — this popup offers no way to revoke, so freeze the box.
         checkbox.disabled = true;
+        anyGranted = true;
+        updateDoneLabel();
         // The key defaults to true, but setting it explicitly makes the
         // settings toggle and any storage listeners see a definite value.
         const updates: Partial<StorageSchema> = {};
@@ -152,7 +160,7 @@ async function init(): Promise<void> {
     });
   });
 
-  document.getElementById('doneBtn')!.addEventListener('click', finish);
+  doneBtn.addEventListener('click', finish);
 
   // Rows are rendered — report the real content height so the parent can
   // size the iframe (and, having heard from us, actually show it).

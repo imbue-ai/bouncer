@@ -469,6 +469,13 @@ label {
   margin-bottom: 6px;
 }
 
+/* Section headings ("Filtering Mode", "Active Platforms", ...) sit one step
+   above the 14px row titles. */
+section > label {
+  font-size: 15px;
+  font-weight: 600;
+}
+
 .input-group {
   display: flex;
   gap: 8px;
@@ -519,7 +526,7 @@ input[type="password"]:focus {
 }
 
 .hint {
-  font-size: 12px;
+  font-size: 13px;
   color: #536471;
   margin-top: 6px;
 }
@@ -688,7 +695,7 @@ footer.contact-footer p {
   text-align: center;
   margin: 0;
   line-height: 1.4;
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .contact-footer-text {
@@ -853,7 +860,7 @@ body.dim-mode .contact-icon {
 
 .api-provider-name {
   font-weight: 500;
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .api-status-badge {
@@ -901,7 +908,7 @@ body.dim-mode .contact-icon {
 
 .api-field label {
   display: block;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 500;
   margin-bottom: 4px;
   color: #536471;
@@ -1736,49 +1743,36 @@ body.dim-mode footer.pricing-disclaimer p {
   color: rgb(139, 152, 165);
 }
 
-/* Local Model Section */
-.local-model-section {
-  background: #f7f9f9;
-  border-radius: 8px;
-  padding: 12px;
-}
-
-.local-model-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 8px;
-}
-
-.local-model-title {
-  font-weight: 500;
-  font-size: 13px;
-}
-
+/* Same pill as the in-feed "View filtered" button (content.css
+   .filtered-toggle-btn), light variant by default, dark under
+   dark/dim mode. Kept at 12px to match the radio sub-text. */
 .local-model-download-btn {
-  width: 100%;
-  display: flex;
+  display: inline-flex;
+  align-self: flex-start;
   align-items: center;
-  justify-content: center;
-  gap: 8px;
-  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-  color: white;
-  border: none;
-  border-radius: 8px;
-  padding: 10px 16px;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: opacity 0.2s, transform 0.1s;
+  gap: 6px;
   margin-top: 8px;
+  padding: 6px 12px;
+  background: rgba(0, 0, 0, 0.05);
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 9999px;
+  color: rgb(15, 20, 25);
+  /* Same typography as the in-feed "View filtered" button (.filtered-toggle-btn
+     inherits X's font stack). Buttons don't inherit font-family by default. */
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  transition: background 0.2s, border-color 0.2s;
 }
 
 .local-model-download-btn:hover {
-  opacity: 0.9;
-}
-
-.local-model-download-btn:active {
-  transform: scale(0.98);
+  background: rgba(0, 0, 0, 0.08);
+  border-color: rgba(0, 0, 0, 0.2);
 }
 
 .local-model-download-btn:disabled {
@@ -1786,80 +1780,17 @@ body.dim-mode footer.pricing-disclaimer p {
   cursor: not-allowed;
 }
 
-.download-icon {
-  font-size: 16px;
+body.dark-mode .local-model-download-btn,
+body.dim-mode .local-model-download-btn {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.15);
+  color: rgb(231, 233, 234);
 }
 
-.local-model-progress {
-  width: 100%;
-  height: 8px;
-  background: #e5e7eb;
-  border-radius: 4px;
-  overflow: hidden;
-  margin: 8px 0;
-}
-
-.local-model-progress-fill {
-  height: 100%;
-  background: linear-gradient(90deg, #10b981 0%, #059669 100%);
-  border-radius: 4px;
-  transition: width 0.3s ease;
-}
-
-.local-model-download-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 4px;
-}
-
-.local-model-download-row .hint {
-  flex: 1;
-  margin: 0;
-}
-
-.local-model-cancel-btn {
-  background: none;
-  border: 1px solid #cfd9de;
-  border-radius: 50%;
-  width: 22px;
-  height: 22px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 11px;
-  cursor: pointer;
-  color: #536471;
-  padding: 0;
-  flex-shrink: 0;
-  line-height: 1;
-}
-
-.local-model-cancel-btn:hover {
-  background: #fee2e2;
-  border-color: #ef4444;
-  color: #ef4444;
-}
-
-.local-model-retry-btn {
-  background: none;
-  border: 1px solid #cfd9de;
-  border-radius: 6px;
-  padding: 6px 12px;
-  font-size: 12px;
-  cursor: pointer;
-  color: #536471;
-  margin-top: 8px;
-}
-
-.local-model-retry-btn:hover {
-  background: #f7f9f9;
-  border-color: #1d9bf0;
-  color: #1d9bf0;
-}
-
-.local-model-error-text {
-  color: #dc2626;
+body.dark-mode .local-model-download-btn:hover,
+body.dim-mode .local-model-download-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.25);
 }
 
 .api-status-badge.downloading {
@@ -1986,11 +1917,40 @@ body.dim-mode footer.pricing-disclaimer p {
   transform: translateX(14px);
 }
 
-/* Dim the body when the platform's master toggle is off, so the body's
- * sub-settings clearly read as "doesn't matter right now". */
-.platform-provider.disabled .api-provider-content {
-  opacity: 0.45;
-  pointer-events: none;
+/* Platform row body: settings stacked as full-width rows divided by
+   hairlines, like the Filtering Mode radio group. */
+.platform-excluded-content {
+  padding: 0;
+}
+
+.platform-excluded-content > * {
+  padding: 10px 12px;
+}
+
+.platform-excluded-content > * + * {
+  border-top: 1px solid #eff3f4;
+}
+
+body.dark-mode .platform-excluded-content > * + * { border-top-color: rgb(47, 51, 54); }
+body.dim-mode .platform-excluded-content > * + * { border-top-color: rgb(56, 68, 77); }
+
+/* Label on the left, switch on the right. Same type as the
+   excluded-accounts sentence below it and the same small switch as the
+   platform headers (.ts-inline). */
+.platform-setting {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0;
+  font-size: 14px;
+  font-weight: normal;
+  cursor: pointer;
+  user-select: none;
+}
+
+/* Platform row expansion follows the master toggle, not header clicks. */
+.platform-provider > .api-provider-header {
+  cursor: default;
 }
 
 .checkbox-label {
@@ -2040,13 +2000,13 @@ body.dim-mode footer.pricing-disclaimer p {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  font-size: 13px;
+  font-size: 14px;
   color: #0f1419;
 }
 .ai-text-threshold-value {
   color: #536471;
   font-variant-numeric: tabular-nums;
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .ai-text-threshold-block input[type="range"] {
@@ -2115,22 +2075,6 @@ body.dim-mode footer.pricing-disclaimer p {
 }
 
 
-/* Local Model Resource Hint */
-.local-model-resource-hint {
-  margin-bottom: 10px;
-  font-size: 12px;
-}
-
-/* Local Model No Image Support Warning */
-.local-model-no-image-warning {
-  background: #fef3c7;
-  color: #92400e;
-  padding: 8px 10px;
-  border-radius: 6px;
-  margin-bottom: 10px;
-  font-size: 12px;
-  line-height: 1.4;
-}
 /* ======================================
    Light Mode Styles (explicit, matches default)
    ====================================== */
@@ -2414,23 +2358,6 @@ body.dim-mode footer.contact-footer { border-top-color: #38444d; }
 body.dim-mode .ai-text-threshold-header { color: #f7f9f9; }
 body.dim-mode .ai-text-threshold-value { color: #8b98a5; }
 
-body.dark-mode .local-model-section {
-  background: rgba(255, 255, 255, 0.05);
-}
-
-body.dark-mode .local-model-title {
-  color: rgb(231, 233, 234);
-}
-
-body.dark-mode .local-model-progress {
-  background: rgb(47, 51, 54);
-}
-
-body.dark-mode .local-model-no-image-warning {
-  background: rgba(245, 158, 11, 0.15);
-  color: #fbbf24;
-}
-
 /* ======================================
    Dim Mode Styles (Twitter's blue-gray theme)
    ====================================== */
@@ -2688,23 +2615,6 @@ body.dim-mode .checkbox-label {
   color: rgb(139, 152, 165);
 }
 
-body.dim-mode .local-model-section {
-  background: rgba(255, 255, 255, 0.04);
-}
-
-body.dim-mode .local-model-title {
-  color: rgb(247, 249, 249);
-}
-
-body.dim-mode .local-model-progress {
-  background: rgb(56, 68, 77);
-}
-
-body.dim-mode .local-model-no-image-warning {
-  background: rgba(245, 158, 11, 0.15);
-  color: #fbbf24;
-}
-
 /* ======================================
    Model radio group (headline Imbue vs Local choice)
    ====================================== */
@@ -2721,7 +2631,7 @@ body.dim-mode .local-model-no-image-warning {
   padding: 10px 12px;
   margin-bottom: 0;
   cursor: pointer;
-  font-size: 13px;
+  font-size: 14px;
   user-select: none;
 }
 
@@ -2748,6 +2658,19 @@ body.dim-mode .local-model-no-image-warning {
   cursor: default;
 }
 
+/* On-Device before its model is downloaded: grey the radio and its text but
+   not the Download button in the same row, which is how you enable it. */
+.model-radio.not-downloaded {
+  cursor: default;
+}
+
+.model-radio.not-downloaded input[type="radio"],
+.model-radio.not-downloaded .model-radio-label,
+.model-radio.not-downloaded .model-radio-sub {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .model-radio-text {
   display: flex;
   flex-direction: column;
@@ -2760,7 +2683,8 @@ body.dim-mode .local-model-no-image-warning {
 }
 
 .model-radio-sub {
-  font-size: 12px;
+  font-size: 13px;
+  font-weight: normal;
   color: #536471;
   line-height: 1.35;
 }
@@ -2823,12 +2747,6 @@ body.dim-mode .model-radio-sub { color: rgb(139, 152, 165); }
 
 .accent-color-content {
   padding: 12px;
-}
-
-/* Excluded Accounts and Accent Color are back-to-back accordions; stack them
-   at the usual .api-provider spacing instead of the 25px between sections. */
-section.excluded-accounts-section {
-  margin-bottom: 12px;
 }
 
 /* Border toggle below the picker inside the accent accordion: force it onto
@@ -3163,11 +3081,13 @@ body.dim-mode .cp-swatch.selected {
   border-bottom-color: rgb(var(--bouncer-brand-rgb, 234, 133, 84));
 }
 
-body.dark-mode .excluded-sentence {
+body.dark-mode .excluded-sentence,
+body.dark-mode .platform-setting {
   color: rgb(231, 233, 234);
 }
 
-body.dim-mode .excluded-sentence {
+body.dim-mode .excluded-sentence,
+body.dim-mode .platform-setting {
   color: rgb(247, 249, 249);
 }
 

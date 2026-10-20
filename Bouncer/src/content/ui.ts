@@ -10,7 +10,7 @@ import {
   FILTER_PACK_SHARE_URL_REGEX, FILTER_PACK_SHARE_URL_BASE, FILTER_PACK_CODE_PREFIX,
   type SharedFilterPack,
 } from '../shared/share-encoding';
-import type { BackgroundToContentMessage, ContentUIDeps, FilteredPost, PipelineResponse, PostContent, LocalModelStatus } from '../types';
+import type { BackgroundToContentMessage, ContentUIDeps, FilteredPost, PipelineResponse, PostContent, LocalModelStatus, PauseScope } from '../types';
 import {
   getStorage, setStorage, getDescriptions, setDescriptions,
   aiIntentActiveForSite,
@@ -423,6 +423,9 @@ function showGuestLimitPopup() {
 // ==================== First-install platform onboarding ====================
 
 let platformOnboardingBackdrop: HTMLElement | null = null;
+// Floor for the iframe height; matches the CSS placeholder's ballpark so a
+// tiny reported height can't fold the card away.
+const ONBOARDING_MIN_HEIGHT = 200;
 
 // One-time popup shown right after install (onInstalled opens x.com, sets
 // `showPlatformOnboarding`, and designates that tab), asking whether to also
@@ -437,8 +440,8 @@ let platformOnboardingBackdrop: HTMLElement | null = null;
 // extension context, and a gesture doesn't survive a message hop to the
 // background — a click inside the iframe satisfies both (same trick as the
 // settings modal below). The popup never closes itself — granting platforms
-// leaves it up. Only an explicit dismissal (the Done button or a backdrop
-// click) clears the flag so it never comes back.
+// leaves it up. Only an explicit user dismissal (the Done/Skip button or a
+// backdrop click) removes it and clears the flag so it never comes back.
 export async function maybeShowPlatformOnboarding(): Promise<void> {
   if (_deps.IS_IOS || chrome._polyfilled) return; // extension-only UI
   if (optionalPlatforms().length === 0) return;   // nothing to offer on this target
@@ -455,9 +458,6 @@ export async function maybeShowPlatformOnboarding(): Promise<void> {
   const theme = _deps.adapter.getThemeMode();
   const backdrop = document.createElement('div');
   backdrop.className = `bouncer-onboarding-backdrop ${theme}-mode`;
-  // Invisible until the iframe reports its height: the grey layer must never
-  // be on screen without a live, sized popup card in it.
-  backdrop.style.visibility = 'hidden';
   const iframe = document.createElement('iframe');
   iframe.className = 'bouncer-onboarding-iframe';
   iframe.src = chrome.runtime.getURL('onboarding.html') + `?theme=${theme}`;
@@ -465,63 +465,80 @@ export async function maybeShowPlatformOnboarding(): Promise<void> {
   document.body.appendChild(backdrop);
   platformOnboardingBackdrop = backdrop;
 
-  let lifeline: chrome.runtime.Port | null = null;
-  // Remove the overlay without touching storage — used when the popup can't
-  // or shouldn't conclude the onboarding (iframe never loaded, extension
-  // reloaded), so a later page load can try again.
-  const teardown = () => {
-    window.removeEventListener('message', messageHandler);
-    clearTimeout(loadTimer);
-    try { lifeline?.disconnect(); } catch { /* runtime already gone */ }
-    lifeline = null;
-    backdrop.remove();
-    platformOnboardingBackdrop = null;
-  };
+  // The ONLY way this popup goes away is a user action: the Done/Skip button
+  // inside the iframe or a click on the backdrop. There is deliberately no
+  // load timeout, no extension-reload lifeline, and nothing that can shrink
+  // the card — every such mechanism has at some point fired on a fresh
+  // install and folded the popup out from under the user.
+  let closing = false;
   const close = () => {
-    teardown();
+    if (closing) return;
+    closing = true;
+    window.removeEventListener('message', messageHandler);
     setStorage({ showPlatformOnboarding: false }).catch(err =>
       console.error('[Bouncer] Failed to clear platform onboarding flag:', err));
+    // Fly the card into the Bouncer box (same flight as importing a filter
+    // pack) so it's clear where to go next, then drop the overlay.
+    void flyOnboardingIntoBouncer(backdrop, iframe).finally(() => {
+      backdrop.remove();
+      platformOnboardingBackdrop = null;
+    });
   };
-  // If the iframe never reports in (failed to load, dead extension frame),
-  // fold the overlay instead of leaving an inert layer over the page.
-  const loadTimer = setTimeout(teardown, 10_000);
   const messageHandler = (event: MessageEvent<{ type?: string; height?: number }>) => {
     if (event.source !== iframe.contentWindow || !event.data) return;
     if (event.data.type === 'bouncerOnboardingDone') {
       close();
     } else if (event.data.type === 'bouncerOnboardingResize' && typeof event.data.height === 'number') {
-      iframe.style.height = `${event.data.height}px`;
-      // The card is alive and sized — now the backdrop may show.
-      backdrop.style.visibility = '';
-      clearTimeout(loadTimer);
+      // Fit to the content, floored so a bogus/early measurement can never
+      // collapse the card.
+      iframe.style.height = `${Math.max(event.data.height, ONBOARDING_MIN_HEIGHT)}px`;
     }
   };
   window.addEventListener('message', messageHandler);
   backdrop.addEventListener('click', (e) => {
     if (e.target === backdrop) close();
   });
+}
 
-  // Lifeline to the background: no traffic, but its onDisconnect is the only
-  // signal an orphaned content script gets when the extension is reloaded or
-  // removed. Without it the extension iframe dies (blank card) while this
-  // plain-DOM backdrop lives on as an unexplained grey layer.
-  const connectLifeline = () => {
-    try {
-      lifeline = chrome.runtime.connect({ name: 'platform-onboarding' });
-      lifeline.onDisconnect.addListener(() => {
-        // The MV3 worker idling also drops the port; tear down only when the
-        // extension is actually gone (runtime.id vanishes for orphans).
-        if (chrome.runtime?.id && backdrop.isConnected) {
-          connectLifeline();
-          return;
-        }
-        teardown();
-      });
-    } catch {
-      teardown();
-    }
-  };
-  connectLifeline();
+// Dismissal animation for the platform-onboarding popup: the card shrinks
+// into the Bouncer box while the grey backdrop fades, then the box pulses.
+// With no Bouncer box on screen it just fades out.
+async function flyOnboardingIntoBouncer(backdrop: HTMLElement, card: HTMLElement): Promise<void> {
+  // The page is usable again the moment the user dismisses.
+  backdrop.style.pointerEvents = 'none';
+  const flightMs = 700;
+  const easing = 'cubic-bezier(0.22, 0.61, 0.36, 1)';
+  const fade = backdrop.animate(
+    [{ backgroundColor: 'rgba(0, 0, 0, 0.6)' }, { backgroundColor: 'rgba(0, 0, 0, 0)' }],
+    { duration: flightMs, easing, fill: 'forwards' },
+  );
+
+  const destEl = pickBouncerFlightTarget();
+  const sourceRect = card.getBoundingClientRect();
+  const destRect = destEl?.getBoundingClientRect();
+  let flight: Animation;
+  if (destEl && destRect && destRect.width >= 4 && sourceRect.width >= 4) {
+    const dx = destRect.left - sourceRect.left;
+    const dy = destRect.top - sourceRect.top;
+    const sx = destRect.width / sourceRect.width;
+    const sy = destRect.height / sourceRect.height;
+    card.style.transformOrigin = 'top left';
+    flight = card.animate(
+      [
+        { transform: 'translate(0, 0) scale(1, 1)', opacity: 1, filter: 'blur(0px)' },
+        // Lift slightly off the straight path, as in the import flight.
+        { transform: `translate(${dx * 0.5}px, ${dy * 0.5 - Math.min(40, Math.abs(dy) * 0.2)}px) scale(${(1 + sx) / 2}, ${(1 + sy) / 2})`, opacity: 0.95, filter: 'blur(0px)', offset: 0.55 },
+        { transform: `translate(${dx}px, ${dy}px) scale(${sx}, ${sy})`, opacity: 0, filter: 'blur(2px)' },
+      ],
+      { duration: flightMs, easing, fill: 'forwards' },
+    );
+  } else {
+    flight = card.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 200, fill: 'forwards' });
+  }
+
+  // Canceled animations (navigation mid-flight) still fall through to cleanup.
+  await Promise.all([flight.finished, fade.finished]).catch(() => {});
+  if (destEl?.isConnected) pulseLandingTarget(destEl);
 }
 
 // Wire up the sign-in button click handler inside a container.
@@ -572,8 +589,10 @@ async function maybeRenderUpdateBanner(container: HTMLElement): Promise<void> {
       + `<ul class="bouncer-update-banner-bullets">${bulletsHTML}</ul>`;
   }
 
+  if (welcome) startWelcomeTipCounting();
+  const bannerClass = welcome ? 'bouncer-update-banner bouncer-update-banner--welcome' : 'bouncer-update-banner';
   const html = `
-    <div class="bouncer-update-banner" role="status">
+    <div class="${bannerClass}" role="status">
       <button type="button" class="bouncer-update-banner-close" aria-label="Dismiss">×</button>
       ${bodyHTML}
     </div>
@@ -585,6 +604,36 @@ async function maybeRenderUpdateBanner(container: HTMLElement): Promise<void> {
     await setStorage(welcome ? { showWelcomeBanner: false } : { lastSeenVersion: current });
     document.querySelectorAll('.bouncer-update-banner').forEach(el => el.remove());
   }));
+}
+
+// The welcome tip also auto-dismisses after WELCOME_TIP_POST_LIMIT processed
+// tweets. A deliberately naive count: re-processed tweets count again and
+// concurrent writes can drop increments, which only nudges when it expires.
+const WELCOME_TIP_POST_LIMIT = 300;
+let welcomeTipCounting = false;
+
+function startWelcomeTipCounting() {
+  welcomeTipCounting = true;
+}
+
+/** Called for each processed tweet. No-op unless the tip is showing. */
+export async function noteTweetSeenForWelcomeTip(): Promise<void> {
+  if (!welcomeTipCounting) return;
+  const { welcomeTipPostsSeen = 0 } = await getStorage(['welcomeTipPostsSeen']);
+  const next = Math.min(WELCOME_TIP_POST_LIMIT, welcomeTipPostsSeen + 1);
+  if (next >= WELCOME_TIP_POST_LIMIT) {
+    welcomeTipCounting = false;
+    // The storage listener in content/index.ts removes the tip from every tab.
+    await setStorage({ welcomeTipPostsSeen: WELCOME_TIP_POST_LIMIT, showWelcomeBanner: false });
+  } else {
+    await setStorage({ welcomeTipPostsSeen: next });
+  }
+}
+
+/** showWelcomeBanner was cleared (dismissed or auto-expired, in any tab). */
+export function removeWelcomeTip() {
+  welcomeTipCounting = false;
+  document.querySelectorAll('.bouncer-update-banner--welcome').forEach(el => el.remove());
 }
 
 // ==================== Placeholder animation ====================
@@ -695,10 +744,43 @@ export function updateTheme() {
 
 // ==================== Sidebar Filter ====================
 
+// Whether the filter cards should stay on the page. X's composer (opened by
+// Share filters, bounce-quote, or the user) routes to /compose/... while
+// rendering as a modal over the feed, so the card stays put there instead of
+// flickering out until the composer closes. Gates injection as well as
+// removal: X re-renders the page behind the composer (e.g. when the "Discard
+// post?" sheet opens), detaching the card, so it must be able to re-inject
+// on /compose/. Post processing still follows shouldProcessCurrentPage alone.
+/** Which pause flag governs the current page (see PlatformAdapter.isExtendedPage). */
+export function currentPauseScope(): PauseScope {
+  return _deps.adapter.isExtendedPage?.() ? 'extended' : 'core';
+}
+
+/** Scope whose paused state the filter cards currently show. Tracked so SPA
+ *  navigation between a core and an extended page — which keeps the same card
+ *  mounted — can repaint the card's .paused class. */
+let renderedPauseScope: PauseScope | null = null;
+
+/** Repaint every filter card's .paused class from the current page's scope. */
+export async function syncPausedClassToPage(): Promise<void> {
+  const scope = currentPauseScope();
+  renderedPauseScope = scope;
+  const paused = await getFilteringPaused(_deps.adapter.siteId, scope);
+  if (currentPauseScope() !== scope) return; // navigated again mid-read
+  document.querySelectorAll('.filter-phrases-header').forEach(el => {
+    (el as HTMLElement).classList.toggle('paused', paused);
+  });
+}
+
+function shouldKeepFilterUI(): boolean {
+  return _deps.adapter.shouldProcessCurrentPage()
+    || window.location.pathname.startsWith('/compose/');
+}
+
 function updateSidebarFilterVisibility() {
   if (!filterPhrasesContainer || !filterPhrasesContainer.isConnected) return;
 
-  if (!_deps.adapter.shouldProcessCurrentPage()) {
+  if (!shouldKeepFilterUI()) {
     filterPhrasesContainer.remove();
     filterPhrasesContainer = null;
   }
@@ -915,9 +997,11 @@ interface FilterCardInitialState {
 }
 async function loadFilterCardInitialState(): Promise<FilterCardInitialState> {
   const siteId = _deps.adapter.siteId;
+  const scope = currentPauseScope();
+  renderedPauseScope = scope;
   const [descriptions, paused] = await Promise.all([
     getDescriptions(_deps.descriptionsKey),
-    getFilteringPaused(siteId),
+    getFilteringPaused(siteId, scope),
   ]);
   return { descriptions, paused };
 }
@@ -949,7 +1033,7 @@ async function injectFilterPhrasesInputImpl() {
   console.log('[Bouncer] injectFilterPhrasesInput: will create new box (DOM count before=', existingInDom, ')');
 
   // Don't inject on non-applicable pages
-  if (!_deps.adapter.shouldProcessCurrentPage()) return;
+  if (!shouldKeepFilterUI()) return;
 
   const sidebar = document.querySelector(_deps.adapter.selectors.sidebar);
   if (!sidebar) return;
@@ -1265,7 +1349,7 @@ function setupFilterBoxEventHandlers(container: HTMLElement) {
     pauseBtn.addEventListener('click', asyncHandler(async () => {
       const siteId = _deps.adapter.siteId;
       const descriptions = await getDescriptions(_deps.descriptionsKey);
-      await setFilteringPaused(siteId, true);
+      await setFilteringPaused(siteId, true, currentPauseScope());
       // Un-hide everything: phrase-hidden posts (their rules are in
       // `descriptions`) and AI-detector-hidden posts (their rules are the
       // detector category labels). AI detection is engaged by filter
@@ -1283,7 +1367,7 @@ function setupFilterBoxEventHandlers(container: HTMLElement) {
   if (playBtn) {
     playBtn.addEventListener('click', asyncHandler(async () => {
       const siteId = _deps.adapter.siteId;
-      await setFilteringPaused(siteId, false);
+      await setFilteringPaused(siteId, false, currentPauseScope());
       // Any evaluations that ran while paused — e.g. a phrase added mid-pause,
       // or new posts that streamed in — cached shouldHide=false because the
       // pipeline masked descriptions to []. Wipe so play-side re-eval actually
@@ -1363,7 +1447,7 @@ function updateBottomFilterPosition() {
 function updateBottomFilterVisibility() {
   if (!bottomFilterContainer || !bottomFilterContainer.isConnected) return;
 
-  if (!_deps.adapter.shouldProcessCurrentPage()) {
+  if (!shouldKeepFilterUI()) {
     bottomFilterContainer.remove();
     bottomFilterContainer = null;
   }
@@ -1386,7 +1470,7 @@ async function injectBottomFilterBoxImpl() {
   }
 
   // Don't inject on non-applicable pages
-  if (!_deps.adapter.shouldProcessCurrentPage()) return;
+  if (!shouldKeepFilterUI()) return;
 
   // Create the bottom filter container - just the pill itself
   bottomFilterContainer = document.createElement('div');
@@ -1462,7 +1546,7 @@ async function injectBottomFilterBoxImpl() {
 function updateMobileFilterVisibility() {
   if (!mobileFilterContainer || !mobileFilterContainer.isConnected) return;
 
-  if (!_deps.adapter.shouldProcessCurrentPage()) {
+  if (!shouldKeepFilterUI()) {
     mobileFilterContainer.remove();
     mobileFilterContainer = null;
   }
@@ -1485,7 +1569,7 @@ async function injectMobileFilterBoxImpl() {
   }
 
   // Don't inject on non-applicable pages
-  if (!_deps.adapter.shouldProcessCurrentPage()) return;
+  if (!shouldKeepFilterUI()) return;
 
   // Find the navigation element
   const nav = document.querySelector(_deps.adapter.selectors.nav);
@@ -2084,6 +2168,29 @@ export function pickVisibleBouncerLayout(): HTMLElement | null {
   return null;
 }
 
+// The element a "fly into Bouncer" animation should land on. Three layout
+// variants live in the DOM simultaneously (sidebar, bottom, mobile); media
+// queries display:none all but the active one, so pick the visible variant —
+// querySelectorAll('.filter-phrases-container') would return the first in
+// document order, which is often a hidden one with a zero-size rect. Within
+// it, use the container when it has real dimensions; otherwise the layout
+// pill (.filter-phrases-bottom collapses its inner container to max-height:
+// 0, but the outer pill is still on screen and is what the user perceives as
+// "the Bouncer UI").
+function pickBouncerFlightTarget(): HTMLElement | null {
+  const visibleLayout = pickVisibleBouncerLayout();
+  const container = visibleLayout?.querySelector<HTMLElement>('.filter-phrases-container') ?? null;
+  const rect = container?.getBoundingClientRect();
+  const useContainer = container && rect && rect.height >= 24 && rect.width >= 24;
+  return useContainer ? container : visibleLayout;
+}
+
+// Brief pulse on a flight's destination so the eye lands on the Bouncer box.
+function pulseLandingTarget(destEl: HTMLElement): void {
+  destEl.classList.add('bouncer-import-landing');
+  setTimeout(() => destEl.classList.remove('bouncer-import-landing'), 700);
+}
+
 // Animate the tweet's screenshot image flying into the user's Bouncer box,
 // then run the actual import. The flight takes ~700ms; we kick the storage
 // writes off in parallel so the new phrases land in the box right as the
@@ -2097,30 +2204,14 @@ async function flyScreenshotAndImport(
   const runImport = () => confirmAndImportPack(phrases);
   console.log('[Bouncer/import-anim] click', { hasArticle: !!article, phraseCount: phrases.length, named: !!pack.name });
 
-  // Three layout variants live in the DOM simultaneously (sidebar, bottom,
-  // mobile); media queries display:none all but the active one. Pick the
-  // visible variant via offsetParent — querySelectorAll('.filter-phrases-
-  // container') would return the first in document order, which is often a
-  // hidden one with a zero-size rect.
-  const visibleLayout = pickVisibleBouncerLayout();
-  const containerInLayout = visibleLayout?.querySelector<HTMLElement>('.filter-phrases-container') ?? null;
-  // Use the container when it has real dimensions; otherwise the layout pill
-  // (.filter-phrases-bottom collapses its inner container to max-height: 0,
-  // but the outer pill is still on screen and is what the user perceives as
-  // "the Bouncer UI").
-  const containerRect = containerInLayout?.getBoundingClientRect();
-  const useContainer = containerInLayout && containerRect && containerRect.height >= 24 && containerRect.width >= 24;
-  const destEl: HTMLElement | null = useContainer ? containerInLayout : visibleLayout;
+  const destEl = pickBouncerFlightTarget();
 
   const tweetPhotoImg = article?.querySelector<HTMLImageElement>('[data-testid="tweetPhoto"] img') ?? null;
   const twimgImg = article?.querySelector<HTMLImageElement>('img[src*="pbs.twimg.com/media"]') ?? null;
   const tweetImg = tweetPhotoImg ?? twimgImg;
 
   console.log('[Bouncer/import-anim] lookups', {
-    visibleLayoutClass: visibleLayout?.className,
-    containerInLayoutFound: !!containerInLayout,
-    containerRect: containerRect ? { w: containerRect.width, h: containerRect.height } : null,
-    chosenDestKind: destEl === containerInLayout ? 'container' : destEl ? 'layout-pill' : 'none',
+    destClass: destEl?.className,
     tweetPhotoImgFound: !!tweetPhotoImg,
     twimgImgFound: !!twimgImg,
     tweetImgSrc: tweetImg?.src,
@@ -2220,10 +2311,8 @@ async function flyScreenshotAndImport(
   flier.remove();
   tweetImg.style.visibility = originalSourceVis;
 
-  // Brief pulse on the destination so the user's eye lands on the place where
-  // the new pack just appeared.
-  destEl.classList.add('bouncer-import-landing');
-  setTimeout(() => destEl.classList.remove('bouncer-import-landing'), 700);
+  // The user's eye should land where the new pack just appeared.
+  pulseLandingTarget(destEl);
 
   // Make sure storage writes are surfaced before we return so callers see real
   // failures and not a silently-completed flight.
@@ -2538,6 +2627,8 @@ export function showSettingsModal(section?: 'local') {
     container.className = 'settings-modal-iframe';
     container.replaceChildren(parseHTML(popup.html));
     container.style.overflow = 'auto';
+    // Don't chain scroll into the page behind the modal at the ends.
+    container.style.overscrollBehavior = 'contain';
 
     // Show close button (modal mode)
     const closeBtnEl = container.querySelector<HTMLElement>('.modal-close-btn');
@@ -4193,7 +4284,7 @@ async function ensureFilterRepliesEnabled(article: HTMLElement) {
 }
 
 // Build the "Quote tweet" toggle row appended at the bottom of the why-annoying
-// tooltip. State is persisted under `bounceQuoteEnabled` (default true).
+// tooltip. State is persisted under `bounceQuoteEnabled` (default false).
 function buildQuoteToggleRow(): HTMLElement {
   const row = document.createElement('label');
   row.className = 'ff-bounce-quote-row';
@@ -4201,7 +4292,7 @@ function buildQuoteToggleRow(): HTMLElement {
   const input = document.createElement('input');
   input.type = 'checkbox';
   input.className = 'ff-bounce-quote-toggle';
-  input.checked = true; // optimistic default; corrected by storage read below
+  input.checked = false; // default; corrected by storage read below
 
   const text = document.createElement('span');
   text.textContent = 'Quote tweet';
@@ -4210,7 +4301,7 @@ function buildQuoteToggleRow(): HTMLElement {
   row.appendChild(text);
 
   getStorage(['bounceQuoteEnabled']).then(data => {
-    input.checked = data.bounceQuoteEnabled !== false;
+    input.checked = data.bounceQuoteEnabled === true;
   }).catch(err => console.error('[UI] Failed to load bounceQuoteEnabled:', err));
 
   input.addEventListener('click', e => e.stopPropagation());
@@ -4578,6 +4669,10 @@ export function setupSearchBarHide() {
 }
 
 export function handleDOMMutation() {
+  if (renderedPauseScope !== null && renderedPauseScope !== currentPauseScope()
+      && _deps.adapter.shouldProcessCurrentPage()) {
+    void syncPausedClassToPage();
+  }
   // Check if containers were disconnected
   if (filterPhrasesContainer && !filterPhrasesContainer.isConnected) {
     filterPhrasesContainer = null;

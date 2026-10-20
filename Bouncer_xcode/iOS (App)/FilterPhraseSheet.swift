@@ -128,8 +128,13 @@ class FilterSheetViewModel: ObservableObject {
         }
     }
     // The settings sheet's "Push notifications" toggle. Mirrors user intent
-    // (PushRegistrar.notificationsOnKey) and the live subscription state.
+    // (PushRegistrar.notificationsOnKey), the live subscription state and the
+    // OS permission (refreshNotificationsEnabled adds the async permission
+    // check).
     @Published var notificationsEnabled: Bool = PushRegistrar.shared.isSubscribedToX && !PushRegistrar.userOptedOut
+    // Turning the toggle on while iOS has notifications denied: the system
+    // prompt can't be shown again, so offer a trip to iOS Settings instead.
+    @Published var showNotificationsDeniedAlert = false
     @Published var isEditingURL = false
     @Published var isFilteredModalOpen = false
     // Scroll-driven nav bar visibility: WebCoordinator's contentOffset
@@ -390,21 +395,65 @@ class FilterSheetViewModel: ObservableObject {
     // subscription — unlike Android, iOS can't suppress a push after Apple
     // delivers it, so "off" has to mean "unsubscribed". x.com's next attempt
     // gets a 410 from the push service and it stops sending.
+    //
+    // Logged out, the toggle shows what will happen at login: on unless the
+    // user turned it off or iOS permission is denied. Logged in, it shows
+    // whether we actually hold a subscription (or are getting one).
     func refreshNotificationsEnabled() {
-        notificationsEnabled = PushRegistrar.shared.isSubscribedToX && !PushRegistrar.userOptedOut
+        Task { @MainActor in
+            let auth = await PushRegistrar.authorization()
+            let intent = !PushRegistrar.userOptedOut && auth != .denied
+            if await PushAutoEnabler.isLoggedInToX() {
+                // A subscription without OS permission delivers nothing (and
+                // the Keychain record can outlive a reinstall): not "on".
+                notificationsEnabled = intent && auth == .granted
+                    && (PushRegistrar.shared.isSubscribedToX || PushAutoEnabler.shared.isEnabling)
+            } else {
+                notificationsEnabled = intent
+            }
+        }
     }
 
     func setNotificationsEnabled(_ on: Bool) {
-        PushRegistrar.setNotificationsOn(on)
         notificationsEnabled = on
         if on {
-            PushAutoEnabler.shared.enableFromSettings(coordinator: cache.coordinator) { [weak self] ok in
-                if !ok { self?.notificationsEnabled = false }
+            Task { @MainActor in
+                let auth = await PushRegistrar.authorization()
+                if auth == .denied {
+                    notificationsEnabled = false
+                    showNotificationsDeniedAlert = true
+                    return
+                }
+                PushRegistrar.setNotificationsOn(true)
+                guard await PushAutoEnabler.isLoggedInToX() else {
+                    // Nothing to subscribe yet: record the intent and get the
+                    // permission question out of the way; the auto-enable
+                    // runs when login reaches the home timeline.
+                    if auth == .notDetermined, !(await PushRegistrar.shared.requestAuthorization()) {
+                        notificationsEnabled = false
+                    }
+                    return
+                }
+                PushAutoEnabler.shared.enableFromSettings(coordinator: cache.coordinator) { [weak self] ok in
+                    if !ok { self?.notificationsEnabled = false }
+                }
             }
         } else {
+            PushRegistrar.setNotificationsOn(false)
             Task { @MainActor in
                 _ = await PushRegistrar.shared.unsubscribe(scope: PushRegistrar.xScope)
             }
+        }
+    }
+
+    // "Open Settings" from the denied alert. Records the intent now; the
+    // enable flow runs when the app returns with permission granted
+    // (PushAutoEnabler.retryIfNeeded).
+    func openNotificationSettings() {
+        PushRegistrar.setNotificationsOn(true)
+        PushAutoEnabler.shared.enableAfterSettingsGrant(coordinator: cache.coordinator)
+        if let url = URL(string: UIApplication.openNotificationSettingsURLString) {
+            UIApplication.shared.open(url)
         }
     }
 
@@ -1418,6 +1467,12 @@ struct BouncerSettingsView: View {
                 .onAppear { viewModel.refreshNotificationsEnabled() }
                 .onReceive(NotificationCenter.default.publisher(for: PushAutoEnabler.stateChangedNotification)) { _ in
                     viewModel.refreshNotificationsEnabled()
+                }
+                .alert("Allow Notifications", isPresented: $viewModel.showNotificationsDeniedAlert) {
+                    Button("Open Settings") { viewModel.openNotificationSettings() }
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    Text("Notifications for Bouncer are turned off in iOS Settings. Turn on Allow Notifications there, then come back to Bouncer.")
                 }
             } footer: {
                 Text("Likes, replies, mentions and messages, as X would send them to a browser.")

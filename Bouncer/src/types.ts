@@ -250,6 +250,11 @@ export interface Settings extends SettingsBase {
    *  without a siteId, and forced false while the site's filtering is paused
    *  (the pause button pauses the phrase-engaged AI detectors too). */
   aiFilterIntentActive: boolean;
+  /** True when the pause flag for the requested pause scope was set. Results
+   *  computed while paused are masked "don't hide" verdicts, so they must
+   *  neither be read from nor written to the evaluation cache — the same post
+   *  can appear on a page whose scope isn't paused. */
+  filteringPaused: boolean;
 }
 
 /** Persisted judgment of which of the user's filter phrases request removal
@@ -306,6 +311,12 @@ export interface PlatformAdapter {
   getFilterBoxAnchor?(): FilterBoxAnchor | null;
   extractPostContent(article: HTMLElement): PostContent;
   shouldProcessCurrentPage(): boolean;
+  /** True when the current page is one of the extra pages the UI was
+   *  extended to (e.g. X profiles, lists, bookmarks). These share a separate
+   *  pause flag that defaults to paused, so filtering there is opt-in. Only
+   *  meaningful when shouldProcessCurrentPage() is true. Omitted → always
+   *  the core scope. */
+  isExtendedPage?(): boolean;
   isMainPost(article: HTMLElement): boolean;
   /**
    * True when the current page is a permalink / conversation view — the
@@ -352,6 +363,9 @@ export interface PendingEvaluation {
   /** True when the post is a reply/comment (permalink-view post). Selects
    *  the reply-specific AI-text-detection threshold. */
   isReply: boolean;
+  /** Which pause flag governs this post (the page it was seen on).
+   *  Omitted → 'core'. */
+  pauseScope?: PauseScope;
 }
 
 // ==================== Chat Messages ====================
@@ -365,7 +379,7 @@ export interface ChatMessage {
 
 export type ContentToBackgroundMessage =
   | { type: 'pageLoad' }
-  | { type: 'evaluatePost'; evaluationId: string; post: string; rawText: string; imageUrls: string[]; postUrl: string | null; siteId: SiteId; isReply?: boolean }
+  | { type: 'evaluatePost'; evaluationId: string; post: string; rawText: string; imageUrls: string[]; postUrl: string | null; siteId: SiteId; isReply?: boolean; pauseScope?: PauseScope }
   | { type: 'suggestAnnoyingReasons'; post: string; imageUrls: string[]; siteId?: SiteId }
   | { type: 'clearCache' }
   // Sent by the settings popup after the user grants an optional platform's
@@ -468,6 +482,14 @@ type FilteringPausedKeys = { [K in SiteId as `filteringPaused_${K}`]: boolean };
 
 export type FilteringPausedKey = `filteringPaused_${SiteId}`;
 
+/** Which pause flag applies: 'core' for the pages filtering originally ran on
+ *  (`filteringPaused_<site>`, default unpaused), 'extended' for the pages
+ *  added later (`filteringPausedExtended_<site>`, default PAUSED — absent
+ *  means paused). See PlatformAdapter.isExtendedPage. */
+export type PauseScope = 'core' | 'extended';
+
+type FilteringPausedExtendedKeys = { [K in SiteId as `filteringPausedExtended_${K}`]: boolean };
+
 /** Per-site excluded-account lists: normalized identities (see
  *  exclusionIdentity in shared/storage.ts) whose posts skip classification
  *  entirely — never evaluated, never hidden, never sent to a model. */
@@ -507,11 +529,14 @@ export type StorageSchema = SettingsBase & {
   openrouterCodeVerifier: string;
   lastSeenVersion: string;
   // "Quote tweet" toggle in the why-annoying tooltip (bounce-quote flow).
-  // Default true; persisted so the choice sticks across posts and sessions.
+  // Default false; persisted so the choice sticks across posts and sessions.
   bounceQuoteEnabled: boolean;
   // Set by onInstalled on a fresh install; drives the one-time "Welcome to
   // Bouncer" banner and is cleared when that banner is dismissed.
   showWelcomeBanner: boolean;
+  // Tweets seen while the welcome tip was showing; the tip auto-dismisses
+  // once this reaches WELCOME_TIP_POST_LIMIT (content/ui.ts). Never exceeds it.
+  welcomeTipPostsSeen: number;
   // Set by onInstalled on a fresh install; drives the one-time "activate
   // other platforms?" popup shown on x.com before any sign-in gating (see
   // maybeShowPlatformOnboarding in content/ui.ts). Cleared when the popup
@@ -555,7 +580,7 @@ export type StorageSchema = SettingsBase & {
   // descriptions_* namespace so the pipeline and AI-intent aggregation never
   // see the inactive list.
   linkedinInactiveModePhrases: string[];
-} & DescriptionKeys & PlatformEnabledKeys & FilteringPausedKeys & ExcludedAccountsKeys;
+} & DescriptionKeys & PlatformEnabledKeys & FilteringPausedKeys & FilteringPausedExtendedKeys & ExcludedAccountsKeys;
 
 // ==================== API Response Types ====================
 
