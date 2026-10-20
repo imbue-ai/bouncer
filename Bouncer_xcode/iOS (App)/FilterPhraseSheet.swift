@@ -122,8 +122,8 @@ class FilterSheetViewModel: ObservableObject {
     @Published var canGoForward = false
     @Published var currentURL: String = "" {
         didSet {
-            // Reaching the authenticated home timeline is the cue to silently
-            // enable x.com push (once per install) — see PushAutoEnabler.
+            // Reaching a push site's authenticated feed is the cue to silently
+            // enable its push (once per login) — see PushAutoEnabler.
             PushAutoEnabler.shared.onURLChanged(currentURL, coordinator: cache.coordinator)
         }
     }
@@ -131,7 +131,7 @@ class FilterSheetViewModel: ObservableObject {
     // (PushRegistrar.notificationsOnKey), the live subscription state and the
     // OS permission (refreshNotificationsEnabled adds the async permission
     // check).
-    @Published var notificationsEnabled: Bool = PushRegistrar.shared.isSubscribedToX && !PushRegistrar.userOptedOut
+    @Published var notificationsEnabled: Bool = PushRegistrar.shared.isSubscribedToAny && !PushRegistrar.userOptedOut
     // Turning the toggle on while iOS has notifications denied: the system
     // prompt can't be shown again, so offer a trip to iOS Settings instead.
     @Published var showNotificationsDeniedAlert = false
@@ -403,11 +403,11 @@ class FilterSheetViewModel: ObservableObject {
         Task { @MainActor in
             let auth = await PushRegistrar.authorization()
             let intent = !PushRegistrar.userOptedOut && auth != .denied
-            if await PushAutoEnabler.isLoggedInToX() {
+            if await PushAutoEnabler.isLoggedInToAny() {
                 // A subscription without OS permission delivers nothing (and
                 // the Keychain record can outlive a reinstall): not "on".
                 notificationsEnabled = intent && auth == .granted
-                    && (PushRegistrar.shared.isSubscribedToX || PushAutoEnabler.shared.isEnabling)
+                    && (PushRegistrar.shared.isSubscribedToAny || PushAutoEnabler.shared.isEnabling)
             } else {
                 notificationsEnabled = intent
             }
@@ -425,7 +425,7 @@ class FilterSheetViewModel: ObservableObject {
                     return
                 }
                 PushRegistrar.setNotificationsOn(true)
-                guard await PushAutoEnabler.isLoggedInToX() else {
+                guard await PushAutoEnabler.isLoggedInToAny() else {
                     // Nothing to subscribe yet: record the intent and get the
                     // permission question out of the way; the auto-enable
                     // runs when login reaches the home timeline.
@@ -441,7 +441,9 @@ class FilterSheetViewModel: ObservableObject {
         } else {
             PushRegistrar.setNotificationsOn(false)
             Task { @MainActor in
-                _ = await PushRegistrar.shared.unsubscribe(scope: PushRegistrar.xScope)
+                for site in PushSite.allCases {
+                    _ = await PushRegistrar.shared.unsubscribe(scope: site.scope)
+                }
             }
         }
     }
@@ -1454,15 +1456,15 @@ struct BouncerSettingsView: View {
                 }
             }
 
-            // Web Push for x.com, delivered natively (see WebPush/). The
-            // toggle reflects the live subscription; turning it on runs the
-            // same silent enable flow the app attempts after login.
+            // Web Push for X and Facebook, delivered natively (see WebPush/).
+            // The toggle reflects the live subscriptions; turning it on runs
+            // the same silent enable flow the app attempts after login.
             Section {
                 Toggle(isOn: Binding(
                     get: { viewModel.notificationsEnabled },
                     set: { viewModel.setNotificationsEnabled($0) }
                 )) {
-                    Text("Push notifications from X")
+                    Text("Push notifications")
                 }
                 .onAppear { viewModel.refreshNotificationsEnabled() }
                 .onReceive(NotificationCenter.default.publisher(for: PushAutoEnabler.stateChangedNotification)) { _ in
@@ -1475,7 +1477,7 @@ struct BouncerSettingsView: View {
                     Text("Notifications for Bouncer are turned off in iOS Settings. Turn on Allow Notifications there, then come back to Bouncer.")
                 }
             } footer: {
-                Text("Likes, replies, mentions and messages, as X would send them to a browser.")
+                Text("Likes, replies, mentions and messages from X and Facebook, as they would send them to a browser.")
             }
 
             // Excluded accounts for the selected platform: posts from these

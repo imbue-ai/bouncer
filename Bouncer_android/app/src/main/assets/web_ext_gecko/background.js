@@ -80,4 +80,31 @@
       contentPorts.delete(port);
     });
   });
+
+  // Facebook push: the hidden enable tab loads www.facebook.com as desktop
+  // Chrome (a per-session UA override), but Gecko fetches the service-worker
+  // script outside that session, with the runtime's mobile UA — and Facebook
+  // answers a mobile UA on www with a 302 to m.facebook.com, which fails
+  // registration (a worker script may not redirect cross-origin) with a
+  // SecurityError. Give the worker-script requests the same desktop UA the
+  // page has. Scoped to www's /sw path, which only that hidden page uses.
+  var DESKTOP_CHROME_UA =
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
+    "(KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36";
+  try {
+    browser.webRequest.onBeforeSendHeaders.addListener(
+      function (details) {
+        var headers = details.requestHeaders || [];
+        for (var i = 0; i < headers.length; i++) {
+          if (headers[i].name.toLowerCase() === "user-agent") headers[i].value = DESKTOP_CHROME_UA;
+        }
+        console.log("[Bouncer/bg] desktop UA for " + details.url.split("?")[0] + " (" + details.type + ")");
+        return { requestHeaders: headers };
+      },
+      { urls: ["https://www.facebook.com/sw*"] },
+      ["blocking", "requestHeaders"]
+    );
+  } catch (e) {
+    console.error("[Bouncer/bg] webRequest UA rewrite unavailable", e);
+  }
 })();

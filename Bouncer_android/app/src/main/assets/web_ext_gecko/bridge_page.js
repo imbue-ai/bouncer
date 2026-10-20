@@ -28,7 +28,8 @@
     "feedfilterModalClosed",
     "feedfilterAiSettings",
     "feedfilterPushDirectResult",
-    "feedfilterPushToggleReady"
+    "feedfilterPushToggleReady",
+    "feedfilterPushRegistered"
   ];
 
   window.__ffExtensionVersion = "1.1.30";
@@ -146,29 +147,105 @@
     } catch (e) {}
   }
 
-  // Native preloads x.com's push-settings page in a HIDDEN tab (see
-  // BouncerGeckoView.preloadPushSettings) so tapping "Turn on" can swap to an
-  // already-rendered page instead of paying x.com's ~5s settings cold-boot
-  // (reproducible even in stock Firefox). But a swap is only instant once that
-  // hidden page has actually rendered its toggle — which x.com does client-side
-  // seconds after the document loads. So the ViewModel holds the prompt until we
-  // report readiness here: poll for the toggle and signal once it exists. Gated
-  // on the settings path so the home tab (which runs this same script) is silent.
-  (function reportPushToggleWhenReady() {
+  // Push-settings pages native loads in a HIDDEN tab to turn push on (see
+  // BouncerViewModel's auto-enable). Each site: how to recognise its settings
+  // page, and how to find its push toggle there.
+  //  - x.com /settings/push_notifications: the page's only checkbox.
+  //  - www.facebook.com /settings/?tab=notifications: the "<browser> push
+  //    notifications" switch under "Where you receive notifications" →
+  //    Browser, which only renders once that row is expanded
+  //    (expandPushSection).
+  function pushSettingsSite() {
     try {
-      if (location.pathname.indexOf("push_notifications") === -1) return;
-    } catch (e) { return; }
+      var host = String(location.hostname || "").toLowerCase();
+      if (/(^|\.)(x|twitter)\.com$/.test(host) &&
+          location.pathname.indexOf("push_notifications") !== -1) return "x";
+      if (host === "www.facebook.com" && location.pathname === "/settings/" &&
+          /[?&]tab=notifications/.test(location.search)) return "facebook";
+    } catch (e) {}
+    return null;
+  }
+  function findPushToggle(site) {
+    try {
+      if (site === "x") return document.querySelector('input[type="checkbox"]');
+      if (site === "facebook") {
+        var switches = document.querySelectorAll('input[type="checkbox"][role="switch"]');
+        for (var i = 0; i < switches.length; i++) {
+          // The nearest short ancestor text is the row label.
+          var p = switches[i];
+          for (var depth = 0; depth < 8 && p; depth++) {
+            p = p.parentElement;
+            var text = (p && p.innerText) || "";
+            if (text.length > 120) break;
+            if (/push notifications/i.test(text)) return switches[i];
+          }
+        }
+      }
+    } catch (e) {}
+    return null;
+  }
+  // Facebook's push switch only exists once its "Browser" row is expanded.
+  // A click that lands before the page hydrates does nothing, so re-click
+  // every 3s while the switch is still missing (a click that did expand is
+  // followed by the switch within that time, so it is never collapsed again).
+  var pushExpandAt = 0, pushExpandTries = 0;
+  function expandPushSection(site) {
+    if (site !== "facebook" || pushExpandTries >= 5 || Date.now() - pushExpandAt < 3000) return;
+    try {
+      var row = document.querySelector('[role="button"][aria-label="Browser notification settings"]');
+      if (!row) {
+        var buttons = document.querySelectorAll('[role="button"]');
+        for (var i = 0; i < buttons.length && !row; i++) {
+          if (String(buttons[i].innerText || "").trim().split("\n")[0] === "Browser") row = buttons[i];
+        }
+      }
+      if (row) {
+        pushExpandAt = Date.now();
+        pushExpandTries++;
+        try { console.log("[Bouncer] preload: expanding Browser row (try " + pushExpandTries + ")"); } catch (e) {}
+        row.click();
+      }
+    } catch (e) {}
+  }
+  // A settings page that bounced to the site's login: nothing to enable.
+  function pushSettingsLoggedOut() {
+    try {
+      return String(location.hostname || "").toLowerCase() === "www.facebook.com" &&
+        location.pathname.indexOf("/login") === 0 &&
+        /settings/.test(decodeURIComponent(location.search));
+    } catch (e) { return false; }
+  }
+
+  // The preload pays the site's settings cold-boot (~5s on x.com, reproducible
+  // even in stock Firefox) in the hidden tab. A click only works once that
+  // page has actually rendered its toggle — which both sites do client-side
+  // seconds after the document loads. So the ViewModel waits until we report
+  // readiness here: poll for the toggle and signal once it exists. Gated on
+  // the settings page so feed tabs (which run this same script) are silent.
+  (function reportPushToggleWhenReady() {
+    if (pushSettingsLoggedOut()) {
+      // Deferred: at document_start the isolated-world relay may not be
+      // listening yet.
+      setTimeout(function () {
+        try {
+          bridge.feedfilterPushToggleReady(JSON.stringify({ ready: false, loggedOut: true }));
+        } catch (e) {}
+      }, 1500);
+      return;
+    }
+    var site = pushSettingsSite();
+    if (!site) return;
     var start = Date.now();
     // Off-screen/background renders are throttled by Gecko, so a cold load can
     // take much longer than a warm ~1.5s. Poll generously — it's invisible.
     var TIMEOUT_MS = 95000;
     var lastDiag = -1;
     (function poll() {
-      var box = null;
-      try { box = document.querySelector('input[type="checkbox"]'); } catch (e) {}
+      var box = findPushToggle(site);
+      if (!box) expandPushSection(site);
       if (box) {
         try {
-          console.log("[Bouncer] preload: push toggle ready after " +
+          console.log("[Bouncer] preload: " + site + " push toggle ready after " +
             (Date.now() - start) + "ms (checked=" + box.checked + ")");
         } catch (e) {}
         // Report readiness AND the current on/off state, so native can decide
@@ -197,25 +274,88 @@
     })();
   })();
 
-  // Auto-enable: flip x.com's own push toggle in the hidden preload tab, with no
-  // UI. x.com's change handler does both halves that actually matter —
-  // pushManager.subscribe() AND the POST that registers the subscription with
-  // x.com's backend (a bare in-page subscribe only does the former, which is why
-  // it never delivered). A scripted .click() drives that same handler. Native
-  // only calls this on the hidden settings tab it spawned, so it never fires on a
-  // page the user navigated to themselves; still self-guarded to the settings
-  // path since this script also runs on the home tab.
-  window.__ff_autoEnablePush = function () {
+  // Facebook: make sure its backend knows our endpoint. Its toggle handler
+  // POSTs the new subscription (/push/register/service_worker/) the moment
+  // subscribe() resolves — but registering the push worker makes the page
+  // reload ~200ms later, which can abort that POST, and the reloaded page
+  // only re-sends it when a flag it passes as false is set. So on each load
+  // of the settings page (only the hidden enable tab loads it), if a
+  // subscription exists, ask Facebook's own PushRegistration to re-send it.
+  // Idempotent: the same endpoint and keys every time.
+  (function reRegisterFacebookPush() {
+    if (pushSettingsSite() !== "facebook") return;
+    var SW_PATH = "/sw?s=push";
+    var FALLBACK_APP_ID = "1443096165982425";
+    // Log the register POST's outcome (AsyncRequest uses XHR).
     try {
-      if (location.pathname.indexOf("push_notifications") === -1) return;
-    } catch (e) { return; }
-    var box = null;
-    try { box = document.querySelector('input[type="checkbox"]'); } catch (e) {}
+      var origOpen = XMLHttpRequest.prototype.open;
+      XMLHttpRequest.prototype.open = function (method, url) {
+        try {
+          if (/\/push\/register\//.test(String(url))) {
+            var xhr = this;
+            xhr.addEventListener("loadend", function () {
+              console.log("[Bouncer] facebook push register POST → " + xhr.status);
+              // Native records that Facebook's backend has the endpoint.
+              if (xhr.status === 200) {
+                try { bridge.feedfilterPushRegistered(JSON.stringify({ ok: true })); } catch (e) {}
+              }
+            });
+          }
+        } catch (e) {}
+        return origOpen.apply(this, arguments);
+      };
+    } catch (e) {}
+    function appId() {
+      try {
+        var m = document.documentElement.innerHTML.match(/"installPush",\[\],\["\\\/sw\?s=push",(\d+)/);
+        if (m) return m[1];
+      } catch (e) {}
+      return FALLBACK_APP_ID;
+    }
+    var start = Date.now();
+    (function attempt() {
+      var req = window.require;
+      var ready = false;
+      try {
+        ready = typeof req === "function" && req("PushRegistration") &&
+          req("XPushRegisterServiceWorkerController") && req("AsyncRequest");
+      } catch (e) { ready = false; }
+      if (!ready) {
+        if (Date.now() - start < 20000) setTimeout(attempt, 250);
+        return;
+      }
+      if (!navigator.serviceWorker) return;
+      navigator.serviceWorker.getRegistration(SW_PATH).then(function (reg) {
+        if (!reg || !reg.pushManager) return null;
+        return reg.pushManager.getSubscription();
+      }).then(function (sub) {
+        if (!sub) return;
+        console.log("[Bouncer] facebook push: re-sending subscription to Facebook");
+        req("PushRegistration").get(SW_PATH, appId())
+          .maybeRegisterPushAgain(req("XPushRegisterServiceWorkerController"), req("AsyncRequest"));
+      }).catch(function (e) {
+        try { console.log("[Bouncer] facebook push re-register failed: " + e); } catch (_) {}
+      });
+    })();
+  })();
+
+  // Auto-enable: flip the site's own push toggle in the hidden preload tab,
+  // with no UI. Its change handler does both halves that actually matter —
+  // pushManager.subscribe() AND the POST that registers the subscription with
+  // the site's backend (a bare in-page subscribe only does the former, which
+  // is why it never delivered). A scripted .click() drives that same handler.
+  // Native only calls this on the hidden settings tab it spawned, so it never
+  // fires on a page the user navigated to themselves; still self-guarded to
+  // the settings page since this script also runs on feed tabs.
+  window.__ff_autoEnablePush = function () {
+    var site = pushSettingsSite();
+    if (!site) return;
+    var box = findPushToggle(site);
     if (!box) { try { console.log("[Bouncer] auto-enable: no toggle found"); } catch (e) {} return; }
     try {
       var perm = (window.Notification && Notification.permission);
       var ua = (navigator.userActivation && navigator.userActivation.isActive);
-      console.log("[Bouncer] auto-enable pre: checked=" + box.checked +
+      console.log("[Bouncer] auto-enable pre (" + site + "): checked=" + box.checked +
         " vis=" + document.visibilityState + " hidden=" + document.hidden +
         " perm=" + perm + " ua=" + ua);
       if (box.checked) {

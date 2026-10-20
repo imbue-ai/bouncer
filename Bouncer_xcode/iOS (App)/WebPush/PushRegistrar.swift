@@ -2,7 +2,8 @@
 //  PushRegistrar.swift
 //  iOS (App)
 //
-//  Native side of Web Push for the in-app x.com web view. Answers the page's
+//  Native side of Web Push for the in-app web views (x.com, Facebook — see
+//  PushSite). Answers the page's
 //  pushManager calls (via WebPushBridge) with keys this app holds, owns the
 //  APNs token, keeps the relay's token mapping fresh, and routes notification
 //  taps into the web view. The iOS counterpart of Android's PushRegistrar +
@@ -39,13 +40,13 @@ final class PushRegistrar {
     /// and got an endpoint — rather than guessing from the settings toggle.
     var onSubscriptionRegistered: ((String) -> Void)?
 
-    static let xScope = "https://x.com/"
     // User intent for the settings toggle. Absent = never touched (new users
     // still auto-enable); false = explicitly turned off.
     static let notificationsOnKey = "notificationsOn"
     static let notificationsPromptedKey = "hasPromptedNotifications"
 
-    var isSubscribedToX: Bool { PushSubscriptionStore.get(scope: Self.xScope) != nil }
+    func isSubscribed(_ site: PushSite) -> Bool { PushSubscriptionStore.get(scope: site.scope) != nil }
+    var isSubscribedToAny: Bool { PushSite.allCases.contains { isSubscribed($0) } }
 
     static var userOptedOut: Bool {
         let d = UserDefaults.standard
@@ -143,13 +144,13 @@ final class PushRegistrar {
                 if reg.created {
                     // The relay had no record of a subscription we hold: its
                     // state was lost (Redis has no persistence). The endpoint
-                    // x.com has is dead, so forget ours and let the enable
+                    // the site has is dead, so forget ours and let the enable
                     // flow subscribe afresh — the only recovery is a new
                     // subscribe from the page.
                     print("[WebPush] relay lost subscription \(record.scope); re-subscribing")
                     PushSubscriptionStore.remove(scope: record.scope)
                     try? await PushRelayClient.unregister(subscriptionId: record.id)
-                    PushAutoEnabler.shared.relayLostSubscription()
+                    PushAutoEnabler.shared.relayLostSubscription(PushSite.forScope(record.scope) ?? .x)
                 }
             } catch {
                 print("[WebPush] refresh failed for \(record.scope): \(error)")

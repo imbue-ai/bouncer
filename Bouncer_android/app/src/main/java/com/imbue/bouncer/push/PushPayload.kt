@@ -18,6 +18,9 @@ import java.net.URI
  * the same `tag` is still open it re-renders with the `multi_*` ICU templates
  * ("{num_others} and X others liked…"). [NativePushHandler] replicates both so
  * notifications look the same as they would from Chrome, without Gecko.
+ *
+ * Facebook's messages are a different shape, mapped onto the same fields by
+ * [parseFacebook].
  */
 data class PushPayload(
     val title: String,
@@ -53,16 +56,16 @@ data class PushPayload(
     }
 
     companion object {
-        const val ORIGIN = "https://x.com"
-        const val DEFAULT_URI = "/notifications"
-
         /** What sw.js shows when a message doesn't parse. */
-        val FALLBACK = PushPayload(
-            title = "X",
+        val FALLBACK = fallback(PushSite.X)
+
+        /** What [site]'s worker shows when a message doesn't parse. */
+        fun fallback(site: PushSite): PushPayload = PushPayload(
+            title = site.fallbackTitle,
             body = "New notification",
             tag = "default",
             iconUrl = null,
-            uri = DEFAULT_URI,
+            uri = site.defaultUri,
             silent = false,
             lang = null,
             multiTitle = null,
@@ -70,11 +73,12 @@ data class PushPayload(
             multiUri = null,
         )
 
-        /** Null when the plaintext isn't the x.com shape (caller shows [FALLBACK]). */
-        fun parse(plaintext: ByteArray?): PushPayload? {
+        /** Null when the plaintext isn't [site]'s shape (caller shows [fallback]). */
+        fun parse(plaintext: ByteArray?, site: PushSite = PushSite.X): PushPayload? {
             if (plaintext == null || plaintext.isEmpty()) return null
             val obj = runCatching { JSONObject(String(plaintext, Charsets.UTF_8)) }.getOrNull()
                 ?: return null
+            if (site == PushSite.FACEBOOK) return parseFacebook(obj)
             val title = obj.optStringOrNull("title") ?: return null
             val data = obj.optJSONObject("data")
             return PushPayload(
@@ -92,18 +96,54 @@ data class PushPayload(
         }
 
         /**
-         * The page a tap opens. Mirrors sw.js W(): resolve `uri` against x.com
-         * and keep only path + query, so a payload can never steer the tap
-         * off-origin (an absolute foreign URL collapses to its path on x.com)
-         * and an unparseable one lands on /notifications.
+         * Facebook's worker (ServiceWorkerPushEvent in its /sw?s=push bundle)
+         * renders a message inline only when it carries a `type`:
+         *
+         *   { type, title?, message?, href?, ppu? | pic?, i? | t? (notif id),
+         *     params?: { t_n? }, … }
+         *
+         * Anything else is a content-less "tickle" its worker resolves with a
+         * cookie-authenticated fetch, which a native receiver can't make — so
+         * those get the generic fallback, as its worker does when that fetch
+         * fails. Each notification id is its own tag, so pushes stack rather
+         * than replace one another.
          */
-        fun resolveClickUrl(uri: String?): String {
-            val target = uri?.trim()?.takeIf { it.isNotEmpty() } ?: DEFAULT_URI
-            val resolved = runCatching { URI("$ORIGIN/").resolve(URI(target)) }.getOrNull()
-                ?: return ORIGIN + DEFAULT_URI
+        private fun parseFacebook(obj: JSONObject): PushPayload? {
+            if (obj.optStringOrNull("type") == null) return null
+            val params = obj.optJSONObject("params")
+            val title = obj.optStringOrNull("title")?.takeIf { it.isNotEmpty() }
+                ?: params?.optStringOrNull("t_n")
+                ?: PushSite.FACEBOOK.fallbackTitle
+            val id = obj.opt("i")?.takeUnless { obj.isNull("i") }
+                ?: obj.opt("t")?.takeUnless { obj.isNull("t") }
+            return PushPayload(
+                title = title,
+                body = obj.optStringOrNull("message"),
+                tag = id?.let { "fb_$it" },
+                iconUrl = obj.optStringOrNull("ppu") ?: obj.optStringOrNull("pic"),
+                uri = obj.optStringOrNull("href"),
+                silent = false,
+                lang = null,
+                multiTitle = null,
+                multiBody = null,
+                multiUri = null,
+            )
+        }
+
+        /**
+         * The page a tap opens. Mirrors sw.js W(): resolve `uri` against the
+         * site's origin and keep only path + query, so a payload can never
+         * steer the tap off-origin (an absolute foreign URL collapses to its
+         * path on that origin) and an unparseable one lands on the default.
+         */
+        fun resolveClickUrl(uri: String?, site: PushSite = PushSite.X): String {
+            val origin = site.origin
+            val target = uri?.trim()?.takeIf { it.isNotEmpty() } ?: site.defaultUri
+            val resolved = runCatching { URI("$origin/").resolve(URI(target)) }.getOrNull()
+                ?: return origin + site.defaultUri
             val path = resolved.rawPath?.takeIf { it.isNotEmpty() } ?: "/"
             val query = resolved.rawQuery?.let { "?$it" }.orEmpty()
-            return ORIGIN + path + query
+            return origin + path + query
         }
 
         private fun JSONObject.optStringOrNull(key: String): String? =

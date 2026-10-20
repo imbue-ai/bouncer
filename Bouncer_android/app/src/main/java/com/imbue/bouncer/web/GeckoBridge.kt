@@ -75,7 +75,11 @@ class GeckoBridge(
     // delivers them only to the visible tab (not warm background tabs). ws /
     // appcheck responses go through postToPage untagged and are broadcast +
     // routed by socket/callback id, so they still reach the tab that asked.
-    fun callJs(fn: String, vararg args: Any?) {
+    fun callJs(fn: String, vararg args: Any?) = callJsOn(activePlatform, fn, *args)
+
+    // Addressed to every tab of one platform, visible or not — for the hidden
+    // push-settings tab, whose page may not belong to the visible platform.
+    fun callJsOn(platformId: String?, fn: String, vararg args: Any?) {
         val argArray = JSONArray().apply {
             args.forEach { put(it ?: JSONObject.NULL) }
         }
@@ -83,7 +87,7 @@ class GeckoBridge(
             put("kind", "call")
             put("fn", fn)
             put("args", argArray)
-            activePlatform?.let { put("__ffTarget", it) }
+            platformId?.let { put("__ffTarget", it) }
         }
         postToPage(payload)
     }
@@ -126,9 +130,14 @@ class GeckoBridge(
             // off-screen settings page rendered its toggle, carrying its current
             // on/off state so the VM knows whether a click is even needed.
             "feedfilterPushToggleReady" -> {
-                val alreadyOn = runCatching { JSONObject(arg).optBoolean("checked") }.getOrDefault(false)
-                scope.launch(Dispatchers.Main) { v.onPushSettingsReady(alreadyOn) }
+                val obj = runCatching { JSONObject(arg) }.getOrNull()
+                val alreadyOn = obj?.optBoolean("checked") ?: false
+                val loggedOut = obj?.optBoolean("loggedOut") ?: false
+                scope.launch(Dispatchers.Main) { v.onPushSettingsReady(fromPlatform, alreadyOn, loggedOut) }
             }
+            // Also from the hidden tab: the site's backend accepted our
+            // subscription (bridge_page.js reRegisterFacebookPush).
+            "feedfilterPushRegistered" -> scope.launch(Dispatchers.Main) { v.onPushSiteRegistered(fromPlatform) }
             else -> Log.w(tag, "unknown bridge message: $name")
         }
     }
