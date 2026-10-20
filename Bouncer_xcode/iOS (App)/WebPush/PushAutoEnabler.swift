@@ -328,7 +328,7 @@ final class PushAutoEnabler: NSObject, WKScriptMessageHandler {
             let checked = (body["checked"] as? Bool) ?? false
             print("[WebPush] auto-enable: toggle ready (checked=\(checked), \(body["elapsedMs"] ?? 0)ms)")
             if checked && PushRegistrar.shared.isSubscribed(site) {
-                debugNotify("Notifications already on ✓")
+                debugNotify("\(site.fallbackTitle) notifications already on ✓")
                 finish(ok: true, reason: "already on")
                 return
             }
