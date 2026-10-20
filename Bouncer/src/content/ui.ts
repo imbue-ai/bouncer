@@ -737,9 +737,15 @@ export function updateTheme() {
     el.classList.add(`${theme}-mode`);
   }
 
-  // Also update the document element for CSS selectors that need it
-  document.documentElement.classList.remove('twitter-light', 'twitter-dim', 'twitter-dark');
-  document.documentElement.classList.add(`twitter-${theme}`);
+  // Also update the document element for CSS selectors that need it. Only
+  // touch it when it's wrong: index.ts re-runs this whenever <html>'s class
+  // changes (m.facebook.com overwrites the whole class list), so an
+  // unconditional remove/add would retrigger itself forever.
+  const html = document.documentElement;
+  const want = `twitter-${theme}`;
+  const stale = ['twitter-light', 'twitter-dim', 'twitter-dark'].filter(c => c !== want && html.classList.contains(c));
+  if (stale.length) html.classList.remove(...stale);
+  if (!html.classList.contains(want)) html.classList.add(want);
 }
 
 // ==================== Sidebar Filter ====================
@@ -4283,8 +4289,16 @@ async function ensureFilterRepliesEnabled(article: HTMLElement) {
   }
 }
 
-// Build the "Quote tweet" toggle row appended at the bottom of the why-annoying
-// tooltip. State is persisted under `bounceQuoteEnabled` (default false).
+// Append the "Quote tweet" toggle row to the bottom of the why-annoying
+// tooltip — X only: the bounce-quote flow drives X's composer, and without
+// the row applyBounceAction never quotes.
+function appendQuoteToggleRow(tooltip: HTMLElement): void {
+  if (_deps.adapter.siteId !== 'twitter') return;
+  tooltip.appendChild(buildQuoteToggleRow());
+}
+
+// Build the "Quote tweet" toggle row. State is persisted under
+// `bounceQuoteEnabled` (default false).
 function buildQuoteToggleRow(): HTMLElement {
   const row = document.createElement('label');
   row.className = 'ff-bounce-quote-row';
@@ -4480,7 +4494,7 @@ export function addWhyAnnoyingButton(article: HTMLElement) {
     if (!alreadyDone) {
       // Still loading — show spinner while we wait
       tooltip.replaceChildren(parseHTML(`<div class="ff-annoying-spinner"><div class="ff-spinner-dot"></div><div class="ff-spinner-dot"></div><div class="ff-spinner-dot"></div></div><span class="ff-annoying-thinking">Diagnosing annoyances</span><div class="ff-progress-bar"><div class="ff-progress-track"><div class="ff-progress-fill" data-stage="0"></div></div></div><a href="#" class="ff-missed-link">This should already be filtered</a>`));
-      tooltip.appendChild(buildQuoteToggleRow());
+      appendQuoteToggleRow(tooltip);
 
       const progressListener = (message: { type: string; verified: number }) => {
         if (message.type === 'annoyingProgress') {
@@ -4615,7 +4629,7 @@ export function addWhyAnnoyingButton(article: HTMLElement) {
         }).catch(err => console.error('[Bouncer] missed flow error:', err));
       });
       tooltip.appendChild(missedLink);
-      tooltip.appendChild(buildQuoteToggleRow());
+      appendQuoteToggleRow(tooltip);
 
     // Reposition after content change (height may differ from spinner)
     requestAnimationFrame(positionTooltip);

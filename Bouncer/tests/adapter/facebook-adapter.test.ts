@@ -257,6 +257,33 @@ describe('Facebook mobile-web (m.facebook.com) adapter', () => {
     <div data-mcomponent="MContainer"><div data-mcomponent="TextArea" data-type="text">Outside my work.\u{F0001}</div></div>
     <div data-mcomponent="ImageArea" aria-label="No photo description available"><img src="https://scontent.xx.fbcdn.net/v/photo.jpg" width="440" height="586"></div>`;
 
+  it('reads the theme from the page background, ignoring a transparent body', () => {
+    document.documentElement.className = '';
+    document.body.style.backgroundColor = 'rgba(0, 0, 0, 0)';
+    document.documentElement.style.backgroundColor = '';
+    expect(adapter.getThemeMode()).toBe('light');
+    document.documentElement.style.backgroundColor = 'rgb(24, 25, 26)';
+    expect(adapter.getThemeMode()).toBe('dark');
+    document.body.style.backgroundColor = 'rgb(255, 255, 255)';
+    expect(adapter.getThemeMode()).toBe('light');
+    document.body.style.backgroundColor = '';
+    document.documentElement.style.backgroundColor = '';
+  });
+
+  it('falls back to the declared theme-color when the page is transparent', () => {
+    document.documentElement.className = '';
+    document.body.style.backgroundColor = 'rgba(0, 0, 0, 0)';
+    const meta = document.createElement('meta');
+    meta.name = 'theme-color';
+    meta.content = '#242526';
+    document.head.appendChild(meta);
+    expect(adapter.getThemeMode()).toBe('dark');
+    meta.content = '#ffffff';
+    expect(adapter.getThemeMode()).toBe('light');
+    meta.remove();
+    document.body.style.backgroundColor = '';
+  });
+
   it('matches feed units through the post selector', () => {
     const units = mountMobileFeed([
       mobileUnit({ id: 1, header: mobileHeader({ pic: 'Kerry Bubb', more: 'Kerry Bubb' }), body }),

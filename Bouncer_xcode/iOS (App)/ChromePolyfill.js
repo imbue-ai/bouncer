@@ -471,8 +471,17 @@
       );
     };
 
-    // Replace WebSocket in this content world (does not affect x.com's own scripts)
-    window.WebSocket = NativeWebSocket;
+    // Bouncer's backend socket (ws-manager) opens through this explicitly.
+    window.__ff_NativeWebSocket = NativeWebSocket;
+    // On iOS this runs in Bouncer's own content world, so replacing
+    // WebSocket there doesn't affect the site's scripts. Android's Gecko
+    // shell injects it into the page's MAIN world, where replacing it would
+    // hijack the site's own sockets too (m.facebook.com renders its whole
+    // feed over one) and route them through the native bridge, which adds
+    // Bouncer's credentials and a chrome-extension Origin.
+    if (window.__ff_platform !== 'android') {
+      window.WebSocket = NativeWebSocket;
+    }
     console.log('[FeedFilter] Native WebSocket bridge installed');
   }
 
