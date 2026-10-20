@@ -31,13 +31,6 @@ enum class PushSite(
     val fallbackTitle: String,
     /** Tap target for a push that carries no URL. */
     val defaultUri: String,
-    /**
-     * How long the hidden tab stays open after subscribe() so the site's
-     * backend learns the endpoint. Facebook's page reloads right after
-     * subscribing and re-sends it from the reloaded page (bridge_page.js
-     * reRegisterFacebookPush), which needs that page to load again.
-     */
-    val registerGraceMs: Long,
 ) {
     X(
         platformId = "twitter",
@@ -47,7 +40,6 @@ enum class PushSite(
         desktopSettingsPage = false,
         fallbackTitle = "X",
         defaultUri = "/notifications",
-        registerGraceMs = 6_000L,
     ),
     FACEBOOK(
         platformId = "facebook",
@@ -57,7 +49,6 @@ enum class PushSite(
         desktopSettingsPage = true,
         fallbackTitle = "Facebook",
         defaultUri = "/notifications",
-        registerGraceMs = 15_000L,
     ),
     ;
 
@@ -71,6 +62,20 @@ enum class PushSite(
             FACEBOOK -> (host == "facebook.com" || host.endsWith(".facebook.com")) &&
                 (path.isEmpty() || path == "/" || path == "/home.php")
         }
+    }
+
+    /**
+     * Login / logout / checkpoint pages. Seeing one means the next feed may
+     * be a freshly logged-in account, worth a new attempt. x.com's login is
+     * tracked by the ViewModel's own hasLoggedIn logic instead.
+     */
+    fun isAuthFlow(url: String): Boolean {
+        if (this != FACEBOOK) return false
+        val uri = runCatching { Uri.parse(url) }.getOrNull() ?: return false
+        val host = uri.host?.lowercase().orEmpty()
+        val path = uri.path.orEmpty()
+        return (host == "facebook.com" || host.endsWith(".facebook.com")) &&
+            (path.startsWith("/login") || path == "/logout.php" || path.startsWith("/checkpoint"))
     }
 
     companion object {

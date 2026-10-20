@@ -135,9 +135,6 @@ class GeckoBridge(
                 val loggedOut = obj?.optBoolean("loggedOut") ?: false
                 scope.launch(Dispatchers.Main) { v.onPushSettingsReady(fromPlatform, alreadyOn, loggedOut) }
             }
-            // Also from the hidden tab: the site's backend accepted our
-            // subscription (bridge_page.js reRegisterFacebookPush).
-            "feedfilterPushRegistered" -> scope.launch(Dispatchers.Main) { v.onPushSiteRegistered(fromPlatform) }
             else -> Log.w(tag, "unknown bridge message: $name")
         }
     }

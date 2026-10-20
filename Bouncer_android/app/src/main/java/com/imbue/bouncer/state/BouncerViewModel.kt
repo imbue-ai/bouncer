@@ -234,6 +234,13 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
         // Other sites: their feed is the cue (the settings page itself reports
         // a logged-out account, so a login form at the feed URL costs one
         // short-lived hidden tab).
+        // A login in progress: an attempt made earlier this session (e.g. on a
+        // mid-login redirect that looks like the feed) gets another go once
+        // the feed is reached again.
+        PushSite.entries.firstOrNull { it.isAuthFlow(url) }?.let { site ->
+            pushEnableEvaluated -= site
+            pushEnableSettled -= site
+        }
         PushSite.entries.firstOrNull { it != PushSite.X && it.isHome(url) }?.let { site ->
             prefs.edit().putBoolean(KEY_PUSH_SITE_USED + site.platformId, true).apply()
             maybeAutoEnablePush(site)
@@ -295,21 +302,6 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
         PushSubscriptionStore(getApplication()).get(site.scope) != null
     }.getOrDefault(false)
 
-    // Whether the site's backend has confirmed it holds our endpoint. Only
-    // tracked for Facebook, whose own registration POST can be cut off by
-    // the page reload that follows subscribe(); x.com's always completes.
-    private fun isRegisteredWithSite(site: PushSite): Boolean =
-        site == PushSite.X || prefs.getBoolean(KEY_PUSH_SITE_REGISTERED + site.platformId, false)
-
-    // Subscribed AND the site knows it: nothing for the hidden tab to do.
-    private fun isPushComplete(site: PushSite): Boolean = isSubscribed(site) && isRegisteredWithSite(site)
-
-    fun onPushSiteRegistered(platformId: String?) {
-        val site = platformId?.let { PushSite.forPlatform(it) } ?: return
-        Log.i(tag, "auto-enable: ${site.name} backend confirmed the subscription")
-        prefs.edit().putBoolean(KEY_PUSH_SITE_REGISTERED + site.platformId, true).apply()
-    }
-
     // Whether the user has been logged in to the site on this install, so the
     // settings toggle only ever loads settings pages of sites they use. X has
     // its own login tracking; the others are marked on reaching their feed.
@@ -332,7 +324,7 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
         if (site in pushEnableEvaluated) return
         pushEnableEvaluated += site
         if (userOptedOutOfNotifications()) return
-        if (isPushComplete(site)) return
+        if (isSubscribed(site)) return
 
         if (NotificationPermissionBroker.hasPermission(getApplication())) {
             // Already permitted (typically from the early onboarding request) →
@@ -365,7 +357,7 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
         _state.update { it.copy(notificationsEnabled = on) }
         Analytics.logNotificationsToggled(getApplication(), on)
         if (!on) return
-        val missing = PushSite.entries.filter { hasUsedSite(it) && !isPushComplete(it) }
+        val missing = PushSite.entries.filter { hasUsedSite(it) && !isSubscribed(it) }
         if (missing.isNotEmpty()) enableNotificationsFromSettings(missing)
     }
 
@@ -395,7 +387,7 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
         val site = PushSite.entries.firstOrNull { it.isHome(url) } ?: return
         if (!hasUsedSite(site) || site in pushEnableSettled) return
         if (!NotificationPermissionBroker.hasPermission(getApplication())) return
-        if (isPushComplete(site)) return
+        if (isSubscribed(site)) return
         Log.i(tag, "auto-enable: retrying ${site.name} after foreground (prior attempt didn't complete)")
         startBackgroundPushEnable(site)
     }
@@ -456,7 +448,7 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
     private fun startNextQueuedPushEnable() {
         pushEnableSite = null
         val next = pushEnableQueue.removeFirstOrNull() ?: return
-        if (isPushComplete(next)) return startNextQueuedPushEnable()
+        if (isSubscribed(next)) return startNextQueuedPushEnable()
         startBackgroundPushEnable(next)
     }
 
@@ -477,17 +469,6 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
             teardownPushEnable()
             return
         }
-        if (alreadyOn && isSubscribed(site) && !isRegisteredWithSite(site)) {
-            // On, but the site never confirmed our endpoint: the page re-sends
-            // it on load (bridge_page.js reRegisterFacebookPush). Give it the
-            // registration grace, then drop the tab.
-            Log.i(tag, "auto-enable: ${site.name} toggle on but unconfirmed; letting the page re-send")
-            viewModelScope.launch {
-                delay(site.registerGraceMs)
-                teardownPushEnable()
-            }
-            return
-        }
         if (alreadyOn) {
             // Push is already on for this account — nothing to click; just drop the tab.
             Log.i(tag, "auto-enable: ${site.name} toggle already on; tearing down")
@@ -496,9 +477,6 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
 
-        // The click makes a new subscription: unconfirmed until the site's
-        // registration POST succeeds (onPushSiteRegistered).
-        prefs.edit().remove(KEY_PUSH_SITE_REGISTERED + site.platformId).apply()
         pendingPushToggle = true
         PushRegistrar.onSubscriptionRegistered = { scope ->
             if (pendingPushToggle && PushSite.forScope(scope) == site) {
@@ -537,7 +515,7 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
                     _state.update { it.copy(pushEnableCoverVisible = false) }
                 }
                 viewModelScope.launch {
-                    delay(site.registerGraceMs)
+                    delay(PUSH_REGISTER_GRACE_MS)
                     if (mode == PushEnableMode.BACKGROUND) {
                         BouncerGeckoView.endBackgroundPushEnable()
                     } else {
@@ -1030,8 +1008,6 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
         private const val KEY_NOTIF_PROMPTED = "hasPromptedNotifications"
         // + platformId: the user has reached that site's feed on this install.
         private const val KEY_PUSH_SITE_USED = "pushSiteUsed:"
-        // + platformId: the site's backend confirmed it holds our endpoint.
-        private const val KEY_PUSH_SITE_REGISTERED = "pushSiteRegistered:"
         // How long to let the off-screen (background, throttled) surface try to
         // render the toggle before falling back to the covered path. Generous
         // because it's invisible — the user browses home the whole time.
@@ -1042,6 +1018,10 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
         // After clicking the toggle, how long to wait for the subscription to
         // register before giving up (e.g. the user denied the OS permission).
         private const val PUSH_ENABLE_TIMEOUT_MS = 15_000L
+        // After the browser subscribe resolves, how long to keep the hidden tab
+        // alive so the site's backend-registration POST (which flips the server-side
+        // toggle + enables delivery) can finish before we close the session.
+        private const val PUSH_REGISTER_GRACE_MS = 6_000L
         private const val TOP_PIN_PX = 80
         private const val HIDE_THRESHOLD_PX = 24
         private const val SHOW_THRESHOLD_PX = 16

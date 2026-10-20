@@ -28,8 +28,7 @@
     "feedfilterModalClosed",
     "feedfilterAiSettings",
     "feedfilterPushDirectResult",
-    "feedfilterPushToggleReady",
-    "feedfilterPushRegistered"
+    "feedfilterPushToggleReady"
   ];
 
   window.__ffExtensionVersion = "1.1.30";
@@ -271,71 +270,6 @@
       }
       if (elapsed > TIMEOUT_MS) return;
       setTimeout(poll, 150);
-    })();
-  })();
-
-  // Facebook: make sure its backend knows our endpoint. Its toggle handler
-  // POSTs the new subscription (/push/register/service_worker/) the moment
-  // subscribe() resolves — but registering the push worker makes the page
-  // reload ~200ms later, which can abort that POST, and the reloaded page
-  // only re-sends it when a flag it passes as false is set. So on each load
-  // of the settings page (only the hidden enable tab loads it), if a
-  // subscription exists, ask Facebook's own PushRegistration to re-send it.
-  // Idempotent: the same endpoint and keys every time.
-  (function reRegisterFacebookPush() {
-    if (pushSettingsSite() !== "facebook") return;
-    var SW_PATH = "/sw?s=push";
-    var FALLBACK_APP_ID = "1443096165982425";
-    // Log the register POST's outcome (AsyncRequest uses XHR).
-    try {
-      var origOpen = XMLHttpRequest.prototype.open;
-      XMLHttpRequest.prototype.open = function (method, url) {
-        try {
-          if (/\/push\/register\//.test(String(url))) {
-            var xhr = this;
-            xhr.addEventListener("loadend", function () {
-              console.log("[Bouncer] facebook push register POST → " + xhr.status);
-              // Native records that Facebook's backend has the endpoint.
-              if (xhr.status === 200) {
-                try { bridge.feedfilterPushRegistered(JSON.stringify({ ok: true })); } catch (e) {}
-              }
-            });
-          }
-        } catch (e) {}
-        return origOpen.apply(this, arguments);
-      };
-    } catch (e) {}
-    function appId() {
-      try {
-        var m = document.documentElement.innerHTML.match(/"installPush",\[\],\["\\\/sw\?s=push",(\d+)/);
-        if (m) return m[1];
-      } catch (e) {}
-      return FALLBACK_APP_ID;
-    }
-    var start = Date.now();
-    (function attempt() {
-      var req = window.require;
-      var ready = false;
-      try {
-        ready = typeof req === "function" && req("PushRegistration") &&
-          req("XPushRegisterServiceWorkerController") && req("AsyncRequest");
-      } catch (e) { ready = false; }
-      if (!ready) {
-        if (Date.now() - start < 20000) setTimeout(attempt, 250);
-        return;
-      }
-      if (!navigator.serviceWorker) return;
-      navigator.serviceWorker.getRegistration(SW_PATH).then(function (reg) {
-        if (!reg || !reg.pushManager) return null;
-        return reg.pushManager.getSubscription();
-      }).then(function (sub) {
-        if (!sub) return;
-        console.log("[Bouncer] facebook push: re-sending subscription to Facebook");
-        req("PushRegistration").get(SW_PATH, appId())
-          .maybeRegisterPushAgain(req("XPushRegisterServiceWorkerController"), req("AsyncRequest"));
-      }).catch(function (e) {
-        try { console.log("[Bouncer] facebook push re-register failed: " + e); } catch (_) {}
-      });
     })();
   })();
 
