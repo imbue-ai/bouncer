@@ -15,7 +15,7 @@ import {
   getStorage, setStorage, getDescriptions, setDescriptions,
   aiIntentActiveForSite,
   getFilteringPaused, setFilteringPaused,
-  getExcludedAccounts, setExcludedAccounts, exclusionIdentity,
+  getExcludedAccounts, setExcludedAccounts, exclusionIdentity, identifiesAccountsByName,
 } from '../shared/storage';
 import { optionalPlatforms } from '../shared/platforms';
 import { getReleaseNote, WELCOME_TIP } from './release-notes';
@@ -737,9 +737,15 @@ export function updateTheme() {
     el.classList.add(`${theme}-mode`);
   }
 
-  // Also update the document element for CSS selectors that need it
-  document.documentElement.classList.remove('twitter-light', 'twitter-dim', 'twitter-dark');
-  document.documentElement.classList.add(`twitter-${theme}`);
+  // Also update the document element for CSS selectors that need it. Only
+  // touch it when it's wrong: index.ts re-runs this whenever <html>'s class
+  // changes (m.facebook.com overwrites the whole class list), so an
+  // unconditional remove/add would retrigger itself forever.
+  const html = document.documentElement;
+  const want = `twitter-${theme}`;
+  const stale = ['twitter-light', 'twitter-dim', 'twitter-dark'].filter(c => c !== want && html.classList.contains(c));
+  if (stale.length) html.classList.remove(...stale);
+  if (!html.classList.contains(want)) html.classList.add(want);
 }
 
 // ==================== Sidebar Filter ====================
@@ -1072,6 +1078,11 @@ async function injectFilterPhrasesInputImpl() {
   // right rail don't overlap the filter box.
   if (_deps.adapter.siteId === 'linkedin') {
     filterPhrasesContainer.classList.add('filter-phrases-sidebar--linkedin');
+  }
+  // facebook adaptation: see facebook.css (z-index over the right rail's
+  // ads, no Twitter gap fill, no share button).
+  if (_deps.adapter.siteId === 'facebook') {
+    filterPhrasesContainer.classList.add('filter-phrases-sidebar--facebook');
   }
 
   if (process.env.HAS_IMBUE_BACKEND === 'true' && (!isAuthenticated || guestLimitReached)) {
@@ -3098,10 +3109,11 @@ function createExcludeAccountButton(post: FilteredPost, postContent: PostContent
   const identity = exclusionIdentity(siteId, postContent);
   if (!identity) return null;
 
-  // Display form: the author's name on LinkedIn, the original-case @handle
-  // elsewhere (the store path may hand us a bare handle — re-add the @).
-  let display = siteId === 'linkedin' ? postContent.author : postContent.handle.replace(/^\//, '');
-  if (siteId !== 'linkedin' && !display.startsWith('@')) display = `@${display}`;
+  // Display form: the author's name on LinkedIn/Facebook, the original-case
+  // @handle elsewhere (the store path may hand us a bare handle — re-add the @).
+  const byName = identifiesAccountsByName(siteId);
+  let display = byName ? postContent.author : postContent.handle.replace(/^\//, '');
+  if (!byName && !display.startsWith('@')) display = `@${display}`;
 
   const noun = siteId === 'youtube' ? 'videos' : 'posts';
   const btn = document.createElement('button');
@@ -4277,8 +4289,16 @@ async function ensureFilterRepliesEnabled(article: HTMLElement) {
   }
 }
 
-// Build the "Quote tweet" toggle row appended at the bottom of the why-annoying
-// tooltip. State is persisted under `bounceQuoteEnabled` (default false).
+// Append the "Quote tweet" toggle row to the bottom of the why-annoying
+// tooltip — X only: the bounce-quote flow drives X's composer, and without
+// the row applyBounceAction never quotes.
+function appendQuoteToggleRow(tooltip: HTMLElement): void {
+  if (_deps.adapter.siteId !== 'twitter') return;
+  tooltip.appendChild(buildQuoteToggleRow());
+}
+
+// Build the "Quote tweet" toggle row. State is persisted under
+// `bounceQuoteEnabled` (default false).
 function buildQuoteToggleRow(): HTMLElement {
   const row = document.createElement('label');
   row.className = 'ff-bounce-quote-row';
@@ -4308,6 +4328,11 @@ function buildQuoteToggleRow(): HTMLElement {
 }
 
 // Add inline "why annoying" button next to Share post button
+/** Fired on a Bounce button to activate it without a DOM click. Must match
+ *  the literal in adapters that dispatch it (adapters are standalone
+ *  bundles and can't import this). */
+export const BOUNCE_ACTIVATE_EVENT = 'ff-bounce-activate';
+
 export function addWhyAnnoyingButton(article: HTMLElement) {
   if (!_deps.adapter.getShareButton(article)) {
     return;
@@ -4328,7 +4353,10 @@ export function addWhyAnnoyingButton(article: HTMLElement) {
   // Track tooltip reference on the button element
   let btnTooltip: HTMLElement | null = null;
 
-  btn.addEventListener('click', (e) => {
+  // Also answers BOUNCE_ACTIVATE_EVENT: an adapter that must swallow the real
+  // click before the page sees it (Facebook's mobile renderer routes taps in
+  // the capture phase) activates the button through that event instead.
+  const onActivate = (e: Event) => {
     e.preventDefault();
     e.stopPropagation();
 
@@ -4466,7 +4494,7 @@ export function addWhyAnnoyingButton(article: HTMLElement) {
     if (!alreadyDone) {
       // Still loading — show spinner while we wait
       tooltip.replaceChildren(parseHTML(`<div class="ff-annoying-spinner"><div class="ff-spinner-dot"></div><div class="ff-spinner-dot"></div><div class="ff-spinner-dot"></div></div><span class="ff-annoying-thinking">Diagnosing annoyances</span><div class="ff-progress-bar"><div class="ff-progress-track"><div class="ff-progress-fill" data-stage="0"></div></div></div><a href="#" class="ff-missed-link">This should already be filtered</a>`));
-      tooltip.appendChild(buildQuoteToggleRow());
+      appendQuoteToggleRow(tooltip);
 
       const progressListener = (message: { type: string; verified: number }) => {
         if (message.type === 'annoyingProgress') {
@@ -4601,12 +4629,14 @@ export function addWhyAnnoyingButton(article: HTMLElement) {
         }).catch(err => console.error('[Bouncer] missed flow error:', err));
       });
       tooltip.appendChild(missedLink);
-      tooltip.appendChild(buildQuoteToggleRow());
+      appendQuoteToggleRow(tooltip);
 
     // Reposition after content change (height may differ from spinner)
     requestAnimationFrame(positionTooltip);
     })().catch(err => console.error('[UI] annoying reasons tooltip failed:', err));
-  });
+  };
+  btn.addEventListener('click', onActivate);
+  btn.addEventListener(BOUNCE_ACTIVATE_EVENT, onActivate);
 
   // Outside-click tooltip dismissal is handled by a single module-level
   // listener registered via setupAnnoyingTooltipCloser — do NOT register a

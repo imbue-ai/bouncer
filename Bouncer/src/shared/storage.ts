@@ -110,16 +110,23 @@ export function normalizeAccountIdentity(raw: string): string {
   return s.trim().toLowerCase();
 }
 
+/** True on platforms without @handles, where an account is identified by the
+ *  author's display name: LinkedIn (its `handle` field carries the headline)
+ *  and Facebook (no handle at all). Those names are shown without an "@". */
+export function identifiesAccountsByName(siteId: string): boolean {
+  return siteId === 'linkedin' || siteId === 'facebook';
+}
+
 /** The string an account exclusion matches against for a post: the @handle
- *  where the platform has one, the display name on LinkedIn (its `handle`
- *  field carries the headline, not an identity). Scoped to the top-level
+ *  where the platform has one, the display name where it doesn't (see
+ *  identifiesAccountsByName). Scoped to the top-level
  *  post author — quoted/reposted accounts don't count. Null when the post
  *  has no usable identity. */
 export function exclusionIdentity(
   siteId: SiteId,
   content: { author?: string; handle?: string }
 ): string | null {
-  const raw = siteId === 'linkedin' ? content.author : content.handle;
+  const raw = identifiesAccountsByName(siteId) ? content.author : content.handle;
   const normalized = raw ? normalizeAccountIdentity(raw) : '';
   return normalized || null;
 }

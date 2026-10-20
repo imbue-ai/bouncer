@@ -867,6 +867,12 @@ import {
       updateTheme();
     });
     themeObserver.observe(document.body, { attributes: true, attributeFilter: ['style', 'class'] });
+    // Sites that rewrite <html>'s class list drop our theme class with it.
+    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+    // Apply once now: the filter-box injectors also call it, but pages that
+    // get no filter box (the apps' Facebook tab) would otherwise never get
+    // a theme class, leaving popups in their default dark style.
+    updateTheme();
 
     // Restore BottomBar opacity when clicked
     document.addEventListener('click', (e: MouseEvent) => {

@@ -38,6 +38,7 @@ object BouncerGeckoView {
         "x.com", "twitter.com", "t.co",
         "twimg.com", "pbs.twimg.com", "abs.twimg.com", "video.twimg.com",
         "linkedin.com", "licdn.com", "static.licdn.com", "media.licdn.com",
+        "facebook.com", "fb.com", "fbcdn.net", "fbsbx.com",
         "accounts.google.com", "accounts.youtube.com", "google.com", "gstatic.com",
     )
 

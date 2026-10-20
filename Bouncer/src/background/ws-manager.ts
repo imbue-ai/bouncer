@@ -166,7 +166,11 @@ class ImbueWebSocket {
     console.log('[WS Manager] Connecting to:', baseUrl, '| iOS:', isIOS);
 
     return new Promise((resolve, reject) => {
-      const ws = new WebSocket(wsUrl);
+      // In the apps, the backend socket goes through the native bridge
+      // (ChromePolyfill.js); on Android that isn't installed as the global
+      // WebSocket, since it shares the page's world.
+      const SocketImpl = (globalThis as { __ff_NativeWebSocket?: typeof WebSocket }).__ff_NativeWebSocket ?? WebSocket;
+      const ws = new SocketImpl(wsUrl);
 
       const connectTimeout = setTimeout(() => {
         ws.close();

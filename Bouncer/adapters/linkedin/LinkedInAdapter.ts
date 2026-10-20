@@ -577,14 +577,33 @@ const BouncerLinkedInAdapter = class LinkedInAdapter implements PlatformAdapter 
     // background luminance. LinkedIn has no "dim" mode (light/dark only).
     const outlet = document.getElementById('interop-outlet');
     if (outlet) return outlet.classList.contains('theme--dark') ? 'dark' : 'light';
+    return this._pageLooksDark() ? 'dark' : 'light';
+  }
 
-    const bg = window.getComputedStyle(document.body).backgroundColor;
-    const m = bg.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
-    if (m) {
-      const [, r, g, b] = m.map(Number);
-      if (r + g + b < 384) return 'dark';
+  /** Dark when the page's background is: body's, else html's, skipping
+   *  transparent ones (a transparent body parses as black). When both are
+   *  transparent (m.facebook.com), the page's declared theme-color; failing
+   *  that, the browser's default white canvas — not the system scheme,
+   *  which the mobile sites don't follow inside the app's web view. */
+  private _pageLooksDark(): boolean {
+    const isDark = (color: string): boolean | null => {
+      const m = color.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?/);
+      if (m) {
+        if (m[4] !== undefined && Number(m[4]) === 0) return null;
+        return Number(m[1]) + Number(m[2]) + Number(m[3]) < 384;
+      }
+      const hex = color.trim().match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+      if (!hex) return null;
+      const h = hex[1].length === 3 ? hex[1].replace(/./g, c => c + c) : hex[1];
+      return parseInt(h.slice(0, 2), 16) + parseInt(h.slice(2, 4), 16) + parseInt(h.slice(4, 6), 16) < 384;
+    };
+    for (const el of [document.body, document.documentElement]) {
+      if (!el) continue;
+      const dark = isDark(window.getComputedStyle(el).backgroundColor);
+      if (dark !== null) return dark;
     }
-    return 'light';
+    const themeColor = document.querySelector('meta[name="theme-color"]')?.getAttribute('content');
+    return themeColor ? isDark(themeColor) ?? false : false;
   }
 
   async extractPostContentFromStore(article: HTMLElement): Promise<PostContent | null> {
