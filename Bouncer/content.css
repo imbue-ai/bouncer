@@ -1674,6 +1674,54 @@ html.bouncer-plain-border .filter-phrases-bottom .filter-phrases-container {
   font-weight: 600;
 }
 
+/* Experiment opt-in prompt: the guest popup's card with a Yes/No pair. */
+.bouncer-experiment-popup-hint {
+  margin: -12px 0 20px;
+  font-size: 13px;
+  line-height: 1.4;
+  opacity: 0.7;
+}
+
+.bouncer-experiment-popup-buttons {
+  display: flex;
+  gap: 10px;
+}
+
+.bouncer-experiment-btn {
+  flex: 1;
+  padding: 10px 16px;
+  border-radius: 9999px;
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: filter 0.15s, background-color 0.15s;
+}
+
+.bouncer-experiment-no {
+  border: 1px solid #536471;
+  background: transparent;
+  color: inherit;
+}
+
+.bouncer-experiment-no:hover {
+  background: rgba(128, 128, 128, 0.12);
+}
+
+.bouncer-experiment-yes {
+  border: 1px solid rgb(var(--bouncer-brand-rgb));
+  background: rgb(var(--bouncer-brand-rgb));
+  color: #ffffff;
+}
+
+.bouncer-experiment-yes:hover {
+  filter: brightness(1.08);
+}
+
+.light-mode .bouncer-experiment-no {
+  border-color: #cfd9de;
+}
+
 /* First-install "activate other platforms?" popup. The card is an extension
    iframe (onboarding.html) so its buttons can call permissions.request();
    backgrounds mirror the guest popup so the iframe doesn't flash a

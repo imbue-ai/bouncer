@@ -19,6 +19,12 @@ interface PendingRequest {
   submissionTime: number | null;
 }
 
+interface DirectReply {
+  resolve: (reply: Record<string, unknown>) => void;
+  reject: (error: Error) => void;
+  timeoutId: ReturnType<typeof setTimeout>;
+}
+
 /** Out-of-band server push instructing the client to force a sign-in (e.g. the
  *  anonymous tweet limit was reached server-side). Not part of the ack/result
  *  routing — handled before validation since `requestId` may be null. */
@@ -110,6 +116,12 @@ class ImbueWebSocket {
   // Invoked when the backend pushes a `forceLogin` message. Set by the
   // background entry point to broadcast the guest-limit gate to content tabs.
   onForceLogin: ((msg: ForceLoginMessage) => void) | null;
+  // Requests answered by a single reply echoing their requestId (see
+  // sendAndAwaitReply), keyed by requestId.
+  directReplies: Map<string, DirectReply>;
+  // Invoked after each new connection opens. Set by the background entry
+  // point to retry work that needs the backend (e.g. an unsent opt-in).
+  onConnected: (() => void) | null;
 
   constructor() {
     this.ws = null;
@@ -117,6 +129,8 @@ class ImbueWebSocket {
     this.unackedRequests = new Map();
     this.pendingRequests = new Map();
     this.onForceLogin = null;
+    this.directReplies = new Map();
+    this.onConnected = null;
   }
 
   // Returns a connected WebSocket, reusing existing or creating new
@@ -181,6 +195,9 @@ class ImbueWebSocket {
         clearTimeout(connectTimeout);
         this.ws = ws;
         resolve(ws);
+        // After the connect promise settles, so the hook's own sends reuse
+        // this socket instead of waiting on (or racing) the connect.
+        setTimeout(() => this.onConnected?.(), 0);
       };
 
       ws.onmessage = (event: MessageEvent) => {
@@ -256,6 +273,22 @@ class ImbueWebSocket {
     });
   }
 
+  // Send a message whose route answers with exactly one reply echoing its
+  // requestId (no ack/jobId/result sequence). Resolves with the reply; rejects
+  // on an error reply, timeout, or the socket closing first.
+  async sendAndAwaitReply(message: Record<string, unknown>, { timeout = 15000 } = {}): Promise<Record<string, unknown>> {
+    const ws = await this.ensureConnected();
+    const requestId = crypto.randomUUID();
+    return new Promise((resolve, reject) => {
+      const timeoutId = setTimeout(() => {
+        this.directReplies.delete(requestId);
+        reject(new Error(`Request timed out after ${Math.round(timeout / 1000)} seconds.`));
+      }, timeout);
+      this.directReplies.set(requestId, { resolve, reject, timeoutId });
+      ws.send(JSON.stringify({ ...message, requestId }));
+    });
+  }
+
   // Send a message without waiting for a response
   async sendFireAndForget(message: object): Promise<void> {
     const ws = await this.ensureConnected();
@@ -264,6 +297,16 @@ class ImbueWebSocket {
 
   // Route incoming messages to the correct pending request
   private _handleMessage(data: WSAckMessage & WSResultMessage): void {
+    // Single-reply requests (sendAndAwaitReply) — matched only by requestId.
+    const direct = data.requestId ? this.directReplies.get(data.requestId) : undefined;
+    if (direct && data.requestId) {
+      this.directReplies.delete(data.requestId);
+      clearTimeout(direct.timeoutId);
+      if (data.error) direct.reject(new Error(data.error));
+      else direct.resolve(data as unknown as Record<string, unknown>);
+      return;
+    }
+
     // Try to match by requestId first (if backend echoes it)
     if (data.requestId && this.unackedRequests.has(data.requestId)) {
       this._handleAck(data, this.unackedRequests.get(data.requestId)!);
@@ -364,8 +407,13 @@ class ImbueWebSocket {
       clearTimeout(request.timeoutId);
       request.reject(error);
     }
+    for (const [, reply] of this.directReplies) {
+      clearTimeout(reply.timeoutId);
+      reply.reject(error);
+    }
     this.unackedRequests.clear();
     this.pendingRequests.clear();
+    this.directReplies.clear();
   }
 
   // Clean close — call from onSuspend

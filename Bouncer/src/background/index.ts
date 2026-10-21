@@ -109,11 +109,36 @@ imbueWebSocket.onForceLogin = (_msg: ForceLoginMessage) => {
 // the backend keeps applying anonymous limits to that connection. Reconnect to
 // re-run $connect with the new token and register the real identity server-side.
 setOnIdentityChanged(() => {
+  // The reconnect's onConnected hook re-sends the experiment answer under
+  // the new UID (see syncExperimentOptIn).
   void imbueWebSocket.reconnect();
   // Keep the uninstall URL's UID in sync with the new identity (e.g.
   // anonymous -> Google sign-in), so uninstall logs attribute to the right user.
   updateUninstallUrl();
 });
+
+// Sends the experiment answer to the backend's experimentOptIn route, which
+// keeps the lists of opted-in / opted-out UIDs. `force` sends even if the
+// backend already has this answer for this UID — every click is reported.
+// Otherwise it only sends what the backend hasn't acknowledged: a send that
+// failed (offline, not signed in yet) or an answer recorded under a previous
+// UID (anonymous -> Google sign-in). Retried on each new connection.
+async function syncExperimentOptIn({ force = false } = {}): Promise<void> {
+  if (process.env.HAS_IMBUE_BACKEND !== 'true') return;
+  const { experimentOptIn, experimentOptInSynced } =
+    await getStorage(['experimentOptIn', 'experimentOptInSynced']);
+  if (typeof experimentOptIn !== 'boolean') return; // not answered yet
+  const uid = getCurrentUid();
+  if (!uid) return; // retried once signed in (the sign-in reconnects)
+  if (!force && experimentOptInSynced?.uid === uid && experimentOptInSynced.optIn === experimentOptIn) return;
+  await imbueWebSocket.sendAndAwaitReply({ action: 'experimentOptIn', optIn: experimentOptIn });
+  await setStorage({ experimentOptInSynced: { uid, optIn: experimentOptIn } });
+}
+
+imbueWebSocket.onConnected = () => {
+  syncExperimentOptIn().catch(err =>
+    console.error('[Experiment] Failed to sync opt-in:', (err as Error).message));
+};
 
 // ==================== Startup ====================
 
@@ -332,6 +357,18 @@ async function handleMessage(
     // for the designated tab (set by onInstalled). If the designated tab no
     // longer exists — closed before the popup was dismissed — the first tab
     // to ask inherits the claim, so the onboarding isn't lost.
+    case 'setExperimentOptIn': {
+      await setStorage({ experimentOptIn: message.optIn });
+      try {
+        await syncExperimentOptIn({ force: true });
+        return { success: true };
+      } catch (err) {
+        // Saved locally; the next connection retries the send.
+        console.error('[Experiment] Failed to send opt-in:', (err as Error).message);
+        return { success: false };
+      }
+    }
+
     case 'claimPlatformOnboarding': {
       if (tabId === undefined) return { show: false };
       const { showPlatformOnboarding, platformOnboardingTabId } =
@@ -974,6 +1011,9 @@ chrome.runtime.onInstalled.addListener((details) => {
         // suppress the "what's new" banner for this version — a fresh install
         // has nothing to catch up on.
         showWelcomeBanner: true,
+        // Hold the experiment opt-in prompt until the new user has viewed
+        // its first posts (see maybeShowExperimentPrompt in content/ui.ts).
+        experimentPromptPostsSeen: 0,
         // One-time "activate other platforms?" popup, shown on x.com ahead
         // of (and independent of) the sign-in gate — but only in the tab
         // created below (see claimPlatformOnboarding). Never set when the

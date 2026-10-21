@@ -365,6 +365,11 @@ function setupStorageListener() {
       const el = document.getElementById('enableFilterReplies') as HTMLInputElement | null;
       if (el && el.checked !== checked) el.checked = checked;
     }
+    if (areaName === 'local' && changes.experimentOptIn) {
+      const checked = changes.experimentOptIn.newValue === true;
+      const el = document.getElementById('experimentOptInToggle') as HTMLInputElement | null;
+      if (el && el.checked !== checked) el.checked = checked;
+    }
     if (areaName === 'local' && changes.coloredBorder) {
       const checked = changes.coloredBorder.newValue !== false;
       const el = document.getElementById('coloredBorderToggle') as HTMLInputElement | null;
@@ -786,6 +791,7 @@ function setupEventListeners() {
   // Accent Color picker
   setupAccentColorPicker();
   setupColoredBorderToggle();
+  setupExperimentToggle();
 
   // Model dropdown
   setupModelDropdown();
@@ -1150,6 +1156,24 @@ function setupColoredBorderToggle() {
       ? removeStorage(['coloredBorder'])
       : setStorage({ coloredBorder: false });
     write.catch(err => console.error('[Popup] Failed to save border toggle:', err));
+  });
+}
+
+// "Participate in experiment" toggle. Saves an explicit true/false either
+// way so flipping it also counts as answering the in-feed opt-in prompt
+// (maybeShowExperimentPrompt in content/ui.ts), which then never shows. Goes
+// through the background, which saves it and sends it to the backend.
+function setupExperimentToggle() {
+  const el = document.getElementById('experimentOptInToggle') as HTMLInputElement | null;
+  if (!el) return;
+  getStorage(['experimentOptIn'])
+    .then(data => { el.checked = data.experimentOptIn === true; })
+    .catch(err => console.error('[Popup] Failed to load experiment toggle:', err));
+  el.addEventListener('change', () => {
+    const optIn = el.checked;
+    chrome.runtime.sendMessage({ type: 'setExperimentOptIn', optIn })
+      .catch(() => setStorage({ experimentOptIn: optIn }))
+      .catch(err => console.error('[Popup] Failed to save experiment toggle:', err));
   });
 }
 

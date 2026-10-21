@@ -65,6 +65,11 @@ export function initUI(deps: ContentUIDeps) {
       if (isAuthenticated) {
         console.log('[Bouncer] Calling refreshAllFilterBoxes after auth');
         refreshAllFilterBoxes();
+        // Every sign-in path (Google/Apple, anonymous "skip", the settings
+        // popup) ends in this broadcast, so it's where new users get the
+        // experiment prompt.
+        maybeShowExperimentPrompt('signInBroadcast').catch(err =>
+          console.error('[Bouncer] Experiment prompt failed:', err));
       } else {
         console.log('[Bouncer] authenticated=false, skipping refresh');
       }
@@ -231,6 +236,8 @@ async function launchSignIn(btn?: HTMLButtonElement) {
       guestLimitReached = false;
       dismissGuestLimitPopup();
       refreshAllFilterBoxes();
+      maybeShowExperimentPrompt('signIn').catch(err =>
+        console.error('[Bouncer] Experiment prompt failed:', err));
     }
   } catch (err) {
     console.error('[Bouncer] Sign-in failed:', err);
@@ -269,6 +276,8 @@ async function skipSignIn(btn?: HTMLButtonElement) {
       isAnonymous = true;
       dismissGuestLimitPopup();
       refreshAllFilterBoxes();
+      maybeShowExperimentPrompt('signIn').catch(err =>
+        console.error('[Bouncer] Experiment prompt failed:', err));
     } else {
       restoreArrow();
     }
@@ -482,6 +491,9 @@ export async function maybeShowPlatformOnboarding(): Promise<void> {
     void flyOnboardingIntoBouncer(backdrop, iframe).finally(() => {
       backdrop.remove();
       platformOnboardingBackdrop = null;
+      // The experiment prompt deferred to this popup; ask it now.
+      maybeShowExperimentPrompt('pageLoad').catch(err =>
+        console.error('[Bouncer] Experiment prompt failed:', err));
     });
   };
   const messageHandler = (event: MessageEvent<{ type?: string; height?: number }>) => {
@@ -539,6 +551,118 @@ async function flyOnboardingIntoBouncer(backdrop: HTMLElement, card: HTMLElement
   // Canceled animations (navigation mid-flight) still fall through to cleanup.
   await Promise.all([flight.finished, fade.finished]).catch(() => {});
   if (destEl?.isConnected) pulseLandingTarget(destEl);
+}
+
+// ==================== Experiment opt-in prompt ====================
+
+let experimentPromptBackdrop: HTMLElement | null = null;
+
+// New installs see the prompt only after WELCOME_TIP_POST_LIMIT viewed posts —
+// the same count (and the same naive counting) that expires the welcome tip.
+// Kept as a separate counter because the tip's stops when the tip is
+// dismissed early.
+// Unknown until loaded from storage; false once the limit is reached or for
+// installs that aren't gated.
+let experimentPromptCounting: boolean | null = null;
+
+/** Called for each processed post. Counts toward the new-install gate and
+ *  shows the prompt on the post that reaches the limit. */
+export async function noteTweetSeenForExperimentPrompt(): Promise<void> {
+  if (experimentPromptCounting === false) return;
+  const { experimentPromptPostsSeen } = await getStorage(['experimentPromptPostsSeen']);
+  if (typeof experimentPromptPostsSeen !== 'number' || experimentPromptPostsSeen >= WELCOME_TIP_POST_LIMIT) {
+    experimentPromptCounting = false;
+    return;
+  }
+  experimentPromptCounting = true;
+  const next = experimentPromptPostsSeen + 1;
+  await setStorage({ experimentPromptPostsSeen: next });
+  if (next >= WELCOME_TIP_POST_LIMIT) {
+    experimentPromptCounting = false;
+    await maybeShowExperimentPrompt('postLimit');
+  }
+}
+
+const EXPERIMENT_PROMPT_MESSAGE =
+  'Would you like to participate in an experiment to help make Bouncer better?';
+
+// One-time Yes/No popup asking browser-extension users to join the
+// experiment. Keyed on `experimentOptIn` being absent, and never returns once
+// answered — the settings toggle changes the answer from then on.
+//
+// Installs made since this prompt shipped wait until WELCOME_TIP_POST_LIMIT
+// posts have been viewed (`experimentPromptPostsSeen`, seeded to 0 by
+// onInstalled; absent for older installs, which aren't gated). Triggers:
+//  - 'postLimit': a new install just viewed its last required post. Fires in
+//    the tab that counted it, on any platform.
+//  - 'signIn' / 'signInBroadcast': right after the user signs in with
+//    Google/Apple or creates an anonymous account — 'signIn' from the tab
+//    whose button ran the flow, 'signInBroadcast' from the authStateChanged
+//    broadcast (covers the settings popup and Safari's sign-in tab). Of the
+//    broadcast recipients only the visible tab asks. Reaches existing installs
+//    that hadn't signed in yet, and new installs that hit the post limit
+//    before signing in.
+//  - 'pageLoad': already signed-in users, on visiting x.com.
+// The prompt needs a signed-in user (the backend records the answer against
+// the Firebase UID). Only the two buttons record an answer; there's no X or
+// backdrop dismissal, so the question stays pending until the user picks one.
+// Defers to the platform-onboarding popup (which re-invokes this on close) so
+// the two never stack. Answering in one tab removes it from the rest via
+// storage.onChanged.
+export async function maybeShowExperimentPrompt(trigger: 'postLimit' | 'signIn' | 'signInBroadcast' | 'pageLoad'): Promise<void> {
+  if (_deps.IS_IOS || chrome._polyfilled) return; // browser extension only
+  if (!isAuthenticated) return;
+  if (trigger === 'pageLoad' && _deps.adapter.siteId !== 'twitter') return;
+  if (trigger === 'signInBroadcast' && document.visibilityState !== 'visible') return;
+  if (experimentPromptBackdrop?.isConnected) return; // idempotent
+  if (platformOnboardingBackdrop?.isConnected) return; // shown after it closes
+  const { experimentOptIn, experimentPromptPostsSeen } =
+    await getStorage(['experimentOptIn', 'experimentPromptPostsSeen']);
+  if (experimentOptIn !== undefined) return; // already answered
+  if (typeof experimentPromptPostsSeen === 'number'
+      && experimentPromptPostsSeen < WELCOME_TIP_POST_LIMIT) return; // new install, too early
+  // Re-check across the await.
+  if (experimentPromptBackdrop?.isConnected || platformOnboardingBackdrop?.isConnected) return;
+
+  const theme = _deps.adapter.getThemeMode();
+  const backdrop = document.createElement('div');
+  backdrop.className = `bouncer-guest-popup-backdrop ${theme}-mode`;
+  backdrop.replaceChildren(parseHTML(`
+    <div class="bouncer-guest-popup bouncer-experiment-popup" role="dialog" aria-modal="true">
+      <p class="bouncer-guest-popup-msg">${escapeHtml(EXPERIMENT_PROMPT_MESSAGE)}</p>
+      <p class="bouncer-experiment-popup-hint">You can leave the experiment at any time in Bouncer settings.</p>
+      <div class="bouncer-experiment-popup-buttons">
+        <button type="button" class="bouncer-experiment-btn bouncer-experiment-no">No</button>
+        <button type="button" class="bouncer-experiment-btn bouncer-experiment-yes">Yes</button>
+      </div>
+    </div>
+  `));
+  document.body.appendChild(backdrop);
+  experimentPromptBackdrop = backdrop;
+
+  const remove = () => {
+    chrome.storage.onChanged.removeListener(onStorageChanged);
+    backdrop.remove();
+    if (experimentPromptBackdrop === backdrop) experimentPromptBackdrop = null;
+  };
+  // Answered elsewhere (another tab, or the settings toggle) — drop ours.
+  const onStorageChanged = (changes: Record<string, chrome.storage.StorageChange>, areaName: string) => {
+    if (areaName === 'local' && changes.experimentOptIn?.newValue !== undefined) remove();
+  };
+  chrome.storage.onChanged.addListener(onStorageChanged);
+
+  // The background saves the answer (closing the prompt in other tabs) and
+  // sends it to the backend. If the message can't be delivered (extension
+  // reloaded under this page), save it here so the prompt stays answered;
+  // the background sends it on its next connection.
+  const answer = (optIn: boolean) => {
+    remove();
+    chrome.runtime.sendMessage({ type: 'setExperimentOptIn', optIn })
+      .catch(() => setStorage({ experimentOptIn: optIn }))
+      .catch(err => console.error('[Bouncer] Failed to save experiment opt-in:', err));
+  };
+  backdrop.querySelector('.bouncer-experiment-yes')?.addEventListener('click', () => answer(true));
+  backdrop.querySelector('.bouncer-experiment-no')?.addEventListener('click', () => answer(false));
 }
 
 // Wire up the sign-in button click handler inside a container.

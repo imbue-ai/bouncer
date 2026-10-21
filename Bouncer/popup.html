@@ -139,6 +139,20 @@
     </section>
 
 
+    <!-- Experiment participation. Stored as `experimentOptIn` (absent =
+         not asked yet, which the in-feed opt-in prompt keys on); this
+         toggle lets the user join or leave at any time afterwards. -->
+    <section class="experiment-section">
+      <label class="toggle-switch experiment-toggle">
+        <input type="checkbox" id="experimentOptInToggle">
+        <span class="toggle-switch-slider" aria-hidden="true"></span>
+        <span class="toggle-switch-text">
+          <span class="toggle-switch-label">Participate in experiment</span>
+          <span class="toggle-switch-sub">Help make Bouncer better. Turn off to leave at any time.</span>
+        </span>
+      </label>
+    </section>
+
     <!-- Everything below is power-user surface: full model list, BYOK
          providers, AI-slop detection. Collapsed by default. -->
     <section>
