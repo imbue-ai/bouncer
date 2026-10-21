@@ -82,15 +82,15 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
             // stuck on its default after every restart.
             filterReplies = prefs.getBoolean(KEY_FILTER_REPLIES, true),
             debugModeEnabled = prefs.getBoolean(KEY_DEBUG_MODE, false),
-            // The settings toggle's state: the persisted display preference,
-            // defaulting to whether a subscription already exists (so pre-existing
-            // subscribers show "on").
+            // Each site's settings toggle: the persisted display preference,
+            // defaulting to whether that site already has a subscription (so
+            // pre-existing subscribers show "on").
             notificationsEnabled = run {
-                val subscribed = runCatching {
-                    val store = PushSubscriptionStore(app)
-                    PushSite.entries.any { store.get(it.scope) != null }
-                }.getOrDefault(false)
-                prefs.getBoolean(WebNotificationHandler.KEY_NOTIFICATIONS_ON, subscribed)
+                val store = runCatching { PushSubscriptionStore(app) }.getOrNull()
+                PushSite.entries.associateWith { site ->
+                    WebNotificationHandler.notificationsSetting(prefs, site)
+                        ?: runCatching { store?.get(site.scope) != null }.getOrDefault(false)
+                }
             },
         )
     )
@@ -272,6 +272,11 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
     // already on, or logged out): not worth a foreground retry.
     private val pushEnableSettled = mutableSetOf<PushSite>()
 
+    // Off-screen renders that timed out this session, per site. Foreground
+    // retries stop at MAX_PUSH_ENABLE_TIMEOUTS so a site whose settings page
+    // never renders doesn't spin up a hidden tab on every resume.
+    private val pushEnableTimeouts = mutableMapOf<PushSite, Int>()
+
     // The site whose hidden settings tab is in flight, and the ones waiting.
     private var pushEnableSite: PushSite? = null
     private val pushEnableQueue = ArrayDeque<PushSite>()
@@ -314,16 +319,15 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
     // Permission was normally already granted at onboarding (above), so this just
     // proceeds with no dialog; if it wasn't (a user who onboarded before this
     // feature, or hasn't answered), we ask here as a fallback and proceed on grant.
-    // True only if the user has EXPLICITLY turned the toggle off (persisted).
-    // Absent key (never touched) is not "off" — new users still auto-enable.
-    private fun userOptedOutOfNotifications(): Boolean =
-        prefs.contains(WebNotificationHandler.KEY_NOTIFICATIONS_ON) &&
-            !prefs.getBoolean(WebNotificationHandler.KEY_NOTIFICATIONS_ON, true)
+    // True only if the user has EXPLICITLY turned the site's toggle off
+    // (persisted). Never touched is not "off" — new users still auto-enable.
+    private fun userOptedOutOfNotifications(site: PushSite): Boolean =
+        WebNotificationHandler.notificationsSetting(prefs, site) == false
 
     private fun maybeAutoEnablePush(site: PushSite) {
         if (site in pushEnableEvaluated) return
         pushEnableEvaluated += site
-        if (userOptedOutOfNotifications()) return
+        if (userOptedOutOfNotifications(site)) return
         if (isSubscribed(site)) return
 
         if (NotificationPermissionBroker.hasPermission(getApplication())) {
@@ -342,23 +346,18 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
         // Else: asked before and denied — respect it.
     }
 
-    // Which surface the in-flight enable is using.
-    private enum class PushEnableMode { BACKGROUND, COVERED }
-    private var pushEnableMode: PushEnableMode? = null
-
-    // The settings-sheet toggle. This is a purely app-level display switch,
-    // shared by every site:
-    //  - OFF keeps the subscriptions AND the OS permission in place; it just tells
-    //    WebNotificationHandler to suppress display (KEY_NOTIFICATIONS_ON).
-    //  - ON restores display, and for each site the user uses that somehow
+    // A site's settings-sheet toggle. This is a purely app-level display
+    // switch, one per site:
+    //  - OFF keeps the site's subscription AND the OS permission in place; it
+    //    just tells the display paths to suppress that site's notifications
+    //    (WebNotificationHandler.notificationsKey).
+    //  - ON restores display, and if the user uses the site but it somehow
     //    isn't subscribed yet, kicks off the enable flow to subscribe.
-    fun setNotificationsEnabled(on: Boolean) {
-        prefs.edit().putBoolean(WebNotificationHandler.KEY_NOTIFICATIONS_ON, on).apply()
-        _state.update { it.copy(notificationsEnabled = on) }
-        Analytics.logNotificationsToggled(getApplication(), on)
-        if (!on) return
-        val missing = PushSite.entries.filter { hasUsedSite(it) && !isSubscribed(it) }
-        if (missing.isNotEmpty()) enableNotificationsFromSettings(missing)
+    fun setNotificationsEnabled(site: PushSite, on: Boolean) {
+        prefs.edit().putBoolean(WebNotificationHandler.notificationsKey(site), on).apply()
+        _state.update { it.copy(notificationsEnabled = it.notificationsEnabled + (site to on)) }
+        Analytics.logNotificationsToggled(getApplication(), site, on)
+        if (on && hasUsedSite(site) && !isSubscribed(site)) enableNotificationsFromSettings(listOf(site))
     }
 
     // Run the subscribe flow on demand (turning the toggle on while unsubscribed).
@@ -381,11 +380,12 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
     // back to the foreground (e.g. the screen slept mid-render). Cheap no-op if
     // already subscribed / in flight / not eligible.
     private fun maybeRetryPushEnable() {
-        if (userOptedOutOfNotifications()) return
         if (_state.value.pushEnableInProgress) return
         val url = _state.value.currentUrl
         val site = PushSite.entries.firstOrNull { it.isHome(url) } ?: return
+        if (userOptedOutOfNotifications(site)) return
         if (!hasUsedSite(site) || site in pushEnableSettled) return
+        if ((pushEnableTimeouts[site] ?: 0) >= MAX_PUSH_ENABLE_TIMEOUTS) return
         if (!NotificationPermissionBroker.hasPermission(getApplication())) return
         if (isSubscribed(site)) return
         Log.i(tag, "auto-enable: retrying ${site.name} after foreground (prior attempt didn't complete)")
@@ -399,32 +399,16 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
         }
         pushEnableSite = site
         _state.update { it.copy(pushEnableInProgress = true) }
-        pushEnableMode = PushEnableMode.BACKGROUND
         awaitingPushPreload = true
         BouncerGeckoView.beginBackgroundPushEnable(site)
         pushPreloadFallbackJob = viewModelScope.launch {
             delay(PUSH_BG_WAIT_MS)
-            if (awaitingPushPreload && pushEnableMode == PushEnableMode.BACKGROUND) {
-                awaitingPushPreload = false
-                Log.w(tag, "auto-enable: off-screen render timed out ($PUSH_BG_WAIT_MS ms); falling back to covered")
-                BouncerGeckoView.endBackgroundPushEnable()
-                startCoveredPushEnable(site)
-            }
-        }
-    }
-
-    // Fallback path: display settings on the real webview UNDER an opaque cover
-    // (reliable on-screen render), wait for its toggle, then click it.
-    private fun startCoveredPushEnable(site: PushSite) {
-        pushEnableMode = PushEnableMode.COVERED
-        awaitingPushPreload = true
-        _state.update { it.copy(pushEnableCoverVisible = true, pushEnableInProgress = true) }
-        BouncerGeckoView.showPushSettingsCovered(site)
-        pushPreloadFallbackJob = viewModelScope.launch {
-            delay(PUSH_PRELOAD_MAX_WAIT_MS)
             if (awaitingPushPreload) {
                 awaitingPushPreload = false
-                Log.w(tag, "auto-enable: settings tab never became ready; abandoning")
+                pushEnableTimeouts[site] = (pushEnableTimeouts[site] ?: 0) + 1
+                // Give up quietly; the next return to the foreground retries
+                // (maybeRetryPushEnable).
+                Log.w(tag, "auto-enable: off-screen render timed out ($PUSH_BG_WAIT_MS ms); abandoning")
                 teardownPushEnable()
                 debugToast("Bouncer: notification setup failed (page never loaded)")
             }
@@ -432,15 +416,10 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     // Full teardown for the abandon / already-on paths (not the success path,
-    // which swaps back early — see onPushSettingsReady).
+    // which removes the off-screen view after a grace — see onPushSettingsReady).
     private fun teardownPushEnable() {
-        when (pushEnableMode) {
-            PushEnableMode.BACKGROUND -> BouncerGeckoView.endBackgroundPushEnable()
-            PushEnableMode.COVERED -> BouncerGeckoView.endCoveredPushEnable(closeSettings = true)
-            null -> {}
-        }
-        pushEnableMode = null
-        _state.update { it.copy(pushEnableCoverVisible = false, pushEnableInProgress = false) }
+        BouncerGeckoView.endBackgroundPushEnable()
+        _state.update { it.copy(pushEnableInProgress = false) }
         startNextQueuedPushEnable()
     }
 
@@ -448,7 +427,8 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
     private fun startNextQueuedPushEnable() {
         pushEnableSite = null
         val next = pushEnableQueue.removeFirstOrNull() ?: return
-        if (isSubscribed(next)) return startNextQueuedPushEnable()
+        // Turned off (or subscribed some other way) while it waited.
+        if (isSubscribed(next) || userOptedOutOfNotifications(next)) return startNextQueuedPushEnable()
         startBackgroundPushEnable(next)
     }
 
@@ -493,34 +473,23 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
                 Log.i(tag, "auto-enable: subscription registered for $scope; POST in background")
                 Analytics.logPushSubscribed(getApplication())
                 debugToast("Bouncer: ${site.fallbackTitle} notifications enabled ✓")
-                val mode = pushEnableMode
-                pushEnableMode = null
                 // Render/click are done — the screen can sleep now (the POST is
                 // backgrounded network). Mark enabled (persist the display pref so
                 // it survives restarts) so the toggle + retry-on-foreground reflect it.
-                prefs.edit().putBoolean(WebNotificationHandler.KEY_NOTIFICATIONS_ON, true).apply()
+                prefs.edit().putBoolean(WebNotificationHandler.notificationsKey(site), true).apply()
                 _state.update {
-                    it.copy(pushEnableInProgress = false, notificationsEnabled = true)
+                    it.copy(
+                        pushEnableInProgress = false,
+                        notificationsEnabled = it.notificationsEnabled + (site to true),
+                    )
                 }
-                // BACKGROUND: the off-screen view is already invisible and the
-                // user never left their feed — just let the in-flight backend POST
-                // finish, then remove it. COVERED: return to the feed + drop the
-                // cover NOW so the user can browse, keeping the settings session
-                // alive (backgrounded) for the POST, then close it. Either way the
-                // POST is a network call that finishes without a surface. The next
-                // queued site waits for that teardown: the off-screen view and
-                // covered session are single slots.
-                if (mode == PushEnableMode.COVERED) {
-                    BouncerGeckoView.endCoveredPushEnable(closeSettings = false)
-                    _state.update { it.copy(pushEnableCoverVisible = false) }
-                }
+                // The off-screen view is invisible and the user never left their
+                // feed — just let the in-flight backend POST finish, then remove
+                // it. The next queued site waits for that: the off-screen view is
+                // a single slot.
                 viewModelScope.launch {
                     delay(PUSH_REGISTER_GRACE_MS)
-                    if (mode == PushEnableMode.BACKGROUND) {
-                        BouncerGeckoView.endBackgroundPushEnable()
-                    } else {
-                        BouncerGeckoView.closeCoveredSettings()
-                    }
+                    BouncerGeckoView.endBackgroundPushEnable()
                     Log.i(tag, "auto-enable: settings tab closed after backend-registration grace")
                     startNextQueuedPushEnable()
                 }
@@ -1009,12 +978,11 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
         // + platformId: the user has reached that site's feed on this install.
         private const val KEY_PUSH_SITE_USED = "pushSiteUsed:"
         // How long to let the off-screen (background, throttled) surface try to
-        // render the toggle before falling back to the covered path. Generous
-        // because it's invisible — the user browses home the whole time.
+        // render the toggle before abandoning the attempt. Generous because it's
+        // invisible — the user browses home the whole time.
         private const val PUSH_BG_WAIT_MS = 90_000L
-        // How long to wait for the covered settings tab to render its toggle
-        // before abandoning; kept above the JS poller's 30s window.
-        private const val PUSH_PRELOAD_MAX_WAIT_MS = 33_000L
+        // Timed-out attempts per site per session before foreground retries stop.
+        private const val MAX_PUSH_ENABLE_TIMEOUTS = 3
         // After clicking the toggle, how long to wait for the subscription to
         // register before giving up (e.g. the user denied the OS permission).
         private const val PUSH_ENABLE_TIMEOUT_MS = 15_000L

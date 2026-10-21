@@ -57,6 +57,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import com.imbue.bouncer.push.PushSite
 
 @OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 @Composable
@@ -68,7 +69,7 @@ fun FilterSheet(
     aiDetectionPending: Boolean,
     aiBadgeDismissed: Boolean,
     filterReplies: Boolean,
-    notificationsEnabled: Boolean,
+    notificationsEnabled: Map<PushSite, Boolean>,
     debugModeEnabled: Boolean,
     onAdd: (String) -> Unit,
     onRemove: (String) -> Unit,
@@ -76,7 +77,7 @@ fun FilterSheet(
     onShareFilterPack: () -> Unit,
     onToggleAiDetection: () -> Unit,
     onFilterRepliesChange: (Boolean) -> Unit,
-    onNotificationsEnabledChange: (Boolean) -> Unit,
+    onNotificationsEnabledChange: (PushSite, Boolean) -> Unit,
     onDebugModeChange: (Boolean) -> Unit,
     excludedAccounts: List<String>,
     onAddExcludedAccount: (String) -> Unit,

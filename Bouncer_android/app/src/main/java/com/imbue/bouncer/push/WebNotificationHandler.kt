@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.Log
@@ -43,9 +44,14 @@ class WebNotificationHandler(
 
     override fun onShowNotification(notification: WebNotification) {
         Log.i(TAG, "onShowNotification from ${notification.source ?: notification.origin}")
-        if (!notificationsEnabled(appCtx)) {
+        // A push site's own toggle decides; any other page's notification
+        // shows as long as either toggle is on.
+        val site = notification.origin?.let { PushSite.forScope(it) }
+        val enabled = if (site != null) notificationsEnabled(appCtx, site)
+            else PushSite.entries.any { notificationsEnabled(appCtx, it) }
+        if (!enabled) {
             // Suppressed at the app level: keep the subscription + permission
-            // intact (so x.com keeps sending), just don't surface it on Android.
+            // intact (so the site keeps sending), just don't surface it on Android.
             // Still ack the service worker so its showNotification bookkeeping
             // resolves and it keeps delivering.
             Log.i(TAG, "notifications off at app level; suppressing display")
@@ -108,20 +114,33 @@ class WebNotificationHandler(
 
     companion object {
         private const val TAG = "FF/WebNotification"
-        // Shared with BouncerViewModel — the settings toggle writes this key.
+        // Shared with BouncerViewModel — the settings toggles write these keys.
         const val PREFS = "bouncer_prefs"
-        const val KEY_NOTIFICATIONS_ON = "notificationsOn"
+        // The old single toggle shared by every site. No longer written: each
+        // site's unset key falls back to it, so whoever had it off stays off.
+        private const val KEY_NOTIFICATIONS_ON_LEGACY = "notificationsOn"
         const val CHANNEL_ID = "web_notifications"
         const val ACTION_CLICK = "com.imbue.bouncer.WEB_NOTIFICATION_CLICK"
         const val EXTRA_NOTIFICATION = "web_notification"
         const val NOTIFICATION_ID = 7001
 
-        // App-level display switch (the settings sheet's "Push notifications"
-        // toggle). Independent of the subscription/permission — off just
-        // hides notifications.
-        fun notificationsEnabled(ctx: Context): Boolean =
-            ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .getBoolean(KEY_NOTIFICATIONS_ON, true)
+        // Per-site app-level display switch (the settings sheet's X /
+        // Facebook notification toggles). Independent of the subscription and
+        // permission — off just hides that site's notifications.
+        fun notificationsKey(site: PushSite): String = "notificationsOn.${site.platformId}"
+
+        /** The site's toggle as the user last set it, or null if never set. */
+        fun notificationsSetting(prefs: SharedPreferences, site: PushSite): Boolean? {
+            val key = notificationsKey(site)
+            return when {
+                prefs.contains(key) -> prefs.getBoolean(key, true)
+                prefs.contains(KEY_NOTIFICATIONS_ON_LEGACY) -> prefs.getBoolean(KEY_NOTIFICATIONS_ON_LEGACY, true)
+                else -> null
+            }
+        }
+
+        fun notificationsEnabled(ctx: Context, site: PushSite): Boolean =
+            notificationsSetting(ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE), site) ?: true
 
         fun manager(ctx: Context): NotificationManager =
             ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager

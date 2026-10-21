@@ -70,8 +70,8 @@ class NativePushHandler(private val appCtx: Context) {
             Log.i(TAG, "silent push for $scope; not displaying")
             return
         }
-        if (!WebNotificationHandler.notificationsEnabled(appCtx)) {
-            // App-level toggle off: keep the subscription alive, just don't show.
+        if (!WebNotificationHandler.notificationsEnabled(appCtx, site)) {
+            // The site's app-level toggle is off: keep the subscription alive, just don't show.
             Log.i(TAG, "notifications off at app level; suppressing display")
             return
         }

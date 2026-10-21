@@ -29,7 +29,6 @@ import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -344,34 +343,6 @@ fun BouncerApp(viewModel: BouncerViewModel = viewModel()) {
                     WindowInsets.navigationBars.only(WindowInsetsSides.Bottom),
                 ),
         )
-
-        // Opaque cover shown while we briefly display x.com's push-settings page
-        // on the real webview to auto-enable notifications (a surfaceless
-        // background tab won't render it cold). Fills the whole screen — over the
-        // webview AND the nav bar — and swallows touches so the user can't
-        // interact with the settings page underneath.
-        if (state.pushEnableCoverVisible) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(MaterialTheme.colorScheme.background)
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                    ) {},
-                contentAlignment = Alignment.Center,
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
-                    Spacer(Modifier.height(20.dp))
-                    Text(
-                        text = "Turning on notifications…",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onBackground,
-                    )
-                }
-            }
-        }
     }
 
     if (state.popupActive) {

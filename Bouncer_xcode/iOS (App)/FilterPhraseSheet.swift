@@ -127,14 +127,17 @@ class FilterSheetViewModel: ObservableObject {
             PushAutoEnabler.shared.onURLChanged(currentURL, coordinator: cache.coordinator)
         }
     }
-    // The settings sheet's "Push notifications" toggle. Mirrors user intent
-    // (PushRegistrar.notificationsOnKey), the live subscription state and the
-    // OS permission (refreshNotificationsEnabled adds the async permission
-    // check).
-    @Published var notificationsEnabled: Bool = PushRegistrar.shared.isSubscribedToAny && !PushRegistrar.userOptedOut
-    // Turning the toggle on while iOS has notifications denied: the system
+    // The settings sheet's per-site notification toggles. Each mirrors user
+    // intent (PushRegistrar.notificationsOnKey), the site's live subscription
+    // state and the OS permission (refreshNotificationsEnabled adds the async
+    // permission check).
+    @Published var notificationsEnabled: [PushSite: Bool] = Dictionary(uniqueKeysWithValues: PushSite.allCases.map {
+        ($0, PushRegistrar.shared.isSubscribed($0) && !PushRegistrar.userOptedOut($0))
+    })
+    // Turning a toggle on while iOS has notifications denied: the system
     // prompt can't be shown again, so offer a trip to iOS Settings instead.
     @Published var showNotificationsDeniedAlert = false
+    private var notificationsDeniedSite: PushSite?
     @Published var isEditingURL = false
     @Published var isFilteredModalOpen = false
     // Scroll-driven nav bar visibility: WebCoordinator's contentOffset
@@ -390,60 +393,61 @@ class FilterSheetViewModel: ObservableObject {
         webView?.reload()
     }
 
-    // The settings-sheet "Push notifications" toggle. ON subscribes (via the
-    // same hidden-settings flow as the silent auto-enable); OFF drops the
-    // subscription — unlike Android, iOS can't suppress a push after Apple
-    // delivers it, so "off" has to mean "unsubscribed". x.com's next attempt
-    // gets a 410 from the push service and it stops sending.
+    // The settings-sheet per-site notification toggles. ON subscribes that
+    // site (via the same hidden-settings flow as the silent auto-enable); OFF
+    // drops its subscription — unlike Android, iOS can't suppress a push after
+    // Apple delivers it, so "off" has to mean "unsubscribed". The site's next
+    // attempt gets a 410 from the push service and it stops sending.
     //
-    // Logged out, the toggle shows what will happen at login: on unless the
-    // user turned it off or iOS permission is denied. Logged in, it shows
-    // whether we actually hold a subscription (or are getting one).
+    // Logged out of a site, its toggle shows what will happen at login: on
+    // unless the user turned it off or iOS permission is denied. Logged in,
+    // it shows whether we actually hold its subscription (or are getting one).
     func refreshNotificationsEnabled() {
         Task { @MainActor in
             let auth = await PushRegistrar.authorization()
-            let intent = !PushRegistrar.userOptedOut && auth != .denied
-            if await PushAutoEnabler.isLoggedInToAny() {
-                // A subscription without OS permission delivers nothing (and
-                // the Keychain record can outlive a reinstall): not "on".
-                notificationsEnabled = intent && auth == .granted
-                    && (PushRegistrar.shared.isSubscribedToAny || PushAutoEnabler.shared.isEnabling)
-            } else {
-                notificationsEnabled = intent
+            for site in PushSite.allCases {
+                let intent = !PushRegistrar.userOptedOut(site) && auth != .denied
+                if await PushAutoEnabler.isLoggedIn(site) {
+                    // A subscription without OS permission delivers nothing (and
+                    // the Keychain record can outlive a reinstall): not "on".
+                    notificationsEnabled[site] = intent && auth == .granted
+                        && (PushRegistrar.shared.isSubscribed(site) || PushAutoEnabler.shared.isEnabling(site))
+                } else {
+                    notificationsEnabled[site] = intent
+                }
             }
         }
     }
 
-    func setNotificationsEnabled(_ on: Bool) {
-        notificationsEnabled = on
+    func setNotificationsEnabled(_ site: PushSite, _ on: Bool) {
+        notificationsEnabled[site] = on
         if on {
             Task { @MainActor in
                 let auth = await PushRegistrar.authorization()
                 if auth == .denied {
-                    notificationsEnabled = false
+                    notificationsEnabled[site] = false
+                    notificationsDeniedSite = site
                     showNotificationsDeniedAlert = true
                     return
                 }
-                PushRegistrar.setNotificationsOn(true)
-                guard await PushAutoEnabler.isLoggedInToAny() else {
+                PushRegistrar.setNotificationsOn(true, for: site)
+                guard await PushAutoEnabler.isLoggedIn(site) else {
                     // Nothing to subscribe yet: record the intent and get the
                     // permission question out of the way; the auto-enable
-                    // runs when login reaches the home timeline.
+                    // runs when login reaches the site's feed.
                     if auth == .notDetermined, !(await PushRegistrar.shared.requestAuthorization()) {
-                        notificationsEnabled = false
+                        notificationsEnabled[site] = false
                     }
                     return
                 }
-                PushAutoEnabler.shared.enableFromSettings(coordinator: cache.coordinator) { [weak self] ok in
-                    if !ok { self?.notificationsEnabled = false }
+                PushAutoEnabler.shared.enableFromSettings(site, coordinator: cache.coordinator) { [weak self] ok in
+                    if !ok { self?.notificationsEnabled[site] = false }
                 }
             }
         } else {
-            PushRegistrar.setNotificationsOn(false)
+            PushRegistrar.setNotificationsOn(false, for: site)
             Task { @MainActor in
-                for site in PushSite.allCases {
-                    _ = await PushRegistrar.shared.unsubscribe(scope: site.scope)
-                }
+                _ = await PushRegistrar.shared.unsubscribe(scope: site.scope)
             }
         }
     }
@@ -452,8 +456,11 @@ class FilterSheetViewModel: ObservableObject {
     // enable flow runs when the app returns with permission granted
     // (PushAutoEnabler.retryIfNeeded).
     func openNotificationSettings() {
-        PushRegistrar.setNotificationsOn(true)
-        PushAutoEnabler.shared.enableAfterSettingsGrant(coordinator: cache.coordinator)
+        if let site = notificationsDeniedSite {
+            PushRegistrar.setNotificationsOn(true, for: site)
+            PushAutoEnabler.shared.enableAfterSettingsGrant(site, coordinator: cache.coordinator)
+        }
+        notificationsDeniedSite = nil
         if let url = URL(string: UIApplication.openNotificationSettingsURLString) {
             UIApplication.shared.open(url)
         }
@@ -1457,14 +1464,17 @@ struct BouncerSettingsView: View {
             }
 
             // Web Push for X and Facebook, delivered natively (see WebPush/).
-            // The toggle reflects the live subscriptions; turning it on runs
-            // the same silent enable flow the app attempts after login.
+            // One toggle per site, reflecting its live subscription; turning
+            // one on runs the same silent enable flow the app attempts after
+            // login.
             Section {
-                Toggle(isOn: Binding(
-                    get: { viewModel.notificationsEnabled },
-                    set: { viewModel.setNotificationsEnabled($0) }
-                )) {
-                    Text("Push notifications")
+                ForEach(PushSite.allCases, id: \.self) { site in
+                    Toggle(isOn: Binding(
+                        get: { viewModel.notificationsEnabled[site] ?? false },
+                        set: { viewModel.setNotificationsEnabled(site, $0) }
+                    )) {
+                        Text("\(site.fallbackTitle) notifications")
+                    }
                 }
                 .onAppear { viewModel.refreshNotificationsEnabled() }
                 .onReceive(NotificationCenter.default.publisher(for: PushAutoEnabler.stateChangedNotification)) { _ in

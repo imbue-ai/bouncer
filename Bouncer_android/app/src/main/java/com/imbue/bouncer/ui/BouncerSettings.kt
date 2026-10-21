@@ -41,6 +41,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.imbue.bouncer.push.PushSite
 
 // AI detection intentionally has no switch here — it is driven entirely by
 // the user's natural-language filter phrases and the sheet header's sparkle
@@ -49,8 +50,8 @@ import androidx.compose.ui.unit.dp
 fun BouncerSettings(
     filterReplies: Boolean,
     onFilterRepliesChange: (Boolean) -> Unit,
-    notificationsEnabled: Boolean,
-    onNotificationsEnabledChange: (Boolean) -> Unit,
+    notificationsEnabled: Map<PushSite, Boolean>,
+    onNotificationsEnabledChange: (PushSite, Boolean) -> Unit,
     debugModeEnabled: Boolean,
     onDebugModeChange: (Boolean) -> Unit,
     excludedAccounts: List<String>,
@@ -77,20 +78,23 @@ fun BouncerSettings(
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
         )
 
-        // App-level display switch. On subscribes (if needed) and shows X and Facebook
-        // notifications; off just suppresses display — the subscription and OS
-        // permission stay in place (see WebNotificationHandler / BouncerViewModel).
-        ListItem(
-            headlineContent = { Text("Push notifications") },
-            trailingContent = {
-                Switch(
-                    checked = notificationsEnabled,
-                    onCheckedChange = onNotificationsEnabledChange,
-                )
-            },
-            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-        )
+        // App-level display switch, one per push site. On subscribes (if needed)
+        // and shows that site's notifications; off just suppresses display — the
+        // subscription and OS permission stay in place (see WebNotificationHandler
+        // / BouncerViewModel).
+        PushSite.entries.forEach { site ->
+            ListItem(
+                headlineContent = { Text("${site.fallbackTitle} notifications") },
+                trailingContent = {
+                    Switch(
+                        checked = notificationsEnabled[site] == true,
+                        onCheckedChange = { onNotificationsEnabledChange(site, it) },
+                    )
+                },
+                colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+            )
+        }
 
         // Enables the press-and-hold reasoning popup on posts (why a post was
         // kept or hidden). This toggle is the sole switch for it — the build
