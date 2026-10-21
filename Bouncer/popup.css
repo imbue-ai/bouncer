@@ -2749,6 +2749,19 @@ body.dim-mode .model-radio-sub { color: rgb(139, 152, 165); }
   padding: 12px;
 }
 
+/* Experiment opt-in toggle: a whole-row toggle directly in its section, so
+   undo the bold `section > label` heading style except on the main label,
+   which keeps heading weight to match the other sections. */
+.experiment-toggle {
+  display: flex;
+  font-size: 13px;
+  font-weight: 400;
+}
+.experiment-toggle .toggle-switch-label {
+  font-size: 15px;
+  font-weight: 600;
+}
+
 /* Border toggle below the picker inside the accent accordion: force it onto
    its own line (.toggle-switch is inline-flex), separated from the picker. */
 .colored-border-toggle {

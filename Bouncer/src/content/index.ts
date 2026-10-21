@@ -38,7 +38,9 @@ import {
   refreshAiIndicatorUI,
   setKeepOnlyMode,
   maybeShowPlatformOnboarding,
+  maybeShowExperimentPrompt,
   noteTweetSeenForWelcomeTip,
+  noteTweetSeenForExperimentPrompt,
   removeWelcomeTip,
 } from './ui';
 
@@ -605,6 +607,7 @@ import {
     const contentKey = adapter.getPostContentKey(article);
     lastProcessedContent.set(article, contentKey);
     noteTweetSeenForWelcomeTip().catch(err => console.error('[Bouncer] welcome tip count failed:', err));
+    noteTweetSeenForExperimentPrompt().catch(err => console.error('[Bouncer] experiment prompt count failed:', err));
 
     addContextMenuHandler(article);
 
@@ -827,9 +830,14 @@ import {
     // First-install "activate other platforms?" popup. Fired before (and not
     // awaited by) the auth check so it appears ahead of — and independent
     // of — any sign-in gating.
-    maybeShowPlatformOnboarding().catch(err =>
-      console.error('[Bouncer] Platform onboarding popup failed:', err));
+    const platformOnboarding = maybeShowPlatformOnboarding()
+      .catch(err => console.error('[Bouncer] Platform onboarding popup failed:', err));
     await checkAuthStatus();
+    // Signed-in users get the experiment opt-in prompt on x.com once auth is
+    // known (new installs only after their first 300 viewed posts).
+    void platformOnboarding
+      .then(() => maybeShowExperimentPrompt('pageLoad'))
+      .catch(err => console.error('[Bouncer] Experiment prompt failed:', err));
 
     if (enabled) {
       observePosts();

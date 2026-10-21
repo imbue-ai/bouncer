@@ -17,6 +17,7 @@ export const imbueWebSocket = {
   unackedRequests: new Map(),
   pendingRequests: new Map(),
   onForceLogin: null as ((msg: ForceLoginMessage) => void) | null,
+  onConnected: null as (() => void) | null,
 
   disconnect(): void {},
 
@@ -25,6 +26,10 @@ export const imbueWebSocket = {
   },
 
   send(_message: Record<string, unknown>): Promise<ImbueAPIResponse> {
+    return Promise.reject(new Error('Imbue backend not configured'));
+  },
+
+  sendAndAwaitReply(_message: Record<string, unknown>): Promise<Record<string, unknown>> {
     return Promise.reject(new Error('Imbue backend not configured'));
   },
 

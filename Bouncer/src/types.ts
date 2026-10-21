@@ -390,6 +390,10 @@ export type ContentToBackgroundMessage =
   // onInstalled (or, if that tab is gone, the first tab to ask afterwards),
   // so pre-existing x.com tabs never grow a popup of their own.
   | { type: 'claimPlatformOnboarding' }
+  // The user answered the experiment prompt or flipped the settings toggle.
+  // The background saves `experimentOptIn` and sends it to the backend —
+  // on every click, even when the answer didn't change.
+  | { type: 'setExperimentOptIn'; optIn: boolean }
   | { type: 'clearSinglePost'; post: string; imageUrls: string[]; postUrl?: string | null; siteId?: SiteId }
   | { type: 'getStats' }
   | { type: 'getReasoning'; post: string; imageUrls: string[]; postUrl?: string | null; siteId?: SiteId }
@@ -546,6 +550,20 @@ export type StorageSchema = SettingsBase & {
   // onInstalled opened). Claimed/reassigned via the claimPlatformOnboarding
   // message; meaningless once showPlatformOnboarding is false.
   platformOnboardingTabId: number;
+  // Whether the user opted into the "help make Bouncer better" experiment
+  // (browser extension only). Absent = not asked yet, which is what makes
+  // the opt-in popup appear for new and existing installs alike (see
+  // maybeShowExperimentPrompt in content/ui.ts); the settings toggle flips
+  // it afterwards.
+  experimentOptIn: boolean;
+  // Posts viewed toward the new-install gate on the experiment prompt.
+  // Seeded to 0 by onInstalled on a fresh install; absent for installs that
+  // predate the prompt, which aren't gated. Stops at the limit.
+  experimentPromptPostsSeen: number;
+  // The answer the backend last acknowledged, and for which Firebase UID.
+  // A mismatch with experimentOptIn / the current UID (failed send, or a
+  // sign-in change) is re-sent on the next connection.
+  experimentOptInSynced: { uid: string; optIn: boolean };
   // Durable once-per-install latch for the install-conversion landing page:
   // set the first time onInstalled 'install' opens it and never cleared, so
   // repeat 'install' events that keep storage (Chrome Repair, synthetic
