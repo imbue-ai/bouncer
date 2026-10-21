@@ -40,21 +40,26 @@ final class PushRegistrar {
     /// and got an endpoint — rather than guessing from the settings toggle.
     var onSubscriptionRegistered: ((String) -> Void)?
 
-    // User intent for the settings toggle. Absent = never touched (new users
-    // still auto-enable); false = explicitly turned off.
-    static let notificationsOnKey = "notificationsOn"
+    // User intent for each site's settings toggle. Absent = never touched
+    // (new users still auto-enable); false = explicitly turned off. An unset
+    // site key falls back to the old shared toggle's key (no longer written),
+    // so whoever had that off stays off for every site.
+    private static let legacyNotificationsOnKey = "notificationsOn"
+    static func notificationsOnKey(_ site: PushSite) -> String { "notificationsOn.\(site.rawValue)" }
     static let notificationsPromptedKey = "hasPromptedNotifications"
 
     func isSubscribed(_ site: PushSite) -> Bool { PushSubscriptionStore.get(scope: site.scope) != nil }
-    var isSubscribedToAny: Bool { PushSite.allCases.contains { isSubscribed($0) } }
 
-    static var userOptedOut: Bool {
+    static func userOptedOut(_ site: PushSite) -> Bool {
         let d = UserDefaults.standard
-        return d.object(forKey: notificationsOnKey) != nil && !d.bool(forKey: notificationsOnKey)
+        for key in [notificationsOnKey(site), legacyNotificationsOnKey] where d.object(forKey: key) != nil {
+            return !d.bool(forKey: key)
+        }
+        return false
     }
 
-    static func setNotificationsOn(_ on: Bool) {
-        UserDefaults.standard.set(on, forKey: notificationsOnKey)
+    static func setNotificationsOn(_ on: Bool, for site: PushSite) {
+        UserDefaults.standard.set(on, forKey: notificationsOnKey(site))
     }
 
     /// OS notification permission as the settings toggle needs it: granted

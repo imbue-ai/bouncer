@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.os.bundleOf
 import com.google.firebase.analytics.FirebaseAnalytics
+import com.imbue.bouncer.push.PushSite
 import com.imbue.bouncer.push.PushSubscriptionStore
 import com.imbue.bouncer.push.WebNotificationHandler
 import kotlinx.coroutines.CoroutineScope
@@ -23,8 +24,9 @@ import kotlinx.coroutines.launch
  *  - [PROP_OS_ENABLED]: Android will actually display our notifications —
  *    NotificationManagerCompat.areNotificationsEnabled(), which covers both
  *    the POST_NOTIFICATIONS grant and the app being muted in system settings.
- *  - [PROP_APP_TOGGLE]: the in-app settings toggle. Off only suppresses
- *    display (WebNotificationHandler); the subscription stays live.
+ *  - [PROP_APP_TOGGLE] / [PROP_APP_TOGGLE_FACEBOOK]: the in-app X and
+ *    Facebook settings toggles. Off only suppresses that site's display
+ *    (WebNotificationHandler); the subscription stays live.
  *  - [PROP_PUSH_SUBSCRIBED]: an x.com web-push subscription exists, i.e.
  *    x.com's backend is registered to send us pushes.
  */
@@ -62,11 +64,11 @@ object Analytics {
         refreshNotificationStatus(ctx)
     }
 
-    /** The in-app notifications display toggle changed. */
-    fun logNotificationsToggled(ctx: Context, on: Boolean) {
+    /** A site's in-app notifications display toggle changed. */
+    fun logNotificationsToggled(ctx: Context, site: PushSite, on: Boolean) {
         firebase?.logEvent(
             "notif_toggle_changed",
-            bundleOf("on" to on.toString()),
+            bundleOf("on" to on.toString(), "site" to site.platformId),
         )
         refreshNotificationStatus(ctx)
     }
@@ -82,11 +84,13 @@ object Analytics {
         scope.launch {
             val osEnabled = NotificationManagerCompat.from(appCtx).areNotificationsEnabled()
             val prefs = appCtx.getSharedPreferences(WebNotificationHandler.PREFS, Context.MODE_PRIVATE)
-            val appToggle = when {
-                !prefs.contains(WebNotificationHandler.KEY_NOTIFICATIONS_ON) -> "unset"
-                prefs.getBoolean(WebNotificationHandler.KEY_NOTIFICATIONS_ON, true) -> "on"
-                else -> "off"
+            fun appToggle(site: PushSite) = when (WebNotificationHandler.notificationsSetting(prefs, site)) {
+                null -> "unset"
+                true -> "on"
+                false -> "off"
             }
+            val appToggle = appToggle(PushSite.X)
+            val appToggleFacebook = appToggle(PushSite.FACEBOOK)
             // Same scope key the enable flow uses (BouncerViewModel).
             val subscribed = runCatching {
                 PushSubscriptionStore(appCtx).get("https://x.com/") != null
@@ -94,6 +98,7 @@ object Analytics {
 
             fa.setUserProperty(PROP_OS_ENABLED, osEnabled.toString())
             fa.setUserProperty(PROP_APP_TOGGLE, appToggle)
+            fa.setUserProperty(PROP_APP_TOGGLE_FACEBOOK, appToggleFacebook)
             fa.setUserProperty(PROP_PUSH_SUBSCRIBED, subscribed.toString())
             // Event twin of the properties: event counts are visible in the
             // Firebase console without registering custom dimensions first.
@@ -102,6 +107,7 @@ object Analytics {
                 bundleOf(
                     "os_enabled" to osEnabled.toString(),
                     "app_toggle" to appToggle,
+                    "app_toggle_facebook" to appToggleFacebook,
                     "push_subscribed" to subscribed.toString(),
                 ),
             )
@@ -110,5 +116,6 @@ object Analytics {
 
     const val PROP_OS_ENABLED = "notif_os_enabled"
     const val PROP_APP_TOGGLE = "notif_app_toggle"
+    const val PROP_APP_TOGGLE_FACEBOOK = "notif_app_toggle_facebook"
     const val PROP_PUSH_SUBSCRIBED = "push_subscribed"
 }

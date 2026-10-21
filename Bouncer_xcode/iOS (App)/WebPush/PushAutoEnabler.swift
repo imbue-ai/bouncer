@@ -57,19 +57,18 @@ final class PushAutoEnabler: NSObject, WKScriptMessageHandler {
     // The site the hidden view is working on, and the ones waiting their turn.
     private var site: PushSite?
     private var queue: [PushSite] = []
-    // Settings-toggle runs: completion fires once the batch has drained, with
-    // whether any site ended up subscribed.
-    private var batchSucceeded = false
+    // Settings-toggle runs: each site's completion fires once its attempt is
+    // over, with whether that site ended up subscribed.
+    private var completions: [PushSite: (Bool) -> Void] = [:]
     private var hiddenView: WKWebView?
     private var timeoutTask: Task<Void, Never>?
-    private var completion: ((Bool) -> Void)?
     private var awaitingSubscription = false
     private var secondClickPending = false
     // Sites whose attempt backgrounding cut short; retried on foreground.
     private var interrupted: [PushSite] = []
-    // Set when the settings toggle sent the user to iOS Settings to allow
+    // Sites whose settings toggle sent the user to iOS Settings to allow
     // notifications; on return with permission granted, enable right away.
-    private var awaitingSettingsGrant = false
+    private var awaitingSettingsGrant: Set<PushSite> = []
     // Last-seen OS permission, so a denied → granted change made in iOS
     // Settings (from our prompt or on the user's own) re-arms the attempt.
     private var lastAuthorizationGranted: Bool?
@@ -106,9 +105,9 @@ final class PushAutoEnabler: NSObject, WKScriptMessageHandler {
     // site's own toggle for whoever is logged in, and is only clicked if off.
     private func maybeAutoEnable(_ site: PushSite, coordinator: FilteredWebView.WebCoordinator) {
         guard !evaluated.contains(site), Self.checkPending(site) else { return }
-        if PushRegistrar.userOptedOut {
+        if PushRegistrar.userOptedOut(site) {
             evaluated.insert(site)
-            print("[WebPush] auto-enable: user turned notifications off; skipping")
+            print("[WebPush] auto-enable: user turned \(site.rawValue) notifications off; skipping")
             return
         }
         guard PushRelayClient.isConfigured else {
@@ -150,18 +149,14 @@ final class PushAutoEnabler: NSObject, WKScriptMessageHandler {
         }
     }
 
-    /// The settings toggle turned on: run the same flow for every logged-in
-    /// site that isn't subscribed, asking for permission first if needed.
-    /// `completion(false)` (nothing ended up subscribed) lets the toggle fall
-    /// back to off.
-    func enableFromSettings(coordinator: FilteredWebView.WebCoordinator, completion: @escaping (Bool) -> Void) {
+    /// A site's settings toggle turned on: run the same flow for it if it's
+    /// logged in and not subscribed, asking for permission first if needed.
+    /// `completion(false)` (the site didn't end up subscribed) lets the toggle
+    /// fall back to off.
+    func enableFromSettings(_ site: PushSite, coordinator: FilteredWebView.WebCoordinator, completion: @escaping (Bool) -> Void) {
         Task { @MainActor in
-            var sites: [PushSite] = []
-            for site in PushSite.allCases where !PushRegistrar.shared.isSubscribed(site) {
-                if await Self.isLoggedIn(site) { sites.append(site) }
-            }
-            guard !sites.isEmpty else {
-                completion(PushRegistrar.shared.isSubscribedToAny)
+            guard !PushRegistrar.shared.isSubscribed(site), await Self.isLoggedIn(site) else {
+                completion(PushRegistrar.shared.isSubscribed(site))
                 return
             }
             let center = UNUserNotificationCenter.current()
@@ -182,9 +177,8 @@ final class PushAutoEnabler: NSObject, WKScriptMessageHandler {
                 completion(false)
                 return
             }
-            self.batchSucceeded = false
-            self.completion = completion
-            sites.forEach { self.start($0, coordinator: coordinator) }
+            self.completions[site] = completion
+            self.start(site, coordinator: coordinator)
         }
     }
 
@@ -198,12 +192,12 @@ final class PushAutoEnabler: NSObject, WKScriptMessageHandler {
         maybeAutoEnable(site, coordinator: coordinator)
     }
 
-    /// The settings toggle found notifications denied and is sending the user
-    /// to iOS Settings. The system prompt can't be shown again, so this is the
-    /// only way back; retryIfNeeded finishes the job when they return.
-    func enableAfterSettingsGrant(coordinator: FilteredWebView.WebCoordinator) {
+    /// A site's settings toggle found notifications denied and is sending the
+    /// user to iOS Settings. The system prompt can't be shown again, so this
+    /// is the only way back; retryIfNeeded finishes the job when they return.
+    func enableAfterSettingsGrant(_ site: PushSite, coordinator: FilteredWebView.WebCoordinator) {
         lastCoordinator = coordinator
-        awaitingSettingsGrant = true
+        awaitingSettingsGrant.insert(site)
         lastAuthorizationGranted = false
     }
 
@@ -220,15 +214,14 @@ final class PushAutoEnabler: NSObject, WKScriptMessageHandler {
 
             let fromSettings = self.awaitingSettingsGrant
             let wasInterrupted = self.interrupted
-            if granted { self.awaitingSettingsGrant = false }
+            if granted { self.awaitingSettingsGrant = [] }
             self.interrupted = []
             guard granted, !wasInterrupted.isEmpty || newlyGranted,
-                  !PushRegistrar.userOptedOut,
                   PushRelayClient.isConfigured,
                   let coordinator = self.lastCoordinator else { return }
-            for site in PushSite.allCases {
+            for site in PushSite.allCases where !PushRegistrar.userOptedOut(site) {
                 let loggedIn = await Self.isLoggedIn(site)
-                if wasInterrupted.contains(site) || (fromSettings && loggedIn) {
+                if wasInterrupted.contains(site) || (fromSettings.contains(site) && loggedIn) {
                     print("[WebPush] auto-enable: retrying \(site.rawValue) after foreground")
                     self.start(site, coordinator: coordinator)
                 } else {
@@ -242,8 +235,11 @@ final class PushAutoEnabler: NSObject, WKScriptMessageHandler {
         }
     }
 
-    /// True while the hidden settings view is working on a subscription.
-    var isEnabling: Bool { hiddenView != nil }
+    /// True while the hidden settings view is working on (or has queued) a
+    /// subscription for `site`.
+    func isEnabling(_ site: PushSite) -> Bool {
+        (hiddenView != nil && self.site == site) || queue.contains(site)
+    }
 
     /// Whether the shared web view store holds a session for `site`: its
     /// session cookie exists (only its presence is read). The hidden settings
@@ -253,11 +249,6 @@ final class PushAutoEnabler: NSObject, WKScriptMessageHandler {
         return await WKWebsiteDataStore.default().httpCookieStore.allCookies().contains {
             $0.name == site.sessionCookie && ($0.domain == domain || $0.domain.hasSuffix("." + domain))
         }
-    }
-
-    static func isLoggedInToAny() async -> Bool {
-        for site in PushSite.allCases where await isLoggedIn(site) { return true }
-        return false
     }
 
     // MARK: - The hidden settings view
@@ -378,7 +369,7 @@ final class PushAutoEnabler: NSObject, WKScriptMessageHandler {
         guard awaitingSubscription, let site, PushSite.forScope(scope) == site else { return }
         awaitingSubscription = false
         timeoutTask?.cancel()
-        PushRegistrar.setNotificationsOn(true)
+        PushRegistrar.setNotificationsOn(true, for: site)
         NotificationCenter.default.post(name: Self.stateChangedNotification, object: nil)
         print("[WebPush] auto-enable: \(site.rawValue) subscription registered; letting its backend POST finish")
         debugNotify("\(site.fallbackTitle) notifications enabled ✓")
@@ -411,20 +402,23 @@ final class PushAutoEnabler: NSObject, WKScriptMessageHandler {
     private func finish(ok: Bool, reason: String) {
         guard hiddenView != nil, let site else { return }
         print("[WebPush] auto-enable finished (\(site.rawValue)): ok=\(ok) (\(reason))")
-        if ok {
-            Self.setCheckPending(site, false)
-            batchSucceeded = true
-        }
+        if ok { Self.setCheckPending(site, false) }
         teardown()
+        completions.removeValue(forKey: site)?(ok || PushRegistrar.shared.isSubscribed(site))
         NotificationCenter.default.post(name: Self.stateChangedNotification, object: nil)
         startNext()
     }
 
-    /// The attempt in flight is over: run the next queued site, or report the
-    /// batch to the settings toggle once nothing is left.
+    /// The attempt in flight is over: run the next queued site, or report any
+    /// settings-toggle runs still waiting once nothing is left.
     private func startNext() {
         while let next = queue.first {
             queue.removeFirst()
+            // Its toggle was turned off while it waited.
+            if PushRegistrar.userOptedOut(next) {
+                completions.removeValue(forKey: next)?(false)
+                continue
+            }
             guard let coordinator = lastCoordinator else { break }
             start(next, coordinator: coordinator)
             if hiddenView != nil { return }
@@ -434,10 +428,9 @@ final class PushAutoEnabler: NSObject, WKScriptMessageHandler {
 
     private func finishBatch() {
         queue.removeAll()
-        let done = completion
-        completion = nil
-        done?(batchSucceeded || PushRegistrar.shared.isSubscribedToAny)
-        batchSucceeded = false
+        let waiting = completions
+        completions = [:]
+        for (site, done) in waiting { done(PushRegistrar.shared.isSubscribed(site)) }
     }
 
     private func teardown() {

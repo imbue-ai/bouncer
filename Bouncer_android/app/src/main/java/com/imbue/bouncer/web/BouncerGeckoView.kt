@@ -475,93 +475,16 @@ object BouncerGeckoView {
         target.setActive(true)
     }
 
-    // ----- Push auto-enable: a site's settings page as a real tab, under a cover -----
-    //
-    // A background GeckoSession that's never attached to the GeckoView has no
-    // compositor surface, and Gecko won't fully render x.com's settings SPA cold
-    // without one (rAF/layout are suspended) — so the toggle never mounts. The fix
-    // is to display the settings session on the REAL view (so it's surfaced and
-    // renders reliably, exactly like the LinkedIn tab) while the caller holds an
-    // opaque cover over it, so the user never sees x.com's settings page. Once its
-    // toggle renders, JS clicks it (bridge_page.js __ff_autoEnablePush); x.com then
-    // subscribes AND registers with its backend, our WebPushDelegate captures the
-    // endpoint, and we swap back to the warm home tab and drop the cover.
-    // activePlatformId is unchanged; the VM addresses the settings tab by its
-    // site's platform (callJsOn), so it is reached from any tab.
-    @Volatile private var pushSettingsSession: GeckoSession? = null
-    @Volatile private var pushHomeSession: GeckoSession? = null
-
-    fun showPushSettingsCovered(site: PushSite) {
-        val view = viewRef ?: return
-        val r = runtime ?: return
-        val vm = vmRef ?: return
-        val appCtx = appCtxRef ?: view.context.applicationContext
-        val home = sessions[activePlatformId] ?: return
-        if (pushSettingsSession != null) return
-        pushHomeSession = home
-        val s = pushSettingsSessionFor(site)
-        wireDelegates(s, view, r, appCtx, vm)
-        s.open(r)
-        pushSettingsSession = s
-        // Make it the displayed session: point the platform slot at it (so
-        // isActiveSession()/bridge routing follow it), attach it to the view for a
-        // real surface, and load settings. The caller's opaque cover hides it.
-        sessions[activePlatformId] = s
-        view.post {
-            home.setActive(false)
-            view.setSession(s)
-            reapplyDynamicToolbar(view)
-            if (coverColor != 0) view.coverUntilFirstPaint(coverColor)
-            vm.attachSession(s)
-            s.setActive(true)
-            s.loadUri(site.settingsUrl)
-            Log.i(TAG, "showPushSettingsCovered: ${site.name} settings tab displayed under cover")
-        }
-    }
-
-    // Swap back to the retained (warm) home tab. With closeSettings=true the
-    // settings tab is closed immediately (done / abandoned). With false it's kept
-    // OPEN but backgrounded so x.com's in-flight backend-registration POST can
-    // finish — call closeCoveredSettings() after a grace to reclaim it.
-    fun endCoveredPushEnable(closeSettings: Boolean = true) {
-        val view = viewRef ?: return
-        val vm = vmRef ?: return
-        val home = pushHomeSession
-        val settings = pushSettingsSession
-        pushHomeSession = null
-        if (closeSettings) pushSettingsSession = null
-        if (home == null) return
-        sessions[activePlatformId] = home
-        view.post {
-            view.setSession(home)
-            reapplyDynamicToolbar(view)
-            if (coverColor != 0) view.coverUntilFirstPaint(coverColor)
-            vm.attachSession(home)
-            home.setActive(true)
-            if (settings != null && settings !== home) {
-                settings.setActive(false)
-                if (closeSettings && settings.isOpen) settings.close()
-            }
-            Log.i(TAG, "endCoveredPushEnable: back to home (closeSettings=$closeSettings)")
-        }
-    }
-
-    // Close the settings tab kept alive by endCoveredPushEnable(closeSettings=false)
-    // once its backend POST has had time to complete.
-    fun closeCoveredSettings() {
-        val s = pushSettingsSession ?: return
-        pushSettingsSession = null
-        if (s.isOpen) s.close()
-        Log.i(TAG, "closeCoveredSettings: settings session closed")
-    }
-
     // ----- Background push-enable: settings on a SECOND, off-screen surface -----
     //
-    // Give the settings session its OWN surface: a second GeckoView added to the
-    // window but shoved off the right edge, so it renders out of sight while the
-    // main view keeps showing home (no cover, fully interactive). Off-screen
-    // rendering is throttled by Gecko so a cold load is slow, but it's invisible,
-    // so the VM waits generously. Clicks the toggle + subscribes, then is removed.
+    // A GeckoSession never attached to a view has no compositor surface, and
+    // Gecko won't render a settings SPA cold without one (rAF/layout are
+    // suspended), so the toggle never mounts. Give the settings session its OWN
+    // surface instead: a second GeckoView added to the window but shoved off the
+    // right edge, so it renders out of sight while the main view keeps showing
+    // home (fully interactive). Off-screen rendering is throttled by Gecko so a
+    // cold load is slow, but it's invisible, so the VM waits generously. Clicks
+    // the toggle + subscribes, then is removed.
     @Volatile private var offscreenView: GeckoView? = null
     @Volatile private var offscreenSession: GeckoSession? = null
 
@@ -780,13 +703,9 @@ object BouncerGeckoView {
                     // consumer relies on: phrase pushes get dropped, native calls
                     // route to the wrong tab, and the per-platform slots corrupt.
                     // Deny it and reroute the URL through a real platform switch.
-                    // The covered push-settings session legitimately shows x.com
-                    // while parked in another platform's slot — leave it alone.
                     val target = Platforms.fromUrl(request.uri)
                     val ownerId = platformIdOf(session)
-                    if (target != null && ownerId != null && target.id != ownerId &&
-                        session !== pushSettingsSession
-                    ) {
+                    if (target != null && ownerId != null && target.id != ownerId) {
                         Log.i(TAG, "cross-platform nav $ownerId → ${target.id}; rerouting")
                         if (isActiveSession(session)) {
                             val url = request.uri
