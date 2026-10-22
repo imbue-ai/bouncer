@@ -692,16 +692,11 @@ const BouncerTwitterAdapter = class TwitterAdapter implements PlatformAdapter {
   insertActionButton(article: HTMLElement, button: HTMLElement): void {
     const shareBtn = this.getShareButton(article);
     if (!shareBtn) return;
-    button.classList.add('ff-why-annoying-btn--x');
-    // Flex wrapper vertically centers the button within the action bar.
-    const wrapper = document.createElement('div');
-    wrapper.className = 'ff-why-annoying-wrapper--x';
-    wrapper.appendChild(button);
 
     if (shareBtn.closest('[role="group"], [data-testid="tweet"]')) {
-      shareBtn.parentElement?.parentElement?.insertAdjacentElement('afterend', wrapper);
+      shareBtn.parentElement?.parentElement?.insertAdjacentElement('afterend', button);
     } else {
-      shareBtn.insertAdjacentElement('afterend', wrapper);
+      shareBtn.insertAdjacentElement('afterend', button);
     }
   }
 

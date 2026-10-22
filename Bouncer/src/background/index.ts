@@ -187,6 +187,38 @@ function updateUninstallUrl(): void {
 }
 updateUninstallUrl();
 
+// Receive the X Ads click ID (twclid) from the post-install conversion page
+// on imbue.com (just_installed_redirect.html), which reads the click ID the
+// ad landing page stored on that domain and hands it in through
+// externally_connectable messaging (Chrome only; the manifest key allows
+// only https://imbue.com/product/bouncer/* senders, and no warning-triggering
+// host permission is involved). Stored once per install: ws-manager appends
+// it to the backend $connect URL so the backend can report an
+// activation-level ad conversion (first filter job) via X's Conversions API.
+if (chrome.runtime.onMessageExternal) {
+  chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => {
+    try {
+      if (!sender.url || !sender.url.startsWith('https://imbue.com/product/bouncer/')) return;
+      if (!message || message.type !== 'bouncerAdClick') return;
+      const twclid = typeof message.twclid === 'string' ? message.twclid : '';
+      // twclid is an opaque base64url-ish token; reject anything odd-looking.
+      if (!/^[A-Za-z0-9_-]{8,120}$/.test(twclid)) return;
+      void (async () => {
+        // First writer wins: a repeat visit to the conversion page (or a
+        // second ad click) must not overwrite the click that drove install.
+        const { adClickId } = await getStorage(['adClickId']);
+        if (!adClickId) {
+          await setStorage({ adClickId: twclid, adClickIdTs: Date.now() });
+        }
+        sendResponse({ ok: true });
+      })();
+      return true; // keep sendResponse alive across the await
+    } catch (err) {
+      console.error('[AdClick] onMessageExternal failed:', err);
+    }
+  });
+}
+
 // One-shot migration: clear any stored selection that points at a local model
 // we no longer ship (e.g. an old Qwen ID from before LiteRT-LM was the sole
 // local backend). Without this, the popup would render a permanent "error"

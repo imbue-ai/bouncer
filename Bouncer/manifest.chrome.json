@@ -3,6 +3,10 @@
   "permissions": [
     "offscreen"
   ],
+  "_comment_externally_connectable": "Lets the post-install conversion page on imbue.com hand the X Ads click ID (twclid) to the extension via chrome.runtime.sendMessage, so the backend can later report an activation-level ad conversion (first filter job). Not a permission: triggers no install/update warning. Chrome-only — Firefox/Safari don't support the key, and the X ads funnel lands on the Chrome Web Store.",
+  "externally_connectable": {
+    "matches": ["https://imbue.com/product/bouncer/*"]
+  },
   "_comment_min_version": "137 guarantees wasm JSPI + relaxed SIMD, letting the build ship only litertlm_wasm_internal.* (~21 MB) instead of all four variants (~105 MB). Keep in sync with copyLitertlmAssets in build.js.",
   "minimum_chrome_version": "137"
 }
