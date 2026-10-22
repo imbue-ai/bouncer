@@ -86,7 +86,8 @@ async function init(): Promise<void> {
   // dismisses it: it must NEVER close itself. (It used to conclude
   // immediately in that case, which on a reinstall with restored grants made
   // the popup flash and vanish under the parent's backdrop.)
-  const candidates = [...optionalPlatforms()];
+  // const candidates = [...optionalPlatforms()];
+  const candidates = optionalPlatforms().filter(p => p.id !== 'youtube');
   const grantedFlags = await Promise.all(candidates.map(isGranted));
 
   // Checking a platform's box fires the browser's permission prompt right

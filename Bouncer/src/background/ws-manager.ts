@@ -3,6 +3,7 @@
 // when the connection drops (e.g., service worker suspend, network issues).
 
 import { getAuthToken } from './auth';
+import { getStorage } from '../shared/storage';
 import type { ImbueAPIResponse } from '../types';
 
 const IMBUE_WS_URL = process.env.IMBUE_WS_URL || '';
@@ -174,6 +175,21 @@ class ImbueWebSocket {
       const authToken = await getAuthToken();
       if (authToken) {
         wsUrl += `?token=${encodeURIComponent(authToken)}`;
+      }
+      // Ad-attributed installs carry the X Ads click ID so the backend can
+      // report an activation conversion on the first filter job (see the
+      // onMessageExternal handler in background/index.ts). Re-sent on every
+      // connect while inside the 30-day attribution window — the backend
+      // dedupes, so repeats are harmless and reconnects before the first
+      // job can't lose the ID.
+      try {
+        const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+        const { adClickId, adClickIdTs } = await getStorage(['adClickId', 'adClickIdTs']);
+        if (adClickId && typeof adClickIdTs === 'number' && Date.now() - adClickIdTs < THIRTY_DAYS_MS) {
+          wsUrl += `${wsUrl.includes('?') ? '&' : '?'}twclid=${encodeURIComponent(adClickId)}`;
+        }
+      } catch {
+        // Storage unavailable — connect without attribution.
       }
     }
 

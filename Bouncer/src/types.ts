@@ -571,6 +571,14 @@ export type StorageSchema = SettingsBase & {
   // conversion. (Devices that ran the old in-extension pixel code may hold
   // this flag already — that correctly suppresses a second conversion.)
   installPixelArmed: boolean;
+  // X Ads click ID (twclid), handed over by the post-install conversion page
+  // on imbue.com via externally_connectable messaging (Chrome only). Sent as
+  // a query param on every backend $connect while fresh (30-day attribution
+  // window, gated by adClickIdTs); the backend reports an activation-level
+  // ad conversion on the user's first filter job and dedupes server-side, so
+  // re-sending on later connects is harmless. Absent for organic installs.
+  adClickId: string;
+  adClickIdTs: number;
   // LinkedIn "keep only" mode (browser extension only, not the iOS app).
   // The pipeline classifies posts against the filter phrases exactly as in
   // filter-out mode; the content script negates the verdict at the last
