@@ -328,6 +328,22 @@ import {
     // Guest trial exhausted — stop filtering until the user signs in.
     if (isGuestLimitReached()) return;
 
+    // A paused scope sends nothing to any backend: no classification, no AI
+    // detection, and no feed-capture telemetry (which would otherwise fire
+    // precisely because pause masks the phrase list to empty). Unpausing
+    // re-evaluates visible posts via the storage listener's
+    // reEvaluateAllPosts call.
+    try {
+      if (await getFilteringPaused(adapter.siteId, currentPauseScope())) {
+        postReasonings.set(article, {
+          shouldHide: false,
+          reasoning: 'Filtering is paused on this page.'
+        });
+        markPostVerified(article);
+        return;
+      }
+    } catch { /* storage unavailable — fall through to normal evaluation */ }
+
     let content: PostContent | undefined;
 
     if (isInApp) {

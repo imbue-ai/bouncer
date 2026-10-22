@@ -991,6 +991,9 @@ async function processBatch(): Promise<void> {
   if (
     process.env.HAS_IMBUE_BACKEND === 'true'
     && !filterEnabled
+    // Pause masks the phrase list to empty, which makes !filterEnabled true —
+    // without this check, pausing would CAUSE telemetry rather than stop it.
+    && !settings.filteringPaused
     && settings.selectedModel === 'imbue'
   ) {
     void callImbueAPI(postData, [], 'filterPost', aiCategories).catch(err =>
