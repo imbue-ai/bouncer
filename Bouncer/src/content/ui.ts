@@ -3,6 +3,7 @@
 import { toBlob } from 'html-to-image';
 import { asyncHandler } from '../shared/async';
 import { cleanReasoning, escapeHtml, formatPostForEvaluation, parseHTML, GUEST_FILTER_LIMIT, AI_DETECTION_SEED_PHRASE, phraseAddNeedsReEvaluation } from '../shared/utils';
+import { mountSeeMoreRow } from './bluesky-see-more';
 import { decideFilterRemoval, AI_DETECTOR_CATEGORIES } from '../shared/filter-removal';
 import { init as initPopup } from '../popup/index';
 import {
@@ -1013,6 +1014,7 @@ function buildFilterContainerHTML(showSignOut = false, initial: FilterContainerI
           <button class="filter-paused-play-btn" type="button" aria-label="Resume filtering">${playIconSVG}</button>
         </div>
       </div>
+      ${_deps.adapter.siteId === 'twitter' ? '<div class="bsky-see-more-row"></div>' : ''}
       ${guestTrialNoticeHTML()}
       <div class="filter-model-loading" style="display: none;">
         <div class="model-loading-text">Loading model...</div>
@@ -1341,6 +1343,8 @@ function setupFilterBoxEventHandlers(container: HTMLElement) {
   // click would toggle the filtered modal on then immediately off.
   if ((container as HTMLElement & { __ffWired?: boolean }).__ffWired) return;
   (container as HTMLElement & { __ffWired?: boolean }).__ffWired = true;
+  const seeMoreRow = container.querySelector<HTMLElement>('.bsky-see-more-row');
+  if (seeMoreRow) mountSeeMoreRow(seeMoreRow);
 
   const phrasesListContainer = container.querySelector('.filter-phrases-list')!;
   const input = container.querySelector<HTMLTextAreaElement>('.filter-phrases-input')!;

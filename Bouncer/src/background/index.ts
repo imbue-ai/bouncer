@@ -20,6 +20,7 @@ import { sendFeedback } from './providers';
 import { imbueWebSocket, type ForceLoginMessage } from './ws-manager';
 import { launchAuthFlow, signInAnon, isAnonymousUser, refreshAuthToken, getAuthToken, handleAppleSignIn, signOut, setOnIdentityChanged, getCurrentUid, IS_SAFARI } from './auth';
 import { initOptionalPlatforms, syncOptionalPlatformScripts } from './optional-platforms';
+import { searchBlueskyPosts } from './bluesky';
 import { CURRENT_TARGET, optionalPlatforms } from '../shared/platforms';
 
 // Register/unregister content scripts for user-granted optional platforms.
@@ -464,6 +465,15 @@ async function handleMessage(
       });
       await saveCache(true);
       return { success: true };
+    }
+
+    case 'fetchBlueskyPosts': {
+      try {
+        return await searchBlueskyPosts(message.topic, message.cursor);
+      } catch (err) {
+        console.warn('[Background] Bluesky search failed:', err);
+        return { posts: [], cursor: null, error: String(err) };
+      }
     }
 
     case 'getStats': {

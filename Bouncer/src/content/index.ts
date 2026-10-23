@@ -45,6 +45,7 @@ import {
 } from './ui';
 
 import { formatPostForEvaluation, phraseAddNeedsReEvaluation } from '../shared/utils';
+import { initBlueskySeeMore, noteTimelinePost } from './bluesky-see-more';
 import {
   findStructuralMatch,
   structuralFilterKind,
@@ -193,6 +194,8 @@ import {
     postReasonings,
     pendingPosts,
   });
+
+  initBlueskySeeMore(adapter);
 
   initIOS({
     adapter,
@@ -629,6 +632,9 @@ import {
 
     // Add inline "why annoying" trash-can button next to Share
     addWhyAnnoyingButton(article);
+
+    // "See more of …": maybe slot a Bluesky post into this tweet's cell
+    noteTimelinePost(article);
 
     if (forceForYou || adapter.shouldProcessCurrentPage()) {
       evaluatePost(article).catch(err => console.error('[Bouncer] evaluatePost failed:', err));
