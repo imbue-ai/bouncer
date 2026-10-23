@@ -275,3 +275,191 @@ body.ff-ios .ff-ios-page.dim-mode .ff-ios-phrase-input::placeholder {
   background: #192734;
   border-color: #38444d;
 }
+
+/* ==================== "See more of …" (Bluesky posts in the timeline) ==================== */
+/* Injected by src/content/bluesky-see-more.ts inside a real tweet's
+   cellInnerDiv, below the tweet. Colors track X's three themes via the
+   twitter-{light,dim,dark} class updateTheme() puts on <html>. */
+
+.bsky-x-post {
+  --bsky-x-text: rgb(231, 233, 234);
+  --bsky-x-secondary: rgb(113, 118, 123);
+  --bsky-x-border: rgb(47, 51, 54);
+  --bsky-x-hover: rgba(255, 255, 255, 0.03);
+  --bsky-x-blue: rgb(17, 133, 254);
+  display: block;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--bsky-x-border);
+  color: var(--bsky-x-text);
+  font-family: TwitterChirp, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 15px;
+  line-height: 20px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+  overflow-wrap: anywhere;
+}
+html.twitter-dim .bsky-x-post {
+  --bsky-x-text: rgb(247, 249, 249);
+  --bsky-x-secondary: rgb(139, 152, 165);
+  --bsky-x-border: rgb(56, 68, 77);
+}
+html.twitter-light .bsky-x-post {
+  --bsky-x-text: rgb(15, 20, 25);
+  --bsky-x-secondary: rgb(83, 100, 113);
+  --bsky-x-border: rgb(239, 243, 244);
+  --bsky-x-hover: rgba(0, 0, 0, 0.03);
+}
+.bsky-x-post:hover { background-color: var(--bsky-x-hover); }
+.bsky-x-post a { color: inherit; text-decoration: none; }
+.bsky-x-post a:hover { text-decoration: underline; }
+
+.bsky-x-context {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 4px;
+  color: var(--bsky-x-secondary);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 16px;
+}
+.bsky-x-context-icon {
+  width: 16px;
+  height: 16px;
+  margin-left: 24px; /* right-aligned under the 40px avatar column, like X's "reposted" row */
+  color: var(--bsky-x-blue);
+  flex-shrink: 0;
+}
+
+.bsky-x-row { display: flex; gap: 8px; }
+.bsky-x-avatar {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--bsky-x-border);
+}
+.bsky-x-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.bsky-x-main { flex: 1; min-width: 0; }
+
+.bsky-x-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  white-space: nowrap;
+}
+.bsky-x-name {
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.bsky-x-badge { display: inline-flex; color: var(--bsky-x-blue); flex-shrink: 0; }
+.bsky-x-badge svg { width: 16px; height: 14px; }
+.bsky-x-handle {
+  color: var(--bsky-x-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.bsky-x-dot, .bsky-x-time { color: var(--bsky-x-secondary); flex-shrink: 0; }
+
+.bsky-x-text { white-space: pre-wrap; margin-top: 2px; }
+.bsky-x-post .bsky-x-link { color: rgb(29, 155, 240); }
+
+.bsky-x-media {
+  position: relative;
+  display: grid;
+  gap: 2px;
+  margin-top: 12px;
+  border: 1px solid var(--bsky-x-border);
+  border-radius: 16px;
+  overflow: hidden;
+}
+.bsky-x-media-2, .bsky-x-media-3, .bsky-x-media-4 {
+  grid-template-columns: 1fr 1fr;
+  aspect-ratio: 16 / 9;
+}
+.bsky-x-media-3 .bsky-x-media-img:first-child { grid-row: span 2; }
+.bsky-x-media-img { width: 100%; height: 100%; object-fit: cover; display: block; min-height: 0; }
+.bsky-x-media-1 .bsky-x-media-img { max-height: 510px; }
+.bsky-x-play {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: rgb(29, 155, 240);
+  color: #fff;
+  font-size: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 4px solid #fff;
+}
+
+.bsky-x-card {
+  display: block;
+  margin-top: 12px;
+  border: 1px solid var(--bsky-x-border);
+  border-radius: 16px;
+  overflow: hidden;
+}
+.bsky-x-post a.bsky-x-card:hover { text-decoration: none; }
+.bsky-x-card-thumb { width: 100%; max-height: 260px; object-fit: cover; display: block; }
+.bsky-x-card-meta { padding: 12px; }
+.bsky-x-card-domain { color: var(--bsky-x-secondary); font-size: 13px; }
+.bsky-x-card-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.bsky-x-actions {
+  display: flex;
+  justify-content: space-between;
+  max-width: 425px;
+  margin-top: 12px;
+}
+.bsky-x-post .bsky-x-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 40px;
+  color: var(--bsky-x-secondary);
+  font-size: 13px;
+  line-height: 16px;
+}
+.bsky-x-post .bsky-x-action:hover { text-decoration: none; color: var(--bsky-x-blue); }
+.bsky-x-post .bsky-x-action-like:hover { color: rgb(249, 24, 128); }
+.bsky-x-post .bsky-x-action-repost:hover { color: rgb(0, 186, 124); }
+.bsky-x-action svg { width: 18.75px; height: 18.75px; }
+
+/* Topic row in the filter box: "See more of woodworking, [input]" */
+.bsky-see-more-row {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  column-gap: 4px;
+  margin-top: 8px;
+  font-size: 15px;
+}
+.bsky-see-more-row:empty { display: none; }
+.bsky-see-more-label { font-weight: 600; }
+.bsky-see-more-list { display: contents; }
+.bsky-see-more-input {
+  flex: 1;
+  min-width: 120px;
+  padding: 0 4px 2px !important;
+  background: transparent !important;
+  border: none !important;
+  border-bottom: 2px solid rgb(113, 118, 123) !important;
+  border-radius: 0 !important;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  outline: none !important;
+  box-shadow: none !important;
+}
+.bsky-see-more-input::placeholder { color: rgb(113, 118, 123); font-weight: 400; }
+.light-mode .bsky-see-more-input { border-bottom-color: rgb(207, 217, 222) !important; }

@@ -396,6 +396,8 @@ export type ContentToBackgroundMessage =
   | { type: 'setExperimentOptIn'; optIn: boolean }
   | { type: 'clearSinglePost'; post: string; imageUrls: string[]; postUrl?: string | null; siteId?: SiteId }
   | { type: 'getStats' }
+  // "See more of <topic>": one page of Bluesky search results (BskySearchResult).
+  | { type: 'fetchBlueskyPosts'; topic: string; cursor: string | null }
   | { type: 'getReasoning'; post: string; imageUrls: string[]; postUrl?: string | null; siteId?: SiteId }
   | { type: 'getErrorStatus' }
   | { type: 'getAllLocalModelStatuses' }
@@ -606,6 +608,9 @@ export type StorageSchema = SettingsBase & {
   // descriptions_* namespace so the pipeline and AI-intent aggregation never
   // see the inactive list.
   linkedinInactiveModePhrases: string[];
+  // "See more of …" topics on X: Bluesky search results for each are
+  // injected into the home timeline (src/content/bluesky-see-more.ts).
+  seeMoreTopics_twitter: string[];
 } & DescriptionKeys & PlatformEnabledKeys & FilteringPausedKeys & FilteringPausedExtendedKeys & ExcludedAccountsKeys;
 
 // ==================== API Response Types ====================
