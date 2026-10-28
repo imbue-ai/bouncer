@@ -932,7 +932,7 @@ export function setKeepOnlyMode(on: boolean) {
   // The cycling placeholder examples are mode-specific (things to remove vs
   // things to keep) — swap the track contents in place. Both phrase sets have
   // the same count, so the shared keyframes keep lining up mid-animation.
-  document.querySelectorAll<HTMLElement>('.filter-placeholder-track').forEach(track => {
+  document.querySelectorAll<HTMLElement>('.filter-placeholder-track:not(.bsky-see-more-track)').forEach(track => {
     track.replaceChildren(parseHTML(placeholderTrackItemsHTML()));
   });
   // Mirrors the class buildFilterContainerHTML sets at render time; CSS in

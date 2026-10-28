@@ -191,6 +191,24 @@ describe('ImbueWebSocket', () => {
       expect(result2.rawResponse).toBe('result-B');
     });
 
+    it('delivers a result that arrives before its ack, without mismatching other requests', async () => {
+      const send1 = imbueWebSocket.send({ action: 'first' });
+      const send2 = imbueWebSocket.send({ action: 'second' });
+      await new Promise(r => setTimeout(r, 10));
+      const ws = MockWebSocket.lastInstance!;
+      const reqId1 = ws.sentMessages[0].requestId;
+      const reqId2 = ws.sentMessages[1].requestId;
+
+      // A fast worker answers job-B before the Lambda's ack for either request.
+      ws.onmessage!({ data: JSON.stringify({ type: 'jobComplete', jobId: 'job-B', rawResponse: 'result-B' }) });
+      ws.onmessage!({ data: JSON.stringify({ requestId: reqId1, jobId: 'job-A' }) });
+      ws.onmessage!({ data: JSON.stringify({ requestId: reqId2, jobId: 'job-B' }) });
+      ws.onmessage!({ data: JSON.stringify({ type: 'jobComplete', jobId: 'job-A', rawResponse: 'result-A' }) });
+
+      expect((await send1).rawResponse).toBe('result-A');
+      expect((await send2).rawResponse).toBe('result-B');
+    });
+
     it('rejects on ack error', async () => {
       const sendPromise = imbueWebSocket.send({ action: 'test' });
       await new Promise(r => setTimeout(r, 10));

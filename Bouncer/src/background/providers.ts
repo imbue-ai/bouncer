@@ -3,7 +3,7 @@
 import { convertSystemToUserMessages } from '../shared/utils';
 import { API_BASE_URLS } from '../shared/models';
 import { imbueWebSocket } from './ws-manager';
-import type { ChatMessage, APIConfig, DirectAPIResponse, ImbueFilterResponse, ImbueSuggestResponse, ImbueAiTextResponse, ImbueAiImageResponse, ImbueDetectAiIntentResponse, EvaluationPostData } from '../types';
+import type { ChatMessage, APIConfig, DirectAPIResponse, ImbueFilterResponse, ImbueSuggestResponse, ImbueAiTextResponse, ImbueAiImageResponse, ImbueDetectAiIntentResponse, ImbueBlueskySearchResponse, EvaluationPostData } from '../types';
 
 // Call an OpenAI-compatible API directly from the extension via fetch
 // Used for OpenAI, OpenRouter, and Gemini models
@@ -268,6 +268,40 @@ export async function callImbueDetectAiIntent(
   } catch (err) {
     const wallMs = Date.now() - startedAt;
     console.warn(`[AiIntentDetect] ✗ error after ${wallMs}ms:`, err);
+    throw err;
+  }
+}
+
+// "See more of <topic>": one page of Bluesky posts about `topic` from the
+// backend's semantic index (EmbeddingGemma 2 over the Jetstream firehose,
+// then the filter model as a relevance check), via the blueskySearch route.
+// `cursor` is the offset returned by the previous page (null for the first).
+// A page runs ~40 filter inferences server-side, so it can take several
+// seconds; the route is rate-limited to 60 requests/min per user.
+export async function callImbueBlueskySearch(
+  topic: string,
+  cursor: number | null,
+  sources: Array<'bluesky' | 'x'>,
+): Promise<ImbueBlueskySearchResponse> {
+  const message: Record<string, unknown> = {
+    action: 'blueskySearch',
+    topic,
+    cursor,
+    sources,
+    version: chrome.runtime.getManifest().version,
+  };
+
+  console.log('[BlueskySearch] → request:', message);
+  const startedAt = Date.now();
+
+  try {
+    const response = await imbueWebSocket.send(message, { timeout: 45000 }) as unknown as ImbueBlueskySearchResponse;
+    const wallMs = Date.now() - startedAt;
+    console.log(`[BlueskySearch] ← response (wallMs=${wallMs}):`, response);
+    return response;
+  } catch (err) {
+    const wallMs = Date.now() - startedAt;
+    console.warn(`[BlueskySearch] ✗ error after ${wallMs}ms:`, err);
     throw err;
   }
 }

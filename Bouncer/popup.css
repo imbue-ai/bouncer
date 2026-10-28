@@ -3126,3 +3126,29 @@ body.dark-mode .excluded-sentence input.excluded-account-input:focus,
 body.dim-mode .excluded-sentence input.excluded-account-input:focus {
   border-bottom-color: rgb(var(--bouncer-brand-rgb, 234, 133, 84));
 }
+
+/* "See more of" source ("Draw from: Bluesky / X / Both"): the model-radio
+   rows laid out as one compact segmented row. */
+.see-more-source-block {
+  margin-top: 12px;
+}
+.see-more-source-label {
+  display: block;
+  font-size: 14px;
+  color: #0f1419;
+  margin-bottom: 6px;
+}
+body.dark-mode .see-more-source-label { color: #e7e9ea; }
+body.dim-mode .see-more-source-label { color: #f7f9f9; }
+.see-more-source-group {
+  display: flex;
+}
+.see-more-source-group .model-radio {
+  flex: 1;
+  align-items: center;
+  padding: 8px 10px;
+}
+.see-more-source-group .model-radio + .model-radio {
+  border-top: none;
+  border-left: 1px solid #eff3f4;
+}

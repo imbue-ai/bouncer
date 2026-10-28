@@ -1,5 +1,7 @@
-// "See more of <topic>" on X: Bluesky posts about the user's topics, rendered
-// to look like tweets (with a small Bluesky badge) and slotted into the home
+// "See more of <topic>" on X: Bluesky and/or X posts about the user's topics
+// (the popup's "Draw from" setting; X posts come from the backend's xstream),
+// rendered to look like tweets (Bluesky ones with a small Bluesky badge) and
+// slotted into the home
 // timeline.
 //
 // Placement: X's timeline is a virtualized list of absolutely-positioned
@@ -20,12 +22,12 @@ import type { PlatformAdapter, PipelineResponse } from '../types';
 import { getStorage, setStorage } from '../shared/storage';
 import { formatPostForEvaluation } from '../shared/utils';
 import {
-  SEE_MORE_TOPICS_KEY, MAX_SEE_MORE_TOPICS, formatCount, formatRelativeTime, normalizeTopic,
-  type BskyFeedPost, type BskySearchResult,
+  SEE_MORE_TOPICS_KEY, SEE_MORE_EVERY_KEY, SEE_MORE_SEEN_KEY, MAX_SEE_MORE_TOPICS, mergeSeenUris, MAX_SEE_MORE_TOPIC_LENGTH, clampSeeMoreEvery, formatCount, formatRelativeTime, normalizeTopic,
+  SEE_MORE_SOURCE_KEY, clampSeeMoreSource, seeMoreSources,
+  type BskyFeedPost, type BskySearchResult, type SeeMoreSource,
 } from '../shared/bluesky';
 import { currentPauseScope } from './ui';
 
-const INJECT_EVERY = 5;          // one Bluesky post per this many timeline tweets
 const READY_TARGET = 3;          // screened posts to keep on hand per topic
 const SWEEP_INTERVAL_MS = 1500;
 const FILTER_CHECK_TIMEOUT_MS = 20000;
@@ -45,9 +47,34 @@ interface TopicPool {
 let adapter: PlatformAdapter;
 let topics: string[] = [];
 const pools = new Map<string, TopicPool>();
+// Posts handed to the timeline in this page load (shown, or waiting for
+// their host tweet), so none is placed twice.
 const seenUris = new Set<string>();
+// Posts the user has actually seen, in any tab and any earlier page load
+// (SEE_MORE_SEEN_KEY). Candidates already in here are skipped.
+const impressedUris = new Set<string>();
+// Seen in this tab but not yet written to storage.
+const pendingImpressions = new Set<string>();
+// A post counts as seen once at least half of it has been on screen for this
+// long — the usual definition of a feed impression. Fetched-but-never-shown
+// posts are not marked, so they stay available.
+const IMPRESSION_VISIBLE_RATIO = 0.5;
+const IMPRESSION_DWELL_MS = 1000;
+const IMPRESSION_FLUSH_MS = 5000;
+let impressionObserver: IntersectionObserver | null = null;
+const dwellTimers = new WeakMap<Element, ReturnType<typeof setTimeout>>();
+// Observed post elements; sweep() unobserves the ones X or we have removed,
+// since the observer would otherwise keep every discarded cell alive.
+const observedRoots = new Set<HTMLElement>();
+let flushTimer: ReturnType<typeof setTimeout> | null = null;
 const postByHostKey = new Map<string, BskyFeedPost>();
-// Tweets already counted toward INJECT_EVERY, so remounts and re-scrolls
+// "1 in N posts" (the popup's frequency slider): after N - 1 tweets, the
+// next post shown is a Bluesky one.
+let injectEvery = clampSeeMoreEvery(undefined);
+// The popup's "Draw from" setting: Bluesky, X, or both.
+let sourceSetting = clampSeeMoreSource(undefined);
+const SOURCE_NAME: Record<SeeMoreSource, string> = { bluesky: 'Bluesky', x: 'X' };
+// Tweets already counted toward injectEvery, so remounts and re-scrolls
 // don't raise the injection rate.
 const countedHostKeys = new Set<string>();
 let tweetsSinceInject = 0;
@@ -58,10 +85,30 @@ const topicRows = new Set<HTMLElement>();
 export function initBlueskySeeMore(platformAdapter: PlatformAdapter): void {
   if (platformAdapter.siteId !== 'twitter') return;
   adapter = platformAdapter;
-  void getStorage([SEE_MORE_TOPICS_KEY]).then(d => setTopics(d[SEE_MORE_TOPICS_KEY] ?? []));
+  void getStorage([SEE_MORE_TOPICS_KEY, SEE_MORE_EVERY_KEY, SEE_MORE_SEEN_KEY, SEE_MORE_SOURCE_KEY]).then(d => {
+    injectEvery = clampSeeMoreEvery(d[SEE_MORE_EVERY_KEY]);
+    sourceSetting = clampSeeMoreSource(d[SEE_MORE_SOURCE_KEY]);
+    for (const uri of d[SEE_MORE_SEEN_KEY] ?? []) impressedUris.add(uri);
+    setTopics(d[SEE_MORE_TOPICS_KEY] ?? []);
+  });
+  // Save pending impressions when the tab is hidden or closed, rather than
+  // losing up to IMPRESSION_FLUSH_MS of them.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') void flushImpressions();
+  });
   chrome.storage.onChanged.addListener((changes, area) => {
-    if (area !== 'local' || !changes[SEE_MORE_TOPICS_KEY]) return;
-    setTopics((changes[SEE_MORE_TOPICS_KEY].newValue as string[] | undefined) ?? []);
+    if (area !== 'local') return;
+    // Impressions from other tabs, so they skip what this one has shown too.
+    if (changes[SEE_MORE_SEEN_KEY]) for (const uri of (changes[SEE_MORE_SEEN_KEY].newValue as string[] | undefined) ?? []) impressedUris.add(uri);
+    if (changes[SEE_MORE_EVERY_KEY]) injectEvery = clampSeeMoreEvery(changes[SEE_MORE_EVERY_KEY].newValue);
+    if (changes[SEE_MORE_SOURCE_KEY]) {
+      sourceSetting = clampSeeMoreSource(changes[SEE_MORE_SOURCE_KEY].newValue);
+      // Candidates (and paging cursors) belong to the old source mix; start
+      // every topic over. Posts already placed in the timeline stay.
+      pools.clear();
+      setTopics(topics);
+    }
+    if (changes[SEE_MORE_TOPICS_KEY]) setTopics((changes[SEE_MORE_TOPICS_KEY].newValue as string[] | undefined) ?? []);
   });
 }
 
@@ -89,16 +136,16 @@ async function refill(topic: string): Promise<void> {
     while (pools.get(topic) === pool && pool.ready.length < READY_TARGET) {
       if (!pool.unchecked.length) {
         if (pool.exhausted) break;
-        const res: (BskySearchResult & { error?: string }) | undefined = await chrome.runtime.sendMessage({ type: 'fetchBlueskyPosts', topic, cursor: pool.cursor });
+        const res: (BskySearchResult & { error?: string }) | undefined = await chrome.runtime.sendMessage({ type: 'fetchBlueskyPosts', topic, cursor: pool.cursor, sources: seeMoreSources(sourceSetting) });
         if (!res?.posts || res.error) { pool.retryAt = Date.now() + SEARCH_RETRY_MS; break; }
         pool.cursor = res.cursor;
         // An empty window just means a quiet stretch; keep walking back.
         if (!res.cursor) pool.exhausted = true;
-        pool.unchecked.push(...res.posts.filter(p => !seenUris.has(p.uri)));
+        pool.unchecked.push(...shuffled(res.posts.filter(p => !seenUris.has(p.uri) && !impressedUris.has(p.uri))));
         continue;
       }
       const post = pool.unchecked.shift()!;
-      if (seenUris.has(post.uri)) continue;
+      if (seenUris.has(post.uri) || impressedUris.has(post.uri)) continue;
       if (await passesHideFilters(post)) pool.ready.push(post);
     }
   } catch (err) {
@@ -112,8 +159,10 @@ async function refill(topic: string): Promise<void> {
 // user's hide filters (and AI-content detection) apply to injected posts too.
 // Anything other than a definite "hide" verdict lets the post through.
 async function passesHideFilters(post: BskyFeedPost): Promise<boolean> {
+  // Quoted text is folded in the way the X adapter does for quote tweets.
+  const quoted = post.quote && post.quote !== 'unavailable' && post.quote.text ? ` [Quoted: ${post.quote.text}]` : '';
   const content = {
-    text: post.text, author: post.authorName, handle: `@${post.authorHandle}`, avatarUrl: null,
+    text: post.text + quoted, author: post.authorName, handle: `@${post.authorHandle}`, avatarUrl: null,
     timeText: null, textHtml: '', quote: null, postUrl: post.url, imageUrls: [], hasMediaContainer: false,
   };
   try {
@@ -137,13 +186,83 @@ async function passesHideFilters(post: BskyFeedPost): Promise<boolean> {
   }
 }
 
+/** A page of candidates in random order. Pages arrive best-first and every
+ *  post on one has already passed the relevance check, so shuffling within
+ *  a page keeps the overall order while two reloads don't serve exactly
+ *  the same sequence. */
+function shuffled<T>(items: T[]): T[] {
+  const out = [...items];
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
+}
+
+// ==================== Impressions ====================
+
+function observeImpression(root: HTMLElement, uri: string): void {
+  if (impressedUris.has(uri) || typeof IntersectionObserver === 'undefined') return;
+  impressionObserver ??= new IntersectionObserver(entries => {
+    for (const entry of entries) {
+      const target = entry.target as HTMLElement;
+      if (entry.isIntersecting) {
+        if (!dwellTimers.has(target)) {
+          dwellTimers.set(target, setTimeout(() => {
+            dwellTimers.delete(target);
+            stopObserving(target);
+            // Removed mid-dwell (X recycled the cell): not a full second on screen.
+            if (target.isConnected) markImpressed(target.dataset.uri ?? '');
+          }, IMPRESSION_DWELL_MS));
+        }
+      } else {
+        clearTimeout(dwellTimers.get(target));
+        dwellTimers.delete(target);
+      }
+    }
+  }, { threshold: IMPRESSION_VISIBLE_RATIO });
+  impressionObserver.observe(root);
+  observedRoots.add(root);
+}
+
+function stopObserving(root: HTMLElement): void {
+  impressionObserver?.unobserve(root);
+  observedRoots.delete(root);
+  clearTimeout(dwellTimers.get(root));
+  dwellTimers.delete(root);
+}
+
+function markImpressed(uri: string): void {
+  if (!uri || impressedUris.has(uri)) return;
+  impressedUris.add(uri);
+  pendingImpressions.add(uri);
+  flushTimer ??= setTimeout(() => void flushImpressions(), IMPRESSION_FLUSH_MS);
+}
+
+// Batched, and merged with what's stored, so tabs don't overwrite each
+// other's impressions.
+async function flushImpressions(): Promise<void> {
+  if (flushTimer) clearTimeout(flushTimer);
+  flushTimer = null;
+  if (!pendingImpressions.size) return;
+  const added = [...pendingImpressions];
+  pendingImpressions.clear();
+  try {
+    const stored = (await getStorage([SEE_MORE_SEEN_KEY]))[SEE_MORE_SEEN_KEY] ?? [];
+    await setStorage({ [SEE_MORE_SEEN_KEY]: mergeSeenUris(stored, added) });
+  } catch (err) {
+    console.warn('[Bouncer] See more: saving seen posts failed:', err);
+    for (const uri of added) pendingImpressions.add(uri);
+  }
+}
+
 function takePost(): BskyFeedPost | null {
   for (let i = 0; i < topics.length; i++) {
     const topic = topics[(nextTopic + i) % topics.length];
     const pool = pools.get(topic);
     if (!pool) continue;
     let post = pool.ready.shift();
-    while (post && seenUris.has(post.uri)) post = pool.ready.shift();
+    while (post && (seenUris.has(post.uri) || impressedUris.has(post.uri))) post = pool.ready.shift();
     void refill(topic);
     if (!post) continue;
     nextTopic = (nextTopic + i + 1) % topics.length;
@@ -180,7 +299,7 @@ export function noteTimelinePost(article: HTMLElement): void {
     countedHostKeys.add(hostKey);
     tweetsSinceInject++;
   }
-  if (tweetsSinceInject < INJECT_EVERY) return;
+  if (tweetsSinceInject < injectEvery - 1) return;
   // Don't wedge a foreign post between the tweets of a self-thread.
   const next = cell.nextElementSibling;
   const threaded = (adapter as unknown as { _isReplyInThread?: (el: Element) => boolean })._isReplyInThread;
@@ -197,6 +316,7 @@ export function noteTimelinePost(article: HTMLElement): void {
 // X recycles cells and Bouncer hides filtered ones; drop injected posts whose
 // host no longer matches, and give a hidden host's post to a later tweet.
 function sweep(): void {
+  for (const root of observedRoots) if (!root.isConnected) stopObserving(root);
   document.querySelectorAll<HTMLElement>(`.${INJECTED_CLASS}`).forEach(el => {
     const cell = el.parentElement;
     const article = cell?.querySelector<HTMLElement>(adapter.selectors.post);
@@ -212,7 +332,7 @@ function sweep(): void {
       if (post) {
         seenUris.delete(post.uri);
         pools.get(post.topic)?.ready.unshift(post);
-        tweetsSinceInject = INJECT_EVERY;
+        tweetsSinceInject = injectEvery;
       }
     }
   });
@@ -236,6 +356,36 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, className: string, te
   return node;
 }
 
+/** Open an x.com URL inside X's own app, the way X's links do: same tab, no
+ *  reload, Back returns to the timeline. X's router follows history
+ *  popstate. If X hasn't rendered the new page shortly after (the injected
+ *  card is still on screen), that's logged and the page loads it in full. */
+function openInX(url: string, from: HTMLElement): void {
+  const target = new URL(url);
+  history.pushState(null, '', target.pathname + target.search);
+  window.dispatchEvent(new PopStateEvent('popstate', { state: null }));
+  setTimeout(() => {
+    if (from.isConnected && location.pathname === target.pathname) {
+      console.warn('[Bouncer] See more: X did not route to', target.pathname, '- loading it in full');
+      location.assign(target.href);
+    }
+  }, 1500);
+}
+
+/** Make an X post's x.com links open inside X (openInX) on a plain click;
+ *  modified clicks (new tab, etc.) keep the browser's behavior. */
+function routeLinksInX(root: HTMLElement): void {
+  root.querySelectorAll<HTMLAnchorElement>('a[href^="https://x.com/"]').forEach(a => {
+    a.removeAttribute('target');
+    a.addEventListener('click', (e) => {
+      if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+      e.preventDefault();
+      e.stopPropagation();
+      openInX(a.href, root);
+    });
+  });
+}
+
 function link(className: string, href: string, text?: string): HTMLAnchorElement {
   const a = el('a', className, text);
   a.href = href;
@@ -257,6 +407,26 @@ function strokeIcon(d: string): SVGSVGElement {
   path.setAttribute('stroke-linejoin', 'round');
   svg.appendChild(path);
   return svg;
+}
+
+// The X logo, for posts drawn from X (the backend's xstream).
+const X_LOGO_PATH = 'M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z';
+
+function xLogo(className: string): SVGSVGElement {
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('class', className);
+  svg.setAttribute('aria-hidden', 'true');
+  const path = document.createElementNS(SVG_NS, 'path');
+  path.setAttribute('d', X_LOGO_PATH);
+  path.setAttribute('fill', 'currentColor');
+  svg.appendChild(path);
+  return svg;
+}
+
+/** The logo of the network a post is from. */
+function sourceLogo(source: SeeMoreSource, className: string): SVGSVGElement {
+  return source === 'x' ? xLogo(className) : blueskyLogo(className);
 }
 
 function blueskyLogo(className: string): SVGSVGElement {
@@ -283,22 +453,45 @@ function renderText(post: BskyFeedPost): HTMLElement {
   return body;
 }
 
-function renderMedia(post: BskyFeedPost): HTMLElement | null {
+// A load can fail transiently (network blip, a request Chrome cancels while
+// X loads its own media, a momentary CDN error), so retry once with a
+// cache-busting query before giving up. Some browsers (Safari, the iOS app)
+// may also apply x.com's CSP to these images; that fails both attempts.
+const IMAGE_RETRY_DELAY_MS = 1500;
+
+function loadWithRetry(image: HTMLImageElement, url: string, onGiveUp: () => void): void {
+  let retried = false;
+  image.addEventListener('error', () => {
+    if (!retried) {
+      retried = true;
+      setTimeout(() => { image.src = `${url}${url.includes('?') ? '&' : '?'}retry=1`; }, IMAGE_RETRY_DELAY_MS);
+      return;
+    }
+    console.warn('[Bouncer] See more: image failed to load after a retry:', url);
+    onGiveUp();
+  });
+  image.src = url;
+}
+
+function renderMedia(post: Pick<BskyFeedPost, 'images' | 'isVideo' | 'external'> & { source?: SeeMoreSource }): HTMLElement | null {
   if (post.images.length) {
     const grid = el('div', `bsky-x-media bsky-x-media-${Math.min(post.images.length, 4)}`);
     for (const img of post.images) {
       const image = el('img', 'bsky-x-media-img');
       image.referrerPolicy = 'no-referrer';
-      // Some browsers (Safari, the iOS app) may still apply x.com's CSP to
-      // these; drop a broken grid rather than show empty boxes.
-      image.addEventListener('error', () => grid.remove(), { once: true });
       // X-style single image: natural aspect, clamped between 3:4 and 2:1.
       if (post.images.length === 1) {
         image.style.aspectRatio = String(Math.min(2, Math.max(0.75, img.aspectRatio ?? 16 / 9)));
       }
-      image.src = img.url;
       image.alt = img.alt;
       image.loading = 'lazy';
+      // Keep the tile (same size and place) so the post never silently loses
+      // its content; clicking it opens the post like the rest of the card.
+      loadWithRetry(image, img.url, () => {
+        const failed = el('div', 'bsky-x-media-img bsky-x-media-failed', `Image couldn't load · open on ${SOURCE_NAME[post.source ?? 'bluesky']}`);
+        failed.style.aspectRatio = image.style.aspectRatio;
+        image.replaceWith(failed);
+      });
       grid.appendChild(image);
     }
     if (post.isVideo) grid.appendChild(el('span', 'bsky-x-play', '▶'));
@@ -309,8 +502,7 @@ function renderMedia(post: BskyFeedPost): HTMLElement | null {
     if (post.external.thumbUrl) {
       const thumb = el('img', 'bsky-x-card-thumb');
       thumb.referrerPolicy = 'no-referrer';
-      thumb.addEventListener('error', () => thumb.remove(), { once: true });
-      thumb.src = post.external.thumbUrl;
+      loadWithRetry(thumb, post.external.thumbUrl, () => thumb.remove());
       thumb.alt = '';
       card.appendChild(thumb);
     }
@@ -323,17 +515,65 @@ function renderMedia(post: BskyFeedPost): HTMLElement | null {
   return null;
 }
 
+// X's compact quote card: bordered box with a small avatar, the quoted
+// author and time, the quoted text, and its media. Clicking it opens the
+// quoted post rather than the outer one.
+function renderQuote(quote: NonNullable<BskyFeedPost['quote']>): HTMLElement {
+  if (quote === 'unavailable') return el('div', 'bsky-x-quote bsky-x-quote-unavailable', 'This post is unavailable.');
+  const card = el('div', 'bsky-x-quote');
+  card.setAttribute('role', 'link');
+  const quoteIsX = quote.url.startsWith('https://x.com/');
+  card.setAttribute('aria-label', `Quoted ${quoteIsX ? 'X' : 'Bluesky'} post by ${quote.authorName}`);
+
+  const header = el('div', 'bsky-x-header bsky-x-quote-header');
+  const avatar = el('span', 'bsky-x-quote-avatar');
+  if (quote.avatarUrl) {
+    const img = el('img', '');
+    img.referrerPolicy = 'no-referrer';
+    loadWithRetry(img, quote.avatarUrl, () => img.remove());
+    img.alt = '';
+    avatar.appendChild(img);
+  }
+  header.appendChild(avatar);
+  header.appendChild(el('span', 'bsky-x-name', quote.authorName));
+  header.appendChild(el('span', 'bsky-x-handle', `@${quote.authorHandle}`));
+  header.appendChild(el('span', 'bsky-x-dot', '·'));
+  const time = el('span', 'bsky-x-time', formatRelativeTime(quote.createdAt));
+  if (quote.createdAt) time.title = new Date(quote.createdAt).toLocaleString();
+  header.appendChild(time);
+  card.appendChild(header);
+
+  if (quote.text) card.appendChild(el('div', 'bsky-x-text bsky-x-quote-text', quote.text));
+  const media = renderMedia(quote);
+  if (media) card.appendChild(media);
+
+  card.addEventListener('click', (e) => {
+    if ((e.target as Element).closest('a')) return;
+    if (window.getSelection()?.toString()) return;
+    e.stopPropagation();
+    if (quoteIsX) openInX(quote.url, card);
+    else window.open(quote.url, '_blank', 'noopener');
+  });
+  return card;
+}
+
 function renderPost(post: BskyFeedPost, hostKey: string): HTMLElement {
   const root = el('div', INJECTED_CLASS);
   root.dataset.hostKey = hostKey;
   root.dataset.topic = post.topic;
   root.dataset.bouncerInjected = 'bluesky';
+  root.dataset.source = post.source;
+  root.dataset.uri = post.uri;
+  observeImpression(root, post.uri);
   root.setAttribute('role', 'article');
-  root.setAttribute('aria-label', `Bluesky post by ${post.authorName}`);
+  const sourceName = SOURCE_NAME[post.source];
+  root.setAttribute('aria-label', `${sourceName} post by ${post.authorName}`);
 
-  const context = el('div', 'bsky-x-context');
-  context.appendChild(blueskyLogo('bsky-x-context-icon'));
-  context.appendChild(el('span', '', `From Bluesky · See more of ${post.topic}`));
+  // Every injected post says which network it's from: logo + name here, and
+  // a badge by the author's name.
+  const context = el('div', `bsky-x-context bsky-x-source-${post.source}`);
+  context.appendChild(sourceLogo(post.source, 'bsky-x-context-icon'));
+  context.appendChild(el('span', '', `From ${sourceName} · See more of ${post.topic}`));
   root.appendChild(context);
 
   const row = el('div', 'bsky-x-row');
@@ -341,8 +581,7 @@ function renderPost(post: BskyFeedPost, hostKey: string): HTMLElement {
   if (post.avatarUrl) {
     const img = el('img', '');
     img.referrerPolicy = 'no-referrer';
-    img.addEventListener('error', () => img.remove(), { once: true });
-    img.src = post.avatarUrl;
+    loadWithRetry(img, post.avatarUrl, () => img.remove());
     img.alt = '';
     avatar.appendChild(img);
   }
@@ -352,9 +591,11 @@ function renderPost(post: BskyFeedPost, hostKey: string): HTMLElement {
   const header = el('div', 'bsky-x-header');
   const name = link('bsky-x-name', post.authorUrl, post.authorName);
   header.appendChild(name);
-  const badge = el('span', 'bsky-x-badge');
-  badge.title = 'This post is from Bluesky';
-  badge.appendChild(blueskyLogo(''));
+  const badge = el('span', `bsky-x-badge bsky-x-source-${post.source}`);
+  badge.title = post.source === 'x'
+    ? 'This post is from X (seen by other Bouncer users)'
+    : 'This post is from Bluesky';
+  badge.appendChild(sourceLogo(post.source, ''));
   header.appendChild(badge);
   header.appendChild(link('bsky-x-handle', post.authorUrl, `@${post.authorHandle}`));
   header.appendChild(el('span', 'bsky-x-dot', '·'));
@@ -366,11 +607,12 @@ function renderPost(post: BskyFeedPost, hostKey: string): HTMLElement {
   if (post.text) main.appendChild(renderText(post));
   const media = renderMedia(post);
   if (media) main.appendChild(media);
+  if (post.quote) main.appendChild(renderQuote(post.quote));
 
   const actions = el('div', 'bsky-x-actions');
   const action = (kind: keyof typeof ICONS, count: number, label: string) => {
     const a = link(`bsky-x-action bsky-x-action-${kind}`, post.url);
-    a.setAttribute('aria-label', `${label} on Bluesky`);
+    a.setAttribute('aria-label', `${label} on ${sourceName}`);
     a.appendChild(strokeIcon(ICONS[kind]));
     const c = formatCount(count);
     if (c) a.appendChild(el('span', '', c));
@@ -388,56 +630,109 @@ function renderPost(post: BskyFeedPost, hostKey: string): HTMLElement {
 
   // Like a tweet, a click anywhere that isn't a link opens the post — but
   // not when the user is selecting text.
+  // X posts open natively, in X itself, where the replies are.
+  if (post.source === 'x') routeLinksInX(root);
   root.addEventListener('click', (e) => {
     if ((e.target as Element).closest('a')) return;
     if (window.getSelection()?.toString()) return;
-    window.open(post.url, '_blank', 'noopener');
+    if (post.source === 'x') openInX(post.url, root);
+    else window.open(post.url, '_blank', 'noopener');
   });
   return root;
 }
 
 // ==================== Topic input (sidebar filter box) ====================
 
-/** Fills the "See more of …" row in an X filter box. */
+// Cycling examples in the empty topic field. Exactly as many as the "Filter
+// out" placeholder has (PLACEHOLDER_PHRASES in ui.ts), because both tracks
+// run on the same ff-placeholder-scroll keyframes, which step once per item.
+const TOPIC_PLACEHOLDERS = ['optimism', 'cute animals', 'urban planning', 'space exploration', 'woodworking', 'local news',
+  'birdwatching', 'people being kind', 'indie games', 'gardening', 'science breakthroughs', 'cooking'];
+
+/** Fills the "See more of …" row in an X filter box. It is built from the
+ *  same pieces as the "Filter out [phrases] and [input]" sentence above it,
+ *  so it reads and behaves the same: chips with Oxford commas, "and", an
+ *  auto-growing field whose cycling placeholder only shows with no topics,
+ *  Enter or comma to add. Its own row class instead of .filter-phrases-header
+ *  keeps the filter's pause dimming off it. */
 export function mountSeeMoreRow(row: HTMLElement): void {
   if (!adapter) return;
   topicRows.add(row);
-  row.replaceChildren(
-    el('span', 'bsky-see-more-label', 'See more of'),
-    el('span', 'bsky-see-more-list'),
-  );
-  const input = el('input', 'bsky-see-more-input');
-  input.type = 'text';
-  input.placeholder = 'a topic, from Bluesky';
-  input.maxLength = 60;
-  input.setAttribute('aria-label', 'See more posts about a topic, from Bluesky');
-  input.addEventListener('keydown', (e) => {
-    e.stopPropagation(); // keep X's keyboard shortcuts out of the field
-    if (e.key !== 'Enter') return;
-    e.preventDefault();
-    const topic = normalizeTopic(input.value);
-    if (!topic) return;
+
+  const andInput = el('span', 'filter-phrases-and-input');
+  andInput.appendChild(el('span', 'filter-phrases-and', 'and'));
+  const wrapper = el('span', 'filter-input-wrapper');
+  const input = el('textarea', 'filter-phrases-input bsky-see-more-input');
+  input.rows = 1;
+  input.maxLength = MAX_SEE_MORE_TOPIC_LENGTH;
+  input.setAttribute('aria-label', 'See more posts about a topic');
+  const cycle = el('span', 'filter-placeholder-cycle');
+  cycle.setAttribute('aria-hidden', 'true');
+  // bsky-see-more-track: excluded from setKeepOnlyMode's swap of the filter
+  // examples into every placeholder track.
+  const track = el('span', 'filter-placeholder-track bsky-see-more-track');
+  for (const t of [...TOPIC_PLACEHOLDERS, TOPIC_PLACEHOLDERS[0]]) track.appendChild(el('span', '', t));
+  cycle.appendChild(track);
+  wrapper.append(input, cycle);
+  andInput.appendChild(wrapper);
+  row.replaceChildren(el('span', 'filter-phrases-label', 'See more of'), el('span', 'filter-phrases-list'), andInput);
+
+  // Same auto-grow and "claim the whole row once it wraps" behavior as the
+  // filter input (see autosizeInput in ui.ts).
+  const autosize = () => {
+    input.style.height = 'auto';
+    const borderY = input.offsetHeight - input.clientHeight;
+    input.style.height = `${input.scrollHeight + borderY}px`;
+    if (input.value === '') { row.classList.remove('input-wraps'); return; }
+    if (row.classList.contains('input-wraps')) return;
+    const lineHeightPx = parseFloat(getComputedStyle(input).lineHeight) || 22;
+    if (input.scrollHeight > lineHeightPx * 1.5) {
+      row.classList.add('input-wraps');
+      input.style.height = 'auto';
+      input.style.height = `${input.scrollHeight + borderY}px`;
+    }
+  };
+  const submit = (raw: string) => {
+    const topic = normalizeTopic(raw);
     input.value = '';
-    void addTopic(topic);
+    renderTopicChips(row);
+    autosize();
+    if (topic) void addTopic(topic);
+  };
+  input.addEventListener('input', () => { renderTopicChips(row); autosize(); });
+  input.addEventListener('keydown', (e) => e.stopPropagation()); // keep X's keyboard shortcuts out of the field
+  input.addEventListener('keypress', (e) => {
+    if (e.key !== 'Enter' && e.key !== ',') return;
+    e.preventDefault();
+    submit(input.value);
   });
-  row.appendChild(input);
+  input.addEventListener('paste', (e) => {
+    const pasted = e.clipboardData?.getData('text') ?? '';
+    if (!pasted.includes(',')) return;
+    e.preventDefault();
+    for (const t of pasted.split(',')) submit(t);
+  });
   renderTopicChips(row);
 }
 
 function renderTopicChips(row: HTMLElement): void {
-  const list = row.querySelector('.bsky-see-more-list');
-  const input = row.querySelector<HTMLInputElement>('.bsky-see-more-input');
+  const list = row.querySelector('.filter-phrases-list');
+  const input = row.querySelector<HTMLTextAreaElement>('.bsky-see-more-input');
   if (!list) return;
-  list.replaceChildren(...topics.map((t, i) => {
-    const item = el('span', 'bsky-see-more-item');
-    const chip = el('span', 'filter-phrase-inline bsky-see-more-topic', t);
+  // Mirrors renderPhrasesInContainer in ui.ts: each chip and its trailing
+  // comma share one wrapper, with a comma after every chip once there are two.
+  list.replaceChildren(...topics.map(t => {
+    const item = el('span', 'filter-phrase-item');
+    const chip = el('span', 'filter-phrase-inline', t);
     chip.title = 'Click to remove';
     chip.addEventListener('click', () => void removeTopic(t));
     item.appendChild(chip);
-    if (i < topics.length - 1) item.appendChild(el('span', 'filter-phrase-separator', ', '));
+    if (topics.length > 1) item.appendChild(el('span', 'filter-phrase-separator', ', '));
     return item;
   }));
-  if (input) input.style.display = topics.length >= MAX_SEE_MORE_TOPICS ? 'none' : '';
+  row.querySelector('.filter-placeholder-cycle')?.classList.toggle('hidden', topics.length > 0 || !!input?.value);
+  const andInput = row.querySelector<HTMLElement>('.filter-phrases-and-input');
+  if (andInput) andInput.style.display = topics.length >= MAX_SEE_MORE_TOPICS ? 'none' : '';
 }
 
 async function addTopic(topic: string): Promise<void> {

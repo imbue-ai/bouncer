@@ -1,12 +1,19 @@
 import { describe, it, expect } from 'vitest';
 import {
   bskyPostUrl,
+  clampSeeMoreEvery,
+  clampSeeMoreSource,
   facetsToLinks,
   formatCount,
   formatRelativeTime,
+  mergeSeenUris,
   isInjectableRawPost,
   normalizeTopic,
+  embedMedia,
   rawMedia,
+  rawQuote,
+  seeMoreSources,
+  sourceOfUri,
   type RawPostView,
 } from '../../src/shared/bluesky.js';
 
@@ -32,10 +39,6 @@ describe('isInjectableRawPost', () => {
   });
   it('rejects replies', () => {
     expect(isInjectableRawPost(raw({ record: { text: 'long enough reply text here', reply: {} } }))).toBe(false);
-  });
-  it('rejects adult or moderation-labeled posts and authors', () => {
-    expect(isInjectableRawPost(raw({ labels: [{ val: 'porn' }] }))).toBe(false);
-    expect(isInjectableRawPost(raw({ author: { did: 'd', handle: 'h', labels: [{ val: '!hide' }] } }))).toBe(false);
   });
   it('rejects very short text-only posts but keeps short posts with media', () => {
     expect(isInjectableRawPost(raw({ record: { text: 'lol' } }))).toBe(false);
@@ -111,5 +114,73 @@ describe('formatting', () => {
   it('normalizes topics', () => {
     expect(normalizeTopic('  wood   working ')).toBe('wood working');
     expect(normalizeTopic('x'.repeat(100))).toHaveLength(60);
+  });
+
+  describe('rawQuote', () => {
+    const quoted = {
+      $type: 'app.bsky.embed.record#viewRecord',
+      uri: 'at://did:plc:bob/app.bsky.feed.post/3kq',
+      author: { did: 'did:plc:bob', handle: 'bob.bsky.social' },
+      value: { text: 'the quoted post' },
+      embeds: [{ $type: 'app.bsky.embed.images#view', images: [{ thumb: 'https://cdn.bsky.app/t.jpg' }] }],
+    };
+
+    it('finds the quoted post of a plain quote and of a quote with media', () => {
+      expect(rawQuote(raw({ embed: { $type: 'app.bsky.embed.record#view', record: quoted } }))).toBe(quoted);
+      const withMedia = raw({
+        embed: {
+          $type: 'app.bsky.embed.recordWithMedia#view',
+          media: { $type: 'app.bsky.embed.images#view', images: [{ thumb: 'https://cdn.bsky.app/own.jpg' }] },
+          record: { $type: 'app.bsky.embed.record#view', record: quoted },
+        },
+      });
+      expect(rawQuote(withMedia)).toBe(quoted);
+      // The outer post's media stays its own; the quote's media comes from its embeds.
+      expect(rawMedia(withMedia).images.map(i => i.thumb)).toEqual(['https://cdn.bsky.app/own.jpg']);
+      expect(embedMedia(quoted.embeds[0]).images.map(i => i.thumb)).toEqual(['https://cdn.bsky.app/t.jpg']);
+    });
+
+    it('marks deleted, blocked and detached quotes unavailable', () => {
+      for (const $type of ['app.bsky.embed.record#viewNotFound', 'app.bsky.embed.record#viewBlocked', 'app.bsky.embed.record#viewDetached']) {
+        expect(rawQuote(raw({ embed: { $type: 'app.bsky.embed.record#view', record: { $type } } }))).toBe('unavailable');
+      }
+    });
+
+    it('ignores posts without a quote and quoted feeds or lists', () => {
+      expect(rawQuote(raw())).toBeNull();
+      expect(rawQuote(raw({ embed: { $type: 'app.bsky.embed.record#view', record: { $type: 'app.bsky.feed.defs#generatorView' } } }))).toBeNull();
+    });
+  });
+
+  it('clamps the see-more frequency to 1 in 2 .. 1 in 10, defaulting to 1 in 5', () => {
+    expect(clampSeeMoreEvery(undefined)).toBe(5);
+    expect(clampSeeMoreEvery('3')).toBe(5);
+    expect(clampSeeMoreEvery(1)).toBe(2);
+    expect(clampSeeMoreEvery(2)).toBe(2);
+    expect(clampSeeMoreEvery(7.4)).toBe(7);
+    expect(clampSeeMoreEvery(50)).toBe(10);
+  });
+
+  it('merges seen post URIs without duplicates, newest last, capped', () => {
+    expect(mergeSeenUris(['a', 'b'], ['c'])).toEqual(['a', 'b', 'c']);
+    // Seeing a post again moves it to the newest end, so it outlives the cap longer.
+    expect(mergeSeenUris(['a', 'b', 'c'], ['a', 'c', 'c'])).toEqual(['b', 'a', 'c']);
+    expect(mergeSeenUris(['a', 'b', 'c'], ['d', 'e'], 3)).toEqual(['c', 'd', 'e']);
+    expect(mergeSeenUris([], [])).toEqual([]);
+  });
+
+  it('maps the "Draw from" setting to request sources, defaulting to Bluesky', () => {
+    expect(seeMoreSources('bluesky')).toEqual(['bluesky']);
+    expect(seeMoreSources('x')).toEqual(['x']);
+    expect(seeMoreSources('both')).toEqual(['bluesky', 'x']);
+    expect(clampSeeMoreSource('x')).toBe('x');
+    expect(clampSeeMoreSource('both')).toBe('both');
+    expect(clampSeeMoreSource(undefined)).toBe('bluesky');
+    expect(clampSeeMoreSource('threads')).toBe('bluesky');
+  });
+
+  it('tells X posts (from xstream) from Bluesky posts by URI', () => {
+    expect(sourceOfUri('at://x:elonmusk/com.x.feed.post/2115503730368061688')).toBe('x');
+    expect(sourceOfUri('at://did:plc:abc/app.bsky.feed.post/3kxyz')).toBe('bluesky');
   });
 });

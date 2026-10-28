@@ -397,7 +397,7 @@ export type ContentToBackgroundMessage =
   | { type: 'clearSinglePost'; post: string; imageUrls: string[]; postUrl?: string | null; siteId?: SiteId }
   | { type: 'getStats' }
   // "See more of <topic>": one page of Bluesky search results (BskySearchResult).
-  | { type: 'fetchBlueskyPosts'; topic: string; cursor: string | null }
+  | { type: 'fetchBlueskyPosts'; topic: string; cursor: string | null; sources: Array<'bluesky' | 'x'> }
   | { type: 'getReasoning'; post: string; imageUrls: string[]; postUrl?: string | null; siteId?: SiteId }
   | { type: 'getErrorStatus' }
   | { type: 'getAllLocalModelStatuses' }
@@ -611,6 +611,12 @@ export type StorageSchema = SettingsBase & {
   // "See more of …" topics on X: Bluesky search results for each are
   // injected into the home timeline (src/content/bluesky-see-more.ts).
   seeMoreTopics_twitter: string[];
+  // One Bluesky post per this many timeline tweets (clampSeeMoreEvery).
+  seeMoreEvery_twitter: number;
+  // Bluesky posts already seen on screen, oldest first (mergeSeenUris).
+  seeMoreSeen_twitter: string[];
+  // Where "See more of" posts come from: Bluesky, X, or both (clampSeeMoreSource).
+  seeMoreSource_twitter: 'bluesky' | 'x' | 'both';
 } & DescriptionKeys & PlatformEnabledKeys & FilteringPausedKeys & FilteringPausedExtendedKeys & ExcludedAccountsKeys;
 
 // ==================== API Response Types ====================
@@ -651,6 +657,24 @@ export interface ImbueDetectAiIntentResponse extends ImbueResponseBase {
   aiFilterPhrases?: string[] | null;
   reasoning?: string | null;
   rawResponse: string;
+}
+
+/** Response from the blueskySearch action ("See more of <topic>"): one page
+ *  of the backend's semantic Bluesky index for the topic, already checked
+ *  for relevance by the filter model. */
+export interface ImbueBlueskySearchResponse extends ImbueResponseBase {
+  /** at:// post URIs judged on-topic, best first. May be empty for a page. */
+  uris: string[];
+  /** Post views for the X URIs in `uris` (Bluesky ones are hydrated through
+   *  the public getPosts API; X ones can't be, so the backend sends them).
+   *  Same shape as Bluesky's postView. Absent from older backends. */
+  posts?: unknown[];
+  /** Per-source counts for this page (ranked, page, missing, candidates,
+   *  kept, filter_failed), so a source that contributed nothing is visible.
+   *  Absent from older backends. */
+  sourceStats?: Partial<Record<'bluesky' | 'x', Record<string, number>>>;
+  /** Offset of the next page; null when the backend's ranking is exhausted. */
+  cursor: number | null;
 }
 
 /** Response from the suggestAnnoying action.

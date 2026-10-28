@@ -1,17 +1,76 @@
 // "See more of <topic>" — Bluesky posts injected into the X timeline.
 //
-// The background fetches public Bluesky search results (no login needed:
-// api.bsky.app allows anonymous searchPosts with `Access-Control-Allow-Origin: *`;
-// the cached public.api.bsky.app host 403s search) and maps each post to the
-// flat shape below. Media stays as cdn.bsky.app URLs: that CDN sends no CORS
+// The background gets candidate posts from the backend's semantic index: the
+// blueskySearch WebSocket route returns URIs of posts the filter model judged
+// on-topic, hydrated through the public getPosts API (no Bluesky login
+// needed: api.bsky.app allows anonymous getPosts with
+// `Access-Control-Allow-Origin: *`). Each post is mapped to the flat shape
+// below. Media stays as cdn.bsky.app URLs: that CDN sends no CORS
 // headers, so the extension can't fetch it, but <img> elements created by a
 // content script are exempt from x.com's CSP img-src in Chrome (verified;
 // the same load from the page's own world is blocked).
 
-export const BSKY_SEARCH_ENDPOINT = 'https://api.bsky.app/xrpc/app.bsky.feed.searchPosts';
+export const BSKY_GET_POSTS_ENDPOINT = 'https://api.bsky.app/xrpc/app.bsky.feed.getPosts';
+/** getPosts accepts at most this many URIs per request. */
+export const BSKY_GET_POSTS_MAX = 25;
 export const SEE_MORE_TOPICS_KEY = 'seeMoreTopics_twitter';
-export const MAX_SEE_MORE_TOPICS = 3;
+export const MAX_SEE_MORE_TOPICS = 10;
 export const MAX_SEE_MORE_TOPIC_LENGTH = 60;
+/** One Bluesky post per this many timeline tweets. Set from the desktop
+ *  popup's slider, from 1 in 10 up to 1 in 2. */
+export const SEE_MORE_EVERY_KEY = 'seeMoreEvery_twitter';
+export const DEFAULT_SEE_MORE_EVERY = 5;
+export const MIN_SEE_MORE_EVERY = 2;
+export const MAX_SEE_MORE_EVERY = 10;
+
+/** Where "See more of" draws posts from (the desktop popup's "Draw from"
+ *  setting): Bluesky, X, or both. X posts come from the backend's xstream,
+ *  a feed of X posts Bouncer users see; their URIs are at://x:<handle>/... */
+export type SeeMoreSource = 'bluesky' | 'x';
+export type SeeMoreSourceSetting = SeeMoreSource | 'both';
+export const SEE_MORE_SOURCE_KEY = 'seeMoreSource_twitter';
+export const DEFAULT_SEE_MORE_SOURCE: SeeMoreSourceSetting = 'bluesky';
+
+/** The stored setting; unset means the default (Bluesky). Anything else
+ *  unrecognized also falls back to the default, but says so. */
+export function clampSeeMoreSource(v: unknown): SeeMoreSourceSetting {
+  if (v === 'bluesky' || v === 'x' || v === 'both') return v;
+  if (v !== undefined) console.warn('[See more] unrecognized source setting, using default:', v, '→', DEFAULT_SEE_MORE_SOURCE);
+  return DEFAULT_SEE_MORE_SOURCE;
+}
+
+/** The blueskySearch request's `sources` for a setting. */
+export function seeMoreSources(setting: SeeMoreSourceSetting): SeeMoreSource[] {
+  return setting === 'both' ? ['bluesky', 'x'] : [setting];
+}
+
+export function sourceOfUri(uri: string): SeeMoreSource {
+  return uri.startsWith('at://x:') ? 'x' : 'bluesky';
+}
+
+/** URIs of Bluesky posts the user has actually seen in their X timeline
+ *  (on screen, not just fetched), oldest first, so a reload doesn't show
+ *  them again. Capped: the backend only indexes a few days of posts, and
+ *  this is far more than anyone scrolls past in that time. */
+export const SEE_MORE_SEEN_KEY = 'seeMoreSeen_twitter';
+export const MAX_SEE_MORE_SEEN = 3000;
+
+/** Append newly seen URIs to the stored list: no duplicates, oldest dropped
+ *  beyond `cap`. */
+export function mergeSeenUris(stored: string[], added: Iterable<string>, cap = MAX_SEE_MORE_SEEN): string[] {
+  const merged = new Set(stored);
+  for (const uri of added) {
+    merged.delete(uri); // re-seen moves to the newest end
+    merged.add(uri);
+  }
+  const all = [...merged];
+  return all.length > cap ? all.slice(all.length - cap) : all;
+}
+
+export function clampSeeMoreEvery(v: unknown): number {
+  if (typeof v !== 'number' || !Number.isFinite(v)) return DEFAULT_SEE_MORE_EVERY;
+  return Math.min(MAX_SEE_MORE_EVERY, Math.max(MIN_SEE_MORE_EVERY, Math.round(v)));
+}
 
 /** A link span over `text`, in UTF-16 offsets (converted from the AT
  *  Protocol's UTF-8 byte offsets in the background). */
@@ -23,7 +82,10 @@ export interface BskyLink {
 
 export interface BskyFeedPost {
   uri: string;
-  /** https://bsky.app/profile/<handle>/post/<rkey> */
+  /** Which network the post is from; X posts render with X branding and
+   *  link to x.com. */
+  source: SeeMoreSource;
+  /** https://bsky.app/profile/<handle>/post/<rkey>, or the x.com status URL */
   url: string;
   authorName: string;
   authorHandle: string;
@@ -40,31 +102,47 @@ export interface BskyFeedPost {
   images: Array<{ url: string; alt: string; aspectRatio: number | null }>;
   isVideo: boolean;
   external: { uri: string; title: string; domain: string; thumbUrl: string | null } | null;
+  /** The quoted post, for a quote post. 'unavailable' when it was deleted,
+   *  blocked, or detached by its author (shown as a placeholder, like X
+   *  does). */
+  quote: BskyQuotedPost | 'unavailable' | null;
   /** The "See more of …" topic this post was found for. */
   topic: string;
 }
+
+/** The post inside a quote post: enough to render X's compact quote card. */
+export type BskyQuotedPost = Pick<BskyFeedPost,
+  'uri' | 'url' | 'authorName' | 'authorHandle' | 'authorUrl' | 'avatarUrl' | 'text' | 'createdAt' | 'images' | 'isVideo' | 'external'>;
 
 export interface BskySearchResult {
   posts: BskyFeedPost[];
   cursor: string | null;
 }
 
-// Self-labels and moderation labels that should never be injected into
-// someone's X feed uninvited.
-const BLOCKED_LABELS = new Set(['porn', 'sexual', 'nudity', 'graphic-media', 'gore', '!hide', '!warn', 'spam']);
-
 // ---- Raw AT Protocol shapes (only the fields we read) ----
 
-interface RawLabel { val: string }
 interface RawAspectRatio { width: number; height: number }
 interface RawImageView { thumb: string; alt?: string; aspectRatio?: RawAspectRatio }
-interface RawEmbedView {
+interface RawAuthor { did: string; handle: string; displayName?: string; avatar?: string }
+/** app.bsky.embed.record#viewRecord, or one of its unavailable variants
+ *  (#viewNotFound, #viewBlocked, #viewDetached), or a quoted feed/list. */
+export interface RawQuotedRecord {
+  $type: string;
+  uri?: string;
+  author?: RawAuthor;
+  value?: { text?: string; createdAt?: string };
+  /** The quoted post's own embeds, already as views. */
+  embeds?: RawEmbedView[];
+}
+export interface RawEmbedView {
   $type: string;
   images?: RawImageView[];
   thumbnail?: string;
   aspectRatio?: RawAspectRatio;
   external?: { uri: string; title?: string; thumb?: string };
   media?: RawEmbedView;
+  /** record#view: the quoted record. recordWithMedia#view: { record }. */
+  record?: RawQuotedRecord & { record?: RawQuotedRecord };
 }
 interface RawFacet {
   index: { byteStart: number; byteEnd: number };
@@ -72,20 +150,17 @@ interface RawFacet {
 }
 export interface RawPostView {
   uri: string;
-  author: { did: string; handle: string; displayName?: string; avatar?: string; labels?: RawLabel[] };
+  author: RawAuthor;
   record: { text?: string; createdAt?: string; reply?: unknown; facets?: RawFacet[]; langs?: string[] };
   embed?: RawEmbedView;
   replyCount?: number;
   repostCount?: number;
   likeCount?: number;
-  labels?: RawLabel[];
 }
 
-/** Whether a raw search hit is fit to show: top-level, unlabeled, has content. */
+/** Whether a raw search hit is fit to show: top-level, has content. */
 export function isInjectableRawPost(p: RawPostView): boolean {
   if (p.record.reply) return false;
-  const labels = [...(p.labels ?? []), ...(p.author.labels ?? [])];
-  if (labels.some(l => BLOCKED_LABELS.has(l.val))) return false;
   const text = (p.record.text ?? '').trim();
   return text.length >= 15 || !!p.embed;
 }
@@ -120,9 +195,34 @@ export function facetsToLinks(text: string, facets: RawFacet[] | undefined): Bsk
   return links.filter((l, i) => i === 0 || l.start >= links[i - 1].end);
 }
 
-/** Media URLs (still remote) a post wants converted to data: URLs. */
-export function rawMedia(p: RawPostView): { images: RawImageView[]; isVideo: boolean; external: RawEmbedView['external'] | null } {
-  let embed = p.embed;
+export interface RawMedia { images: RawImageView[]; isVideo: boolean; external: RawEmbedView['external'] | null }
+
+/** A post's own media (photos, video poster, or link card). A quoted post's
+ *  media is not included; see rawQuote. */
+export function rawMedia(p: RawPostView): RawMedia {
+  return embedMedia(p.embed);
+}
+
+/** The post a quote post quotes: the record view, 'unavailable' when it
+ *  can't or shouldn't be shown, or null for a post that quotes nothing (or
+ *  quotes a feed, list or other non-post record). */
+export function rawQuote(p: RawPostView): RawQuotedRecord | 'unavailable' | null {
+  const embed = p.embed;
+  let record: RawQuotedRecord | undefined;
+  if (embed?.$type === 'app.bsky.embed.record#view') record = embed.record;
+  else if (embed?.$type === 'app.bsky.embed.recordWithMedia#view') record = embed.record?.record;
+  if (!record) return null;
+  if (record.$type === 'app.bsky.embed.record#viewRecord') {
+    if (!record.uri || !record.author) return 'unavailable';
+    return record;
+  }
+  if (/#view(NotFound|Blocked|Detached)$/.test(record.$type)) return 'unavailable';
+  return null;
+}
+
+/** Media of an embed view: the post's own, or a quoted post's embeds[0]. */
+export function embedMedia(view: RawEmbedView | undefined): RawMedia {
+  let embed = view;
   if (embed?.$type === 'app.bsky.embed.recordWithMedia#view') embed = embed.media;
   if (!embed) return { images: [], isVideo: false, external: null };
   if (embed.$type === 'app.bsky.embed.images#view') return { images: (embed.images ?? []).slice(0, 4), isVideo: false, external: null };

@@ -9,6 +9,7 @@ import {
   normalizeHexColor, hexToRgb, rgbToHex, rgbToHsv, hsvToRgb,
 } from '../shared/brand-color';
 import { asyncHandler } from '../shared/async';
+import { SEE_MORE_EVERY_KEY, SEE_MORE_SOURCE_KEY, clampSeeMoreEvery, clampSeeMoreSource, type SeeMoreSourceSetting } from '../shared/bluesky';
 import type { PlatformDef } from '../shared/platforms';
 import { PLATFORMS, PLATFORMS_FOR_TARGET, enabledStorageKey, isOptionalPlatform } from '../shared/platforms';
 
@@ -115,6 +116,19 @@ const isIOSDevice = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
 
 // In-app mode detection
 const isInAppMode = typeof chrome !== 'undefined' && chrome._polyfilled;
+
+/** Show a "See more of" frequency (one Bluesky post per `every` tweets).
+ *  With `label`, only the readout changes (mid-drag). */
+function renderSeeMoreEvery(every: number, { label = false } = {}): void {
+  const valueEl = document.getElementById('seeMoreEveryValue');
+  if (valueEl) valueEl.textContent = `1 in ${every} posts`;
+  const input = document.getElementById('seeMoreEvery') as HTMLInputElement | null;
+  if (input && !label) input.value = String(every);
+}
+
+function renderSeeMoreSource(setting: SeeMoreSourceSetting): void {
+  document.querySelectorAll<HTMLInputElement>('input[name="seeMoreSource"]').forEach(r => { r.checked = r.value === setting; });
+}
 
 // Model key the "On-Device (E2B)" headline radio writes. In the iOS app the
 // native bridge runs the on-device model (iosLocal:, entries injected from
@@ -395,6 +409,12 @@ function setupStorageListener() {
           .catch(err => console.error(`[Popup] Permission check for ${p.id} failed:`, err));
       }
     }
+    if (areaName === 'local' && changes[SEE_MORE_EVERY_KEY]) {
+      renderSeeMoreEvery(clampSeeMoreEvery(changes[SEE_MORE_EVERY_KEY].newValue));
+    }
+    if (areaName === 'local' && changes[SEE_MORE_SOURCE_KEY]) {
+      renderSeeMoreSource(clampSeeMoreSource(changes[SEE_MORE_SOURCE_KEY].newValue));
+    }
     if (areaName === 'local' && changes.aiTextDetectionThreshold) {
       const v = clampThreshold(changes.aiTextDetectionThreshold.newValue);
       const thresholdEl = document.getElementById('aiTextThreshold') as HTMLInputElement | null;
@@ -443,6 +463,8 @@ async function loadSettings() {
     'aiTextDetectionThreshold',
     'aiTextReplyDetectionThreshold',
     'aiImageDetectionThreshold',
+    SEE_MORE_EVERY_KEY,
+    SEE_MORE_SOURCE_KEY,
     'aiFilterIntent',
     'pendingLocalModelSelection',
     'filterReplies',
@@ -495,6 +517,9 @@ async function loadSettings() {
   // driven entirely by the inferred AI-removal intent (natural language) —
   // there is no manual toggle.
   applyAiDetectionUI(data);
+
+  renderSeeMoreEvery(clampSeeMoreEvery(data[SEE_MORE_EVERY_KEY]));
+  renderSeeMoreSource(clampSeeMoreSource(data[SEE_MORE_SOURCE_KEY]));
 
   const thresholdEl = document.getElementById('aiTextThreshold') as HTMLInputElement | null;
   if (thresholdEl) {
@@ -1027,6 +1052,26 @@ function setupEventListeners() {
       })().catch(err => console.error(`[Popup] ${platformToggleId(p.id)} change failed:`, err));
     });
   }
+
+  // Bluesky "See more of" frequency (desktop only). Same input/change split
+  // as the threshold sliders below.
+  const seeMoreSection = document.getElementById('seeMoreFrequencySection');
+  if (seeMoreSection && isInAppMode) seeMoreSection.style.display = 'none';
+  const seeMoreEveryEl = document.getElementById('seeMoreEvery') as HTMLInputElement | null;
+  seeMoreEveryEl?.addEventListener('input', (e) => {
+    renderSeeMoreEvery(clampSeeMoreEvery(parseFloat((e.target as HTMLInputElement).value)), { label: true });
+  });
+  seeMoreEveryEl?.addEventListener('change', (e) => { (async () => {
+    const every = clampSeeMoreEvery(parseFloat((e.target as HTMLInputElement).value));
+    renderSeeMoreEvery(every);
+    await setStorage({ [SEE_MORE_EVERY_KEY]: every });
+  })().catch(err => console.error('[Popup] seeMoreEvery change failed:', err)); });
+  document.querySelectorAll<HTMLInputElement>('input[name="seeMoreSource"]').forEach(radio => {
+    radio.addEventListener('change', () => { (async () => {
+      if (!radio.checked) return;
+      await setStorage({ [SEE_MORE_SOURCE_KEY]: clampSeeMoreSource(radio.value) });
+    })().catch(err => console.error('[Popup] seeMoreSource change failed:', err)); });
+  });
 
   // AI-text-detection threshold (range slider). Live-update the percentage
   // display on `input` (every drag tick); persist only on `change` (release)

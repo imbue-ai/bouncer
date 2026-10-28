@@ -358,6 +358,11 @@ html.twitter-light .bsky-x-post {
 }
 .bsky-x-badge { display: inline-flex; color: var(--bsky-x-blue); flex-shrink: 0; }
 .bsky-x-badge svg { width: 16px; height: 14px; }
+/* Posts drawn from X carry the X logo in X's text color instead of the
+   Bluesky butterfly in blue. */
+.bsky-x-context.bsky-x-source-x .bsky-x-context-icon,
+.bsky-x-badge.bsky-x-source-x { color: var(--bsky-x-text); }
+.bsky-x-badge.bsky-x-source-x svg { width: 14px; height: 14px; }
 .bsky-x-handle {
   color: var(--bsky-x-secondary);
   overflow: hidden;
@@ -385,6 +390,18 @@ html.twitter-light .bsky-x-post {
 .bsky-x-media-3 .bsky-x-media-img:first-child { grid-row: span 2; }
 .bsky-x-media-img { width: 100%; height: 100%; object-fit: cover; display: block; min-height: 0; }
 .bsky-x-media-1 .bsky-x-media-img { max-height: 510px; }
+.bsky-x-media-failed {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  box-sizing: border-box;
+  color: var(--bsky-x-secondary);
+  background-color: var(--bsky-x-hover);
+  font-size: 13px;
+  text-align: center;
+}
+.bsky-x-media-1 .bsky-x-media-failed { min-height: 120px; }
 .bsky-x-play {
   position: absolute;
   top: 50%;
@@ -415,6 +432,34 @@ html.twitter-light .bsky-x-post {
 .bsky-x-card-domain { color: var(--bsky-x-secondary); font-size: 13px; }
 .bsky-x-card-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+.bsky-x-quote {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--bsky-x-border);
+  border-radius: 16px;
+  overflow: hidden;
+}
+.bsky-x-quote:hover { background-color: var(--bsky-x-hover); }
+.bsky-x-quote-unavailable { color: var(--bsky-x-secondary); background-color: var(--bsky-x-hover); }
+.bsky-x-quote-avatar {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--bsky-x-border);
+}
+.bsky-x-quote-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.bsky-x-quote-text {
+  display: -webkit-box;
+  -webkit-line-clamp: 8;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+/* Media inside the quote sits flush with the card's padding, like X. */
+.bsky-x-quote .bsky-x-media, .bsky-x-quote .bsky-x-card { margin-top: 8px; }
+.bsky-x-quote .bsky-x-media-1 .bsky-x-media-img { max-height: 300px; }
+
 .bsky-x-actions {
   display: flex;
   justify-content: space-between;
@@ -435,31 +480,17 @@ html.twitter-light .bsky-x-post {
 .bsky-x-post .bsky-x-action-repost:hover { color: rgb(0, 186, 124); }
 .bsky-x-action svg { width: 18.75px; height: 18.75px; }
 
-/* Topic row in the filter box: "See more of woodworking, [input]" */
+/* Topic row in the filter box: "See more of optimism and [input]". Its
+   pieces reuse the "Filter out" sentence's classes (content.css); this only
+   repeats .filter-phrases-header's layout, which the row can't share without
+   also picking up the filter's pause dimming. */
 .bsky-see-more-row {
   display: flex;
   align-items: baseline;
   flex-wrap: wrap;
   column-gap: 4px;
+  position: relative;
   margin-top: 8px;
-  font-size: 15px;
 }
 .bsky-see-more-row:empty { display: none; }
-.bsky-see-more-label { font-weight: 600; }
-.bsky-see-more-list { display: contents; }
-.bsky-see-more-input {
-  flex: 1;
-  min-width: 120px;
-  padding: 0 4px 2px !important;
-  background: transparent !important;
-  border: none !important;
-  border-bottom: 2px solid rgb(113, 118, 123) !important;
-  border-radius: 0 !important;
-  color: inherit;
-  font: inherit;
-  font-weight: 600;
-  outline: none !important;
-  box-shadow: none !important;
-}
-.bsky-see-more-input::placeholder { color: rgb(113, 118, 123); font-weight: 400; }
-.light-mode .bsky-see-more-input { border-bottom-color: rgb(207, 217, 222) !important; }
+.bsky-see-more-row.input-wraps .filter-phrases-and-input { flex-basis: 100%; }
