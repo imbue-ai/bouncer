@@ -276,7 +276,7 @@ body.ff-ios .ff-ios-page.dim-mode .ff-ios-phrase-input::placeholder {
   border-color: #38444d;
 }
 
-/* ==================== "See more of …" (Bluesky posts in the timeline) ==================== */
+/* ==================== "See more …" (Bluesky posts in the timeline) ==================== */
 /* Injected by src/content/bluesky-see-more.ts inside a real tweet's
    cellInnerDiv, below the tweet. Colors track X's three themes via the
    twitter-{light,dim,dark} class updateTheme() puts on <html>. */
@@ -287,6 +287,7 @@ body.ff-ios .ff-ios-page.dim-mode .ff-ios-phrase-input::placeholder {
   --bsky-x-border: rgb(47, 51, 54);
   --bsky-x-hover: rgba(255, 255, 255, 0.03);
   --bsky-x-blue: rgb(17, 133, 254);
+  --bsky-x-shimmer: rgba(255, 255, 255, 0.06);
   display: block;
   padding: 12px 16px;
   border-bottom: 1px solid var(--bsky-x-border);
@@ -308,8 +309,19 @@ html.twitter-light .bsky-x-post {
   --bsky-x-secondary: rgb(83, 100, 113);
   --bsky-x-border: rgb(239, 243, 244);
   --bsky-x-hover: rgba(0, 0, 0, 0.03);
+  --bsky-x-shimmer: rgba(255, 255, 255, 0.6);
 }
 .bsky-x-post:hover { background-color: var(--bsky-x-hover); }
+
+/* A just-added "See more" topic while its first post loads. */
+.filter-phrase-inline.bsky-see-more-loading { animation: bsky-see-more-pulse 1.2s ease-in-out infinite; }
+@keyframes bsky-see-more-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .filter-phrase-inline.bsky-see-more-loading { animation: none; opacity: 0.6; }
+}
 .bsky-x-post a { color: inherit; text-decoration: none; }
 .bsky-x-post a:hover { text-decoration: underline; }
 
@@ -342,6 +354,24 @@ html.twitter-light .bsky-x-post {
 }
 .bsky-x-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .bsky-x-main { flex: 1; min-width: 0; }
+
+/* A reply's parent, above the reply as in X's timeline: the parent's avatar
+   column carries a 2px thread line down to the reply's avatar. */
+.bsky-x-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex-shrink: 0;
+  width: 40px;
+}
+.bsky-x-thread-line {
+  flex: 1;
+  width: 2px;
+  min-height: 8px;
+  margin-top: 4px;
+  background: var(--bsky-x-border);
+}
+.bsky-x-parent-main { padding-bottom: 12px; }
 
 .bsky-x-header {
   display: flex;
@@ -387,10 +417,82 @@ html.twitter-light .bsky-x-post {
   grid-template-columns: 1fr 1fr;
   aspect-ratio: 16 / 9;
 }
-.bsky-x-media-3 .bsky-x-media-img:first-child { grid-row: span 2; }
-.bsky-x-media-img { width: 100%; height: 100%; object-fit: cover; display: block; min-height: 0; }
-.bsky-x-media-1 .bsky-x-media-img { max-height: 510px; }
+.bsky-x-media-3 .bsky-x-media-cell:first-child { grid-row: span 2; }
+.bsky-x-media-cell { position: relative; min-height: 0; overflow: hidden; }
+.bsky-x-media-1 .bsky-x-media-cell { max-height: 510px; }
+.bsky-x-media-img { width: 100%; height: 100%; object-fit: cover; display: block; transition: opacity 0.2s; }
+/* Not loaded yet (or waiting to retry): keep the browser's broken-image icon
+   and alt text out of sight and show a skeleton in the image's place. */
+.bsky-x-post img.bsky-x-img-pending { opacity: 0; }
+.bsky-x-card-thumb.bsky-x-img-pending { display: none; }
+.bsky-x-media-cell:has(> .bsky-x-img-pending),
+.bsky-x-avatar:has(> .bsky-x-img-pending),
+.bsky-x-quote-avatar:has(> .bsky-x-img-pending) {
+  background-color: var(--bsky-x-border);
+  background-image: linear-gradient(90deg, transparent 0%, var(--bsky-x-shimmer) 50%, transparent 100%);
+  background-size: 200% 100%;
+  background-repeat: no-repeat;
+  animation: bsky-x-shimmer 1.4s ease-in-out infinite;
+}
+@keyframes bsky-x-shimmer {
+  from { background-position: 150% 0; }
+  to { background-position: -50% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bsky-x-media-cell:has(> .bsky-x-img-pending),
+  .bsky-x-avatar:has(> .bsky-x-img-pending),
+  .bsky-x-quote-avatar:has(> .bsky-x-img-pending) { animation: none; background-image: none; }
+}
+.bsky-x-media-previewable { cursor: pointer; }
+.bsky-x-media-previewable:focus-visible { outline: 2px solid rgb(29, 155, 240); outline-offset: -2px; }
+
+/* Bluesky image preview (openLightbox), styled after X's photo viewer. Lives
+   on <body>, outside .bsky-x-post, so it doesn't use the post's variables. */
+.bsky-x-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 64px;
+  box-sizing: border-box;
+  background: rgba(0, 0, 0, 0.9);
+}
+.bsky-x-lightbox-img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  display: block;
+  user-select: none;
+}
+.bsky-x-lightbox-btn {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(15, 20, 25, 0.75);
+  color: rgb(255, 255, 255);
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+.bsky-x-lightbox-btn:hover { background: rgba(39, 44, 48, 0.75); }
+.bsky-x-lightbox-btn[hidden] { display: none; }
+.bsky-x-lightbox-btn svg { width: 20px; height: 20px; }
+.bsky-x-lightbox-close { top: 12px; left: 12px; }
+.bsky-x-lightbox-prev { left: 12px; top: 50%; transform: translateY(-50%); }
+.bsky-x-lightbox-next { right: 12px; top: 50%; transform: translateY(-50%); }
+@media (max-width: 600px) {
+  .bsky-x-lightbox { padding: 56px 0; }
+}
 .bsky-x-media-failed {
+  width: 100%;
+  height: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -458,7 +560,7 @@ html.twitter-light .bsky-x-post {
 }
 /* Media inside the quote sits flush with the card's padding, like X. */
 .bsky-x-quote .bsky-x-media, .bsky-x-quote .bsky-x-card { margin-top: 8px; }
-.bsky-x-quote .bsky-x-media-1 .bsky-x-media-img { max-height: 300px; }
+.bsky-x-quote .bsky-x-media-1 .bsky-x-media-cell { max-height: 300px; }
 
 .bsky-x-actions {
   display: flex;
@@ -480,7 +582,7 @@ html.twitter-light .bsky-x-post {
 .bsky-x-post .bsky-x-action-repost:hover { color: rgb(0, 186, 124); }
 .bsky-x-action svg { width: 18.75px; height: 18.75px; }
 
-/* Topic row in the filter box: "See more of optimism and [input]". Its
+/* Topic row in the filter box: "See more optimism and [input]". Its
    pieces reuse the "Filter out" sentence's classes (content.css); this only
    repeats .filter-phrases-header's layout, which the row can't share without
    also picking up the filter's pause dimming. */

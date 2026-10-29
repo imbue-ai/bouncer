@@ -1,4 +1,4 @@
-// "See more of <topic>" on X: Bluesky and/or X posts about the user's topics
+// "See more <topic>" on X: Bluesky and/or X posts about the user's topics
 // (the popup's "Draw from" setting; X posts come from the backend's xstream),
 // rendered to look like tweets (Bluesky ones with a small Bluesky badge) and
 // slotted into the home
@@ -23,12 +23,13 @@ import { getStorage, setStorage } from '../shared/storage';
 import { formatPostForEvaluation } from '../shared/utils';
 import {
   SEE_MORE_TOPICS_KEY, SEE_MORE_EVERY_KEY, SEE_MORE_SEEN_KEY, MAX_SEE_MORE_TOPICS, mergeSeenUris, MAX_SEE_MORE_TOPIC_LENGTH, clampSeeMoreEvery, formatCount, formatRelativeTime, normalizeTopic,
-  SEE_MORE_SOURCE_KEY, clampSeeMoreSource, seeMoreSources,
-  type BskyFeedPost, type BskySearchResult, type SeeMoreSource,
+  SEE_MORE_SOURCE_KEY, SEE_MORE_SHOW_NSFW_KEY, clampSeeMoreSource, seeMoreSources,
+  type BskyFeedPost, type BskyQuotedPost, type BskySearchResult, type SeeMoreSource,
 } from '../shared/bluesky';
 import { currentPauseScope } from './ui';
 
 const READY_TARGET = 3;          // screened posts to keep on hand per topic
+const HIDE_CHECK_CONCURRENCY = 4; // candidates screened against hide filters at once
 const SWEEP_INTERVAL_MS = 1500;
 const FILTER_CHECK_TIMEOUT_MS = 20000;
 const SEARCH_RETRY_MS = 60000;
@@ -67,27 +68,44 @@ const dwellTimers = new WeakMap<Element, ReturnType<typeof setTimeout>>();
 // since the observer would otherwise keep every discarded cell alive.
 const observedRoots = new Set<HTMLElement>();
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
-const postByHostKey = new Map<string, BskyFeedPost>();
+// Posts placed in the timeline, by slot (slotKey): normally under their host
+// tweet; introducePost can also put one above it, so a host has up to two.
+// A recycled cell re-renders them from here in the same spots.
+const postBySlot = new Map<string, BskyFeedPost>();
+type Slot = 'above' | 'below';
+const slotKey = (hostKey: string, slot: Slot) => `${slot}:${hostKey}`;
 // "1 in N posts" (the popup's frequency slider): after N - 1 tweets, the
 // next post shown is a Bluesky one.
 let injectEvery = clampSeeMoreEvery(undefined);
 // The popup's "Draw from" setting: Bluesky, X, or both.
 let sourceSetting = clampSeeMoreSource(undefined);
+// The popup's NSFW toggle; adult and graphic posts are skipped unless it's on.
+let showNsfw = false;
+const allowed = (post: BskyFeedPost) => showNsfw || !post.nsfw;
+// A reply's parent counts as shown along with it: no second reply under the
+// same parent, and no parent again as a post of its own.
+const shownUris = (post: BskyFeedPost) => (post.parent ? [post.uri, post.parent.uri] : [post.uri]);
+const alreadyShown = (post: BskyFeedPost) => shownUris(post).some(u => seenUris.has(u) || impressedUris.has(u));
 const SOURCE_NAME: Record<SeeMoreSource, string> = { bluesky: 'Bluesky', x: 'X' };
 // Tweets already counted toward injectEvery, so remounts and re-scrolls
 // don't raise the injection rate.
 const countedHostKeys = new Set<string>();
 let tweetsSinceInject = 0;
 let nextTopic = 0;
+// Topics just added in this tab: their chip pulses until the first post is
+// ready, and that post is then slid into view (introducePost) instead of
+// waiting for the user to scroll to the next slot.
+const introTopics = new Set<string>();
 let sweepTimer: ReturnType<typeof setInterval> | null = null;
 const topicRows = new Set<HTMLElement>();
 
 export function initBlueskySeeMore(platformAdapter: PlatformAdapter): void {
   if (platformAdapter.siteId !== 'twitter') return;
   adapter = platformAdapter;
-  void getStorage([SEE_MORE_TOPICS_KEY, SEE_MORE_EVERY_KEY, SEE_MORE_SEEN_KEY, SEE_MORE_SOURCE_KEY]).then(d => {
+  void getStorage([SEE_MORE_TOPICS_KEY, SEE_MORE_EVERY_KEY, SEE_MORE_SEEN_KEY, SEE_MORE_SOURCE_KEY, SEE_MORE_SHOW_NSFW_KEY]).then(d => {
     injectEvery = clampSeeMoreEvery(d[SEE_MORE_EVERY_KEY]);
     sourceSetting = clampSeeMoreSource(d[SEE_MORE_SOURCE_KEY]);
+    showNsfw = d[SEE_MORE_SHOW_NSFW_KEY] === true;
     for (const uri of d[SEE_MORE_SEEN_KEY] ?? []) impressedUris.add(uri);
     setTopics(d[SEE_MORE_TOPICS_KEY] ?? []);
   });
@@ -108,6 +126,18 @@ export function initBlueskySeeMore(platformAdapter: PlatformAdapter): void {
       pools.clear();
       setTopics(topics);
     }
+    if (changes[SEE_MORE_SHOW_NSFW_KEY]) {
+      showNsfw = changes[SEE_MORE_SHOW_NSFW_KEY].newValue === true;
+      if (!showNsfw) {
+        // Take down NSFW posts already placed in the timeline.
+        for (const [key, post] of postBySlot) if (post.nsfw) postBySlot.delete(key);
+        document.querySelectorAll<HTMLElement>(`.${INJECTED_CLASS}[data-nsfw]`).forEach(el => el.remove());
+      }
+      // Pages fetched with the setting off dropped NSFW posts; start over so
+      // turning it on can show them.
+      pools.clear();
+      setTopics(topics);
+    }
     if (changes[SEE_MORE_TOPICS_KEY]) setTopics((changes[SEE_MORE_TOPICS_KEY].newValue as string[] | undefined) ?? []);
   });
 }
@@ -115,7 +145,8 @@ export function initBlueskySeeMore(platformAdapter: PlatformAdapter): void {
 function setTopics(next: string[]): void {
   topics = next.slice(0, MAX_SEE_MORE_TOPICS);
   for (const t of [...pools.keys()]) if (!topics.includes(t)) pools.delete(t);
-  for (const [key, post] of postByHostKey) if (!topics.includes(post.topic)) postByHostKey.delete(key);
+  for (const t of [...introTopics]) if (!topics.includes(t)) introTopics.delete(t);
+  for (const [key, post] of postBySlot) if (!topics.includes(post.topic)) postBySlot.delete(key);
   document.querySelectorAll<HTMLElement>(`.${INJECTED_CLASS}`).forEach(el => {
     if (!topics.includes(el.dataset.topic ?? '')) el.remove();
   });
@@ -141,28 +172,47 @@ async function refill(topic: string): Promise<void> {
         pool.cursor = res.cursor;
         // An empty window just means a quiet stretch; keep walking back.
         if (!res.cursor) pool.exhausted = true;
-        pool.unchecked.push(...shuffled(res.posts.filter(p => !seenUris.has(p.uri) && !impressedUris.has(p.uri))));
+        pool.unchecked.push(...shuffled(res.posts.filter(p => allowed(p) && !alreadyShown(p))));
         continue;
       }
-      const post = pool.unchecked.shift()!;
-      if (seenUris.has(post.uri) || impressedUris.has(post.uri)) continue;
-      if (await passesHideFilters(post)) pool.ready.push(post);
+      // A few at a time, in parallel; each post joins the pool as soon as it
+      // passes, so a new topic's first post isn't held up by slower checks.
+      const batch = pool.unchecked.splice(0, HIDE_CHECK_CONCURRENCY).filter(p => !alreadyShown(p) && allowed(p));
+      await Promise.all(batch.map(async post => {
+        if (await passesHideFilters(post) && pools.get(topic) === pool) {
+          pool.ready.push(post);
+          if (introTopics.has(topic)) endIntro(topic, introducePost(topic) ? null : 'no free gap in reach on screen');
+        }
+      }));
     }
   } catch (err) {
     console.warn('[Bouncer] See more: refill failed for', topic, err);
   } finally {
     pool.busy = false;
+    // Nothing found (no results, or the search failed): stop the pulse. Only
+    // for the topic's current pool: a removed topic's search can still be
+    // running when the user adds it back, and must not end the new intro.
+    if (pools.get(topic) === pool && introTopics.has(topic) && !pool.ready.length) endIntro(topic, 'search found no posts');
   }
+}
+
+/** `failure` says why the new topic's first post wasn't slid in (null: it was). */
+function endIntro(topic: string, failure: string | null): void {
+  introTopics.delete(topic);
+  if (failure) console.log(`[Bouncer] See more: didn't slide in a post for new topic "${topic}": ${failure}`);
+  topicRows.forEach(row => { if (row.isConnected) renderTopicChips(row); });
 }
 
 // Runs the candidate through the same pipeline as a real tweet, so the
 // user's hide filters (and AI-content detection) apply to injected posts too.
 // Anything other than a definite "hide" verdict lets the post through.
 async function passesHideFilters(post: BskyFeedPost): Promise<boolean> {
-  // Quoted text is folded in the way the X adapter does for quote tweets.
+  // Quoted text is folded in the way the X adapter does for quote tweets,
+  // and a reply's parent (shown above it) the same way.
   const quoted = post.quote && post.quote !== 'unavailable' && post.quote.text ? ` [Quoted: ${post.quote.text}]` : '';
+  const parent = post.parent?.text ? ` [Replying to: ${post.parent.text}]` : '';
   const content = {
-    text: post.text + quoted, author: post.authorName, handle: `@${post.authorHandle}`, avatarUrl: null,
+    text: post.text + quoted + parent, author: post.authorName, handle: `@${post.authorHandle}`, avatarUrl: null,
     timeText: null, textHtml: '', quote: null, postUrl: post.url, imageUrls: [], hasMediaContainer: false,
   };
   try {
@@ -212,7 +262,10 @@ function observeImpression(root: HTMLElement, uri: string): void {
             dwellTimers.delete(target);
             stopObserving(target);
             // Removed mid-dwell (X recycled the cell): not a full second on screen.
-            if (target.isConnected) markImpressed(target.dataset.uri ?? '');
+            if (target.isConnected) {
+              markImpressed(target.dataset.uri ?? '');
+              markImpressed(target.dataset.parentUri ?? '');
+            }
           }, IMPRESSION_DWELL_MS));
         }
       } else {
@@ -262,11 +315,11 @@ function takePost(): BskyFeedPost | null {
     const pool = pools.get(topic);
     if (!pool) continue;
     let post = pool.ready.shift();
-    while (post && (seenUris.has(post.uri) || impressedUris.has(post.uri))) post = pool.ready.shift();
+    while (post && (alreadyShown(post) || !allowed(post))) post = pool.ready.shift();
     void refill(topic);
     if (!post) continue;
     nextTopic = (nextTopic + i + 1) % topics.length;
-    seenUris.add(post.uri);
+    for (const uri of shownUris(post)) seenUris.add(uri);
     return post;
   }
   return null;
@@ -286,14 +339,17 @@ export function noteTimelinePost(article: HTMLElement): void {
   const hostKey = adapter.getPostContentKey(article);
   if (!hostKey) return;
 
-  const existing = cell.querySelector<HTMLElement>(`:scope > .${INJECTED_CLASS}`);
-  if (existing) {
-    if (existing.dataset.hostKey === hostKey) return;
-    existing.remove();
+  cell.querySelectorAll<HTMLElement>(`:scope > .${INJECTED_CLASS}`).forEach(e => {
+    if (e.dataset.hostKey !== hostKey) e.remove();
+  });
+  let assigned = false;
+  for (const slot of ['above', 'below'] as const) {
+    const post = postBySlot.get(slotKey(hostKey, slot));
+    if (!post) continue;
+    assigned = true;
+    if (!injectedIn(cell, slot)) placePost(cell, renderPost(post, hostKey, slot), slot);
   }
-
-  const assigned = postByHostKey.get(hostKey);
-  if (assigned) { cell.appendChild(renderPost(assigned, hostKey)); return; }
+  if (assigned) return;
 
   if (!countedHostKeys.has(hostKey)) {
     countedHostKeys.add(hostKey);
@@ -309,8 +365,104 @@ export function noteTimelinePost(article: HTMLElement): void {
   const post = takePost();
   if (!post) return;
   tweetsSinceInject = 0;
-  postByHostKey.set(hostKey, post);
-  cell.appendChild(renderPost(post, hostKey));
+  postBySlot.set(slotKey(hostKey, 'below'), post);
+  placePost(cell, renderPost(post, hostKey, 'below'), 'below');
+}
+
+function injectedIn(cell: Element, slot: Slot): boolean {
+  return !!cell.querySelector(`:scope > .${INJECTED_CLASS}[data-slot="${slot}"]`);
+}
+
+function placePost(cell: Element, root: HTMLElement, slot: Slot): void {
+  if (slot === 'above') cell.prepend(root);
+  else cell.appendChild(root);
+}
+
+// Where a newly added topic's first post goes: the topmost gap between tweets
+// (under a tweet, or above one) that is on screen with room left below it.
+// When there's none — a tall post introduced moments earlier can fill the
+// screen — the nearest gap further down is used and the page scrolls so the
+// new post lands mid-screen.
+const INTRO_MIN_Y_PX = 80;           // below X's sticky header
+const INTRO_MIN_ROOM_PX = 240;       // visible space wanted below the gap
+const INTRO_MAX_SCROLL_RATIO = 1.5;  // farthest fallback gap, in viewports
+const INTRO_ANIMATION_MS = 450;
+
+interface IntroSlot { cell: HTMLElement; hostKey: string; slot: Slot; y: number }
+
+/** Free gaps between timeline tweets, top to bottom: above and below each
+ *  tweet, where it doesn't have a See more post yet. */
+function introSlots(): IntroSlot[] {
+  const threaded = (adapter as unknown as { _isReplyInThread?: (el: Element) => boolean })._isReplyInThread;
+  // Never wedge a foreign post between the tweets of a self-thread.
+  const inThread = (cell: Element | null) => !!cell && !!threaded?.call(adapter, cell);
+  const slots: IntroSlot[] = [];
+  for (const article of document.querySelectorAll<HTMLElement>(adapter.selectors.post)) {
+    const cell = adapter.getPostContainer(article);
+    if (cell === article || cell.dataset.filteredByExtension) continue;
+    const hostKey = adapter.getPostContentKey(article);
+    if (!hostKey) continue;
+    const free = (slot: Slot) => !postBySlot.has(slotKey(hostKey, slot)) && !injectedIn(cell, slot);
+    const rect = cell.getBoundingClientRect();
+    if (free('above') && !inThread(cell)) slots.push({ cell, hostKey, slot: 'above', y: rect.top });
+    if (free('below') && !inThread(cell.nextElementSibling)) slots.push({ cell, hostKey, slot: 'below', y: rect.bottom });
+  }
+  return slots;
+}
+
+/** Put `topic`'s first ready post in view right away, in a gap between
+ *  tweets, with a slide-in. Returns false when there's no gap within reach
+ *  (not on the home timeline, say); the post then stays in the pool for the
+ *  normal rotation. */
+function introducePost(topic: string): boolean {
+  if (!adapter || !onHomeTimeline()) return false;
+  const pool = pools.get(topic);
+  if (!pool) return false;
+  const slots = introSlots().filter(s => s.y >= INTRO_MIN_Y_PX);
+  const maxY = window.innerHeight - INTRO_MIN_ROOM_PX;
+  const slot = slots.find(s => s.y <= maxY)
+    ?? slots.find(s => s.y <= window.innerHeight * INTRO_MAX_SCROLL_RATIO);
+  if (!slot) return false;
+
+  let post = pool.ready.shift();
+  while (post && (alreadyShown(post) || !allowed(post))) post = pool.ready.shift();
+  void refill(topic);
+  if (!post) return false;
+  for (const uri of shownUris(post)) seenUris.add(uri);
+  postBySlot.set(slotKey(slot.hostKey, slot.slot), post);
+  tweetsSinceInject = 0;
+  const root = renderPost(post, slot.hostKey, slot.slot);
+  placePost(slot.cell, root, slot.slot);
+  slideIn(root);
+  if (slot.y > maxY) {
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    window.scrollBy({ top: slot.y - window.innerHeight / 2, behavior: reduceMotion ? 'auto' : 'smooth' });
+  }
+  return true;
+}
+
+/** Open a gap next to the host tweet and slide the post into it. */
+function slideIn(root: HTMLElement): void {
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const style = getComputedStyle(root);
+  const full = { height: `${root.offsetHeight}px`, paddingTop: style.paddingTop, paddingBottom: style.paddingBottom };
+  const easing = 'cubic-bezier(0.2, 0, 0, 1)';
+  root.style.overflow = 'hidden';
+  root.style.boxSizing = 'border-box';
+  const grow = root.animate(
+    [{ height: '0px', paddingTop: '0px', paddingBottom: '0px' }, full],
+    { duration: INTRO_ANIMATION_MS, easing },
+  );
+  root.animate(
+    [{ transform: 'translateX(-24px)', opacity: 0 }, { transform: 'translateX(0)', opacity: 1 }],
+    { duration: INTRO_ANIMATION_MS, delay: INTRO_ANIMATION_MS / 3, easing, fill: 'backwards' },
+  );
+  root.animate(
+    [{ backgroundColor: 'rgba(29, 155, 240, 0.12)' }, { backgroundColor: 'rgba(29, 155, 240, 0)' }],
+    { duration: 1600, delay: INTRO_ANIMATION_MS, easing: 'ease-out' },
+  );
+  const done = () => { root.style.overflow = ''; root.style.boxSizing = ''; };
+  grow.finished.then(done, done);
 }
 
 // X recycles cells and Bouncer hides filtered ones; drop injected posts whose
@@ -326,11 +478,12 @@ function sweep(): void {
       return;
     }
     if (cell.dataset.filteredByExtension) {
-      const post = postByHostKey.get(hostKey);
-      postByHostKey.delete(hostKey);
+      const key = slotKey(hostKey, el.dataset.slot === 'above' ? 'above' : 'below');
+      const post = postBySlot.get(key);
+      postBySlot.delete(key);
       el.remove();
       if (post) {
-        seenUris.delete(post.uri);
+        for (const uri of shownUris(post)) seenUris.delete(uri);
         pools.get(post.topic)?.ready.unshift(post);
         tweetsSinceInject = injectEvery;
       }
@@ -342,10 +495,13 @@ function sweep(): void {
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const BLUESKY_LOGO_PATH = 'm135.72 44.03c66.496 49.921 138.02 151.14 164.28 205.46 26.262-54.316 97.782-155.54 164.28-205.46 47.98-36.021 125.72-63.892 125.72 24.795 0 17.712-10.155 148.79-16.111 170.07-20.703 73.984-96.144 92.854-163.25 81.433 117.3 19.964 147.14 86.092 82.697 152.22-122.39 125.59-175.91-31.511-189.63-71.766-2.514-7.3797-3.6904-10.832-3.7077-7.8964-0.0174-2.9357-1.1937 0.51669-3.7077 7.8964-13.714 40.255-67.233 197.36-189.63 71.766-64.444-66.128-34.605-132.26 82.697-152.22-67.108 11.421-142.55-7.4491-163.25-81.433-5.9562-21.282-16.111-152.36-16.111-170.07 0-88.687 77.742-60.816 125.72-24.795z';
+// X's own action icons (filled glyphs, copied from x.com), so the actions
+// row matches the real tweets around it. X has no "open" action; that one
+// stays a stroked outline icon.
 const ICONS = {
-  reply: 'M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8v.5z',
-  repost: 'M17 1l4 4-4 4M3 11V9a4 4 0 0 1 4-4h14M7 23l-4-4 4-4M21 13v2a4 4 0 0 1-4 4H3',
-  like: 'M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8l1.1 1.1L12 21.2l7.8-7.8 1.1-1.1a5.5 5.5 0 0 0 0-7.8z',
+  reply: 'M1.751 10c0-4.42 3.584-8 8.005-8h4.366c4.49 0 8.129 3.64 8.129 8.13 0 2.96-1.607 5.68-4.196 7.11l-8.054 4.46v-3.69h-.067c-4.49.1-8.183-3.51-8.183-8.01zm8.005-6c-3.317 0-6.005 2.69-6.005 6 0 3.37 2.77 6.08 6.138 6.01l.351-.01h1.761v2.3l5.087-2.81c1.951-1.08 3.163-3.13 3.163-5.36 0-3.39-2.744-6.13-6.129-6.13H9.756z',
+  repost: 'M4.5 3.88l4.432 4.14-1.364 1.46L5.5 7.55V16c0 1.1.896 2 2 2H13v2H7.5c-2.209 0-4-1.79-4-4V7.55L1.432 9.48.068 8.02 4.5 3.88zM16.5 6H11V4h5.5c2.209 0 4 1.79 4 4v8.45l2.068-1.93 1.364 1.46-4.432 4.14-4.432-4.14 1.364-1.46 2.068 1.93V8c0-1.1-.896-2-2-2z',
+  like: 'M16.697 5.5c-1.222-.06-2.679.51-3.89 2.16l-.805 1.09-.806-1.09C9.984 6.01 8.526 5.44 7.304 5.5c-1.243.07-2.349.78-2.91 1.91-.552 1.12-.633 2.78.479 4.82 1.074 1.97 3.257 4.27 7.129 6.61 3.87-2.34 6.052-4.64 7.126-6.61 1.111-2.04 1.03-3.7.477-4.82-.561-1.13-1.666-1.84-2.908-1.91zm4.187 7.69c-1.351 2.48-4.001 5.12-8.379 7.67l-.503.3-.504-.3c-4.379-2.55-7.029-5.19-8.382-7.67-1.36-2.5-1.41-4.86-.514-6.67.887-1.79 2.647-2.91 4.601-3.01 1.651-.09 3.368.56 4.798 2.01 1.429-1.45 3.146-2.1 4.796-2.01 1.954.1 3.714 1.22 4.601 3.01.896 1.81.846 4.17-.514 6.67z',
   open: 'M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3',
 };
 
@@ -359,13 +515,16 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, className: string, te
 /** Open an x.com URL inside X's own app, the way X's links do: same tab, no
  *  reload, Back returns to the timeline. X's router follows history
  *  popstate. If X hasn't rendered the new page shortly after (the injected
- *  card is still on screen), that's logged and the page loads it in full. */
-function openInX(url: string, from: HTMLElement): void {
+ *  card is still on screen, and no dialog opened for routes X shows as a
+ *  modal over the timeline, like /photo/N), that's logged and the page
+ *  loads it in full. */
+function openInX(url: string, from: HTMLElement, opensModal = false): void {
   const target = new URL(url);
   history.pushState(null, '', target.pathname + target.search);
   window.dispatchEvent(new PopStateEvent('popstate', { state: null }));
   setTimeout(() => {
-    if (from.isConnected && location.pathname === target.pathname) {
+    const modalOpen = opensModal && document.querySelector('[aria-modal="true"]');
+    if (from.isConnected && !modalOpen && location.pathname === target.pathname) {
       console.warn('[Bouncer] See more: X did not route to', target.pathname, '- loading it in full');
       location.assign(target.href);
     }
@@ -413,12 +572,16 @@ function strokeIcon(d: string): SVGSVGElement {
 const X_LOGO_PATH = 'M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z';
 
 function xLogo(className: string): SVGSVGElement {
+  return filledIcon(X_LOGO_PATH, className);
+}
+
+function filledIcon(d: string, className = ''): SVGSVGElement {
   const svg = document.createElementNS(SVG_NS, 'svg');
   svg.setAttribute('viewBox', '0 0 24 24');
-  svg.setAttribute('class', className);
+  if (className) svg.setAttribute('class', className);
   svg.setAttribute('aria-hidden', 'true');
   const path = document.createElementNS(SVG_NS, 'path');
-  path.setAttribute('d', X_LOGO_PATH);
+  path.setAttribute('d', d);
   path.setAttribute('fill', 'currentColor');
   svg.appendChild(path);
   return svg;
@@ -457,10 +620,16 @@ function renderText(post: BskyFeedPost): HTMLElement {
 // X loads its own media, a momentary CDN error), so retry once with a
 // cache-busting query before giving up. Some browsers (Safari, the iOS app)
 // may also apply x.com's CSP to these images; that fails both attempts.
+// Until the image loads it carries IMG_PENDING_CLASS, which keeps it
+// invisible (no broken-image icon during the retry wait) and lets its
+// container show a skeleton instead.
 const IMAGE_RETRY_DELAY_MS = 1500;
+const IMG_PENDING_CLASS = 'bsky-x-img-pending';
 
 function loadWithRetry(image: HTMLImageElement, url: string, onGiveUp: () => void): void {
   let retried = false;
+  image.classList.add(IMG_PENDING_CLASS);
+  image.addEventListener('load', () => image.classList.remove(IMG_PENDING_CLASS));
   image.addEventListener('error', () => {
     if (!retried) {
       retried = true;
@@ -473,27 +642,140 @@ function loadWithRetry(image: HTMLImageElement, url: string, onGiveUp: () => voi
   image.src = url;
 }
 
-function renderMedia(post: Pick<BskyFeedPost, 'images' | 'isVideo' | 'external'> & { source?: SeeMoreSource }): HTMLElement | null {
+// ==================== Image preview (Bluesky posts) ====================
+
+/** Full-screen image viewer for a Bluesky post's photos, modeled on X's: dark
+ *  backdrop, close button top-left, arrows (and arrow keys) between photos,
+ *  Escape or a click outside the image closes it. Opens on the thumbnail the
+ *  timeline already loaded and swaps in the full-size image once it's in. */
+function openLightbox(images: BskyFeedPost['images'], start: number, from: HTMLElement): void {
+  let index = start;
+  const overlay = el('div', 'bsky-x-lightbox');
+  overlay.setAttribute('role', 'dialog');
+  overlay.setAttribute('aria-modal', 'true');
+  overlay.setAttribute('aria-label', 'Image preview');
+  const image = el('img', 'bsky-x-lightbox-img');
+  image.referrerPolicy = 'no-referrer';
+  const button = (cls: string, label: string, d: string) => {
+    const b = el('button', `bsky-x-lightbox-btn ${cls}`);
+    b.type = 'button';
+    b.setAttribute('aria-label', label);
+    b.appendChild(strokeIcon(d));
+    return b;
+  };
+  const close = button('bsky-x-lightbox-close', 'Close', LIGHTBOX_ICONS.close);
+  const prev = button('bsky-x-lightbox-prev', 'Previous image', LIGHTBOX_ICONS.prev);
+  const next = button('bsky-x-lightbox-next', 'Next image', LIGHTBOX_ICONS.next);
+  overlay.append(image, close);
+  if (images.length > 1) overlay.append(prev, next);
+
+  const show = (i: number) => {
+    index = i;
+    const img = images[i];
+    image.alt = img.alt;
+    image.src = img.url;
+    if (img.fullUrl !== img.url) {
+      const full = new Image();
+      full.referrerPolicy = 'no-referrer';
+      full.onload = () => { if (index === i) image.src = img.fullUrl; };
+      full.src = img.fullUrl;
+    }
+    prev.hidden = i === 0;
+    next.hidden = i === images.length - 1;
+  };
+  const step = (delta: number) => {
+    const i = index + delta;
+    if (i >= 0 && i < images.length) show(i);
+  };
+
+  const prevOverflow = document.documentElement.style.overflow;
+  const dismiss = () => {
+    overlay.remove();
+    document.removeEventListener('keydown', onKey, true);
+    document.documentElement.style.overflow = prevOverflow;
+    if (from.isConnected) from.focus({ preventScroll: true });
+  };
+  // Capture phase, so X's own keyboard shortcuts (j/k, l, …) don't act on
+  // the timeline behind the preview.
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key === 'Escape') dismiss();
+    else if (e.key === 'ArrowLeft') step(-1);
+    else if (e.key === 'ArrowRight') step(1);
+    else return;
+    e.preventDefault();
+    e.stopPropagation();
+  };
+  overlay.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (e.target === overlay) dismiss();
+  });
+  close.addEventListener('click', dismiss);
+  prev.addEventListener('click', () => step(-1));
+  next.addEventListener('click', () => step(1));
+  document.addEventListener('keydown', onKey, true);
+
+  show(start);
+  document.documentElement.style.overflow = 'hidden';
+  document.body.appendChild(overlay);
+  close.focus();
+}
+
+const LIGHTBOX_ICONS = {
+  close: 'M6 6l12 12M18 6L6 18',
+  prev: 'M15 18l-6-6 6-6',
+  next: 'M9 18l6-6-6-6',
+};
+
+/** `postUrl` makes the images open a full-screen preview on click, the way a
+ *  tweet's photos do: X's own photo viewer (…/status/<id>/photo/N) for X
+ *  posts, Bouncer's lightbox for Bluesky ones. Without it (quoted posts,
+ *  where X opens the quoted post instead) clicks fall through. Video
+ *  thumbnails always fall through and open the post. */
+function renderMedia(post: Pick<BskyFeedPost, 'images' | 'isVideo' | 'external'> & { source?: SeeMoreSource }, postUrl?: string): HTMLElement | null {
   if (post.images.length) {
     const grid = el('div', `bsky-x-media bsky-x-media-${Math.min(post.images.length, 4)}`);
-    for (const img of post.images) {
-      const image = el('img', 'bsky-x-media-img');
-      image.referrerPolicy = 'no-referrer';
+    const previewable = postUrl && !post.isVideo;
+    post.images.forEach((img, index) => {
+      // The cell holds the tile's size and shows the skeleton while the image loads.
+      const cell = el('div', 'bsky-x-media-cell');
+      if (previewable) {
+        cell.classList.add('bsky-x-media-previewable');
+        cell.tabIndex = 0;
+        cell.setAttribute('role', 'button');
+        cell.setAttribute('aria-label', img.alt ? `Image: ${img.alt}` : 'Image');
+        // Once the image has given up (the failed tile), clicks open the post.
+        const open = () => {
+          if (postUrl.startsWith('https://x.com/')) openInX(`${postUrl}/photo/${index + 1}`, cell, true);
+          else openLightbox(post.images, index, cell);
+        };
+        cell.addEventListener('click', (e) => {
+          if (!cell.querySelector('img')) return;
+          e.stopPropagation();
+          open();
+        });
+        cell.addEventListener('keydown', (e) => {
+          if ((e.key !== 'Enter' && e.key !== ' ') || !cell.querySelector('img')) return;
+          e.preventDefault();
+          e.stopPropagation();
+          open();
+        });
+      }
       // X-style single image: natural aspect, clamped between 3:4 and 2:1.
       if (post.images.length === 1) {
-        image.style.aspectRatio = String(Math.min(2, Math.max(0.75, img.aspectRatio ?? 16 / 9)));
+        cell.style.aspectRatio = String(Math.min(2, Math.max(0.75, img.aspectRatio ?? 16 / 9)));
       }
+      const image = el('img', 'bsky-x-media-img');
+      image.referrerPolicy = 'no-referrer';
       image.alt = img.alt;
       image.loading = 'lazy';
       // Keep the tile (same size and place) so the post never silently loses
       // its content; clicking it opens the post like the rest of the card.
       loadWithRetry(image, img.url, () => {
-        const failed = el('div', 'bsky-x-media-img bsky-x-media-failed', `Image couldn't load · open on ${SOURCE_NAME[post.source ?? 'bluesky']}`);
-        failed.style.aspectRatio = image.style.aspectRatio;
-        image.replaceWith(failed);
+        image.replaceWith(el('div', 'bsky-x-media-failed', `Image couldn't load · open on ${SOURCE_NAME[post.source ?? 'bluesky']}`));
       });
-      grid.appendChild(image);
-    }
+      cell.appendChild(image);
+      grid.appendChild(cell);
+    });
     if (post.isVideo) grid.appendChild(el('span', 'bsky-x-play', '▶'));
     return grid;
   }
@@ -557,13 +839,60 @@ function renderQuote(quote: NonNullable<BskyFeedPost['quote']>): HTMLElement {
   return card;
 }
 
-function renderPost(post: BskyFeedPost, hostKey: string): HTMLElement {
+/** A reply's parent, above the reply as X shows it in the timeline: same
+ *  layout as a post, with a thread line from its avatar down to the
+ *  reply's, and no action bar. Clicking it opens the parent. */
+function renderParent(parent: BskyQuotedPost): HTMLElement {
+  const isX = parent.url.startsWith('https://x.com/');
+  const row = el('div', 'bsky-x-row bsky-x-parent');
+  row.setAttribute('role', 'link');
+  row.setAttribute('aria-label', `Replying to ${isX ? 'X' : 'Bluesky'} post by ${parent.authorName}`);
+  const rail = el('div', 'bsky-x-rail');
+  const avatar = link('bsky-x-avatar', parent.authorUrl);
+  if (parent.avatarUrl) {
+    const img = el('img', '');
+    img.referrerPolicy = 'no-referrer';
+    loadWithRetry(img, parent.avatarUrl, () => img.remove());
+    img.alt = '';
+    avatar.appendChild(img);
+  }
+  rail.append(avatar, el('div', 'bsky-x-thread-line'));
+  row.appendChild(rail);
+
+  const main = el('div', 'bsky-x-main bsky-x-parent-main');
+  const header = el('div', 'bsky-x-header');
+  header.appendChild(link('bsky-x-name', parent.authorUrl, parent.authorName));
+  header.appendChild(link('bsky-x-handle', parent.authorUrl, `@${parent.authorHandle}`));
+  header.appendChild(el('span', 'bsky-x-dot', '·'));
+  const time = link('bsky-x-time', parent.url, formatRelativeTime(parent.createdAt));
+  if (parent.createdAt) time.title = new Date(parent.createdAt).toLocaleString();
+  header.appendChild(time);
+  main.appendChild(header);
+  if (parent.text) main.appendChild(el('div', 'bsky-x-text', parent.text));
+  const media = renderMedia(parent, parent.url);
+  if (media) main.appendChild(media);
+  row.appendChild(main);
+
+  row.addEventListener('click', (e) => {
+    if ((e.target as Element).closest('a')) return;
+    if (window.getSelection()?.toString()) return;
+    e.stopPropagation();
+    if (isX) openInX(parent.url, row);
+    else window.open(parent.url, '_blank', 'noopener');
+  });
+  return row;
+}
+
+function renderPost(post: BskyFeedPost, hostKey: string, slot: Slot): HTMLElement {
   const root = el('div', INJECTED_CLASS);
   root.dataset.hostKey = hostKey;
+  root.dataset.slot = slot;
   root.dataset.topic = post.topic;
   root.dataset.bouncerInjected = 'bluesky';
   root.dataset.source = post.source;
   root.dataset.uri = post.uri;
+  if (post.parent) root.dataset.parentUri = post.parent.uri;
+  if (post.nsfw) root.dataset.nsfw = '';
   observeImpression(root, post.uri);
   root.setAttribute('role', 'article');
   const sourceName = SOURCE_NAME[post.source];
@@ -573,8 +902,9 @@ function renderPost(post: BskyFeedPost, hostKey: string): HTMLElement {
   // a badge by the author's name.
   const context = el('div', `bsky-x-context bsky-x-source-${post.source}`);
   context.appendChild(sourceLogo(post.source, 'bsky-x-context-icon'));
-  context.appendChild(el('span', '', `From ${sourceName} · See more of ${post.topic}`));
+  context.appendChild(el('span', '', `From ${sourceName} · See more ${post.topic}`));
   root.appendChild(context);
+  if (post.parent) root.appendChild(renderParent(post.parent));
 
   const row = el('div', 'bsky-x-row');
   const avatar = link('bsky-x-avatar', post.authorUrl);
@@ -605,7 +935,7 @@ function renderPost(post: BskyFeedPost, hostKey: string): HTMLElement {
   main.appendChild(header);
 
   if (post.text) main.appendChild(renderText(post));
-  const media = renderMedia(post);
+  const media = renderMedia(post, post.url);
   if (media) main.appendChild(media);
   if (post.quote) main.appendChild(renderQuote(post.quote));
 
@@ -613,7 +943,7 @@ function renderPost(post: BskyFeedPost, hostKey: string): HTMLElement {
   const action = (kind: keyof typeof ICONS, count: number, label: string) => {
     const a = link(`bsky-x-action bsky-x-action-${kind}`, post.url);
     a.setAttribute('aria-label', `${label} on ${sourceName}`);
-    a.appendChild(strokeIcon(ICONS[kind]));
+    a.appendChild(kind === 'open' ? strokeIcon(ICONS.open) : filledIcon(ICONS[kind]));
     const c = formatCount(count);
     if (c) a.appendChild(el('span', '', c));
     return a;
@@ -649,7 +979,7 @@ function renderPost(post: BskyFeedPost, hostKey: string): HTMLElement {
 const TOPIC_PLACEHOLDERS = ['optimism', 'cute animals', 'urban planning', 'space exploration', 'woodworking', 'local news',
   'birdwatching', 'people being kind', 'indie games', 'gardening', 'science breakthroughs', 'cooking'];
 
-/** Fills the "See more of …" row in an X filter box. It is built from the
+/** Fills the "See more …" row in an X filter box. It is built from the
  *  same pieces as the "Filter out [phrases] and [input]" sentence above it,
  *  so it reads and behaves the same: chips with Oxford commas, "and", an
  *  auto-growing field whose cycling placeholder only shows with no topics,
@@ -675,7 +1005,7 @@ export function mountSeeMoreRow(row: HTMLElement): void {
   cycle.appendChild(track);
   wrapper.append(input, cycle);
   andInput.appendChild(wrapper);
-  row.replaceChildren(el('span', 'filter-phrases-label', 'See more of'), el('span', 'filter-phrases-list'), andInput);
+  row.replaceChildren(el('span', 'filter-phrases-label', 'See more'), el('span', 'filter-phrases-list'), andInput);
 
   // Same auto-grow and "claim the whole row once it wraps" behavior as the
   // filter input (see autosizeInput in ui.ts).
@@ -725,6 +1055,10 @@ function renderTopicChips(row: HTMLElement): void {
     const item = el('span', 'filter-phrase-item');
     const chip = el('span', 'filter-phrase-inline', t);
     chip.title = 'Click to remove';
+    if (introTopics.has(t)) {
+      chip.classList.add('bsky-see-more-loading');
+      chip.setAttribute('aria-busy', 'true');
+    }
     chip.addEventListener('click', () => void removeTopic(t));
     item.appendChild(chip);
     if (topics.length > 1) item.appendChild(el('span', 'filter-phrase-separator', ', '));
@@ -739,6 +1073,7 @@ async function addTopic(topic: string): Promise<void> {
   const current = (await getStorage([SEE_MORE_TOPICS_KEY]))[SEE_MORE_TOPICS_KEY] ?? [];
   if (current.some(t => t.toLowerCase() === topic.toLowerCase())) return;
   if (current.length >= MAX_SEE_MORE_TOPICS) return;
+  introTopics.add(topic);
   await setStorage({ [SEE_MORE_TOPICS_KEY]: [...current, topic] });
 }
 

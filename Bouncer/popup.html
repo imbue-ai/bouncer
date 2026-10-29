@@ -73,7 +73,7 @@
       <div id="platformsContainer"></div>
     </section>
 
-    <!-- "See more of …" on X: how often Bluesky posts are mixed into the
+    <!-- "See more" on X: how often Bluesky posts are mixed into the
          timeline, as one per N tweets (seeMoreEvery_twitter, read live by
          src/content/bluesky-see-more.ts). Desktop only: hidden in the apps'
          in-page copy of this popup. The range is flipped (rtl) so dragging
@@ -81,26 +81,35 @@
     <section class="see-more-frequency-section" id="seeMoreFrequencySection">
       <div class="ai-text-threshold-block">
         <div class="ai-text-threshold-header">
-          <span>See more of posts</span>
+          <span>See More posts</span>
           <span class="ai-text-threshold-value" id="seeMoreEveryValue">1 in 5 posts</span>
         </div>
-        <input type="range" id="seeMoreEvery" min="2" max="10" step="1" value="5" dir="rtl" aria-label="How often See more of posts appear in your X timeline">
+        <input type="range" id="seeMoreEvery" min="2" max="10" step="1" value="5" dir="rtl" aria-label="How often See More posts appear in your X timeline">
         <div class="ai-text-threshold-scale">
           <span>Less often</span>
           <span>More often</span>
         </div>
-        <p class="hint ai-text-threshold-hint">How often posts from your &ldquo;See more of&rdquo; topics appear in your X timeline.</p>
+        <p class="hint ai-text-threshold-hint">How often posts from your &ldquo;See More&rdquo; topics appear in your X timeline.</p>
       </div>
       <!-- Where those posts come from (seeMoreSource_twitter: bluesky | x |
            both). X posts are ones other Bouncer users have seen on X. -->
       <div class="see-more-source-block">
         <span class="see-more-source-label">Draw from</span>
-        <div class="model-radio-group see-more-source-group" role="radiogroup" aria-label="Where See more of posts come from">
+        <div class="model-radio-group see-more-source-group" role="radiogroup" aria-label="Where See More posts come from">
           <label class="model-radio"><input type="radio" name="seeMoreSource" value="bluesky"><span class="model-radio-text"><span class="model-radio-label">Bluesky</span></span></label>
           <label class="model-radio"><input type="radio" name="seeMoreSource" value="x"><span class="model-radio-text"><span class="model-radio-label">X</span></span></label>
           <label class="model-radio"><input type="radio" name="seeMoreSource" value="both"><span class="model-radio-text"><span class="model-radio-label">Both</span></span></label>
         </div>
       </div>
+      <!-- Adult and graphic posts, judged by Bluesky's moderation labels and
+           X's sensitive-media flag (seeMoreShowNsfw_twitter, absent = off). -->
+      <label class="toggle-switch see-more-nsfw-toggle">
+        <input type="checkbox" id="seeMoreShowNsfwToggle">
+        <span class="toggle-switch-slider" aria-hidden="true"></span>
+        <span class="toggle-switch-text">
+          <span class="toggle-switch-label">Show NSFW posts</span>
+        </span>
+      </label>
     </section>
 
     <!-- Accent color: retheme Bouncer's in-feed UI (panel outline, buttons,

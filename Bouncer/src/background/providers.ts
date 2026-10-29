@@ -272,7 +272,7 @@ export async function callImbueDetectAiIntent(
   }
 }
 
-// "See more of <topic>": one page of Bluesky posts about `topic` from the
+// "See more <topic>": one page of Bluesky posts about `topic` from the
 // backend's semantic index (EmbeddingGemma 2 over the Jetstream firehose,
 // then the filter model as a relevance check), via the blueskySearch route.
 // `cursor` is the offset returned by the previous page (null for the first).

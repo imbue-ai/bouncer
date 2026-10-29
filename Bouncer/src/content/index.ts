@@ -633,7 +633,7 @@ import {
     // Add inline "why annoying" trash-can button next to Share
     addWhyAnnoyingButton(article);
 
-    // "See more of …": maybe slot a Bluesky post into this tweet's cell
+    // "See more …": maybe slot a Bluesky post into this tweet's cell
     noteTimelinePost(article);
 
     if (forceForYou || adapter.shouldProcessCurrentPage()) {

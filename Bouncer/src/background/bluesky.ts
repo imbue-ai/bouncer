@@ -1,10 +1,10 @@
-// Background half of "See more of <topic>": candidate Bluesky posts from the
+// Background half of "See more <topic>": candidate Bluesky posts from the
 // backend's semantic index, mapped to BskyFeedPost (see shared/bluesky.ts).
 
 import {
-  BSKY_GET_POSTS_ENDPOINT, BSKY_GET_POSTS_MAX, bskyPostUrl, embedMedia, facetsToLinks, isInjectableRawPost, rawMedia,
-  rawQuote, sourceOfUri, type BskyFeedPost, type BskyQuotedPost, type BskySearchResult, type RawMedia,
-  type RawPostView, type SeeMoreSource,
+  BSKY_GET_POSTS_ENDPOINT, BSKY_GET_POSTS_MAX, bskyPostUrl, embedMedia, facetsToLinks, isInjectableRawPost, isNsfwRawPost, rawMedia,
+  rawQuote, rawReplyParent, sourceOfUri, type BskyFeedPost, type BskyQuotedPost, type BskySearchResult, type RawMedia,
+  type RawPostView, type RawQuotedRecord, type SeeMoreSource,
 } from '../shared/bluesky';
 import { callImbueBlueskySearch } from './providers';
 
@@ -23,7 +23,7 @@ function mapMedia(media: RawMedia): Pick<BskyFeedPost, 'images' | 'isVideo' | 'e
       const url = httpsOrNull(img.thumb);
       const ar = img.aspectRatio;
       const aspectRatio = ar && ar.width > 0 && ar.height > 0 ? ar.width / ar.height : null;
-      return url ? [{ url, alt: img.alt ?? '', aspectRatio }] : [];
+      return url ? [{ url, fullUrl: httpsOrNull(img.fullsize) ?? url, alt: img.alt ?? '', aspectRatio }] : [];
     }),
     isVideo: media.isVideo,
     external: media.external && /^https:\/\//.test(media.external.uri)
@@ -35,9 +35,19 @@ function mapMedia(media: RawMedia): Pick<BskyFeedPost, 'images' | 'isVideo' | 'e
 function mapQuote(p: RawPostView): BskyFeedPost['quote'] {
   const q = rawQuote(p);
   if (q === null || q === 'unavailable') return q;
-  // rawQuote only returns a viewRecord with uri and author set.
+  return mapRecord(q);
+}
+
+function mapParent(p: RawPostView): BskyFeedPost['parent'] {
+  const r = rawReplyParent(p);
+  return r ? mapRecord(r) : null;
+}
+
+/** A quoted post or a reply's parent (both viewRecords with uri and author
+ *  set, per rawQuote and rawReplyParent). */
+function mapRecord(q: RawQuotedRecord): BskyQuotedPost {
   const author = q.author!;
-  // A quoted X post (xstream builds the same viewRecord shape) links to x.com.
+  // An X post (xstream builds the same viewRecord shape) links to x.com.
   const isX = sourceOfUri(q.uri!) === 'x';
   const quoted: BskyQuotedPost = {
     uri: q.uri!,
@@ -65,8 +75,11 @@ function mapXPost(p: RawPostView & { url?: string; enrichment?: string }, topic:
     console.warn('[BlueskySearch] dropping X post without an x.com url:', p.uri, p.url);
     return null;
   }
+  // Only xstream's lookup on X says whether a post is a reply (and gives
+  // its parent) or sensitive; without it, neither is known.
   if (p.enrichment !== 'ok') {
-    console.warn(`[BlueskySearch] X post shown without avatar/counts (enrichment: ${p.enrichment}):`, p.uri);
+    console.warn(`[BlueskySearch] dropping X post xstream couldn't look up on X (enrichment: ${p.enrichment}):`, p.uri);
+    return null;
   }
   const name = p.author.displayName?.trim() || p.author.handle;
   const raw = p.record.text ?? '';
@@ -87,7 +100,10 @@ function mapXPost(p: RawPostView & { url?: string; enrichment?: string }, topic:
     likeCount: p.likeCount ?? 0,
     ...mapMedia(rawMedia(p)),
     quote: mapQuote(p),
+    parent: mapParent(p),
     topic,
+    // xstream labels the posts X marks possibly_sensitive.
+    nsfw: isNsfwRawPost(p),
   };
 }
 
@@ -110,7 +126,9 @@ function mapPost(p: RawPostView, topic: string): BskyFeedPost | null {
     likeCount: p.likeCount ?? 0,
     ...mapMedia(rawMedia(p)),
     quote: mapQuote(p),
+    parent: mapParent(p),
     topic,
+    nsfw: isNsfwRawPost(p),
   };
 }
 
@@ -146,16 +164,17 @@ export async function searchBlueskyPosts(
   return { posts, cursor: res.cursor == null ? null : String(res.cursor) };
 }
 
-/** Hydrate post URIs; deleted posts are simply absent from the result. */
+/** Hydrate post URIs (batches fetched in parallel); deleted posts are
+ *  simply absent from the result. */
 async function getPosts(uris: string[]): Promise<Map<string, RawPostView>> {
-  const views = new Map<string, RawPostView>();
-  for (let i = 0; i < uris.length; i += BSKY_GET_POSTS_MAX) {
+  const batches: string[][] = [];
+  for (let i = 0; i < uris.length; i += BSKY_GET_POSTS_MAX) batches.push(uris.slice(i, i + BSKY_GET_POSTS_MAX));
+  const pages = await Promise.all(batches.map(async batch => {
     const params = new URLSearchParams();
-    for (const uri of uris.slice(i, i + BSKY_GET_POSTS_MAX)) params.append('uris', uri);
+    for (const uri of batch) params.append('uris', uri);
     const res = await fetch(`${BSKY_GET_POSTS_ENDPOINT}?${params}`);
     if (!res.ok) throw new Error(`Bluesky getPosts failed: HTTP ${res.status}`);
-    const body = await res.json() as { posts?: RawPostView[] };
-    for (const p of body.posts ?? []) views.set(p.uri, p);
-  }
-  return views;
+    return (await res.json() as { posts?: RawPostView[] }).posts ?? [];
+  }));
+  return new Map(pages.flat().map(p => [p.uri, p]));
 }

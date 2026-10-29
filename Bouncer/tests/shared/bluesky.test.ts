@@ -8,10 +8,12 @@ import {
   formatRelativeTime,
   mergeSeenUris,
   isInjectableRawPost,
+  isNsfwRawPost,
   normalizeTopic,
   embedMedia,
   rawMedia,
   rawQuote,
+  rawReplyParent,
   seeMoreSources,
   sourceOfUri,
   type RawPostView,
@@ -43,6 +45,48 @@ describe('isInjectableRawPost', () => {
   it('rejects very short text-only posts but keeps short posts with media', () => {
     expect(isInjectableRawPost(raw({ record: { text: 'lol' } }))).toBe(false);
     expect(isInjectableRawPost(raw({ record: { text: 'lol' }, embed: { $type: 'app.bsky.embed.images#view', images: [] } }))).toBe(true);
+  });  it('accepts a reply only when its parent came with it', () => {
+    const parent = { $type: 'app.bsky.embed.record#viewRecord', uri: 'at://x:bob/app.bsky.feed.post/1', author: { did: 'x:bob', handle: 'bob' }, value: { text: 'the parent' } };
+    const reply = { text: 'a reply with enough text to show', reply: { parent: { uri: parent.uri } } };
+    expect(isInjectableRawPost(raw({ record: reply }))).toBe(false);
+    expect(isInjectableRawPost(raw({ record: reply, reply: { parent } }))).toBe(true);
+    expect(rawReplyParent(raw({ record: reply, reply: { parent } }))?.uri).toBe(parent.uri);
+    expect(isInjectableRawPost(raw({ record: reply, reply: { parent: { $type: 'app.bsky.embed.record#viewNotFound' } } }))).toBe(false);
+  });
+  it('rejects posts moderation hid or whose author opted out of logged-out viewers', () => {
+    expect(isInjectableRawPost(raw({ labels: [{ src: 'did:plc:mod', val: '!hide' }] }))).toBe(false);
+    expect(isInjectableRawPost(raw({ author: { did: 'did:plc:abc', handle: 'a', labels: [{ src: 'did:plc:abc', val: '!no-unauthenticated' }] } }))).toBe(false);
+  });
+});
+
+describe('isNsfwRawPost', () => {
+  const MOD = 'did:plc:ar7c4by46qjdydhdevvrndac';
+  it('is false for an unlabelled post', () => {
+    expect(isNsfwRawPost(raw())).toBe(false);
+  });
+  it('flags self-labels and moderation labels on the post', () => {
+    expect(isNsfwRawPost(raw({ labels: [{ src: 'did:plc:abc', val: 'porn' }] }))).toBe(true);
+    expect(isNsfwRawPost(raw({ labels: [{ src: MOD, val: 'graphic-media' }] }))).toBe(true);
+    expect(isNsfwRawPost(raw({ labels: [{ src: 'x:alice', val: 'x-possibly-sensitive' }] }))).toBe(true);
+  });
+  it('ignores labels that are not about adult or graphic content', () => {
+    expect(isNsfwRawPost(raw({ labels: [{ src: MOD, val: 'bridged-from-bridgy-fed-activitypub' }] }))).toBe(false);
+  });
+  it('honours negations', () => {
+    expect(isNsfwRawPost(raw({ labels: [{ src: MOD, val: 'sexual' }, { src: MOD, val: 'sexual', neg: true }] }))).toBe(false);
+  });
+  it('flags replies to NSFW posts', () => {
+    expect(isNsfwRawPost(raw({ reply: { parent: {
+      $type: 'app.bsky.embed.record#viewRecord', uri: 'at://x:bob/app.bsky.feed.post/1',
+      author: { did: 'x:bob', handle: 'bob' }, labels: [{ src: 'x:bob', val: 'x-possibly-sensitive' }],
+    } } }))).toBe(true);
+  });
+  it('flags adult accounts and quotes of NSFW posts', () => {
+    expect(isNsfwRawPost(raw({ author: { did: 'did:plc:abc', handle: 'a', labels: [{ src: MOD, val: 'porn' }] } }))).toBe(true);
+    expect(isNsfwRawPost(raw({ embed: { $type: 'app.bsky.embed.record#view', record: {
+      $type: 'app.bsky.embed.record#viewRecord', uri: 'at://did:plc:q/app.bsky.feed.post/1',
+      author: { did: 'did:plc:q', handle: 'q' }, labels: [{ src: 'did:plc:q', val: 'nudity' }],
+    } } }))).toBe(true);
   });
 });
 

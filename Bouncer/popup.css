@@ -3127,7 +3127,7 @@ body.dim-mode .excluded-sentence input.excluded-account-input:focus {
   border-bottom-color: rgb(var(--bouncer-brand-rgb, 234, 133, 84));
 }
 
-/* "See more of" source ("Draw from: Bluesky / X / Both"): the model-radio
+/* "See more" source ("Draw from: Bluesky / X / Both"): the model-radio
    rows laid out as one compact segmented row. */
 .see-more-source-block {
   margin-top: 12px;
@@ -3147,6 +3147,10 @@ body.dim-mode .see-more-source-label { color: #f7f9f9; }
   flex: 1;
   align-items: center;
   padding: 8px 10px;
+}
+.see-more-nsfw-toggle {
+  display: flex;
+  margin-top: 12px;
 }
 .see-more-source-group .model-radio + .model-radio {
   border-top: none;
