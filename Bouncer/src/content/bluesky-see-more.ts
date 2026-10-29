@@ -182,6 +182,7 @@ async function refill(topic: string): Promise<void> {
         if (await passesHideFilters(post) && pools.get(topic) === pool) {
           pool.ready.push(post);
           if (introTopics.has(topic)) endIntro(topic, introducePost(topic) ? null : 'no free gap in reach on screen');
+          else scheduleFillAhead();
         }
       }));
     }
@@ -434,11 +435,53 @@ function introducePost(topic: string): boolean {
   const root = renderPost(post, slot.hostKey, slot.slot);
   placePost(slot.cell, root, slot.slot);
   slideIn(root);
+  fillAhead();
   if (slot.y > maxY) {
     const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     window.scrollBy({ top: slot.y - window.innerHeight / 2, behavior: reduceMotion ? 'auto' : 'smooth' });
   }
   return true;
+}
+
+/** Bring the 1-in-N pattern up to date across the tweets X has already
+ *  rendered below the viewport. They were counted when they first rendered,
+ *  and any that came due while no post was ready (a topic just added, a
+ *  slow search) were skipped; without this they'd stay bare until X
+ *  recycles them, a gap of several tweets before the mix shows up. Runs
+ *  after a topic's first post slides in and whenever a post becomes ready.
+ *  Only tweets fully below the viewport get a post, so nothing pops in on
+ *  screen. */
+function fillAhead(): void {
+  if (!adapter || !topics.length || !onHomeTimeline()) return;
+  const threaded = (adapter as unknown as { _isReplyInThread?: (el: Element) => boolean })._isReplyInThread;
+  let since = 0;
+  for (const article of document.querySelectorAll<HTMLElement>(adapter.selectors.post)) {
+    const cell = adapter.getPostContainer(article);
+    if (cell === article) continue;
+    const hostKey = adapter.getPostContentKey(article);
+    if (!hostKey || cell.dataset.filteredByExtension) continue;
+    if (postBySlot.has(slotKey(hostKey, 'below'))) { since = 0; continue; }
+    if (postBySlot.has(slotKey(hostKey, 'above'))) since = 0;
+    since++;
+    if (since < injectEvery - 1) continue;
+    if (cell.getBoundingClientRect().top <= window.innerHeight) continue;
+    const next = cell.nextElementSibling;
+    if (next && threaded?.call(adapter, next)) continue;
+    const post = takePost();
+    if (!post) break;
+    countedHostKeys.add(hostKey);
+    postBySlot.set(slotKey(hostKey, 'below'), post);
+    placePost(cell, renderPost(post, hostKey, 'below'), 'below');
+    since = 0;
+  }
+  tweetsSinceInject = since;
+}
+
+let fillScheduled = false;
+function scheduleFillAhead(): void {
+  if (fillScheduled) return;
+  fillScheduled = true;
+  setTimeout(() => { fillScheduled = false; fillAhead(); }, 0);
 }
 
 /** Open a gap next to the host tweet and slide the post into it. */
