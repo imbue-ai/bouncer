@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   bskyPostUrl,
+  buildSeenFilter,
+  seenFilterHas,
   clampSeeMoreEvery,
   clampSeeMoreSource,
   facetsToLinks,
@@ -53,9 +55,9 @@ describe('isInjectableRawPost', () => {
     expect(rawReplyParent(raw({ record: reply, reply: { parent } }))?.uri).toBe(parent.uri);
     expect(isInjectableRawPost(raw({ record: reply, reply: { parent: { $type: 'app.bsky.embed.record#viewNotFound' } } }))).toBe(false);
   });
-  it('rejects posts moderation hid or whose author opted out of logged-out viewers', () => {
+  it('rejects posts moderation hid, but not ones whose author opted out of logged-out viewers', () => {
     expect(isInjectableRawPost(raw({ labels: [{ src: 'did:plc:mod', val: '!hide' }] }))).toBe(false);
-    expect(isInjectableRawPost(raw({ author: { did: 'did:plc:abc', handle: 'a', labels: [{ src: 'did:plc:abc', val: '!no-unauthenticated' }] } }))).toBe(false);
+    expect(isInjectableRawPost(raw({ author: { did: 'did:plc:abc', handle: 'a', labels: [{ src: 'did:plc:abc', val: '!no-unauthenticated' }] } }))).toBe(true);
   });
 });
 
@@ -226,5 +228,25 @@ describe('formatting', () => {
   it('tells X posts (from xstream) from Bluesky posts by URI', () => {
     expect(sourceOfUri('at://x:elonmusk/com.x.feed.post/2115503730368061688')).toBe('x');
     expect(sourceOfUri('at://did:plc:abc/app.bsky.feed.post/3kxyz')).toBe('bluesky');
+  });
+});
+
+describe('buildSeenFilter', () => {
+  const uris = ['at://did:plc:abc/app.bsky.feed.post/3kxyz', 'at://x:bob/app.bsky.feed.post/2115625912641388820', 'at://did:plc:é/app.bsky.feed.post/1'];
+  it('is null when nothing has been seen', () => {
+    expect(buildSeenFilter([])).toBeNull();
+  });
+  it('matches the bits the worker computes (SeenFilter in workers/worker_bluesky_search.py)', () => {
+    // Verified against the Python implementation; a change here breaks the
+    // backend's skipping silently, so change both sides together.
+    expect(buildSeenFilter(uris)).toEqual({ m: 64, k: 15, bits: 'nuT+/8iTdEk=' });
+  });
+  it('contains every member and few non-members at the 3,000-post cap', () => {
+    const seen = Array.from({ length: 3000 }, (_, i) => `at://did:plc:u${i}/app.bsky.feed.post/r${i}`);
+    const f = buildSeenFilter(seen)!;
+    expect(f.bits.length).toBeLessThan(5000);
+    expect(seen.every(u => seenFilterHas(f, u))).toBe(true);
+    const others = Array.from({ length: 5000 }, (_, i) => `at://did:plc:other${i}/app.bsky.feed.post/z${i}`);
+    expect(others.filter(u => seenFilterHas(f, u)).length / others.length).toBeLessThan(0.02);
   });
 });

@@ -78,9 +78,9 @@ export const SEE_MORE_SHOW_NSFW_KEY = 'seeMoreShowNsfw_twitter';
 export const X_SENSITIVE_LABEL = 'x-possibly-sensitive';
 const NSFW_LABELS = new Set(['porn', 'sexual', 'nudity', 'graphic-media', 'gore', 'nsfl', X_SENSITIVE_LABEL]);
 /** Labels that mean a post should never be shown here: moderation hides and
- *  takedowns, and authors who asked not to be shown to logged-out viewers
- *  (anyone reading it in X is not logged in to Bluesky). */
-const NEVER_SHOW_LABELS = new Set(['!hide', '!takedown', '!no-unauthenticated']);
+ *  takedowns. Authors' !no-unauthenticated (logged-out viewers) is a
+ *  request the API doesn't enforce and is deliberately not honored. */
+const NEVER_SHOW_LABELS = new Set(['!hide', '!takedown']);
 
 /** Label values in effect: a negation (`neg`) cancels an earlier label with
  *  the same value from the same labeler. */
@@ -104,6 +104,52 @@ export function isNsfwRawPost(p: RawPostView): boolean {
   const related = [q && q !== 'unavailable' ? q : null, rawReplyParent(p)];
   return hasAny(p.labels, NSFW_LABELS) || hasAny(p.author.labels, NSFW_LABELS)
     || related.some(r => hasAny(r?.labels, NSFW_LABELS) || hasAny(r?.author?.labels, NSFW_LABELS));
+}
+
+/** The posts the user has seen, sent with each search as a Bloom filter so
+ *  the backend can skip them before spending filter-model calls on them
+ *  (the URI list itself is too big for a WebSocket message). The worker
+ *  (workers/worker_bluesky_search.py, SeenFilter) implements the same
+ *  hashing and must stay bit-for-bit identical: double hashing over the
+ *  URI's UTF-8 bytes, h1 = FNV-1a 32 (standard offset basis), h2 = FNV-1a
+ *  32 seeded with 0x5bd1e995 and forced odd, bit i = (h1 + i*h2) mod 2^32
+ *  mod m, set LSB-first within each byte. A false positive skips an unseen
+ *  post, so the target rate is low. */
+export interface SeenFilter { m: number; k: number; bits: string }
+const SEEN_FILTER_FALSE_POSITIVE_RATE = 0.01;
+
+function fnv1a(bytes: Uint8Array, seed: number): number {
+  let h = seed >>> 0;
+  for (const b of bytes) h = Math.imul(h ^ b, 0x01000193) >>> 0;
+  return h;
+}
+
+function seenFilterIndexes(uri: string, m: number, k: number): number[] {
+  const bytes = new TextEncoder().encode(uri);
+  const h1 = fnv1a(bytes, 0x811c9dc5);
+  const h2 = (fnv1a(bytes, 0x5bd1e995) | 1) >>> 0;
+  const out: number[] = [];
+  for (let i = 0; i < k; i++) out.push(((h1 + Math.imul(i, h2)) >>> 0) % m);
+  return out;
+}
+
+/** null when there's nothing to skip. */
+export function buildSeenFilter(uris: Iterable<string>, rate = SEEN_FILTER_FALSE_POSITIVE_RATE): SeenFilter | null {
+  const unique = [...new Set(uris)];
+  if (!unique.length) return null;
+  const n = unique.length;
+  const m = Math.max(64, Math.ceil(-n * Math.log(rate) / (Math.LN2 * Math.LN2) / 8) * 8);
+  const k = Math.min(16, Math.max(1, Math.round(m / n * Math.LN2)));
+  const bytes = new Uint8Array(m / 8);
+  for (const uri of unique) for (const i of seenFilterIndexes(uri, m, k)) bytes[i >> 3] |= 1 << (i & 7);
+  let binary = '';
+  for (const b of bytes) binary += String.fromCharCode(b);
+  return { m, k, bits: btoa(binary) };
+}
+
+export function seenFilterHas(filter: SeenFilter, uri: string): boolean {
+  const bin = atob(filter.bits);
+  return seenFilterIndexes(uri, filter.m, filter.k).every(i => (bin.charCodeAt(i >> 3) >> (i & 7)) & 1);
 }
 
 export function clampSeeMoreEvery(v: unknown): number {
@@ -163,7 +209,12 @@ export type BskyQuotedPost = Pick<BskyFeedPost,
 
 export interface BskySearchResult {
   posts: BskyFeedPost[];
-  cursor: string | null;
+  /** Every URI the backend returned, including any this side couldn't turn
+   *  into a post: the content script records them all as seen. */
+  returned: string[];
+  /** The backend has nothing more on the topic the user hasn't seen (until
+   *  new posts arrive). */
+  exhausted: boolean;
 }
 
 // ---- Raw AT Protocol shapes (only the fields we read) ----

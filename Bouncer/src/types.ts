@@ -4,6 +4,7 @@
  *  in shared/platforms.ts. Adding a new platform there automatically extends
  *  this union. Re-exported here so existing `import { SiteId } from '../types'`
  *  call sites keep working without touching every consumer. */
+import type { SeenFilter } from './shared/bluesky';
 import type { SiteId } from './shared/platforms';
 export type { SiteId };
 
@@ -397,7 +398,7 @@ export type ContentToBackgroundMessage =
   | { type: 'clearSinglePost'; post: string; imageUrls: string[]; postUrl?: string | null; siteId?: SiteId }
   | { type: 'getStats' }
   // "See more <topic>": one page of Bluesky search results (BskySearchResult).
-  | { type: 'fetchBlueskyPosts'; topic: string; cursor: string | null; sources: Array<'bluesky' | 'x'> }
+  | { type: 'fetchBlueskyPosts'; topic: string; sources: Array<'bluesky' | 'x'>; seen: SeenFilter | null; want: number }
   | { type: 'getReasoning'; post: string; imageUrls: string[]; postUrl?: string | null; siteId?: SiteId }
   | { type: 'getErrorStatus' }
   | { type: 'getAllLocalModelStatuses' }
@@ -667,16 +668,21 @@ export interface ImbueDetectAiIntentResponse extends ImbueResponseBase {
 export interface ImbueBlueskySearchResponse extends ImbueResponseBase {
   /** at:// post URIs judged on-topic, best first. May be empty for a page. */
   uris: string[];
-  /** Post views for the X URIs in `uris` (Bluesky ones are hydrated through
-   *  the public getPosts API; X ones can't be, so the backend sends them).
-   *  Same shape as Bluesky's postView. Absent from older backends. */
+  /** Post views for URIs in `uris`, same shape as Bluesky's postView:
+   *  always the X ones (nothing public can hydrate them), and the Bluesky
+   *  ones too while the message stays small; the client fetches any Bluesky
+   *  view that's missing from the public getPosts API. Absent from older
+   *  backends. */
   posts?: unknown[];
   /** Per-source counts for this page (ranked, page, missing, candidates,
    *  kept, filter_failed), so a source that contributed nothing is visible.
    *  Absent from older backends. */
   sourceStats?: Partial<Record<'bluesky' | 'x', Record<string, number>>>;
-  /** Offset of the next page; null when the backend's ranking is exhausted. */
-  cursor: number | null;
+  /** The whole ranking has been walked: nothing more the user hasn't seen,
+   *  until new posts are indexed. Older backends send only `cursor`, null
+   *  meaning the same. */
+  exhausted?: boolean;
+  cursor?: number | null;
 }
 
 /** Response from the suggestAnnoying action.

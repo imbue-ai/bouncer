@@ -4,7 +4,7 @@
 import {
   BSKY_GET_POSTS_ENDPOINT, BSKY_GET_POSTS_MAX, bskyPostUrl, embedMedia, facetsToLinks, isInjectableRawPost, isNsfwRawPost, rawMedia,
   rawQuote, rawReplyParent, sourceOfUri, type BskyFeedPost, type BskyQuotedPost, type BskySearchResult, type RawMedia,
-  type RawPostView, type RawQuotedRecord, type SeeMoreSource,
+  type RawPostView, type RawQuotedRecord, type SeenFilter, type SeeMoreSource,
 } from '../shared/bluesky';
 import { callImbueBlueskySearch } from './providers';
 
@@ -132,8 +132,8 @@ function mapPost(p: RawPostView, topic: string): BskyFeedPost | null {
   };
 }
 
-/** One page of posts for `topic` from `sources` (Bluesky and/or X). `cursor` is the opaque value
- *  returned by the previous page (null for the first).
+/** The best posts on `topic` from `sources` (Bluesky and/or X) that aren't
+ *  in `seen`, up to about `want` of them.
  *
  *  Every post comes from the backend's blueskySearch route, which only
  *  returns posts the filter model judged on-topic. There is deliberately no
@@ -141,18 +141,21 @@ function mapPost(p: RawPostView, topic: string): BskyFeedPost | null {
  *  route fails, the error propagates and the content script retries later,
  *  showing nothing new in the meantime. */
 export async function searchBlueskyPosts(
-  topic: string, cursor: string | null, sources: SeeMoreSource[],
+  topic: string, sources: SeeMoreSource[], seen: SeenFilter | null, want: number,
 ): Promise<BskySearchResult> {
-  const res = await callImbueBlueskySearch(topic, cursor ? Number(cursor) || 0 : 0, sources);
+  const res = await callImbueBlueskySearch(topic, sources, seen, want);
   // A forceLogin push settles the request with a filter-shaped placeholder.
   if (!Array.isArray(res?.uris)) throw new Error('blueskySearch returned no uris');
-  // Bluesky posts hydrate from the public API; X posts arrive with the
-  // response, since nothing public can hydrate them.
-  const views = await getPosts(res.uris.filter(u => sourceOfUri(u) === 'bluesky'));
+  // Views arrive with the response: always for X posts (nothing public can
+  // hydrate them), and for Bluesky ones while the message is small. Any
+  // Bluesky view that's missing comes from the public API.
+  const views = new Map<string, RawPostView>();
   for (const p of (res.posts ?? []) as RawPostView[]) {
-    if (p && typeof p.uri === 'string' && sourceOfUri(p.uri) === 'x' && p.author && p.record) views.set(p.uri, p);
-    else console.warn('[BlueskySearch] dropping malformed X post view:', p);
+    if (p && typeof p.uri === 'string' && p.author && p.record) views.set(p.uri, p);
+    else console.warn('[BlueskySearch] dropping malformed post view:', p);
   }
+  const fetched = await getPosts(res.uris.filter(u => sourceOfUri(u) === 'bluesky' && !views.has(u)));
+  for (const [uri, p] of fetched) views.set(uri, p);
   const missingX = res.uris.filter(u => sourceOfUri(u) === 'x' && !views.has(u));
   if (missingX.length) console.warn(`[BlueskySearch] ${missingX.length} X post(s) returned without a view:`, missingX);
   console.log(`[BlueskySearch] "${topic}" sources=${sources.join('+')} page stats:`, res.sourceStats ?? '(backend sent none)');
@@ -161,7 +164,7 @@ export async function searchBlueskyPosts(
     const post = p && isInjectableRawPost(p) ? mapPost(p, topic) : null;
     return post ? [post] : [];
   });
-  return { posts, cursor: res.cursor == null ? null : String(res.cursor) };
+  return { posts, returned: res.uris, exhausted: res.exhausted ?? res.cursor == null };
 }
 
 /** Hydrate post URIs (batches fetched in parallel); deleted posts are

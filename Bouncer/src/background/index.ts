@@ -469,10 +469,10 @@ async function handleMessage(
 
     case 'fetchBlueskyPosts': {
       try {
-        return await searchBlueskyPosts(message.topic, message.cursor, message.sources);
+        return await searchBlueskyPosts(message.topic, message.sources, message.seen ?? null, message.want);
       } catch (err) {
         console.warn('[Background] Bluesky search failed:', err);
-        return { posts: [], cursor: null, error: String(err) };
+        return { posts: [], returned: [], exhausted: false, error: String(err) };
       }
     }
 

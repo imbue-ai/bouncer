@@ -23,7 +23,7 @@ import { getStorage, setStorage } from '../shared/storage';
 import { formatPostForEvaluation } from '../shared/utils';
 import {
   SEE_MORE_TOPICS_KEY, SEE_MORE_EVERY_KEY, SEE_MORE_SEEN_KEY, MAX_SEE_MORE_TOPICS, mergeSeenUris, MAX_SEE_MORE_TOPIC_LENGTH, clampSeeMoreEvery, formatCount, formatRelativeTime, normalizeTopic,
-  SEE_MORE_SOURCE_KEY, SEE_MORE_SHOW_NSFW_KEY, clampSeeMoreSource, seeMoreSources,
+  SEE_MORE_SOURCE_KEY, SEE_MORE_SHOW_NSFW_KEY, buildSeenFilter, clampSeeMoreSource, seeMoreSources,
   type BskyFeedPost, type BskyQuotedPost, type BskySearchResult, type SeeMoreSource,
 } from '../shared/bluesky';
 import { currentPauseScope } from './ui';
@@ -33,15 +33,21 @@ const HIDE_CHECK_CONCURRENCY = 4; // candidates screened against hide filters at
 const SWEEP_INTERVAL_MS = 1500;
 const FILTER_CHECK_TIMEOUT_MS = 20000;
 const SEARCH_RETRY_MS = 60000;
+// The backend has nothing left on a topic the user hasn't seen: look again
+// once new posts have had time to arrive.
+const EXHAUSTED_RETRY_MS = 5 * 60000;
+// Hard cap on searches per tab, well under the backend's 60/min per user,
+// so no loop (a bug, or a topic where almost nothing passes) can reach it.
+const MAX_SEARCHES_PER_MINUTE = 20;
+const searchTimes: number[] = [];
 const INJECTED_CLASS = 'bsky-x-post';
 
 interface TopicPool {
   ready: BskyFeedPost[];
   unchecked: BskyFeedPost[];
-  cursor: string | null;
-  exhausted: boolean;
   busy: boolean;
-  /** After a failed search, don't hit Bluesky again before this time. */
+  /** Don't search again before this time: after a failed search, or once the
+   *  backend has run out of posts on the topic. */
   retryAt: number;
 }
 
@@ -51,6 +57,13 @@ const pools = new Map<string, TopicPool>();
 // Posts handed to the timeline in this page load (shown, or waiting for
 // their host tweet), so none is placed twice.
 const seenUris = new Set<string>();
+// Every post the backend has returned to this tab, recorded the moment the
+// response arrives, before anything else looks at it. It goes in the seen
+// filter, so the next search always differs from the last: searches have no
+// cursor, and a post this tab received but then didn't show (hidden by the
+// user's filters, NSFW, …) would otherwise come back on every search.
+// Cleared, with the pools, when a setting that decides what's shown changes.
+const returnedUris = new Set<string>();
 // Posts the user has actually seen, in any tab and any earlier page load
 // (SEE_MORE_SEEN_KEY). Candidates already in here are skipped.
 const impressedUris = new Set<string>();
@@ -91,6 +104,18 @@ const SOURCE_NAME: Record<SeeMoreSource, string> = { bluesky: 'Bluesky', x: 'X' 
 // don't raise the injection rate.
 const countedHostKeys = new Set<string>();
 let tweetsSinceInject = 0;
+// Where posts go is decided as tweets render (every Nth one becomes due);
+// which post goes there is decided late, once the tweet comes within
+// FILL_AHEAD_MARGIN of the viewport. X renders well ahead of the screen, so
+// deciding at render time locked in posts from the old topic mix (and left
+// slots that came due before any post was ready empty) a screen or two
+// ahead; filling late lets a just-added topic show up at the next slot.
+const dueHosts = new Set<string>();
+const FILL_AHEAD_MARGIN = '0px 0px 100% 0px';
+let fillObserver: IntersectionObserver | null = null;
+// Cells of due hosts being watched, and those currently within the margin.
+const watchedCells = new Set<HTMLElement>();
+const nearCells = new Set<HTMLElement>();
 let nextTopic = 0;
 // Topics just added in this tab: their chip pulses until the first post is
 // ready, and that post is then slid into view (introducePost) instead of
@@ -113,6 +138,7 @@ export function initBlueskySeeMore(platformAdapter: PlatformAdapter): void {
   // losing up to IMPRESSION_FLUSH_MS of them.
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') void flushImpressions();
+    else for (const t of topics) void refill(t); // searches skipped while hidden
   });
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local') return;
@@ -121,8 +147,9 @@ export function initBlueskySeeMore(platformAdapter: PlatformAdapter): void {
     if (changes[SEE_MORE_EVERY_KEY]) injectEvery = clampSeeMoreEvery(changes[SEE_MORE_EVERY_KEY].newValue);
     if (changes[SEE_MORE_SOURCE_KEY]) {
       sourceSetting = clampSeeMoreSource(changes[SEE_MORE_SOURCE_KEY].newValue);
-      // Candidates (and paging cursors) belong to the old source mix; start
+      // Candidates belong to the old source mix; start
       // every topic over. Posts already placed in the timeline stay.
+      returnedUris.clear();
       pools.clear();
       setTopics(topics);
     }
@@ -130,11 +157,11 @@ export function initBlueskySeeMore(platformAdapter: PlatformAdapter): void {
       showNsfw = changes[SEE_MORE_SHOW_NSFW_KEY].newValue === true;
       if (!showNsfw) {
         // Take down NSFW posts already placed in the timeline.
-        for (const [key, post] of postBySlot) if (post.nsfw) postBySlot.delete(key);
-        document.querySelectorAll<HTMLElement>(`.${INJECTED_CLASS}[data-nsfw]`).forEach(el => el.remove());
+        releasePosts(post => post.nsfw);
       }
       // Pages fetched with the setting off dropped NSFW posts; start over so
       // turning it on can show them.
+      returnedUris.clear();
       pools.clear();
       setTopics(topics);
     }
@@ -146,11 +173,8 @@ function setTopics(next: string[]): void {
   topics = next.slice(0, MAX_SEE_MORE_TOPICS);
   for (const t of [...pools.keys()]) if (!topics.includes(t)) pools.delete(t);
   for (const t of [...introTopics]) if (!topics.includes(t)) introTopics.delete(t);
-  for (const [key, post] of postBySlot) if (!topics.includes(post.topic)) postBySlot.delete(key);
-  document.querySelectorAll<HTMLElement>(`.${INJECTED_CLASS}`).forEach(el => {
-    if (!topics.includes(el.dataset.topic ?? '')) el.remove();
-  });
-  for (const t of topics) if (!pools.has(t)) pools.set(t, { ready: [], unchecked: [], cursor: null, exhausted: false, busy: false, retryAt: 0 });
+  releasePosts(post => !topics.includes(post.topic));
+  for (const t of topics) if (!pools.has(t)) pools.set(t, { ready: [], unchecked: [], busy: false, retryAt: 0 });
   for (const t of topics) void refill(t);
   if (topics.length && !sweepTimer) sweepTimer = setInterval(sweep, SWEEP_INTERVAL_MS);
   if (!topics.length && sweepTimer) { clearInterval(sweepTimer); sweepTimer = null; }
@@ -162,16 +186,34 @@ function setTopics(next: string[]): void {
 async function refill(topic: string): Promise<void> {
   const pool = pools.get(topic);
   if (!pool || pool.busy || Date.now() < pool.retryAt) return;
+  // Background tabs don't search: each open X tab pages every topic on its
+  // own, and only the visible one is being read. They catch up when shown.
+  if (document.hidden) return;
   pool.busy = true;
   try {
     while (pools.get(topic) === pool && pool.ready.length < READY_TARGET) {
       if (!pool.unchecked.length) {
-        if (pool.exhausted) break;
-        const res: (BskySearchResult & { error?: string }) | undefined = await chrome.runtime.sendMessage({ type: 'fetchBlueskyPosts', topic, cursor: pool.cursor, sources: seeMoreSources(sourceSetting) });
+        if (Date.now() < pool.retryAt) break;
+        // There's no cursor: every search returns the best posts on the topic
+        // that aren't in here — seen, placed, or already returned.
+        const seen = buildSeenFilter([...impressedUris, ...seenUris, ...returnedUris]);
+        // Ask for as many posts as the pool is short of, so a topic where
+        // few candidates pass costs one search rather than one per page.
+        // A new topic waiting for its slide-in asks for one, so the first
+        // post isn't held back while the backend looks for more.
+        const want = introTopics.has(topic) ? 1 : Math.max(1, READY_TARGET - pool.ready.length);
+        const now = Date.now();
+        while (searchTimes.length && now - searchTimes[0] >= 60000) searchTimes.shift();
+        if (searchTimes.length >= MAX_SEARCHES_PER_MINUTE) {
+          console.warn(`[Bouncer] See more: ${MAX_SEARCHES_PER_MINUTE} searches in the last minute; pausing "${topic}"`);
+          pool.retryAt = searchTimes[0] + 60000;
+          break;
+        }
+        searchTimes.push(now);
+        const res: (BskySearchResult & { error?: string }) | undefined = await chrome.runtime.sendMessage({ type: 'fetchBlueskyPosts', topic, sources: seeMoreSources(sourceSetting), seen, want });
         if (!res?.posts || res.error) { pool.retryAt = Date.now() + SEARCH_RETRY_MS; break; }
-        pool.cursor = res.cursor;
-        // An empty window just means a quiet stretch; keep walking back.
-        if (!res.cursor) pool.exhausted = true;
+        for (const uri of res.returned) returnedUris.add(uri);
+        if (res.exhausted) pool.retryAt = Date.now() + EXHAUSTED_RETRY_MS;
         pool.unchecked.push(...shuffled(res.posts.filter(p => allowed(p) && !alreadyShown(p))));
         continue;
       }
@@ -182,7 +224,7 @@ async function refill(topic: string): Promise<void> {
         if (await passesHideFilters(post) && pools.get(topic) === pool) {
           pool.ready.push(post);
           if (introTopics.has(topic)) endIntro(topic, introducePost(topic) ? null : 'no free gap in reach on screen');
-          else scheduleFillAhead();
+          else scheduleFillNear();
         }
       }));
     }
@@ -334,7 +376,9 @@ function onHomeTimeline(): boolean {
 
 /** Called for every tweet the post observer processes (including recycled ones). */
 export function noteTimelinePost(article: HTMLElement): void {
-  if (!adapter || !topics.length || !onHomeTimeline()) return;
+  // Tweets are counted even with no topics yet, so the slots are already in
+  // place when the first topic's posts arrive.
+  if (!adapter || !onHomeTimeline()) return;
   const cell = adapter.getPostContainer(article);
   if (cell === article) return;
   const hostKey = adapter.getPostContentKey(article);
@@ -351,6 +395,7 @@ export function noteTimelinePost(article: HTMLElement): void {
     if (!injectedIn(cell, slot)) placePost(cell, renderPost(post, hostKey, slot), slot);
   }
   if (assigned) return;
+  if (dueHosts.has(hostKey)) { watchDue(cell); return; }
 
   if (!countedHostKeys.has(hostKey)) {
     countedHostKeys.add(hostKey);
@@ -363,11 +408,83 @@ export function noteTimelinePost(article: HTMLElement): void {
   if (next && threaded?.call(adapter, next)) return;
   if (cell.dataset.filteredByExtension) return;
 
-  const post = takePost();
-  if (!post) return;
   tweetsSinceInject = 0;
-  postBySlot.set(slotKey(hostKey, 'below'), post);
-  placePost(cell, renderPost(post, hostKey, 'below'), 'below');
+  dueHosts.add(hostKey);
+  watchDue(cell);
+}
+
+function watchDue(cell: HTMLElement): void {
+  if (typeof IntersectionObserver === 'undefined') return;
+  fillObserver ??= new IntersectionObserver(entries => {
+    for (const entry of entries) {
+      const target = entry.target as HTMLElement;
+      if (entry.isIntersecting) nearCells.add(target);
+      else nearCells.delete(target);
+    }
+    scheduleFillNear();
+  }, { rootMargin: FILL_AHEAD_MARGIN });
+  fillObserver.observe(cell);
+  watchedCells.add(cell);
+}
+
+function unwatch(cell: HTMLElement): void {
+  fillObserver?.unobserve(cell);
+  watchedCells.delete(cell);
+  nearCells.delete(cell);
+}
+
+/** Fill the due slots within FILL_AHEAD_MARGIN, top to bottom, from the
+ *  topic rotation. A slot whose spot is already on screen is left for later
+ *  (it fills if it goes back below the viewport), so no post pops in where
+ *  the user is looking. Runs when a due tweet comes near and whenever a
+ *  post becomes ready. */
+function fillNear(): void {
+  if (!adapter || !onHomeTimeline()) return;
+  const cells = [...nearCells].sort((a, b) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1));
+  for (const cell of cells) {
+    const article = cell.isConnected ? cell.querySelector<HTMLElement>(adapter.selectors.post) : null;
+    const hostKey = article ? adapter.getPostContentKey(article) : null;
+    // Recycled for another tweet, or already filled.
+    if (!hostKey || !dueHosts.has(hostKey) || postBySlot.has(slotKey(hostKey, 'below'))) { unwatch(cell); continue; }
+    if (cell.dataset.filteredByExtension) {
+      // Hidden by a filter: the next tweet takes the slot.
+      dueHosts.delete(hostKey);
+      unwatch(cell);
+      tweetsSinceInject = injectEvery;
+      continue;
+    }
+    if (cell.getBoundingClientRect().bottom <= window.innerHeight) continue;
+    const post = takePost();
+    if (!post) return;
+    dueHosts.delete(hostKey);
+    unwatch(cell);
+    postBySlot.set(slotKey(hostKey, 'below'), post);
+    placePost(cell, renderPost(post, hostKey, 'below'), 'below');
+  }
+}
+
+let fillScheduled = false;
+function scheduleFillNear(): void {
+  if (fillScheduled) return;
+  fillScheduled = true;
+  setTimeout(() => { fillScheduled = false; fillNear(); }, 0);
+}
+
+/** Take down placed posts matching `drop` (a removed topic, NSFW turned
+ *  off). Their below-tweet slots become due again, to be refilled. */
+function releasePosts(drop: (post: BskyFeedPost) => boolean): void {
+  for (const [key, post] of postBySlot) {
+    if (!drop(post)) continue;
+    postBySlot.delete(key);
+    if (key.startsWith('below:')) dueHosts.add(key.slice('below:'.length));
+  }
+  document.querySelectorAll<HTMLElement>(`.${INJECTED_CLASS}`).forEach(el => {
+    const slot: Slot = el.dataset.slot === 'above' ? 'above' : 'below';
+    if (postBySlot.has(slotKey(el.dataset.hostKey ?? '', slot))) return;
+    const cell = el.parentElement;
+    el.remove();
+    if (cell && slot === 'below') watchDue(cell);
+  });
 }
 
 function injectedIn(cell: Element, slot: Slot): boolean {
@@ -431,57 +548,15 @@ function introducePost(topic: string): boolean {
   if (!post) return false;
   for (const uri of shownUris(post)) seenUris.add(uri);
   postBySlot.set(slotKey(slot.hostKey, slot.slot), post);
-  tweetsSinceInject = 0;
+  if (slot.slot === 'below' && dueHosts.delete(slot.hostKey)) unwatch(slot.cell);
   const root = renderPost(post, slot.hostKey, slot.slot);
   placePost(slot.cell, root, slot.slot);
   slideIn(root);
-  fillAhead();
   if (slot.y > maxY) {
     const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     window.scrollBy({ top: slot.y - window.innerHeight / 2, behavior: reduceMotion ? 'auto' : 'smooth' });
   }
   return true;
-}
-
-/** Bring the 1-in-N pattern up to date across the tweets X has already
- *  rendered below the viewport. They were counted when they first rendered,
- *  and any that came due while no post was ready (a topic just added, a
- *  slow search) were skipped; without this they'd stay bare until X
- *  recycles them, a gap of several tweets before the mix shows up. Runs
- *  after a topic's first post slides in and whenever a post becomes ready.
- *  Only tweets fully below the viewport get a post, so nothing pops in on
- *  screen. */
-function fillAhead(): void {
-  if (!adapter || !topics.length || !onHomeTimeline()) return;
-  const threaded = (adapter as unknown as { _isReplyInThread?: (el: Element) => boolean })._isReplyInThread;
-  let since = 0;
-  for (const article of document.querySelectorAll<HTMLElement>(adapter.selectors.post)) {
-    const cell = adapter.getPostContainer(article);
-    if (cell === article) continue;
-    const hostKey = adapter.getPostContentKey(article);
-    if (!hostKey || cell.dataset.filteredByExtension) continue;
-    if (postBySlot.has(slotKey(hostKey, 'below'))) { since = 0; continue; }
-    if (postBySlot.has(slotKey(hostKey, 'above'))) since = 0;
-    since++;
-    if (since < injectEvery - 1) continue;
-    if (cell.getBoundingClientRect().top <= window.innerHeight) continue;
-    const next = cell.nextElementSibling;
-    if (next && threaded?.call(adapter, next)) continue;
-    const post = takePost();
-    if (!post) break;
-    countedHostKeys.add(hostKey);
-    postBySlot.set(slotKey(hostKey, 'below'), post);
-    placePost(cell, renderPost(post, hostKey, 'below'), 'below');
-    since = 0;
-  }
-  tweetsSinceInject = since;
-}
-
-let fillScheduled = false;
-function scheduleFillAhead(): void {
-  if (fillScheduled) return;
-  fillScheduled = true;
-  setTimeout(() => { fillScheduled = false; fillAhead(); }, 0);
 }
 
 /** Open a gap next to the host tweet and slide the post into it. */
@@ -512,6 +587,7 @@ function slideIn(root: HTMLElement): void {
 // host no longer matches, and give a hidden host's post to a later tweet.
 function sweep(): void {
   for (const root of observedRoots) if (!root.isConnected) stopObserving(root);
+  for (const cell of watchedCells) if (!cell.isConnected) unwatch(cell);
   document.querySelectorAll<HTMLElement>(`.${INJECTED_CLASS}`).forEach(el => {
     const cell = el.parentElement;
     const article = cell?.querySelector<HTMLElement>(adapter.selectors.post);
