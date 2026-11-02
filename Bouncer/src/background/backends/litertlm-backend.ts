@@ -67,6 +67,12 @@ export class LitertlmBackend implements LocalBackend {
     if (!this.modelDef) throw new Error('Engine not loaded');
     return visionConfigFor(this.modelDef)?.maxVisionTokensPerImage ?? 0;
   }
+
+  // eslint-disable-next-line @typescript-eslint/require-await
+  async getContextWindow(): Promise<number> {
+    if (!this.modelDef) throw new Error('Engine not loaded');
+    return this.modelDef.litertlmConfig?.maxTokens ?? 1024;
+  }
 }
 
 // Static cache probe used by LocalEngine to query state without loading the

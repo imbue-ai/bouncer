@@ -6,7 +6,7 @@ import { getStorage, setStorage, removeStorage, phraseSetKey } from '../shared/s
 import type { AiFilterIntentState, ContentToBackgroundMessage, LocalModelStatus } from '../types';
 import { refreshAiFilterIntent, pruneAiFilterPhrases, canJudgeAiIntent } from './ai-intent';
 import { STRUCTURAL_FILTER_SITES, structuralFilterKind } from '../shared/structural-filters';
-import { localEngine } from './local-model';
+import { localEngine, localModelUnsupportedReason } from './local-model';
 import {
   initPipeline, loadCache, saveCache,
   setActiveTab, enqueuePost, isKeyPending, clearTabQueue,
@@ -507,18 +507,21 @@ async function handleMessage(
       const data = await getStorage(['localModelStatuses']);
       const statuses: Record<string, { state: string; reason?: string }> = (data.localModelStatuses || {});
 
-      // Check WebGPU support
-      const webgpuSupported = !!navigator.gpu;
+      // True when any local model can run here (field name predates the
+      // Prompt API backend, which doesn't need WebGPU).
+      let webgpuSupported = false;
 
       // Always check cache status for models not currently in a loading state
       for (const model of PREDEFINED_MODELS.local) {
         const currentStatus = statuses[model.name];
         // Skip cache check only if actively downloading/initializing
         const isLoading = currentStatus?.state === 'downloading' || currentStatus?.state === 'initializing';
+        const unsupportedReason = await localModelUnsupportedReason(model);
+        if (!unsupportedReason) webgpuSupported = true;
 
         if (!isLoading) {
-          if (!webgpuSupported) {
-            statuses[model.name] = { state: 'unsupported', reason: 'WebGPU not supported' };
+          if (unsupportedReason) {
+            statuses[model.name] = { state: 'unsupported', reason: unsupportedReason };
           } else if (localEngine.isModelLoaded(model.name)) {
             // Model is currently loaded in GPU memory
             statuses[model.name] = { state: 'ready' };
@@ -1071,11 +1074,11 @@ chrome.runtime.onInstalled.addListener((details) => {
     (async () => {
 
       const statuses: Record<string, LocalModelStatus> = {};
-      const webgpuSupported = !!navigator.gpu;
 
       for (const model of PREDEFINED_MODELS.local) {
-        if (!webgpuSupported) {
-          statuses[model.name] = { state: 'unsupported', reason: 'WebGPU not supported' };
+        const unsupportedReason = await localModelUnsupportedReason(model);
+        if (unsupportedReason) {
+          statuses[model.name] = { state: 'unsupported', reason: unsupportedReason };
         } else {
           const cached = await localEngine.checkCached(model.name);
           // Use 'cached' for models in cache but not loaded (they will auto-load when selected)

@@ -166,7 +166,7 @@ export interface ModelDef {
 /** A local model with backend-specific configuration. */
 export interface LocalModelDef extends ModelDef {
   isLocal?: boolean;
-  backend?: 'litertlm';
+  backend?: 'litertlm' | 'prompt-api';
   extraBody?: Record<string, unknown>;
   inferenceParams?: Record<string, unknown>;
   // iOS on-device entries only — carried over from the native registry
@@ -175,6 +175,12 @@ export interface LocalModelDef extends ModelDef {
   sizeDisplay?: string;
   isSupportedOnThisDevice?: boolean;
   requiredRAMDisplay?: string;
+  // Chrome built-in AI (Prompt API / Gemini Nano). Chrome owns the weights;
+  // the context window is read from the live session.
+  promptApiConfig?: {
+    // Images per post; extras are dropped.
+    maxNumImages: number;
+  };
   litertlmConfig?: {
     // Absolute URL to the `.litertlm` model asset.
     modelUrl: string;

@@ -49,6 +49,20 @@ export const LOCAL_SYSTEM_PROMPT_SINGLE = `You will see a social media post and 
 Answer with a single word: yes or no. Do not output anything else — no pipes, no tables, no second verdict, no explanation.
 `;
 
+// Constrained-decoding regex (iOS LlGuidance, Chrome Prompt API): forces N pipe-delimited yes/no
+// cells with optional leading/trailing pipes and tight ` ?` (zero or one
+// space) padding. We deliberately avoid `\s*` here because that includes
+// newlines and tabs — Gemma can otherwise spend its maxOutputTokens budget
+// on whitespace tokens and never reach the Nth verdict.
+//
+// For N=3: `^\|? ?(yes|no)( ?\| ?(yes|no)){2}\|? ?$`
+export function yesnoRowRegex(n: number): string {
+  const cell = '(yes|no)';
+  return n === 1
+    ? `^\\|? ?${cell} ?\\|? ?$`
+    : `^\\|? ?${cell}( ?\\| ?${cell}){${n - 1}}\\|? ?$`;
+}
+
 // System prompt for the local-model AI-intent judgment: given the user's
 // filter phrases, which ones ask for AI-generated content to be removed?
 // This is the local equivalent of the Imbue backend's detectAiIntent probe
