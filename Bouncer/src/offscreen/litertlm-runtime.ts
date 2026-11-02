@@ -11,11 +11,14 @@ import {
   unloadLiteRtLm,
   Backend,
   SamplerType,
+  SUPPORTED_IMAGE_MIME_TYPES,
+  type ContentPart,
   type Conversation,
   type ConversationConfig,
   type Message,
 } from '@litert-lm/core';
 import type { LocalModelDef, ChatMessage } from '../types';
+import { PREDEFINED_MODELS } from '../shared/models';
 
 // Cache the .litertlm model in the standard Cache Storage so a reload skips
 // the multi-GB download. Keyed by the model URL so multiple models coexist.
@@ -31,6 +34,40 @@ const WASM_BASE = 'dist/litertlm-wasm';
 // (truncateText) to err on the side of fitting in the budget.
 const CHARS_PER_TOKEN = 3;
 
+// Vision config for the loaded model, or null when the engine is text-only.
+type VisionConfig = NonNullable<NonNullable<LocalModelDef['litertlmConfig']>['vision']>;
+
+export function visionConfigFor(modelDef: LocalModelDef): VisionConfig | null {
+  if (modelDef.supportsImages !== true) return null;
+  return modelDef.litertlmConfig?.vision ?? null;
+}
+
+// Fetch one post image as bytes LiteRT-LM's native decoder accepts. The
+// platform CDNs (pbs.twimg.com, i.ytimg.com, *.fbcdn.net, media.licdn.com)
+// all send Access-Control-Allow-Origin, so the extension origin can read
+// them directly. Formats the decoder lacks (WebP, AVIF) are re-encoded to
+// PNG through an OffscreenCanvas.
+async function fetchImageBytes(url: string): Promise<Uint8Array> {
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error(`Image fetch failed: ${resp.status}`);
+  const blob = await resp.blob();
+  const mime = blob.type.split(';')[0].trim().toLowerCase();
+  if (SUPPORTED_IMAGE_MIME_TYPES.has(mime)) {
+    return new Uint8Array(await blob.arrayBuffer());
+  }
+  const bitmap = await createImageBitmap(blob);
+  try {
+    const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('No 2d context for image transcode');
+    ctx.drawImage(bitmap, 0, 0);
+    const png = await canvas.convertToBlob({ type: 'image/png' });
+    return new Uint8Array(await png.arrayBuffer());
+  } finally {
+    bitmap.close();
+  }
+}
+
 export interface InitProgress {
   progress: number;
   text: string;
@@ -41,6 +78,19 @@ function getWasmBaseUrl(): string {
   // LiteRT-LM loader appends litertlm_wasm_internal.js (or its compat
   // variant) to this prefix.
   return chrome.runtime.getURL(`${WASM_BASE}/`);
+}
+
+// Delete cached models no catalog entry points at any more — e.g. the
+// text-only `-web.litertlm` files the catalog used before vision. Each is
+// 2-3 GB, so drop them before a new download needs the quota.
+async function pruneStaleModels(cache: Cache): Promise<void> {
+  const current = new Set(PREDEFINED_MODELS.local.map(m => m.litertlmConfig?.modelUrl));
+  for (const req of await cache.keys()) {
+    if (current.has(req.url)) continue;
+    console.log('[LiteRT-LM] Pruning stale cached model', req.url);
+    try { await cache.delete(req); }
+    catch (e) { console.error('[LiteRT-LM] Error pruning', req.url, e); }
+  }
 }
 
 // Stream a remote model into the Cache Storage while reporting progress.
@@ -59,6 +109,8 @@ async function fetchAndCacheModel(
     // stays hidden for the few seconds of cache-to-GPU streaming.
     return cached;
   }
+
+  await pruneStaleModels(cache);
 
   const upstream = await fetch(url, { signal: abortSignal });
   if (!upstream.ok || !upstream.body) {
@@ -172,14 +224,26 @@ export class LitertlmRuntime {
     const cached = await fetchAndCacheModel(cfg.modelUrl, onProgress, abortSignal);
     if (abortSignal.aborted) throw new Error('aborted');
 
-    // LiteRT-LM's default backend (GPU_ARTISAN) supports streaming load:
-    // pass the ReadableStream straight into Engine.create so the multi-GB
-    // blob is streamed into the GPU instead of materialized contiguously.
+    // Engine.create supports streaming load: pass the ReadableStream straight
+    // in so the multi-GB blob is streamed into the GPU instead of
+    // materialized contiguously. The backend (GPU for the generic files,
+    // GPU_ARTISAN for `-web` ones) is resolved from the file itself.
     if (!cached.body) throw new Error('Cached model response has no body');
 
+    // Vision runs the encoder on WebGPU alongside the decoder. Leaving
+    // visionBackend unset keeps the engine text-only, which is required for
+    // the GPU_ARTISAN `-web` files (they carry no vision sections).
+    const vision = visionConfigFor(modelDef);
     this.engine = await Engine.create({
       model: cached.body,
-      mainExecutorSettings: { maxNumTokens: cfg.maxTokens ?? 1024 },
+      ...(vision ? {
+        visionBackend: Backend.GPU,
+        maxVisionTokensPerImage: vision.maxVisionTokensPerImage,
+      } : {}),
+      mainExecutorSettings: {
+        maxNumTokens: cfg.maxTokens ?? 1024,
+        ...(vision ? { maxNumImages: vision.maxNumImages } : {}),
+      },
     });
 
     if (abortSignal.aborted) {
@@ -215,33 +279,67 @@ export class LitertlmRuntime {
   // Translate Bouncer's ChatMessage[] into LiteRT-LM's Preface + final user
   // message. The system message goes into the preface; the last user message
   // is what gets sent. LiteRT-LM applies the model's chat template internally.
-  private splitMessages(messages: ChatMessage[]): { prefaceMessages: Message[]; userText: string } {
+  // Preface messages are flattened to text (the prefix-cache key is built
+  // from them); image_url parts on the last user message become image parts
+  // when the engine has vision, and are dropped otherwise.
+  private async splitMessages(messages: ChatMessage[]): Promise<{ prefaceMessages: Message[]; userMessage: Message }> {
     const flatten = (content: ChatMessage['content']): string =>
       typeof content === 'string'
         ? content
         : content.filter(c => c.type === 'text').map(c => c.text ?? '').join('');
 
     const prefaceMessages: Message[] = [];
-    let userText = '';
+    let userMessage: Message = { role: 'user', content: '' };
     for (let i = 0; i < messages.length; i++) {
       const m = messages[i];
-      const text = flatten(m.content);
       const isLastUser = i === messages.length - 1 && m.role === 'user';
       if (isLastUser) {
-        userText = text;
+        const images = await this.loadImages(m.content);
+        userMessage = images.length > 0
+          // Images before the text: Gemma's documented ordering, and the
+          // prompt text refers to "the attached images".
+          ? { role: 'user', content: [...images, { type: 'text', text: flatten(m.content) }] }
+          : { role: 'user', content: flatten(m.content) };
       } else {
-        prefaceMessages.push({ role: m.role, content: text });
+        prefaceMessages.push({ role: m.role, content: flatten(m.content) });
       }
     }
-    return { prefaceMessages, userText };
+    return { prefaceMessages, userMessage };
+  }
+
+  // Fetch the message's image_url parts, capped at the engine's maxNumImages.
+  // A failed image is skipped rather than failing the post — the rest of the
+  // post (text and any other images) is still classifiable.
+  private async loadImages(content: ChatMessage['content']): Promise<ContentPart[]> {
+    const vision = this.modelDef ? visionConfigFor(this.modelDef) : null;
+    if (!vision || typeof content === 'string') return [];
+    const urls = content
+      .filter(c => c.type === 'image_url' && c.image_url?.url)
+      .map(c => c.image_url!.url)
+      .slice(0, vision.maxNumImages);
+    const results = await Promise.allSettled(urls.map(fetchImageBytes));
+    const parts: ContentPart[] = [];
+    results.forEach((r, i) => {
+      if (r.status === 'fulfilled') {
+        parts.push({ type: 'image', data: r.value });
+      } else {
+        console.warn('[LiteRT-LM] Skipping image', urls[i], r.reason);
+      }
+    });
+    return parts;
   }
 
   generate(messages: ChatMessage[], maxTokens: number, _params: Record<string, unknown>): Promise<string> {
     if (!this.engine) throw new Error('Engine not loaded');
+    // Start image fetches now so they overlap with whatever generation is
+    // ahead of us in the chain. Swallow here; the rejection is rethrown when
+    // awaited inside the chain.
+    const split = this.splitMessages(messages);
+    split.catch(() => undefined);
     return this.enqueue(async () => {
       if (!this.engine) throw new Error('Engine not loaded');
 
-      const { prefaceMessages, userText } = this.splitMessages(messages);
+      const { prefaceMessages, userMessage } = await split;
 
       // Clone from the prefix-cached base so only the user message needs
       // prefill; each clone is stateless — no KV-cache carryover between
@@ -257,7 +355,7 @@ export class LitertlmRuntime {
         await this.deleteRetiredClone();
         this.activeConversation = conversation;
         this.generating = true;
-        const response = await conversation.sendMessage(userText);
+        const response = await conversation.sendMessage(userMessage);
         const raw = this.extractText(response);
         return raw.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
       } catch (e) {
@@ -409,7 +507,3 @@ export function unloadLitertlmWasm(): void {
   }
 }
 
-// Suppress unused-import warning on Backend. We don't override the default
-// (GPU_ARTISAN, set by Engine.create) yet, but re-exporting keeps the import
-// list tied to the API surface the runtime depends on.
-export { Backend };
