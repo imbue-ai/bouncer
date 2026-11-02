@@ -198,9 +198,9 @@ describe('formatting', () => {
     });
   });
 
-  it('clamps the see-more frequency to 1 in 2 .. 1 in 10, defaulting to 1 in 5', () => {
-    expect(clampSeeMoreEvery(undefined)).toBe(5);
-    expect(clampSeeMoreEvery('3')).toBe(5);
+  it('clamps the see-more frequency to 1 in 2 .. 1 in 10, defaulting to 1 in 2', () => {
+    expect(clampSeeMoreEvery(undefined)).toBe(2);
+    expect(clampSeeMoreEvery('3')).toBe(2);
     expect(clampSeeMoreEvery(1)).toBe(2);
     expect(clampSeeMoreEvery(2)).toBe(2);
     expect(clampSeeMoreEvery(7.4)).toBe(7);
@@ -215,14 +215,14 @@ describe('formatting', () => {
     expect(mergeSeenUris([], [])).toEqual([]);
   });
 
-  it('maps the "Draw from" setting to request sources, defaulting to Bluesky', () => {
+  it('maps the "Draw from" setting to request sources, defaulting to both', () => {
     expect(seeMoreSources('bluesky')).toEqual(['bluesky']);
     expect(seeMoreSources('x')).toEqual(['x']);
     expect(seeMoreSources('both')).toEqual(['bluesky', 'x']);
     expect(clampSeeMoreSource('x')).toBe('x');
     expect(clampSeeMoreSource('both')).toBe('both');
-    expect(clampSeeMoreSource(undefined)).toBe('bluesky');
-    expect(clampSeeMoreSource('threads')).toBe('bluesky');
+    expect(clampSeeMoreSource(undefined)).toBe('both');
+    expect(clampSeeMoreSource('threads')).toBe('both');
   });
 
   it('tells X posts (from xstream) from Bluesky posts by URI', () => {

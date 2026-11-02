@@ -19,7 +19,7 @@ export const MAX_SEE_MORE_TOPIC_LENGTH = 60;
 /** One Bluesky post per this many timeline tweets. Set from the desktop
  *  popup's slider, from 1 in 10 up to 1 in 2. */
 export const SEE_MORE_EVERY_KEY = 'seeMoreEvery_twitter';
-export const DEFAULT_SEE_MORE_EVERY = 5;
+export const DEFAULT_SEE_MORE_EVERY = 2;
 export const MIN_SEE_MORE_EVERY = 2;
 export const MAX_SEE_MORE_EVERY = 10;
 
@@ -29,9 +29,9 @@ export const MAX_SEE_MORE_EVERY = 10;
 export type SeeMoreSource = 'bluesky' | 'x';
 export type SeeMoreSourceSetting = SeeMoreSource | 'both';
 export const SEE_MORE_SOURCE_KEY = 'seeMoreSource_twitter';
-export const DEFAULT_SEE_MORE_SOURCE: SeeMoreSourceSetting = 'bluesky';
+export const DEFAULT_SEE_MORE_SOURCE: SeeMoreSourceSetting = 'both';
 
-/** The stored setting; unset means the default (Bluesky). Anything else
+/** The stored setting; unset means the default (both). Anything else
  *  unrecognized also falls back to the default, but says so. */
 export function clampSeeMoreSource(v: unknown): SeeMoreSourceSetting {
   if (v === 'bluesky' || v === 'x' || v === 'both') return v;
