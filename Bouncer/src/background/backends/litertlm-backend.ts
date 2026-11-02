@@ -8,7 +8,7 @@
 import type { LocalModelDef, ChatMessage } from '../../types';
 import type { LocalBackend, InitProgress } from './types';
 import { LitertlmProxy } from './litertlm-proxy';
-import { LitertlmRuntime } from '../../offscreen/litertlm-runtime';
+import { LitertlmRuntime, visionConfigFor } from '../../offscreen/litertlm-runtime';
 
 interface Impl {
   initialize(d: LocalModelDef, p: (x: InitProgress) => void, s: AbortSignal): Promise<void>;
@@ -25,6 +25,7 @@ function hasDocument(): boolean {
 
 export class LitertlmBackend implements LocalBackend {
   private impl: Impl;
+  private modelDef: LocalModelDef | null = null;
 
   constructor() {
     // Direct mode in any window/event-page context; proxy through the
@@ -32,11 +33,13 @@ export class LitertlmBackend implements LocalBackend {
     this.impl = hasDocument() ? new LitertlmRuntime() : new LitertlmProxy();
   }
 
-  initialize(modelDef: LocalModelDef, onProgress: (p: InitProgress) => void, abortSignal: AbortSignal): Promise<void> {
-    return this.impl.initialize(modelDef, onProgress, abortSignal);
+  async initialize(modelDef: LocalModelDef, onProgress: (p: InitProgress) => void, abortSignal: AbortSignal): Promise<void> {
+    await this.impl.initialize(modelDef, onProgress, abortSignal);
+    this.modelDef = modelDef;
   }
 
   unload(): Promise<void> {
+    this.modelDef = null;
     return this.impl.unload();
   }
 
@@ -56,11 +59,13 @@ export class LitertlmBackend implements LocalBackend {
     return this.impl.truncateText(text, maxTokens);
   }
 
+  // Per-image token cost for context budgeting. Read from the model def
+  // rather than the engine so the SW doesn't need an offscreen round-trip;
+  // the runtime passes the same value to Engine.create.
   // eslint-disable-next-line @typescript-eslint/require-await
   async getImageEmbedSize(): Promise<number> {
-    // Text-only for v1. Multimodal will need a separate code path that
-    // forwards images across the offscreen message channel.
-    return 0;
+    if (!this.modelDef) throw new Error('Engine not loaded');
+    return visionConfigFor(this.modelDef)?.maxVisionTokensPerImage ?? 0;
   }
 }
 

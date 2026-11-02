@@ -36,19 +36,25 @@ if (inApp && injectedIosModels.length === 0) {
 }
 
 export const PREDEFINED_MODELS: PredefinedModelsMap = {
+  // Web models use the generic `.litertlm` files (Backend.GPU) rather than
+  // the `-web`/`-gpu` GPU_ARTISAN builds: only the generic files carry the
+  // vision encoder sections. Ids keep their "-web" suffix because they're
+  // persisted in users' selectedModel setting. The context window fits up to
+  // 4 images x 280 vision tokens (Gemma 4's default budget) plus the prompt.
   local: [
     {
       name: "gemma-4-E2B-it-web",
       display: "Gemma 4 E2B (Instruct)",
       isLocal: true,
       backend: 'litertlm',
-      supportsImages: false,
-      sizeGB: 2.0,
+      supportsImages: true,
+      sizeGB: 2.6,
       inferenceParams: { temperature: 0.0 },
       litertlmConfig: {
-        modelUrl: "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it-web.litertlm",
-        maxTokens: 1024,
+        modelUrl: "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it.litertlm",
+        maxTokens: 2048,
         topK: 40,
+        vision: { maxNumImages: 4, maxVisionTokensPerImage: 280 },
       }
     },
     {
@@ -56,13 +62,14 @@ export const PREDEFINED_MODELS: PredefinedModelsMap = {
       display: "Gemma 4 E4B (Instruct)",
       isLocal: true,
       backend: 'litertlm',
-      supportsImages: false,
-      sizeGB: 3.0,
+      supportsImages: true,
+      sizeGB: 3.7,
       inferenceParams: { temperature: 0.0 },
       litertlmConfig: {
-        modelUrl: "https://huggingface.co/litert-community/gemma-4-E4B-it-litert-lm/resolve/main/gemma-4-E4B-it-web.litertlm",
-        maxTokens: 1024,
+        modelUrl: "https://huggingface.co/litert-community/gemma-4-E4B-it-litert-lm/resolve/main/gemma-4-E4B-it.litertlm",
+        maxTokens: 2048,
         topK: 40,
+        vision: { maxNumImages: 4, maxVisionTokensPerImage: 280 },
       }
     }
   ],

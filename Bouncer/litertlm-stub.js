@@ -28,3 +28,5 @@ export const SamplerType = {
   TOP_P: 2,
   GREEDY: 3,
 };
+
+export const SUPPORTED_IMAGE_MIME_TYPES = new Set();
