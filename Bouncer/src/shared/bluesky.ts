@@ -188,6 +188,12 @@ export interface BskyFeedPost {
    *  is none). */
   images: Array<{ url: string; fullUrl: string; alt: string; aspectRatio: number | null }>;
   isVideo: boolean;
+  /** A video's HLS playlist or MP4 (https), for the inline player;
+   *  images[0] is its poster. Null for a video without one, which shows as
+   *  a poster. */
+  videoUrl: string | null;
+  /** A GIF-like video: loops silently, no controls. */
+  isGif: boolean;
   external: { uri: string; title: string; domain: string; thumbUrl: string | null } | null;
   /** The quoted post, for a quote post. 'unavailable' when it was deleted,
    *  blocked, or detached by its author (shown as a placeholder, like X
@@ -205,7 +211,7 @@ export interface BskyFeedPost {
 
 /** The post inside a quote post: enough to render X's compact quote card. */
 export type BskyQuotedPost = Pick<BskyFeedPost,
-  'uri' | 'url' | 'authorName' | 'authorHandle' | 'authorUrl' | 'avatarUrl' | 'text' | 'createdAt' | 'images' | 'isVideo' | 'external'>;
+  'uri' | 'url' | 'authorName' | 'authorHandle' | 'authorUrl' | 'avatarUrl' | 'text' | 'createdAt' | 'images' | 'isVideo' | 'videoUrl' | 'isGif' | 'external'>;
 
 export interface BskySearchResult {
   posts: BskyFeedPost[];
@@ -239,6 +245,12 @@ export interface RawEmbedView {
   $type: string;
   images?: RawImageView[];
   thumbnail?: string;
+  /** video#view: the HLS playlist, the video's alt text, and "gif" for a
+   *  GIF-like video. mp4: xstream's, for an X video (in place of a playlist). */
+  playlist?: string;
+  mp4?: string;
+  alt?: string;
+  presentation?: string;
   aspectRatio?: RawAspectRatio;
   /** domain: xstream's, for an X link card, whose uri may be a t.co link. */
   external?: { uri: string; title?: string; thumb?: string; domain?: string };
@@ -305,7 +317,7 @@ export function facetsToLinks(text: string, facets: RawFacet[] | undefined): Bsk
   return links.filter((l, i) => i === 0 || l.start >= links[i - 1].end);
 }
 
-export interface RawMedia { images: RawImageView[]; isVideo: boolean; external: RawEmbedView['external'] | null }
+export interface RawMedia { images: RawImageView[]; isVideo: boolean; videoUrl?: string; isGif?: boolean; external: RawEmbedView['external'] | null }
 
 /** A post's own media (photos, video poster, or link card). A quoted post's
  *  media is not included; see rawQuote. */
@@ -342,7 +354,10 @@ export function embedMedia(view: RawEmbedView | undefined): RawMedia {
   if (embed?.$type === 'app.bsky.embed.recordWithMedia#view') embed = embed.media;
   if (!embed) return { images: [], isVideo: false, external: null };
   if (embed.$type === 'app.bsky.embed.images#view') return { images: (embed.images ?? []).slice(0, 4), isVideo: false, external: null };
-  if (embed.$type === 'app.bsky.embed.video#view' && embed.thumbnail) return { images: [{ thumb: embed.thumbnail, aspectRatio: embed.aspectRatio }], isVideo: true, external: null };
+  if (embed.$type === 'app.bsky.embed.video#view' && embed.thumbnail) return {
+      images: [{ thumb: embed.thumbnail, alt: embed.alt, aspectRatio: embed.aspectRatio }],
+      isVideo: true, videoUrl: embed.playlist ?? embed.mp4, isGif: embed.presentation === 'gif', external: null,
+    };
   if (embed.$type === 'app.bsky.embed.external#view' && embed.external) return { images: [], isVideo: false, external: embed.external };
   return { images: [], isVideo: false, external: null };
 }

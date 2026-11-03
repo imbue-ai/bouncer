@@ -132,9 +132,13 @@ describe('rawMedia', () => {
     const images = Array.from({ length: 6 }, (_, i) => ({ thumb: `https://cdn/${i}` }));
     expect(rawMedia(raw({ embed: { $type: 'app.bsky.embed.images#view', images } })).images).toHaveLength(4);
   });
-  it('uses the video thumbnail and flags video', () => {
-    const m = rawMedia(raw({ embed: { $type: 'app.bsky.embed.video#view', thumbnail: 'https://cdn/t', aspectRatio: { width: 16, height: 9 } } }));
-    expect(m).toEqual({ images: [{ thumb: 'https://cdn/t', aspectRatio: { width: 16, height: 9 } }], isVideo: true, external: null });
+  it('uses the video thumbnail as poster and keeps the playlist', () => {
+    const m = rawMedia(raw({ embed: { $type: 'app.bsky.embed.video#view', thumbnail: 'https://cdn/t', playlist: 'https://video/p.m3u8', alt: 'A creek', aspectRatio: { width: 16, height: 9 } } }));
+    expect(m).toEqual({ images: [{ thumb: 'https://cdn/t', alt: 'A creek', aspectRatio: { width: 16, height: 9 } }], isVideo: true, videoUrl: 'https://video/p.m3u8', isGif: false, external: null });
+  });
+  it("takes an X video's MP4 and GIF presentation", () => {
+    const m = rawMedia(raw({ embed: { $type: 'app.bsky.embed.video#view', thumbnail: 'https://pbs/t', mp4: 'https://video.twimg.com/v.mp4', presentation: 'gif' } }));
+    expect(m).toMatchObject({ isVideo: true, videoUrl: 'https://video.twimg.com/v.mp4', isGif: true });
   });
   it('unwraps recordWithMedia', () => {
     const m = rawMedia(raw({ embed: { $type: 'app.bsky.embed.recordWithMedia#view', media: { $type: 'app.bsky.embed.external#view', external: { uri: 'https://x.org', title: 'T' } } } }));

@@ -3,7 +3,7 @@
 import { toBlob } from 'html-to-image';
 import { asyncHandler } from '../shared/async';
 import { cleanReasoning, escapeHtml, formatPostForEvaluation, parseHTML, GUEST_FILTER_LIMIT, AI_DETECTION_SEED_PHRASE, phraseAddNeedsReEvaluation } from '../shared/utils';
-import { mountSeeMoreRow } from './bluesky-see-more';
+import { injectedPostSource, mountSeeMoreRow } from './bluesky-see-more';
 import { decideFilterRemoval, AI_DETECTOR_CATEGORIES } from '../shared/filter-removal';
 import { init as initPopup } from '../popup/index';
 import {
@@ -4419,9 +4419,11 @@ async function ensureFilterRepliesEnabled(article: HTMLElement) {
 
 // Append the "Quote tweet" toggle row to the bottom of the why-annoying
 // tooltip — X only: the bounce-quote flow drives X's composer, and without
-// the row applyBounceAction never quotes.
-function appendQuoteToggleRow(tooltip: HTMLElement): void {
+// the row applyBounceAction never quotes. Not on an injected Bluesky post,
+// which X can't quote.
+function appendQuoteToggleRow(tooltip: HTMLElement, article: HTMLElement): void {
   if (_deps.adapter.siteId !== 'twitter') return;
+  if (injectedPostSource(article) === 'bluesky') return;
   tooltip.appendChild(buildQuoteToggleRow());
 }
 
@@ -4622,7 +4624,7 @@ export function addWhyAnnoyingButton(article: HTMLElement) {
     if (!alreadyDone) {
       // Still loading — show spinner while we wait
       tooltip.replaceChildren(parseHTML(`<div class="ff-annoying-spinner"><div class="ff-spinner-dot"></div><div class="ff-spinner-dot"></div><div class="ff-spinner-dot"></div></div><span class="ff-annoying-thinking">Diagnosing annoyances</span><div class="ff-progress-bar"><div class="ff-progress-track"><div class="ff-progress-fill" data-stage="0"></div></div></div><a href="#" class="ff-missed-link">This should already be filtered</a>`));
-      appendQuoteToggleRow(tooltip);
+      appendQuoteToggleRow(tooltip, article);
 
       const progressListener = (message: { type: string; verified: number }) => {
         if (message.type === 'annoyingProgress') {
@@ -4757,7 +4759,7 @@ export function addWhyAnnoyingButton(article: HTMLElement) {
         }).catch(err => console.error('[Bouncer] missed flow error:', err));
       });
       tooltip.appendChild(missedLink);
-      appendQuoteToggleRow(tooltip);
+      appendQuoteToggleRow(tooltip, article);
 
     // Reposition after content change (height may differ from spinner)
     requestAnimationFrame(positionTooltip);

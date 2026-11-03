@@ -18,6 +18,7 @@
 // Candidates are screened against the user's hide filters by sending them
 // through the normal evaluatePost pipeline before they're shown.
 
+import type Hls from 'hls.js';
 import type { PlatformAdapter, PipelineResponse, PostContent } from '../types';
 import { filteringPausedKeyFor, getDescriptions, getFilteringPaused, getStorage, setStorage } from '../shared/storage';
 import { findStructuralMatch } from '../shared/structural-filters';
@@ -140,14 +141,21 @@ const topicRows = new Set<HTMLElement>();
 // on Restore, and rechecked with the timeline — all by the tweet code, so
 // it behaves exactly like one. The adapter is taught about injected posts:
 // each is its own container (not the host tweet's cell, which hiding would
-// take down), its content comes from the post (postContentFor), and
-// findPosts (content/index.ts) includes them via INJECTED_POST_SELECTOR.
+// take down), its content comes from the post (postContentFor), its action
+// bar takes the Bounce trashcan after Open (where a tweet's goes after
+// Share), and findPosts (content/index.ts) includes them via
+// INJECTED_POST_SELECTOR.
 export const INJECTED_POST_SELECTOR = `.${INJECTED_CLASS}[data-uri]`;
 const placedPosts = new WeakMap<HTMLElement, BskyFeedPost>();
 let processPost: ((post: HTMLElement) => void) | null = null;
 
 export function isInjectedPost(el: Element): boolean {
   return el instanceof HTMLElement && placedPosts.has(el);
+}
+
+/** Where an injected post is from, or null for anything else (a tweet). */
+export function injectedPostSource(el: Element): SeeMoreSource | null {
+  return el instanceof HTMLElement ? placedPosts.get(el)?.source ?? null : null;
 }
 
 function teachAdapter(a: PlatformAdapter): void {
@@ -158,6 +166,8 @@ function teachAdapter(a: PlatformAdapter): void {
     getPostContentKey: a.getPostContentKey.bind(a),
     isMainPost: a.isMainPost.bind(a),
     hidePost: a.hidePost.bind(a),
+    getShareButton: a.getShareButton.bind(a),
+    insertActionButton: a.insertActionButton.bind(a),
     extractPostContent: a.extractPostContent.bind(a),
     extractPostContentFromStore: a.extractPostContentFromStore.bind(a),
   };
@@ -165,6 +175,14 @@ function teachAdapter(a: PlatformAdapter): void {
   a.getPostUrl = el => post(el)?.url ?? orig.getPostUrl(el);
   a.getPostContentKey = el => post(el)?.url ?? orig.getPostContentKey(el);
   a.isMainPost = el => (post(el) ? false : orig.isMainPost(el));
+  // Open stands in for Share: addWhyAnnoyingButton (content/ui.ts) adds the
+  // trashcan only where there's one, and puts it right after.
+  const openAction = (el: HTMLElement) => el.querySelector<HTMLElement>('.bsky-x-actions > .bsky-x-action-open');
+  a.getShareButton = el => (post(el) ? openAction(el) : orig.getShareButton(el));
+  a.insertActionButton = (el, button) => {
+    if (post(el)) openAction(el)?.after(button);
+    else orig.insertActionButton(el, button);
+  };
   a.extractPostContent = el => { const p = post(el); return p ? postContentFor(p) : orig.extractPostContent(el); };
   a.extractPostContentFromStore = async el => { const p = post(el); return p ? postContentFor(p) : orig.extractPostContentFromStore(el); };
   // Hide just the post, the way the X adapter hides a tweet's cell (now if
@@ -714,6 +732,7 @@ function slideIn(root: HTMLElement): void {
 function sweep(): void {
   for (const root of observedRoots) if (!root.isConnected) stopObserving(root);
   for (const cell of watchedCells) if (!cell.isConnected) unwatch(cell);
+  for (const video of players.keys()) if (!video.isConnected) stopVideo(video);
   document.querySelectorAll<HTMLElement>(`.${INJECTED_CLASS}`).forEach(el => {
     const cell = el.parentElement;
     const article = cell?.querySelector<HTMLElement>(adapter.selectors.post);
@@ -910,6 +929,201 @@ function loadWithRetry(image: HTMLImageElement, url: string, onGiveUp: () => voi
   image.src = url;
 }
 
+// ==================== Inline video ====================
+
+// Videos play in place, the way a tweet's do: muted autoplay once half on
+// screen, paused when scrolled away, native controls for sound, seeking and
+// fullscreen; a GIF loops silently without them. X videos are MP4s (from
+// video.twimg.com, which x.com's media-src allows) and play directly.
+// Bluesky serves HLS with MPEG-TS segments, which only Safari (and the iOS
+// app's WebKit) plays natively, so hls.js transmuxes into Media Source
+// elsewhere. It's ~370 KB, so it's imported on the first video rather
+// than bundled into content.js. Its blob: source is allowed by x.com's
+// media-src; its fetches are the content script's, not the page's. A video
+// that can't play falls back to the poster, which opens the post.
+const HLS_MODULE_PATH = 'dist/hls.light.min.mjs';
+const VIDEO_AUTOPLAY_RATIO = 0.5;
+// Start fetching the playlist a screen before the video scrolls in.
+const VIDEO_PRELOAD_MARGIN = '100% 0px';
+
+let hlsModule: Promise<typeof Hls | null> | null = null;
+function loadHls(): Promise<typeof Hls | null> {
+  hlsModule ??= (async () => {
+    try {
+      const mod = await import(chrome.runtime.getURL(HLS_MODULE_PATH)) as { default: typeof Hls };
+      return mod.default.isSupported() ? mod.default : null;
+    } catch (err) {
+      console.warn('[Bouncer] See more: hls.js unavailable, trying native HLS:', err);
+      return null;
+    }
+  })();
+  return hlsModule;
+}
+
+interface Player {
+  url: string;
+  onFail: () => void;
+  hls: Hls | null;
+  /** Settles once the source is attached and ready for play(). */
+  ready: Promise<void> | null;
+  /** At least half on screen (VIDEO_AUTOPLAY_RATIO). */
+  visible: boolean;
+  /** Paused by the user (not by scrolling away): don't autoplay it again. */
+  userPaused: boolean;
+  /** A pause() of ours is in flight, so its event isn't the user's. */
+  autoPausing: boolean;
+}
+const players = new Map<HTMLVideoElement, Player>();
+let preloadObserver: IntersectionObserver | null = null;
+let autoplayObserver: IntersectionObserver | null = null;
+const reducedMotion = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+
+const isHls = (url: string) => new URL(url).pathname.endsWith('.m3u8');
+
+function attachVideo(video: HTMLVideoElement, player: Player): Promise<void> {
+  player.ready ??= (async () => {
+    if (!isHls(player.url)) {
+      video.src = player.url;
+      return;
+    }
+    const HlsCtor = await loadHls();
+    if (!players.has(video)) return; // stopped while loading
+    if (HlsCtor) {
+      const hls = new HlsCtor({ enableWorker: false, capLevelToPlayerSize: true });
+      player.hls = hls;
+      await new Promise<void>(resolve => {
+        hls.on(HlsCtor.Events.MANIFEST_PARSED, () => resolve());
+        hls.on(HlsCtor.Events.ERROR, (_event, data) => {
+          if (!data.fatal) return;
+          console.warn('[Bouncer] See more: video failed to play:', data.details, player.url);
+          failVideo(video);
+          resolve();
+        });
+        hls.attachMedia(video);
+        hls.loadSource(player.url);
+      });
+    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      video.src = player.url;
+    } else {
+      failVideo(video);
+    }
+  })();
+  return player.ready;
+}
+
+/** Plays once attached, if it's still wanted (on screen, not paused by the user). */
+function playVideo(video: HTMLVideoElement, player: Player): void {
+  void attachVideo(video, player).then(() => {
+    if (!players.has(video) || !player.visible || player.userPaused || !video.paused) return;
+    video.play().catch(() => { /* blocked or interrupted: the user can press play */ });
+  });
+}
+
+function stopVideo(video: HTMLVideoElement): void {
+  const player = players.get(video);
+  if (!player) return;
+  players.delete(video);
+  preloadObserver?.unobserve(video);
+  autoplayObserver?.unobserve(video);
+  player.hls?.destroy();
+  video.removeAttribute('src');
+  video.load();
+}
+
+function failVideo(video: HTMLVideoElement): void {
+  const onFail = players.get(video)?.onFail;
+  stopVideo(video);
+  onFail?.();
+}
+
+function autoplay(video: HTMLVideoElement, player: Player, visible: boolean): void {
+  player.visible = visible;
+  if (visible) {
+    if (!player.userPaused && !reducedMotion()) playVideo(video, player);
+  } else if (!video.paused) {
+    player.autoPausing = true;
+    video.pause();
+  }
+}
+
+function observeVideo(video: HTMLVideoElement, player: Player): void {
+  players.set(video, player);
+  if (typeof IntersectionObserver === 'undefined') return;
+  preloadObserver ??= new IntersectionObserver(entries => {
+    for (const entry of entries) {
+      const v = entry.target as HTMLVideoElement;
+      const p = players.get(v);
+      if (!entry.isIntersecting || !p) continue;
+      preloadObserver?.unobserve(v);
+      void attachVideo(v, p);
+    }
+  }, { rootMargin: VIDEO_PRELOAD_MARGIN });
+  autoplayObserver ??= new IntersectionObserver(entries => {
+    for (const entry of entries) {
+      const v = entry.target as HTMLVideoElement;
+      const p = players.get(v);
+      if (p) autoplay(v, p, entry.intersectionRatio >= VIDEO_AUTOPLAY_RATIO);
+    }
+  }, { threshold: [0, VIDEO_AUTOPLAY_RATIO] });
+  preloadObserver.observe(video);
+  autoplayObserver.observe(video);
+}
+
+/** A single video in place of its poster. `fallback` builds the poster
+ *  version (clicks open the post) for when the video can't play. */
+function renderVideo(post: Pick<BskyFeedPost, 'images' | 'isGif'> & { videoUrl: string }, fallback: () => HTMLElement): HTMLElement {
+  const poster = post.images[0];
+  const grid = el('div', 'bsky-x-media bsky-x-media-1 bsky-x-media-video');
+  const cell = el('div', 'bsky-x-media-cell');
+  cell.style.aspectRatio = String(Math.min(2, Math.max(0.75, poster.aspectRatio ?? 16 / 9)));
+  const video = el('video', 'bsky-x-video');
+  video.poster = poster.url;
+  video.muted = true;
+  video.playsInline = true;
+  video.controls = !post.isGif;
+  video.loop = post.isGif;
+  video.preload = 'none';
+  const kind = post.isGif ? 'GIF' : 'Video';
+  video.setAttribute('aria-label', poster.alt ? `${kind}: ${poster.alt}` : kind);
+  if (poster.alt) video.title = poster.alt;
+  // Playing, pausing, seeking: the player's, not a click on the post. A GIF
+  // has no controls, so a click pauses or resumes it, as on X.
+  cell.addEventListener('click', e => {
+    e.stopPropagation();
+    if (post.isGif) {
+      if (video.paused) video.play().catch(() => {});
+      else video.pause();
+    }
+  });
+  if (post.isGif) cell.appendChild(el('span', 'bsky-x-gif-badge', 'GIF'));
+  const player: Player = {
+    url: post.videoUrl,
+    onFail: () => { if (grid.isConnected) grid.replaceWith(fallback()); },
+    hls: null,
+    ready: null,
+    visible: false,
+    userPaused: false,
+    autoPausing: false,
+  };
+  video.addEventListener('pause', () => {
+    if (player.autoPausing) player.autoPausing = false;
+    else if (!video.ended) player.userPaused = true;
+  });
+  video.addEventListener('play', () => {
+    player.userPaused = false;
+    // Pressed before the source was attached: that play() is aborted by the
+    // attach, so play again once it's ready.
+    if (!player.ready) void attachVideo(video, player).then(() => { if (video.paused) video.play().catch(() => {}); });
+  });
+  video.addEventListener('error', () => {
+    if (!player.hls) failVideo(video); // hls.js reports its own errors
+  });
+  observeVideo(video, player);
+  cell.prepend(video);
+  grid.appendChild(cell);
+  return grid;
+}
+
 // ==================== Image preview (Bluesky posts) ====================
 
 /** Full-screen image viewer for a Bluesky post's photos, modeled on X's: dark
@@ -996,10 +1210,15 @@ const LIGHTBOX_ICONS = {
 
 /** `postUrl` makes the images open a full-screen preview on click, the way a
  *  tweet's photos do: X's own photo viewer (…/status/<id>/photo/N) for X
- *  posts, Bouncer's lightbox for Bluesky ones. Without it (quoted posts,
- *  where X opens the quoted post instead) clicks fall through. Video
- *  thumbnails always fall through and open the post. */
-function renderMedia(post: Pick<BskyFeedPost, 'images' | 'isVideo' | 'external'> & { source?: SeeMoreSource }, postUrl?: string): HTMLElement | null {
+ *  posts, Bouncer's lightbox for Bluesky ones, and a video play in place.
+ *  Without it (quoted posts, where X opens the quoted post instead) clicks
+ *  fall through, and a video shows as its poster. So does a video that
+ *  can't play. */
+function renderMedia(post: Pick<BskyFeedPost, 'images' | 'isVideo' | 'videoUrl' | 'isGif' | 'external'> & { source?: SeeMoreSource }, postUrl?: string): HTMLElement | null {
+  const { videoUrl } = post;
+  if (postUrl && post.isVideo && videoUrl && post.images.length) {
+    return renderVideo({ images: post.images, isGif: post.isGif, videoUrl }, () => renderMedia({ ...post, videoUrl: null }, postUrl)!);
+  }
   if (post.images.length) {
     const grid = el('div', `bsky-x-media bsky-x-media-${Math.min(post.images.length, 4)}`);
     const previewable = postUrl && !post.isVideo;
@@ -1221,6 +1440,8 @@ function renderPost(post: BskyFeedPost, hostKey: string, slot: Slot): HTMLElemen
     action('reply', post.replyCount, 'Reply'),
     action('repost', post.repostCount, 'Repost'),
     action('like', post.likeCount, 'Like'),
+    // A tweet's Views column, kept empty so the icons line up with it.
+    el('span', 'bsky-x-action-column'),
     action('open', 0, 'Open'),
   );
   main.appendChild(actions);

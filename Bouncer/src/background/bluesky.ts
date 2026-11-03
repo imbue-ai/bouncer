@@ -15,7 +15,7 @@ function avatarThumb(url: string | undefined): string | undefined {
 
 const httpsOrNull = (url: string | undefined) => (url?.startsWith('https://') ? url : null);
 
-function mapMedia(media: RawMedia): Pick<BskyFeedPost, 'images' | 'isVideo' | 'external'> {
+function mapMedia(media: RawMedia): Pick<BskyFeedPost, 'images' | 'isVideo' | 'videoUrl' | 'isGif' | 'external'> {
   let domain = '';
   try { domain = media.external ? media.external.domain || new URL(media.external.uri).hostname.replace(/^www\./, '') : ''; } catch { /* bad URI */ }
   return {
@@ -26,6 +26,8 @@ function mapMedia(media: RawMedia): Pick<BskyFeedPost, 'images' | 'isVideo' | 'e
       return url ? [{ url, fullUrl: httpsOrNull(img.fullsize) ?? url, alt: img.alt ?? '', aspectRatio }] : [];
     }),
     isVideo: media.isVideo,
+    videoUrl: (media.isVideo && httpsOrNull(media.videoUrl)) || null,
+    isGif: media.isVideo && !!media.isGif,
     external: media.external && /^https:\/\//.test(media.external.uri)
       ? { uri: media.external.uri, title: media.external.title ?? '', domain, thumbUrl: httpsOrNull(media.external.thumb) }
       : null,

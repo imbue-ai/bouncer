@@ -205,6 +205,16 @@ function copyLitertlmAssets() {
   console.log(`Copied LiteRT-LM wasm assets for ${target} (${names.join(', ')}) into dist/litertlm-wasm/`);
 }
 
+// hls.js for the See more inline video player (content/bluesky-see-more.ts),
+// which imports it on the first video instead of bundling it into
+// content.js. The light build: no subtitles, alternate audio or DRM.
+function copyHlsAsset() {
+  fs.copyFileSync(
+    path.join(__dirname, 'node_modules/hls.js/dist/hls.light.min.mjs'),
+    path.join(__dirname, 'dist/hls.light.min.mjs'),
+  );
+}
+
 async function build() {
   const flavor = `env: ${env}${noAd ? ', no-ad' : ''}, target: ${target}`;
   console.log(hasImbue
@@ -220,6 +230,7 @@ async function build() {
   fs.rmSync(path.join(__dirname, 'dist'), { recursive: true, force: true });
 
   copyLitertlmAssets();
+  copyHlsAsset();
 
   // 1. Background: bundles the LiteRT-LM SDK directly so the SW-side proxy can
   //    ship its message protocol without a second chunk. The actual Engine

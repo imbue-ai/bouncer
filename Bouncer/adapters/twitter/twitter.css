@@ -353,7 +353,8 @@ html.twitter-light .bsky-x-post {
   background: var(--bsky-x-border);
 }
 .bsky-x-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.bsky-x-main { flex: 1; min-width: 0; }
+/* A size container for the action bar's narrow layout (.bsky-x-actions). */
+.bsky-x-main { flex: 1; min-width: 0; container-type: inline-size; }
 
 /* A reply's parent, above the reply as in X's timeline: the parent's avatar
    column carries a 2px thread line down to the reply's avatar. */
@@ -426,7 +427,28 @@ html.twitter-light .bsky-x-post {
 }
 .bsky-x-media-3 .bsky-x-media-cell:first-child { grid-row: span 2; }
 .bsky-x-media-cell { position: relative; min-height: 0; overflow: hidden; }
-.bsky-x-media-1 .bsky-x-media-cell { max-height: 510px; }
+/* width: 100% keeps the tile full width when max-height caps it: a grid item
+   with an aspect-ratio otherwise narrows to keep its shape, leaving a strip
+   of the bordered box empty. Images crop (cover) and videos letterbox. */
+.bsky-x-media-1 .bsky-x-media-cell { width: 100%; max-height: 510px; }
+/* Letterboxed in black like X's player, whatever the video's shape. */
+.bsky-x-media-video .bsky-x-media-cell { background: #000; cursor: default; }
+.bsky-x-video { width: 100%; height: 100%; object-fit: contain; display: block; background: #000; }
+.bsky-x-media-video .bsky-x-media-cell:has(.bsky-x-gif-badge) { cursor: pointer; }
+/* X's GIF label: bottom left, white on translucent black. */
+.bsky-x-gif-badge {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.77);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 20px;
+  pointer-events: none;
+}
 .bsky-x-media-img { width: 100%; height: 100%; object-fit: cover; display: block; transition: opacity 0.2s; }
 /* Not loaded yet (or waiting to retry): keep the browser's broken-image icon
    and alt text out of sight and show a skeleton in the image's place. */
@@ -569,11 +591,28 @@ html.twitter-light .bsky-x-post {
 .bsky-x-quote .bsky-x-media, .bsky-x-quote .bsky-x-card { margin-top: 8px; }
 .bsky-x-quote .bsky-x-media-1 .bsky-x-media-cell { max-height: 300px; }
 
+/* Laid out like a tweet's action bar, so the icons line up with the tweets
+   around it: reply, repost, like and an empty Views column share the width
+   equally, then Open sits where Share does (after Bookmark's 19px + 8px)
+   and the Bounce trashcan follows, as on a tweet. */
 .bsky-x-actions {
   display: flex;
+  align-items: center;
   justify-content: space-between;
-  max-width: 425px;
+  gap: 4px;
+  max-width: 600px;
+  height: 20px;
   margin-top: 12px;
+}
+.bsky-x-actions > .bsky-x-action-reply,
+.bsky-x-actions > .bsky-x-action-repost,
+.bsky-x-actions > .bsky-x-action-like,
+.bsky-x-action-column { flex: 1 1 0; min-width: 0; }
+.bsky-x-post .bsky-x-actions > .bsky-x-action-open { min-width: 0; margin-left: calc(18.75px + 8px + 4px); }
+/* X drops Bookmark from a bar under 290px wide (its columns take the
+   space), so stop keeping its slot. The bar is as wide as .bsky-x-main. */
+@container (max-width: 289.98px) {
+  .bsky-x-post .bsky-x-actions > .bsky-x-action-open { margin-left: 0; }
 }
 .bsky-x-post .bsky-x-action {
   display: inline-flex;

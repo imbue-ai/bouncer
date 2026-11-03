@@ -43,6 +43,7 @@
     "@litert-lm/core": "^0.19.0",
     "dompurify": "^3.3.1",
     "firebase": "^12.11.0",
+    "hls.js": "^1.7.4",
     "html-to-image": "^1.11.13"
   }
 }
