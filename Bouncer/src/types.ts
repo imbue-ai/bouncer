@@ -402,6 +402,13 @@ export type ContentToBackgroundMessage =
   // onInstalled (or, if that tab is gone, the first tab to ask afterwards),
   // so pre-existing x.com tabs never grow a popup of their own.
   | { type: 'claimPlatformOnboarding' }
+  // Firefox's in-page settings modal can't request host permissions (see the
+  // platform toggles in popup/index.ts), so it asks the background to open
+  // activate.html as a top-level tab for this one platform.
+  | { type: 'openPlatformActivation'; siteId: SiteId }
+  // Same modal reading back whether an optional platform's host permission
+  // is granted, for its toggle state.
+  | { type: 'checkPlatformPermission'; siteId: SiteId }
   // The user answered the experiment prompt or flipped the settings toggle.
   // The background saves `experimentOptIn` and sends it to the backend —
   // on every click, even when the answer didn't change.

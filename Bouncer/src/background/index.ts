@@ -385,6 +385,23 @@ async function handleMessage(
       return { success: true };
     }
 
+    // activate.html: a top-level extension tab where the user can grant an optional
+    // platform the in-page settings modal can't (Firefox only — see the
+    // platform toggles in popup/index.ts). Opened next to the sender's tab.
+    case 'openPlatformActivation': {
+      const url = chrome.runtime.getURL(`activate.html?platform=${encodeURIComponent(message.siteId)}`);
+      const index = sender.tab?.index;
+      await chrome.tabs.create({ url, ...(index !== undefined ? { index: index + 1 } : {}) });
+      return { success: true };
+    }
+
+    case 'checkPlatformPermission': {
+      const p = optionalPlatforms().find(o => o.id === message.siteId);
+      if (!p) return { granted: false };
+      const granted = await chrome.permissions.contains({ origins: [p.manifestHost] }).catch(() => false);
+      return { granted };
+    }
+
     // Should the sender's tab show the platform-onboarding popup? True only
     // for the designated tab (set by onInstalled). If the designated tab no
     // longer exists — closed before the popup was dismissed — the first tab
