@@ -20,6 +20,7 @@ import { sendFeedback } from './providers';
 import { imbueWebSocket, type ForceLoginMessage } from './ws-manager';
 import { launchAuthFlow, signInAnon, isAnonymousUser, refreshAuthToken, getAuthToken, handleAppleSignIn, signOut, setOnIdentityChanged, getCurrentUid, IS_SAFARI } from './auth';
 import { initOptionalPlatforms, syncOptionalPlatformScripts } from './optional-platforms';
+import { searchBlueskyPosts } from './bluesky';
 import { CURRENT_TARGET, optionalPlatforms } from '../shared/platforms';
 
 // Register/unregister content scripts for user-granted optional platforms.
@@ -332,7 +333,7 @@ async function handleMessage(
       // Check if already in queue - add another resolver for this item
       if (tabId !== undefined && isKeyPending(tabId, cacheKey)) {
         return new Promise(resolve => {
-          const item = { evaluationId: message.evaluationId, post: message.post, rawText: message.rawText, imageUrls, resolve, cacheKey, tabId, postUrl: message.postUrl, siteId: message.siteId, isReply: message.isReply === true, pauseScope };
+          const item = { evaluationId: message.evaluationId, post: message.post, rawText: message.rawText, imageUrls, quotedImageUrls: message.quotedImageUrls, resolve, cacheKey, tabId, postUrl: message.postUrl, siteId: message.siteId, isReply: message.isReply === true, pauseScope };
           enqueuePost(tabId, item);
         });
       }
@@ -340,7 +341,7 @@ async function handleMessage(
       // Queue for batch processing
       // processBatch will prioritize posts closest to viewport center for local models
       const resultPromise = new Promise(resolve => {
-        const item = { evaluationId: message.evaluationId, post: message.post, rawText: message.rawText, imageUrls, resolve, cacheKey, tabId, postUrl: message.postUrl, siteId: message.siteId, isReply: message.isReply === true, pauseScope };
+        const item = { evaluationId: message.evaluationId, post: message.post, rawText: message.rawText, imageUrls, quotedImageUrls: message.quotedImageUrls, resolve, cacheKey, tabId, postUrl: message.postUrl, siteId: message.siteId, isReply: message.isReply === true, pauseScope };
         enqueuePost(tabId!, item);
       });
       console.log('[Bouncer][diag] evaluatePost enqueued for tab', tabId);
@@ -481,6 +482,15 @@ async function handleMessage(
       });
       await saveCache(true);
       return { success: true };
+    }
+
+    case 'fetchBlueskyPosts': {
+      try {
+        return await searchBlueskyPosts(message.topic, message.sources, message.seen ?? null, message.want);
+      } catch (err) {
+        console.warn('[Background] Bluesky search failed:', err);
+        return { posts: [], returned: [], exhausted: false, error: String(err) };
+      }
     }
 
     case 'getStats': {

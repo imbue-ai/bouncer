@@ -4,6 +4,7 @@
  *  in shared/platforms.ts. Adding a new platform there automatically extends
  *  this union. Re-exported here so existing `import { SiteId } from '../types'`
  *  call sites keep working without touching every consumer. */
+import type { SeenFilter } from './shared/bluesky';
 import type { SiteId } from './shared/platforms';
 export type { SiteId };
 
@@ -64,6 +65,10 @@ export interface EvaluationResult {
 export interface EvaluationPostData {
   text: string;
   imageUrls: string[];
+  /** The quoted tweet's images, which imageUrls also contains (the model
+   *  sees them all). Lets the backend's xstream tell a quote tweet's own
+   *  images from the quoted one's; never part of the prompt. */
+  quotedImageUrls?: string[];
   /** Permalink of the post. Sent to the Imbue backend for logging only; never part of the prompt. */
   postUrl?: string | null;
 }
@@ -113,6 +118,8 @@ export interface PostContent {
    *  hqdefault thumbnail vs. the classifier's mqdefault), it sets this.
    *  Falls back to `imageUrls` when absent. */
   displayImageUrls?: string[];
+  /** The quoted tweet's images, also in imageUrls (X only). */
+  quotedImageUrls?: string[];
   hasMediaContainer: boolean;
   fromStore?: boolean;
   mediaBlurred?: boolean;
@@ -367,6 +374,8 @@ export interface PendingEvaluation {
    *  so the model only sees the post content, not author metadata. */
   rawText: string;
   imageUrls: string[];
+  /** See EvaluationPostData.quotedImageUrls. */
+  quotedImageUrls?: string[];
   resolve: (result: PipelineResponse) => void;
   cacheKey: string;
   tabId: number | undefined;
@@ -391,7 +400,7 @@ export interface ChatMessage {
 
 export type ContentToBackgroundMessage =
   | { type: 'pageLoad' }
-  | { type: 'evaluatePost'; evaluationId: string; post: string; rawText: string; imageUrls: string[]; postUrl: string | null; siteId: SiteId; isReply?: boolean; pauseScope?: PauseScope }
+  | { type: 'evaluatePost'; evaluationId: string; post: string; rawText: string; imageUrls: string[]; quotedImageUrls?: string[]; postUrl: string | null; siteId: SiteId; isReply?: boolean; pauseScope?: PauseScope }
   | { type: 'suggestAnnoyingReasons'; post: string; imageUrls: string[]; siteId?: SiteId }
   | { type: 'clearCache' }
   // Sent by the settings popup after the user grants an optional platform's
@@ -415,6 +424,8 @@ export type ContentToBackgroundMessage =
   | { type: 'setExperimentOptIn'; optIn: boolean }
   | { type: 'clearSinglePost'; post: string; imageUrls: string[]; postUrl?: string | null; siteId?: SiteId }
   | { type: 'getStats' }
+  // "See more <topic>": one page of Bluesky search results (BskySearchResult).
+  | { type: 'fetchBlueskyPosts'; topic: string; sources: Array<'bluesky' | 'x'>; seen: SeenFilter | null; want: number }
   | { type: 'getReasoning'; post: string; imageUrls: string[]; postUrl?: string | null; siteId?: SiteId }
   | { type: 'getErrorStatus' }
   | { type: 'getAllLocalModelStatuses' }
@@ -625,6 +636,17 @@ export type StorageSchema = SettingsBase & {
   // descriptions_* namespace so the pipeline and AI-intent aggregation never
   // see the inactive list.
   linkedinInactiveModePhrases: string[];
+  // "See more …" topics on X: Bluesky search results for each are
+  // injected into the home timeline (src/content/bluesky-see-more.ts).
+  seeMoreTopics_twitter: string[];
+  // One Bluesky post per this many timeline tweets (clampSeeMoreEvery).
+  seeMoreEvery_twitter: number;
+  // Bluesky posts already seen on screen, oldest first (mergeSeenUris).
+  seeMoreSeen_twitter: string[];
+  // Where "See more" posts come from: Bluesky, X, or both (clampSeeMoreSource).
+  seeMoreSource_twitter: 'bluesky' | 'x' | 'both';
+  // Show adult/graphic "See more" posts (absent = off).
+  seeMoreShowNsfw_twitter: boolean;
 } & DescriptionKeys & PlatformEnabledKeys & FilteringPausedKeys & FilteringPausedExtendedKeys & ExcludedAccountsKeys;
 
 // ==================== API Response Types ====================
@@ -665,6 +687,29 @@ export interface ImbueDetectAiIntentResponse extends ImbueResponseBase {
   aiFilterPhrases?: string[] | null;
   reasoning?: string | null;
   rawResponse: string;
+}
+
+/** Response from the blueskySearch action ("See more <topic>"): one page
+ *  of the backend's semantic Bluesky index for the topic, already checked
+ *  for relevance by the filter model. */
+export interface ImbueBlueskySearchResponse extends ImbueResponseBase {
+  /** at:// post URIs judged on-topic, best first. May be empty for a page. */
+  uris: string[];
+  /** Post views for URIs in `uris`, same shape as Bluesky's postView:
+   *  always the X ones (nothing public can hydrate them), and the Bluesky
+   *  ones too while the message stays small; the client fetches any Bluesky
+   *  view that's missing from the public getPosts API. Absent from older
+   *  backends. */
+  posts?: unknown[];
+  /** Per-source counts for this page (ranked, page, missing, candidates,
+   *  kept, filter_failed), so a source that contributed nothing is visible.
+   *  Absent from older backends. */
+  sourceStats?: Partial<Record<'bluesky' | 'x', Record<string, number>>>;
+  /** The whole ranking has been walked: nothing more the user hasn't seen,
+   *  until new posts are indexed. Older backends send only `cursor`, null
+   *  meaning the same. */
+  exhausted?: boolean;
+  cursor?: number | null;
 }
 
 /** Response from the suggestAnnoying action.

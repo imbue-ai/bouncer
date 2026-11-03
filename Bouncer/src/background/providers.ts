@@ -3,7 +3,8 @@
 import { convertSystemToUserMessages } from '../shared/utils';
 import { API_BASE_URLS } from '../shared/models';
 import { imbueWebSocket } from './ws-manager';
-import type { ChatMessage, APIConfig, DirectAPIResponse, ImbueFilterResponse, ImbueSuggestResponse, ImbueAiTextResponse, ImbueAiImageResponse, ImbueDetectAiIntentResponse, EvaluationPostData } from '../types';
+import type { ChatMessage, APIConfig, DirectAPIResponse, ImbueFilterResponse, ImbueSuggestResponse, ImbueAiTextResponse, ImbueAiImageResponse, ImbueDetectAiIntentResponse, ImbueBlueskySearchResponse, EvaluationPostData } from '../types';
+import type { SeenFilter } from '../shared/bluesky';
 
 // Call an OpenAI-compatible API directly from the extension via fetch
 // Used for OpenAI, OpenRouter, and Gemini models
@@ -268,6 +269,47 @@ export async function callImbueDetectAiIntent(
   } catch (err) {
     const wallMs = Date.now() - startedAt;
     console.warn(`[AiIntentDetect] ✗ error after ${wallMs}ms:`, err);
+    throw err;
+  }
+}
+
+// "See more <topic>": one page of Bluesky posts about `topic` from the
+// backend's semantic index (EmbeddingGemma 2 over the Jetstream firehose,
+// then the filter model as a relevance check), via the blueskySearch route.
+// Each search returns the best posts not in `seen`; the worker judges
+// candidates in batches until `want` pass (capped at ~5 s), and the route is
+// rate-limited to 60 requests/min per user.
+export async function callImbueBlueskySearch(
+  topic: string,
+  sources: Array<'bluesky' | 'x'>,
+  seen: SeenFilter | null,
+  want: number,
+): Promise<ImbueBlueskySearchResponse> {
+  const message: Record<string, unknown> = {
+    action: 'blueskySearch',
+    topic,
+    sources,
+    // Posts already seen or fetched, for the backend to skip
+    // (buildSeenFilter). There is no cursor: each search returns the best
+    // posts not in here.
+    seen,
+    // How many matching posts to find before replying; the worker checks
+    // candidates in batches until it has them (or hits its cap).
+    want,
+    version: chrome.runtime.getManifest().version,
+  };
+
+  console.log('[BlueskySearch] → request:', { ...message, seen: seen && `${seen.m} bits` });
+  const startedAt = Date.now();
+
+  try {
+    const response = await imbueWebSocket.send(message, { timeout: 45000 }) as unknown as ImbueBlueskySearchResponse;
+    const wallMs = Date.now() - startedAt;
+    console.log(`[BlueskySearch] ← response (wallMs=${wallMs}):`, response);
+    return response;
+  } catch (err) {
+    const wallMs = Date.now() - startedAt;
+    console.warn(`[BlueskySearch] ✗ error after ${wallMs}ms:`, err);
     throw err;
   }
 }

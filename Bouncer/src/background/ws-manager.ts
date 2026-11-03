@@ -106,6 +106,9 @@ function validateWSMessage(raw: unknown): (WSAckMessage & WSResultMessage) | nul
   return msg as unknown as WSAckMessage & WSResultMessage;
 }
 
+// How long a result that beat its ack is kept waiting for that ack.
+const EARLY_RESULT_TTL_MS = 60_000;
+
 class ImbueWebSocket {
   ws: WebSocket | null;
   connectPromise: Promise<WebSocket> | null;
@@ -120,6 +123,11 @@ class ImbueWebSocket {
   // Requests answered by a single reply echoing their requestId (see
   // sendAndAwaitReply), keyed by requestId.
   directReplies: Map<string, DirectReply>;
+  // Results (jobComplete/jobFailed) that arrived before their request's ack,
+  // keyed by jobId, with arrival time. A fast worker (e.g. a cached
+  // blueskySearch page, ~0.25 s) can beat the Lambda's route response; the
+  // result is delivered when the ack with its jobId lands.
+  earlyResults: Map<string, { data: WSAckMessage & WSResultMessage; at: number }>;
   // Invoked after each new connection opens. Set by the background entry
   // point to retry work that needs the backend (e.g. an unsent opt-in).
   onConnected: (() => void) | null;
@@ -131,6 +139,7 @@ class ImbueWebSocket {
     this.pendingRequests = new Map();
     this.onForceLogin = null;
     this.directReplies = new Map();
+    this.earlyResults = new Map();
     this.onConnected = null;
   }
 
@@ -337,6 +346,18 @@ class ImbueWebSocket {
       return;
     }
 
+    // A result whose ack hasn't arrived yet. Never treat it as an ack (the
+    // FIFO fallback below would hand it to the wrong request); hold it for
+    // _handleAck.
+    if (data.jobId && (data.type === 'jobComplete' || data.type === 'jobFailed')) {
+      const now = Date.now();
+      for (const [jobId, early] of this.earlyResults) {
+        if (now - early.at > EARLY_RESULT_TTL_MS) this.earlyResults.delete(jobId);
+      }
+      this.earlyResults.set(data.jobId, { data, at: now });
+      return;
+    }
+
     // Fallback: FIFO ordering for ack messages (oldest unacked request)
     if (this.unackedRequests.size > 0) {
       const [firstRequestId, firstRequest] = this.unackedRequests.entries().next().value as [string, PendingRequest];
@@ -364,6 +385,12 @@ class ImbueWebSocket {
 
     // Move to pendingRequests keyed by jobId
     if (data.jobId) {
+      const early = this.earlyResults.get(data.jobId);
+      if (early) {
+        this.earlyResults.delete(data.jobId);
+        this._handleResult(early.data, request);
+        return;
+      }
       this.pendingRequests.set(data.jobId, request);
     }
   }
@@ -429,6 +456,7 @@ class ImbueWebSocket {
     }
     this.unackedRequests.clear();
     this.pendingRequests.clear();
+    this.earlyResults.clear();
     this.directReplies.clear();
   }
 
