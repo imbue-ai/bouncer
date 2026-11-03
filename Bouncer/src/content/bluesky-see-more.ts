@@ -18,8 +18,9 @@
 // Candidates are screened against the user's hide filters by sending them
 // through the normal evaluatePost pipeline before they're shown.
 
-import type { PlatformAdapter, PipelineResponse } from '../types';
-import { getStorage, setStorage } from '../shared/storage';
+import type { PlatformAdapter, PipelineResponse, PostContent } from '../types';
+import { filteringPausedKeyFor, getDescriptions, getFilteringPaused, getStorage, setStorage } from '../shared/storage';
+import { findStructuralMatch } from '../shared/structural-filters';
 import { formatPostForEvaluation } from '../shared/utils';
 import {
   SEE_MORE_TOPICS_KEY, SEE_MORE_EVERY_KEY, SEE_MORE_SEEN_KEY, MAX_SEE_MORE_TOPICS, mergeSeenUris, MAX_SEE_MORE_TOPIC_LENGTH, clampSeeMoreEvery, formatCount, formatRelativeTime, normalizeTopic,
@@ -31,8 +32,15 @@ import { currentPauseScope } from './ui';
 const READY_TARGET = 3;          // screened posts to keep on hand per topic
 const HIDE_CHECK_CONCURRENCY = 4; // candidates screened against hide filters at once
 const SWEEP_INTERVAL_MS = 1500;
-const FILTER_CHECK_TIMEOUT_MS = 20000;
+// Long enough for a local model, which serves on-screen tweets first and
+// gets to candidates (not on screen yet) in its gaps.
+const FILTER_CHECK_TIMEOUT_MS = 60000;
+
 const SEARCH_RETRY_MS = 60000;
+// A filter check that gets no verdict (rate limit, backend error, timeout,
+// local model not ready) pauses the topic this long with the post kept, so
+// a failing filter backend isn't answered with more searches and checks.
+const SCREEN_RETRY_MS = 30000;
 // The backend has nothing left on a topic the user hasn't seen: look again
 // once new posts have had time to arrive.
 const EXHAUSTED_RETRY_MS = 5 * 60000;
@@ -124,9 +132,56 @@ const introTopics = new Set<string>();
 let sweepTimer: ReturnType<typeof setInterval> | null = null;
 const topicRows = new Set<HTMLElement>();
 
-export function initBlueskySeeMore(platformAdapter: PlatformAdapter): void {
+// ==================== Placed posts are tweets ====================
+//
+// Once placed, a post goes through the same pipeline as a tweet (content/
+// index.ts processPost): it's evaluated, dimmed while pending, faded out and
+// hidden, listed in the Filtered tab, restored when a phrase is removed or
+// on Restore, and rechecked with the timeline — all by the tweet code, so
+// it behaves exactly like one. The adapter is taught about injected posts:
+// each is its own container (not the host tweet's cell, which hiding would
+// take down), its content comes from the post (postContentFor), and
+// findPosts (content/index.ts) includes them via INJECTED_POST_SELECTOR.
+export const INJECTED_POST_SELECTOR = `.${INJECTED_CLASS}[data-uri]`;
+const placedPosts = new WeakMap<HTMLElement, BskyFeedPost>();
+let processPost: ((post: HTMLElement) => void) | null = null;
+
+export function isInjectedPost(el: Element): boolean {
+  return el instanceof HTMLElement && placedPosts.has(el);
+}
+
+function teachAdapter(a: PlatformAdapter): void {
+  const post = (el: HTMLElement) => placedPosts.get(el);
+  const orig = {
+    getPostContainer: a.getPostContainer.bind(a),
+    getPostUrl: a.getPostUrl.bind(a),
+    getPostContentKey: a.getPostContentKey.bind(a),
+    isMainPost: a.isMainPost.bind(a),
+    hidePost: a.hidePost.bind(a),
+    extractPostContent: a.extractPostContent.bind(a),
+    extractPostContentFromStore: a.extractPostContentFromStore.bind(a),
+  };
+  a.getPostContainer = el => (post(el) ? el : orig.getPostContainer(el));
+  a.getPostUrl = el => post(el)?.url ?? orig.getPostUrl(el);
+  a.getPostContentKey = el => post(el)?.url ?? orig.getPostContentKey(el);
+  a.isMainPost = el => (post(el) ? false : orig.isMainPost(el));
+  a.extractPostContent = el => { const p = post(el); return p ? postContentFor(p) : orig.extractPostContent(el); };
+  a.extractPostContentFromStore = async el => { const p = post(el); return p ? postContentFor(p) : orig.extractPostContentFromStore(el); };
+  // Hide just the post, the way the X adapter hides a tweet's cell (now if
+  // it's on or below the screen; above it, marked for the scroll handler).
+  // Never the threaded-reply walk: the post's siblings are its host tweet.
+  a.hidePost = el => {
+    if (!post(el)) { orig.hidePost(el); return; }
+    el.dataset.filteredByExtension = 'true';
+    if (el.getBoundingClientRect().bottom > 0) el.style.display = 'none';
+  };
+}
+
+export function initBlueskySeeMore(platformAdapter: PlatformAdapter, hooks: { processPost: (post: HTMLElement) => void }): void {
   if (platformAdapter.siteId !== 'twitter') return;
   adapter = platformAdapter;
+  processPost = hooks.processPost;
+  teachAdapter(adapter);
   void getStorage([SEE_MORE_TOPICS_KEY, SEE_MORE_EVERY_KEY, SEE_MORE_SEEN_KEY, SEE_MORE_SOURCE_KEY, SEE_MORE_SHOW_NSFW_KEY]).then(d => {
     injectEvery = clampSeeMoreEvery(d[SEE_MORE_EVERY_KEY]);
     sourceSetting = clampSeeMoreSource(d[SEE_MORE_SOURCE_KEY]);
@@ -164,6 +219,9 @@ export function initBlueskySeeMore(platformAdapter: PlatformAdapter): void {
       returnedUris.clear();
       pools.clear();
       setTopics(topics);
+    }
+    if (changes[`descriptions_${adapter.siteId}`] || changes[filteringPausedKeyFor(adapter.siteId, currentPauseScope())]) {
+      rescreenAfterFilterChange();
     }
     if (changes[SEE_MORE_TOPICS_KEY]) setTopics((changes[SEE_MORE_TOPICS_KEY].newValue as string[] | undefined) ?? []);
   });
@@ -220,13 +278,22 @@ async function refill(topic: string): Promise<void> {
       // A few at a time, in parallel; each post joins the pool as soon as it
       // passes, so a new topic's first post isn't held up by slower checks.
       const batch = pool.unchecked.splice(0, HIDE_CHECK_CONCURRENCY).filter(p => !alreadyShown(p) && allowed(p));
+      const unscreened: BskyFeedPost[] = [];
       await Promise.all(batch.map(async post => {
-        if (await passesHideFilters(post) && pools.get(topic) === pool) {
+        const verdict = await screen(post);
+        if (verdict === 'unknown') unscreened.push(post);
+        else if (verdict === 'show' && pools.get(topic) === pool) {
           pool.ready.push(post);
           if (introTopics.has(topic)) endIntro(topic, introducePost(topic) ? null : 'no free gap in reach on screen');
           else scheduleFillNear();
         }
       }));
+      if (unscreened.length) {
+        pool.unchecked.unshift(...unscreened);
+        pool.retryAt = Date.now() + SCREEN_RETRY_MS;
+        console.log(`[Bouncer] See more: ${unscreened.length} filter check(s) got no verdict; pausing "${topic}" for ${SCREEN_RETRY_MS / 1000}s`);
+        break;
+      }
     }
   } catch (err) {
     console.warn('[Bouncer] See more: refill failed for', topic, err);
@@ -246,25 +313,24 @@ function endIntro(topic: string, failure: string | null): void {
   topicRows.forEach(row => { if (row.isConnected) renderTopicChips(row); });
 }
 
-// Runs the candidate through the same pipeline as a real tweet, so the
-// user's hide filters (and AI-content detection) apply to injected posts too.
-// Anything other than a definite "hide" verdict lets the post through.
-async function passesHideFilters(post: BskyFeedPost): Promise<boolean> {
-  // Quoted text is folded in the way the X adapter does for quote tweets,
-  // and a reply's parent (shown above it) the same way.
-  const quoted = post.quote && post.quote !== 'unavailable' && post.quote.text ? ` [Quoted: ${post.quote.text}]` : '';
-  const parent = post.parent?.text ? ` [Replying to: ${post.parent.text}]` : '';
-  const content = {
-    text: post.text + quoted + parent, author: post.authorName, handle: `@${post.authorHandle}`, avatarUrl: null,
-    timeText: null, textHtml: '', quote: null, postUrl: post.url, imageUrls: [], hasMediaContainer: false,
-  };
+// Screens a candidate against the user's Filter Out phrases the way a real
+// tweet is: structural phrases ("no reposts", "videos") here, as the content
+// script does, and the rest (plus AI-content detection) through the same
+// pipeline. Only a definite "show" verdict passes. A timeout, error, or
+// "retry" (local model not downloaded yet) is 'unknown': the post's filters
+// never ran, so it waits (SCREEN_RETRY_MS) rather than being shown.
+async function screen(post: BskyFeedPost): Promise<'show' | 'hide' | 'unknown'> {
+  const content = postContentFor(post);
   try {
+    if (!await getFilteringPaused(adapter.siteId, currentPauseScope())) {
+      if (findStructuralMatch(await getDescriptions(`descriptions_${adapter.siteId}`), content)) return 'hide';
+    }
     const verdict: Promise<PipelineResponse | undefined> = chrome.runtime.sendMessage({
       type: 'evaluatePost',
       evaluationId: crypto.randomUUID(),
       post: formatPostForEvaluation(content),
-      rawText: post.text,
-      imageUrls: [],
+      rawText: content.text,
+      imageUrls: content.imageUrls,
       postUrl: post.url,
       siteId: 'twitter',
       pauseScope: currentPauseScope(),
@@ -273,10 +339,69 @@ async function passesHideFilters(post: BskyFeedPost): Promise<boolean> {
     // A torn-down message channel can leave sendMessage pending forever;
     // don't let that wedge the pool.
     const res = await Promise.race([verdict, new Promise<undefined>(r => setTimeout(r, FILTER_CHECK_TIMEOUT_MS))]);
-    return !(res && typeof res === 'object' && 'shouldHide' in res && res.shouldHide === true);
-  } catch {
-    return true;
+    if (res && typeof res === 'object' && 'shouldHide' in res) return res.shouldHide ? 'hide' : 'show';
+    console.log('[Bouncer] See more: no filter verdict for', post.uri, res ?? 'timeout');
+    return 'unknown';
+  } catch (err) {
+    console.log('[Bouncer] See more: filter check failed for', post.uri, err);
+    return 'unknown';
   }
+}
+
+/** A post as the tweet pipeline sees it, the counterpart of the X adapter's
+ *  extractPostContent. Screening and the pipeline (once placed) both use
+ *  this, so they produce the same evaluation text and images, and the
+ *  pipeline's check of a placed post is a cache hit on its screening. Quoted
+ *  text is folded in the way the X adapter does for quote tweets, and a
+ *  reply's parent (shown above it) the same way. */
+function postContentFor(post: BskyFeedPost): PostContent {
+  const quote = post.quote && post.quote !== 'unavailable' ? post.quote : null;
+  const quoted = quote?.text ? ` [Quoted: ${quote.text}]` : '';
+  const parent = post.parent?.text ? ` [Replying to: ${post.parent.text}]` : '';
+  const imageUrls = screeningImageUrls(post);
+  return {
+    text: post.text + quoted + parent,
+    author: post.authorName,
+    handle: `@${post.authorHandle}`,
+    avatarUrl: post.avatarUrl,
+    timeText: formatRelativeTime(post.createdAt) || null,
+    textHtml: post.text ? renderText(post).innerHTML : '',
+    quote: quote
+      ? { textHtml: renderText({ text: quote.text, links: [] }).innerHTML, author: quote.authorName, handle: `@${quote.authorHandle}`, avatarUrl: quote.avatarUrl, timeText: formatRelativeTime(quote.createdAt) || null }
+      : null,
+    postUrl: post.url,
+    imageUrls,
+    displayImageUrls: post.images.length ? post.images.map(i => i.fullUrl) : undefined,
+    hasMediaContainer: imageUrls.length > 0,
+    // An injected post is never a repost (they come from search, not
+    // someone's timeline); a video's poster stands in for it.
+    isRepost: false,
+    hasVideo: post.isVideo,
+  };
+}
+
+// The images a post is screened with, like the X adapter's for a tweet: its
+// photos or video poster and link-card thumbnail, then the quoted post's and
+// (for a reply, whose parent is shown with it) the parent's. Feed-size
+// thumbnails, at most MAX_SCREENING_IMAGES of them.
+const MAX_SCREENING_IMAGES = 4;
+function screeningImageUrls(post: BskyFeedPost): string[] {
+  const media = (p: Pick<BskyFeedPost, 'images' | 'external'>) =>
+    [...p.images.map(i => i.url), ...(p.external?.thumbUrl ? [p.external.thumbUrl] : [])];
+  const quote = post.quote && post.quote !== 'unavailable' ? post.quote : null;
+  const urls = [...media(post), ...(quote ? media(quote) : []), ...(post.parent ? media(post.parent) : [])];
+  return [...new Set(urls)].slice(0, MAX_SCREENING_IMAGES);
+}
+
+// The user's Filter Out phrases (or pause) changed: start every topic over,
+// so candidates are screened against the new phrases (and ones the old
+// phrases hid can come back). Placed posts need nothing here: they're in the
+// tweet pipeline (see "Placed posts are tweets" below), which rechecks,
+// hides and restores them as it does tweets.
+function rescreenAfterFilterChange(): void {
+  returnedUris.clear();
+  pools.clear();
+  setTopics(topics);
 }
 
 /** A page of candidates in random order. Pages arrive best-first and every
@@ -494,6 +619,7 @@ function injectedIn(cell: Element, slot: Slot): boolean {
 function placePost(cell: Element, root: HTMLElement, slot: Slot): void {
   if (slot === 'above') cell.prepend(root);
   else cell.appendChild(root);
+  processPost?.(root);
 }
 
 // Where a newly added topic's first post goes: the topmost gap between tweets
@@ -723,7 +849,7 @@ function blueskyLogo(className: string): SVGSVGElement {
   return svg;
 }
 
-function renderText(post: BskyFeedPost): HTMLElement {
+function renderText(post: Pick<BskyFeedPost, 'text' | 'links'>): HTMLElement {
   const body = el('div', 'bsky-x-text');
   let pos = 0;
   for (const l of post.links) {
@@ -733,6 +859,29 @@ function renderText(post: BskyFeedPost): HTMLElement {
   }
   if (pos < post.text.length) body.append(post.text.slice(pos));
   return body;
+}
+
+// X's fold for a long post: the timeline shows about a tweet's worth of
+// text, and "Show more" unfolds the rest in place. Cut at the last space
+// before FOLD_CHARS, keeping only the links wholly before the cut.
+const FOLD_CHARS = 280;
+function renderFoldableText(post: BskyFeedPost): HTMLElement[] {
+  const full = renderText(post);
+  if (post.text.length <= FOLD_CHARS) return [full];
+  const space = post.text.lastIndexOf(' ', FOLD_CHARS);
+  const cut = space > FOLD_CHARS / 2 ? space : FOLD_CHARS;
+  const folded = renderText({ text: `${post.text.slice(0, cut).trimEnd()}…`, links: post.links.filter(l => l.end <= cut) });
+  // Not in the card when renderPost routes its x.com links, so done here.
+  if (post.source === 'x') routeLinksInX(full);
+  const button = el('button', 'bsky-x-show-more', 'Show more');
+  button.type = 'button';
+  button.addEventListener('click', e => {
+    e.preventDefault();
+    e.stopPropagation();
+    folded.replaceWith(full);
+    button.remove();
+  });
+  return [folded, button];
 }
 
 // A load can fail transiently (network blip, a request Chrome cancels while
@@ -1010,6 +1159,7 @@ function renderPost(post: BskyFeedPost, hostKey: string, slot: Slot): HTMLElemen
   root.dataset.bouncerInjected = 'bluesky';
   root.dataset.source = post.source;
   root.dataset.uri = post.uri;
+  placedPosts.set(root, post);
   if (post.parent) root.dataset.parentUri = post.parent.uri;
   if (post.nsfw) root.dataset.nsfw = '';
   observeImpression(root, post.uri);
@@ -1053,7 +1203,7 @@ function renderPost(post: BskyFeedPost, hostKey: string, slot: Slot): HTMLElemen
   header.appendChild(time);
   main.appendChild(header);
 
-  if (post.text) main.appendChild(renderText(post));
+  if (post.text) main.append(...renderFoldableText(post));
   const media = renderMedia(post, post.url);
   if (media) main.appendChild(media);
   if (post.quote) main.appendChild(renderQuote(post.quote));

@@ -65,6 +65,10 @@ export interface EvaluationResult {
 export interface EvaluationPostData {
   text: string;
   imageUrls: string[];
+  /** The quoted tweet's images, which imageUrls also contains (the model
+   *  sees them all). Lets the backend's xstream tell a quote tweet's own
+   *  images from the quoted one's; never part of the prompt. */
+  quotedImageUrls?: string[];
   /** Permalink of the post. Sent to the Imbue backend for logging only; never part of the prompt. */
   postUrl?: string | null;
 }
@@ -114,6 +118,8 @@ export interface PostContent {
    *  hqdefault thumbnail vs. the classifier's mqdefault), it sets this.
    *  Falls back to `imageUrls` when absent. */
   displayImageUrls?: string[];
+  /** The quoted tweet's images, also in imageUrls (X only). */
+  quotedImageUrls?: string[];
   hasMediaContainer: boolean;
   fromStore?: boolean;
   mediaBlurred?: boolean;
@@ -356,6 +362,8 @@ export interface PendingEvaluation {
    *  so the model only sees the post content, not author metadata. */
   rawText: string;
   imageUrls: string[];
+  /** See EvaluationPostData.quotedImageUrls. */
+  quotedImageUrls?: string[];
   resolve: (result: PipelineResponse) => void;
   cacheKey: string;
   tabId: number | undefined;
@@ -380,7 +388,7 @@ export interface ChatMessage {
 
 export type ContentToBackgroundMessage =
   | { type: 'pageLoad' }
-  | { type: 'evaluatePost'; evaluationId: string; post: string; rawText: string; imageUrls: string[]; postUrl: string | null; siteId: SiteId; isReply?: boolean; pauseScope?: PauseScope }
+  | { type: 'evaluatePost'; evaluationId: string; post: string; rawText: string; imageUrls: string[]; quotedImageUrls?: string[]; postUrl: string | null; siteId: SiteId; isReply?: boolean; pauseScope?: PauseScope }
   | { type: 'suggestAnnoyingReasons'; post: string; imageUrls: string[]; siteId?: SiteId }
   | { type: 'clearCache' }
   // Sent by the settings popup after the user grants an optional platform's

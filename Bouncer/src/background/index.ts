@@ -333,7 +333,7 @@ async function handleMessage(
       // Check if already in queue - add another resolver for this item
       if (tabId !== undefined && isKeyPending(tabId, cacheKey)) {
         return new Promise(resolve => {
-          const item = { evaluationId: message.evaluationId, post: message.post, rawText: message.rawText, imageUrls, resolve, cacheKey, tabId, postUrl: message.postUrl, siteId: message.siteId, isReply: message.isReply === true, pauseScope };
+          const item = { evaluationId: message.evaluationId, post: message.post, rawText: message.rawText, imageUrls, quotedImageUrls: message.quotedImageUrls, resolve, cacheKey, tabId, postUrl: message.postUrl, siteId: message.siteId, isReply: message.isReply === true, pauseScope };
           enqueuePost(tabId, item);
         });
       }
@@ -341,7 +341,7 @@ async function handleMessage(
       // Queue for batch processing
       // processBatch will prioritize posts closest to viewport center for local models
       const resultPromise = new Promise(resolve => {
-        const item = { evaluationId: message.evaluationId, post: message.post, rawText: message.rawText, imageUrls, resolve, cacheKey, tabId, postUrl: message.postUrl, siteId: message.siteId, isReply: message.isReply === true, pauseScope };
+        const item = { evaluationId: message.evaluationId, post: message.post, rawText: message.rawText, imageUrls, quotedImageUrls: message.quotedImageUrls, resolve, cacheKey, tabId, postUrl: message.postUrl, siteId: message.siteId, isReply: message.isReply === true, pauseScope };
         enqueuePost(tabId!, item);
       });
       console.log('[Bouncer][diag] evaluatePost enqueued for tab', tabId);

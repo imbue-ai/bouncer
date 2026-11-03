@@ -240,7 +240,8 @@ export interface RawEmbedView {
   images?: RawImageView[];
   thumbnail?: string;
   aspectRatio?: RawAspectRatio;
-  external?: { uri: string; title?: string; thumb?: string };
+  /** domain: xstream's, for an X link card, whose uri may be a t.co link. */
+  external?: { uri: string; title?: string; thumb?: string; domain?: string };
   media?: RawEmbedView;
   /** record#view: the quoted record. recordWithMedia#view: { record }. */
   record?: RawQuotedRecord & { record?: RawQuotedRecord };

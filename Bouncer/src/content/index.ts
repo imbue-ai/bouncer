@@ -45,7 +45,7 @@ import {
 } from './ui';
 
 import { formatPostForEvaluation, phraseAddNeedsReEvaluation } from '../shared/utils';
-import { initBlueskySeeMore, noteTimelinePost } from './bluesky-see-more';
+import { initBlueskySeeMore, noteTimelinePost, INJECTED_POST_SELECTOR } from './bluesky-see-more';
 import {
   findStructuralMatch,
   structuralFilterKind,
@@ -195,7 +195,7 @@ import {
     pendingPosts,
   });
 
-  initBlueskySeeMore(adapter);
+  initBlueskySeeMore(adapter, { processPost: article => processPost(article) });
 
   initIOS({
     adapter,
@@ -211,8 +211,11 @@ import {
 
   // ==================== Core Functions ====================
 
+  // Includes "See more" posts placed in the timeline, which go through the
+  // same pipeline as tweets (bluesky-see-more.ts).
   function findPosts(): HTMLElement[] {
-    return Array.from(document.querySelectorAll<HTMLElement>(adapter.selectors.post));
+    const selector = adapter.siteId === 'twitter' ? `${adapter.selectors.post}, ${INJECTED_POST_SELECTOR}` : adapter.selectors.post;
+    return Array.from(document.querySelectorAll<HTMLElement>(selector));
   }
 
   // Tab-dispatch messages from background reference an evaluation by a UUID
@@ -449,6 +452,7 @@ import {
           post: formatPostForEvaluation(content),
           rawText: content.text,
           imageUrls: content.imageUrls || [],
+          quotedImageUrls: content.quotedImageUrls,
           postUrl: content.postUrl || null,
           siteId: adapter.siteId,
           pauseScope,

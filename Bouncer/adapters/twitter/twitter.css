@@ -403,6 +403,13 @@ html.twitter-light .bsky-x-post {
 
 .bsky-x-text { white-space: pre-wrap; margin-top: 2px; }
 .bsky-x-post .bsky-x-link { color: rgb(29, 155, 240); }
+/* Like X's, the whole row is the button: hovering anywhere on it underlines
+   the label, and a click anywhere on it unfolds the post. */
+.bsky-x-post .bsky-x-show-more {
+  display: block; width: 100%; padding: 0; border: 0; background: none; text-align: left;
+  font: inherit; color: rgb(29, 155, 240); cursor: pointer;
+}
+.bsky-x-post .bsky-x-show-more:hover { text-decoration: underline; }
 
 .bsky-x-media {
   position: relative;

@@ -17,7 +17,7 @@ const httpsOrNull = (url: string | undefined) => (url?.startsWith('https://') ? 
 
 function mapMedia(media: RawMedia): Pick<BskyFeedPost, 'images' | 'isVideo' | 'external'> {
   let domain = '';
-  try { domain = media.external ? new URL(media.external.uri).hostname.replace(/^www\./, '') : ''; } catch { /* bad URI */ }
+  try { domain = media.external ? media.external.domain || new URL(media.external.uri).hostname.replace(/^www\./, '') : ''; } catch { /* bad URI */ }
   return {
     images: media.images.flatMap(img => {
       const url = httpsOrNull(img.thumb);
@@ -63,11 +63,12 @@ function mapRecord(q: RawQuotedRecord): BskyQuotedPost {
   return quoted;
 }
 
-/** X posts (from the backend's xstream) carry their x.com status URL; their
- *  text is what Bouncer captured, "<display name>: <tweet>", so the name
- *  prefix is dropped (the header shows it). xstream fills in avatar, like and
- *  reply counts and the post time from X's embed endpoint (`enrichment:
- *  'ok'`); X gives no repost count there, so none is shown. */
+/** X posts (from the backend's xstream) carry their x.com status URL.
+ *  xstream fills in the text as X renders it (newlines, display URLs, with
+ *  links, mentions and hashtags as link facets; a long post keeps Bouncer's
+ *  flattened capture, since X's endpoint cuts it off), avatar, like and reply
+ *  counts and the post time from X's embed endpoint (`enrichment: 'ok'`); X
+ *  gives no repost count there, so none is shown. */
 function mapXPost(p: RawPostView & { url?: string; enrichment?: string }, topic: string): BskyFeedPost | null {
   // No permalink means the post can't be opened; drop it loudly rather than
   // pointing it somewhere else.
@@ -82,8 +83,7 @@ function mapXPost(p: RawPostView & { url?: string; enrichment?: string }, topic:
     return null;
   }
   const name = p.author.displayName?.trim() || p.author.handle;
-  const raw = p.record.text ?? '';
-  const text = raw.startsWith(`${name}: `) ? raw.slice(name.length + 2) : raw;
+  const text = p.record.text ?? '';
   return {
     uri: p.uri,
     source: 'x',
@@ -93,7 +93,7 @@ function mapXPost(p: RawPostView & { url?: string; enrichment?: string }, topic:
     authorUrl: `https://x.com/${p.author.handle}`,
     avatarUrl: httpsOrNull(p.author.avatar),
     text,
-    links: [],
+    links: facetsToLinks(text, p.record.facets),
     createdAt: p.record.createdAt ?? '',
     replyCount: p.replyCount ?? 0,
     repostCount: 0,

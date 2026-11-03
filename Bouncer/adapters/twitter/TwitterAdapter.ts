@@ -187,33 +187,11 @@ const BouncerTwitterAdapter = class TwitterAdapter implements PlatformAdapter {
 
     const postUrl = this.getPostUrl(article);
 
-    const imageEls = article.querySelectorAll('img[src*="pbs.twimg.com/media"]');
-    const imageUrls: string[] = [];
-    imageEls.forEach(img => {
-      let url = (img as HTMLImageElement).src;
-      if (url.includes('?')) {
-        url = url.split('?')[0] + '?format=jpg&name=medium';
-      }
-      if (!imageUrls.includes(url)) {
-        imageUrls.push(url);
-      }
-    });
-
-    const videoEls = article.querySelectorAll('video[poster]');
-    videoEls.forEach(video => {
-      const posterUrl = (video as HTMLVideoElement).poster;
-      if (posterUrl && !imageUrls.includes(posterUrl)) {
-        imageUrls.push(posterUrl);
-      }
-    });
-
-    const videoThumbEls = article.querySelectorAll('img[src*="pbs.twimg.com/ext_tw_video_thumb"], img[src*="pbs.twimg.com/amplify_video_thumb"]');
-    videoThumbEls.forEach(img => {
-      const url = (img as HTMLImageElement).src;
-      if (!imageUrls.includes(url)) {
-        imageUrls.push(url);
-      }
-    });
+    const imageUrls = this._mediaUrls(article);
+    // The quote card's own media (also in imageUrls), so xstream can tell a
+    // quote tweet's images from the quoted tweet's.
+    const quoteCardEl = tweetTextEls.length > 1 ? tweetTextEls[1].closest('[role="link"]') : null;
+    const quotedImageUrls = quoteCardEl ? this._mediaUrls(quoteCardEl).filter(u => imageUrls.includes(u)) : [];
 
     const hasMediaContainer = article.querySelector(
       '[data-testid="tweetPhoto"], [data-testid="videoPlayer"], [data-testid="card.wrapper"]'
@@ -239,7 +217,7 @@ const BouncerTwitterAdapter = class TwitterAdapter implements PlatformAdapter {
     const repostHeader = this._getRepostHeader(article);
 
     return {
-      text, author, handle, avatarUrl, timeText, textHtml, quote, postUrl, imageUrls,
+      text, author, handle, avatarUrl, timeText, textHtml, quote, postUrl, imageUrls, quotedImageUrls,
       hasMediaContainer: hasPotentialMedia,
       isRepost: repostHeader !== null,
       repostHeader,
@@ -395,6 +373,20 @@ const BouncerTwitterAdapter = class TwitterAdapter implements PlatformAdapter {
 
   getPostContentKey(article: HTMLElement) {
     return this.getPostUrl(article) || article.querySelector(this.selectors.textContent)?.textContent?.substring(0, 200) || '';
+  }
+
+  /** Photo, video-poster and video-thumbnail URLs under `root`, deduped. */
+  _mediaUrls(root: Element): string[] {
+    const urls: string[] = [];
+    const add = (url: string) => { if (url && !urls.includes(url)) urls.push(url); };
+    root.querySelectorAll('img[src*="pbs.twimg.com/media"]').forEach(img => {
+      const src = (img as HTMLImageElement).src;
+      add(src.includes('?') ? src.split('?')[0] + '?format=jpg&name=medium' : src);
+    });
+    root.querySelectorAll('video[poster]').forEach(video => add((video as HTMLVideoElement).poster));
+    root.querySelectorAll('img[src*="pbs.twimg.com/ext_tw_video_thumb"], img[src*="pbs.twimg.com/amplify_video_thumb"]')
+      .forEach(img => add((img as HTMLImageElement).src));
+    return urls;
   }
 
   getPostContainer(article: HTMLElement): HTMLElement {
@@ -592,6 +584,7 @@ const BouncerTwitterAdapter = class TwitterAdapter implements PlatformAdapter {
       quote,
       postUrl: data.postUrl || null,
       imageUrls: allImageUrls,
+      quotedImageUrls: data.quotedTweet?.imageUrls?.length ? [...data.quotedTweet.imageUrls] : undefined,
       hasMediaContainer: allImageUrls.length > 0,
       fromStore: true,
       mediaBlurred: data.mediaBlurred || false,

@@ -977,7 +977,7 @@ async function processBatch(): Promise<void> {
     return;
   }
 
-  const postData = { text: item.post, imageUrls, postUrl: item.postUrl };
+  const postData = { text: item.post, imageUrls, postUrl: item.postUrl, ...(item.quotedImageUrls?.length ? { quotedImageUrls: item.quotedImageUrls } : {}) };
   // Phrases routed to the AI detectors rather than the classifier (see
   // effectiveDescriptions). Sent to the Imbue backend for logging only.
   const aiCategories = settings.descriptions.filter(d => !settings.effectiveDescriptions.includes(d));
