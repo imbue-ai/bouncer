@@ -664,7 +664,11 @@ export async function callLocalInference(
   // budgeting.
   const maxGenerationTokens = Math.max(64, 6 + 4 * bannedCategories.length);
   const supportsImages = modelConfig?.supportsImages === true;
-  let useImages = !!(supportsImages && postData.imageUrls && postData.imageUrls.length > 0);
+  // The engine reserves embedding space for a fixed number of images; extras
+  // beyond that are dropped (in feed order) rather than failing the post.
+  const maxImages = modelConfig?.litertlmConfig?.vision?.maxNumImages ?? Infinity;
+  let imageUrls = supportsImages ? (postData.imageUrls ?? []).slice(0, maxImages) : [];
+  let useImages = imageUrls.length > 0;
 
   // The user content is a string for text-only models and a multipart array
   // (text + image_url entries) when the backend supports vision.
@@ -679,7 +683,7 @@ export async function callLocalInference(
     if (!includeImages) return userText;
     return [
       { type: 'text', text: userText },
-      ...postData.imageUrls.map(url => ({ type: 'image_url' as const, image_url: { url } })),
+      ...imageUrls.map(url => ({ type: 'image_url' as const, image_url: { url } })),
     ];
   };
   const buildMessages = (postText: string, includeImages: boolean): ChatMessage[] => [
@@ -700,14 +704,18 @@ export async function callLocalInference(
   let imageTokens = 0;
   if (useImages) {
     const perImageTokens = await localEngine.getImageEmbedSize();
-    imageTokens = perImageTokens * postData.imageUrls.length;
+    // Keep as many images as leave room for at least one token of post text.
+    const room = contextWindowSize - overheadTokens - maxGenerationTokens - 1;
+    const fit = perImageTokens > 0 ? Math.floor(room / perImageTokens) : imageUrls.length;
+    imageUrls = imageUrls.slice(0, Math.max(0, fit));
+    useImages = imageUrls.length > 0;
+    imageTokens = perImageTokens * imageUrls.length;
   }
 
   let postTextBudget = contextWindowSize - overheadTokens - maxGenerationTokens - imageTokens;
 
-  // If images leave no room for text, drop them and recompute.
-  if (useImages && postTextBudget < 1) {
-    useImages = false;
+  // If no image fits, fall back to the text-only prompt and recompute.
+  if (!useImages) {
     const textOnlyOverhead = await localEngine.countTokens(overheadText(false));
     postTextBudget = contextWindowSize - textOnlyOverhead - maxGenerationTokens;
   }

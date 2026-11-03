@@ -190,6 +190,18 @@ export interface LocalModelDef extends ModelDef {
     // Sampler knobs forwarded to SessionConfig.samplerParams. inferenceParams
     // override these per-call via the existing LocalBackend.generate(params) channel.
     topK?: number;
+    // Vision input. Requires a model file that actually carries the vision
+    // encoder sections — the `-web`/`-gpu` (GPU_ARTISAN) files are
+    // text-only; the generic `.litertlm` runs on Backend.GPU with vision.
+    // Only consulted when the model's supportsImages is true.
+    vision?: {
+      // Images per post; extras are dropped. GPU engines reserve embedding
+      // space for this many images up front.
+      maxNumImages: number;
+      // Per-image vision-token budget. Also what getImageEmbedSize reports,
+      // so callLocalInference can budget the context window.
+      maxVisionTokensPerImage: number;
+    };
   };
 }
 
