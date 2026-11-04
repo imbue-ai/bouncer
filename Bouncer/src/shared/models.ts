@@ -1,7 +1,8 @@
 // Shared model definitions for Bouncer
 // Used by both background and popup (via esbuild bundling)
 
-import type { PredefinedModelsMap } from '../types';
+import type { LocalModelDef, PredefinedModelsMap } from '../types';
+import { CURRENT_TARGET } from './platforms';
 
 // iOS on-device model catalog, injected by the native app: FilteredWebView
 // prepends `var __iosLocalModels = [...]` (serialized from the Swift
@@ -35,6 +36,20 @@ if (inApp && injectedIosModels.length === 0) {
   );
 }
 
+// Chrome's built-in Gemini Nano via the Prompt API (Chrome 138+ for
+// extensions). Chrome downloads and owns the weights, so there's no
+// modelUrl or size; Firefox/Safari have no LanguageModel global, so the
+// entry only exists in the Chrome build.
+export const PROMPT_API_MODEL_NAME = 'gemini-nano-chrome';
+const PROMPT_API_MODELS: LocalModelDef[] = CURRENT_TARGET === 'chrome' ? [{
+  name: PROMPT_API_MODEL_NAME,
+  display: 'Gemini Nano (Chrome built-in)',
+  isLocal: true,
+  backend: 'prompt-api',
+  supportsImages: true,
+  promptApiConfig: { maxNumImages: 4 },
+}] : [];
+
 export const PREDEFINED_MODELS: PredefinedModelsMap = {
   // Web models use the generic `.litertlm` files (Backend.GPU) rather than
   // the `-web`/`-gpu` GPU_ARTISAN builds: only the generic files carry the
@@ -42,6 +57,7 @@ export const PREDEFINED_MODELS: PredefinedModelsMap = {
   // persisted in users' selectedModel setting. The context window fits up to
   // 4 images x 280 vision tokens (Gemma 4's default budget) plus the prompt.
   local: [
+    ...PROMPT_API_MODELS,
     {
       name: "gemma-4-E2B-it-web",
       display: "Gemma 4 E2B (Instruct)",

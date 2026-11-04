@@ -12,6 +12,7 @@ type FakeBackend = {
   countTokens: ReturnType<typeof vi.fn>;
   truncateText: ReturnType<typeof vi.fn>;
   getImageEmbedSize: ReturnType<typeof vi.fn>;
+  getContextWindow: ReturnType<typeof vi.fn>;
 };
 
 function makeFakeBackend(): FakeBackend {
@@ -23,6 +24,7 @@ function makeFakeBackend(): FakeBackend {
     countTokens: vi.fn().mockResolvedValue(0),
     truncateText: vi.fn().mockImplementation((t: string) => Promise.resolve(t)),
     getImageEmbedSize: vi.fn().mockResolvedValue(0),
+    getContextWindow: vi.fn().mockResolvedValue(2048),
   };
 }
 

@@ -1,7 +1,8 @@
 // Bouncer - Popup Script
 
-import type { ModelDef, LocalModelStatus, StorageSchema, SiteId } from '../types';
-import { PREDEFINED_MODELS, DEFAULT_MODEL } from '../shared/models';
+import type { ModelDef, LocalModelDef, LocalModelStatus, StorageSchema, SiteId } from '../types';
+import { PREDEFINED_MODELS, DEFAULT_MODEL, PROMPT_API_MODEL_NAME } from '../shared/models';
+import { startPromptApiDownloadFromUserGesture } from '../background/backends/prompt-api-backend';
 import { escapeHtml, parseHTML } from '../shared/utils';
 import { getStorage, setStorage, removeStorage, clampThreshold, clampImageThreshold, clampReplyThreshold, aiIntentAutoActive, getExcludedAccounts, setExcludedAccounts, normalizeAccountIdentity, identifiesAccountsByName } from '../shared/storage';
 import {
@@ -124,12 +125,16 @@ const isInAppMode = typeof chrome !== 'undefined' && chrome._polyfilled;
 
 // Model key the "On-Device (E2B)" headline radio writes. In the iOS app the
 // native bridge runs the on-device model (iosLocal:, entries injected from
-// the Swift registry — see shared/models.ts), everywhere else it's the
-// WebGPU litert-lm web build (local:).
+// the Swift registry — see shared/models.ts). The Chrome build uses Chrome's
+// built-in Gemini Nano (Prompt API); Firefox/Safari use the WebGPU litert-lm
+// web build (local:).
 const IOS_LOCAL_MODEL = PREDEFINED_MODELS.iosLocal[0];
+const HAS_PROMPT_API_MODEL = PREDEFINED_MODELS.local.some(m => m.name === PROMPT_API_MODEL_NAME);
 const LOCAL_RADIO_MODEL_KEY = isInAppMode && IOS_LOCAL_MODEL
   ? `iosLocal:${IOS_LOCAL_MODEL.name}`
-  : 'local:gemma-4-E2B-it-web';
+  : HAS_PROMPT_API_MODEL
+    ? `local:${PROMPT_API_MODEL_NAME}`
+    : 'local:gemma-4-E2B-it-web';
 
 // User-friendly error message mapping for local-model errors
 const LOCAL_ERROR_MESSAGES: Record<string, { display: string; hint: string }> = {
@@ -1759,7 +1764,8 @@ function updateModelRadioUI() {
   // mode has neither.
   const localSupported = isInAppMode
     ? (IOS_LOCAL_MODEL?.isSupportedOnThisDevice ?? false)
-    : webgpuSupported;
+    : webgpuSupported
+      && localModelStatuses[LOCAL_RADIO_MODEL_KEY.split(':')[1]]?.state !== 'unsupported';
   // Outside the iOS app, On-Device stays greyed until its model is
   // downloaded (the row's Download button is the way in). Never grey it
   // while it's the active selection.
@@ -2287,6 +2293,14 @@ function setupLocalModelListeners() {
       if (!selectedLocalModel) {
         console.error('No local model selected');
         return;
+      }
+      // Chrome only starts a Gemini Nano download from a user gesture, which
+      // the background worker never has. Kick it off here, before any await
+      // spends the click's transient activation; the background's
+      // initializeLocalModel then tracks it to completion.
+      if ((selectedLocalModel as LocalModelDef).backend === 'prompt-api') {
+        startPromptApiDownloadFromUserGesture(selectedLocalModel as LocalModelDef)
+          .catch(err => console.error('[Popup] Gemini Nano download kickoff failed:', err));
       }
       // Downloading from the start (nothing local chosen yet) means "use
       // On-Device": park it so the background switches over once the

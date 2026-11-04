@@ -18,6 +18,7 @@ import { inferenceQueue } from './inference-queue';
 import { getStorage, setStorage } from '../shared/storage';
 import type { LocalBackend } from './backends/types';
 import { LitertlmBackend, isLitertlmCached } from './backends/litertlm-backend';
+import { PromptApiBackend, isPromptApiCached, isPromptApiPresent, promptApiAvailability } from './backends/prompt-api-backend';
 
 declare global {
   interface Navigator {
@@ -44,13 +45,27 @@ const DOWNLOAD_RETRY_DELAY_MS = 2000;
 
 // ==================== Pure helpers ====================
 
-function selectBackend(_modelDef: LocalModelDef): LocalBackend {
-  return new LitertlmBackend();
+function selectBackend(modelDef: LocalModelDef): LocalBackend {
+  return modelDef.backend === 'prompt-api' ? new PromptApiBackend() : new LitertlmBackend();
 }
 
 // Probe whether a model's weights are already on disk, without loading them.
+// For the Prompt API, "on disk" means Chrome reports Gemini Nano available.
 async function backendIsCached(modelDef: LocalModelDef): Promise<boolean> {
-  return isLitertlmCached(modelDef);
+  return modelDef.backend === 'prompt-api' ? isPromptApiCached(modelDef) : isLitertlmCached(modelDef);
+}
+
+// Why this device can't run the model, or null if it can. LiteRT-LM needs
+// WebGPU; the Prompt API needs Chrome's LanguageModel global and a device
+// Chrome deems capable (it falls back to CPU, so no WebGPU requirement).
+export async function localModelUnsupportedReason(modelDef: LocalModelDef): Promise<string | null> {
+  if (modelDef.backend === 'prompt-api') {
+    if (!isPromptApiPresent()) return 'Chrome built-in AI not available';
+    return await promptApiAvailability(modelDef) === 'unavailable'
+      ? 'Gemini Nano is not supported on this device'
+      : null;
+  }
+  return navigator.gpu ? null : 'WebGPU not supported';
 }
 
 // ==================== LocalEngine ====================
@@ -108,7 +123,7 @@ export class LocalEngine {
     if (!this.isModelLoaded(modelId)) {
       const backend = await this.initialize(modelId);
       if (!backend) {
-        throw new Error('Local model not available. WebGPU may not be supported or model not downloaded.');
+        throw new Error('Local model not available. The device may be unsupported or the model not downloaded.');
       }
     }
   }
@@ -126,11 +141,6 @@ export class LocalEngine {
       return this.engine;
     }
 
-    if (!navigator.gpu) {
-      await this.updateStatus(modelId, { state: 'unsupported', reason: 'WebGPU not supported' });
-      return null;
-    }
-
     const modelDef = PREDEFINED_MODELS.local.find(m => m.name === modelId) || null;
     if (!modelDef) {
       await this.updateStatus(modelId, { state: 'error', error: `Unknown model: ${modelId}` });
@@ -141,6 +151,16 @@ export class LocalEngine {
     // see isInitializingModel() and wait on _initPromise.
     void this._startInit(modelId);
     const abortSignal = this._initAbortController!.signal;
+
+    // Checked after _startInit: the Prompt API probe is async, and awaiting
+    // before init tracking starts would let concurrent callers race past
+    // the isInitializingModel() guard.
+    const unsupportedReason = await localModelUnsupportedReason(modelDef);
+    if (unsupportedReason) {
+      await this.updateStatus(modelId, { state: 'unsupported', reason: unsupportedReason });
+      this._completeInit(null);
+      return null;
+    }
     this._startDownloadKeepAlive();
 
     // If a different model is loaded, unload it first to free GPU memory.
@@ -324,10 +344,13 @@ export class LocalEngine {
   async generate(
     messages: ChatMessage[],
     maxTokens: number,
-    { priority = 0, temperature, onStart }: { priority?: number; temperature?: number; onStart?: () => void } = {}
+    { priority = 0, temperature, verdictCount, onStart }: { priority?: number; temperature?: number; verdictCount?: number; onStart?: () => void } = {}
   ): Promise<string> {
     const params: Record<string, unknown> = {};
     if (temperature !== undefined) params.temperature = temperature;
+    // Number of yes/no verdict lines the caller expects. Backends with
+    // constrained decoding (Prompt API) enforce that shape; others ignore it.
+    if (verdictCount !== undefined) params.verdictCount = verdictCount;
 
     return inferenceQueue.enqueue(async () => {
       // Wait for any previous interruptGenerate() to settle
@@ -388,6 +411,11 @@ export class LocalEngine {
   async getImageEmbedSize(): Promise<number> {
     if (!this.engine) throw new Error('Engine not loaded');
     return await this.engine.getImageEmbedSize();
+  }
+
+  async getContextWindow(): Promise<number> {
+    if (!this.engine) throw new Error('Engine not loaded');
+    return await this.engine.getContextWindow();
   }
 
   // ---- Queue operations ----
@@ -636,7 +664,7 @@ export async function callLocalAiIntentJudgment(
   // Same output-budget shape as callLocalInference: ~3 tokens per verdict,
   // floored high enough that markdown-table drift doesn't truncate mid-row.
   const maxGenerationTokens = Math.max(64, 6 + 4 * phrases.length);
-  const rawResponse = await localEngine.generate(messages, maxGenerationTokens, { priority: 1 });
+  const rawResponse = await localEngine.generate(messages, maxGenerationTokens, { priority: 1, verdictCount: phrases.length });
   const { matches, malformed } = parseTableYesnoResponse(rawResponse, phrases);
   return malformed ? null : matches;
 }
@@ -654,7 +682,7 @@ export async function callLocalInference(
 ): Promise<{ shouldHide: boolean; reasoning: string; category?: string | null; matches: string[]; rawResponse?: string | null; inferenceTime?: number }> {
   await localEngine.ensureLoaded(modelId);
 
-  const contextWindowSize = modelConfig?.litertlmConfig?.maxTokens ?? 1024;
+  const contextWindowSize = await localEngine.getContextWindow();
   // Output is the verdict row (~3 tokens × N categories). Pad generously so
   // a long topic name or extra category never truncates. The floor also
   // leaves headroom for Gemma's markdown-table drift (header + separator
@@ -666,7 +694,9 @@ export async function callLocalInference(
   const supportsImages = modelConfig?.supportsImages === true;
   // The engine reserves embedding space for a fixed number of images; extras
   // beyond that are dropped (in feed order) rather than failing the post.
-  const maxImages = modelConfig?.litertlmConfig?.vision?.maxNumImages ?? Infinity;
+  const maxImages = modelConfig?.litertlmConfig?.vision?.maxNumImages
+    ?? modelConfig?.promptApiConfig?.maxNumImages
+    ?? Infinity;
   let imageUrls = supportsImages ? (postData.imageUrls ?? []).slice(0, maxImages) : [];
   let useImages = imageUrls.length > 0;
 
@@ -735,11 +765,11 @@ export async function callLocalInference(
 
   let rawResponse: string;
   try {
-    rawResponse = await localEngine.generate(messages, maxGenerationTokens, { priority, onStart });
+    rawResponse = await localEngine.generate(messages, maxGenerationTokens, { priority, verdictCount: bannedCategories.length, onStart });
   } catch (imgError) {
     if ((imgError as Error).message === 'Inference preempted') throw imgError;
     if (useImages) {
-      rawResponse = await localEngine.generate(buildMessages(postText, false), maxGenerationTokens, { priority, onStart });
+      rawResponse = await localEngine.generate(buildMessages(postText, false), maxGenerationTokens, { priority, verdictCount: bannedCategories.length, onStart });
     } else {
       throw imgError;
     }

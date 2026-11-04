@@ -1,4 +1,4 @@
-// Common interface for local-inference backends (LiteRT-LM).
+// Common interface for local-inference backends (LiteRT-LM, Chrome Prompt API).
 // LocalEngine (the orchestrator) holds one of these and delegates model-specific
 // calls. Lifecycle/status/queue/keep-alive/preemption live in the orchestrator.
 
@@ -40,6 +40,9 @@ export interface LocalBackend {
 
   // 0 if the backend does not support images for the loaded model.
   getImageEmbedSize(): Promise<number>;
+
+  // Combined prompt + output token budget of the loaded model.
+  getContextWindow(): Promise<number>;
 }
 
 // Backend-level static cache check — answered without an initialized engine.

@@ -25,7 +25,7 @@
 
 import {
   LOCAL_SYSTEM_PROMPT, buildTableYesnoUserMessage, parseTableYesnoResponse,
-  AI_INTENT_LOCAL_SYSTEM_PROMPT, buildAiIntentUserMessage,
+  AI_INTENT_LOCAL_SYSTEM_PROMPT, buildAiIntentUserMessage, yesnoRowRegex,
 } from '../shared/prompts';
 import type { DetectorResult } from './detectors';
 import type { EvaluationPostData, LocalModelDef } from '../types';
@@ -177,20 +177,6 @@ export async function iosLocalGenerate(
       reject(err instanceof Error ? err : new Error(String(err)));
     }
   });
-}
-
-// LlGuidance FSM-constrained decoding regex: forces N pipe-delimited yes/no
-// cells with optional leading/trailing pipes and tight ` ?` (zero or one
-// space) padding. We deliberately avoid `\s*` here because that includes
-// newlines and tabs — Gemma can otherwise spend its maxOutputTokens budget
-// on whitespace tokens and never reach the Nth verdict.
-//
-// For N=3: `^\|? ?(yes|no)( ?\| ?(yes|no)){2}\|? ?$`
-function yesnoRowRegex(n: number): string {
-  const cell = '(yes|no)';
-  return n === 1
-    ? `^\\|? ?${cell} ?\\|? ?$`
-    : `^\\|? ?${cell}( ?\\| ?${cell}){${n - 1}}\\|? ?$`;
 }
 
 /**
