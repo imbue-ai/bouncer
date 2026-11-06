@@ -126,6 +126,7 @@ async function main() {
     'content.js',
     'offscreen.js',
     'onboarding.js',
+    'activate.js',
     'litertlm-stub.js',
     // iOS-only bundles (consumed by the Xcode project, dead weight in
     // Chrome/Firefox zips).

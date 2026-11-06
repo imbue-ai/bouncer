@@ -485,7 +485,9 @@ const BouncerLinkedInAdapter = class LinkedInAdapter implements PlatformAdapter 
 
   shouldProcessCurrentPage(): boolean {
     const path = window.location.pathname;
-    return path === '/' || path === '/feed' || path === '/feed/' || this.isPermalinkView();
+    // The home feed is /feed/ or one of its tabs, /feed/<tab>/ (the default
+    // tab is /feed/foryou/). A post is /feed/update/<urn>/ (isPermalinkView).
+    return path === '/' || /^\/feed(\/[^/]+)?\/?$/.test(path) || this.isPermalinkView();
   }
 
   isPermalinkView(): boolean {

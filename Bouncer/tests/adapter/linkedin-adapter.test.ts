@@ -207,3 +207,27 @@ describe('LinkedIn desktop wrapper layout (componentkey on parent of listitem)',
     expect(content.timeText).toBe('1d');
   });
 });
+
+describe('LinkedIn page gating', () => {
+  const at = (path: string) => {
+    (window as unknown as { happyDOM: { setURL(url: string): void } })
+      .happyDOM.setURL(`https://www.linkedin.com${path}`);
+    return new LinkedInAdapter().shouldProcessCurrentPage();
+  };
+
+  it('processes the home feed and its tabs, including the default /feed/foryou/', () => {
+    for (const path of ['/', '/feed', '/feed/', '/feed/foryou/', '/feed/foryou', '/feed/following/']) {
+      expect(at(path), path).toBe(true);
+    }
+  });
+
+  it('processes a post page', () => {
+    expect(at('/feed/update/urn:li:activity:7390000000000000000/')).toBe(true);
+  });
+
+  it('skips pages that are not the feed', () => {
+    for (const path of ['/in/someone/', '/jobs/', '/mynetwork/', '/feedback/']) {
+      expect(at(path), path).toBe(false);
+    }
+  });
+});

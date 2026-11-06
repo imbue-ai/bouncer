@@ -1162,9 +1162,8 @@ async function injectFilterPhrasesInputImpl() {
     updateSidebarFilterVisibility();
     return;
   }
-  console.log('[Bouncer] injectFilterPhrasesInput: will create new box (DOM count before=', existingInDom, ')');
-
-  // Don't inject on non-applicable pages
+  // Don't inject on non-applicable pages. This runs on every DOM change, so
+  // nothing is logged until there's a box to create.
   if (!shouldKeepFilterUI()) return;
 
   const sidebar = document.querySelector(_deps.adapter.selectors.sidebar);
@@ -1173,6 +1172,7 @@ async function injectFilterPhrasesInputImpl() {
     ? sidebar.querySelector(_deps.adapter.selectors.sidebarContent)
     : sidebar;
   if (!sidebarContent) return;
+  console.log('[Bouncer] injectFilterPhrasesInput: will create new box (DOM count before=', existingInDom, ')');
 
   // Preferred target: inside the sidebar wrapper so our z-index can sit between
   // the fixed search bar (z=2, Home only) and scrolling content (z=0). Falls

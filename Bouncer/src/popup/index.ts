@@ -25,7 +25,13 @@ const platformToggleId = (id: SiteId) => `enable${id.charAt(0).toUpperCase()}${i
 // false — a revoke from chrome://extensions reads back here as off.
 async function platformPermissionGranted(p: PlatformDef): Promise<boolean> {
   if (!isOptionalPlatform(p)) return true;
-  if (!chrome.permissions?.contains) return false;
+  if (!chrome.permissions?.contains) {
+    // Firefox's in-page settings modal has no permissions API (see the
+    // platform toggles below) — ask the background instead.
+    const res = await chrome.runtime.sendMessage({ type: 'checkPlatformPermission', siteId: p.id })
+      .catch(() => null) as { granted?: boolean } | null;
+    return res?.granted === true;
+  }
   try {
     return await chrome.permissions.contains({ origins: [p.manifestHost] });
   } catch {
@@ -1040,6 +1046,31 @@ function setupEventListeners() {
         // No permission pre-check here: any await before request() can spend
         // the user gesture. request() is a no-op returning true when the
         // origin is already granted.
+        if (checked && isOptionalPlatform(p) && !chrome.permissions?.request) {
+          // Firefox's in-page settings modal (popup.html iframed on x.com):
+          // Gecko gives extension iframes in web pages only content-script
+          // privileges, so there's no permissions API here (Bugzilla
+          // 1443253). Hand off to a top-level activate.html tab, where the
+          // grant runs from the user's click; the toggle reads as on once
+          // the modal is reopened after granting.
+          input.checked = false;
+          await chrome.runtime.sendMessage({ type: 'openPlatformActivation', siteId: p.id })
+            .catch(err => console.error(`[Popup] Opening activation tab for ${p.id} failed:`, err));
+          // The grant happens in the other tab. Its enabled-flag write
+          // usually flips this toggle via storage.onChanged, but that write
+          // is a no-op when the flag was already true (granted before, then
+          // revoked) — so re-check once the user is back on this page.
+          const recheck = () => {
+            if (document.visibilityState !== 'visible') return;
+            document.removeEventListener('visibilitychange', recheck);
+            getStorage([enabledStorageKey(p.id)])
+              .then(async data => data[enabledStorageKey(p.id)] !== false && await platformPermissionGranted(p))
+              .then(on => { input.checked = on; setPlatformRowActive(p.id, on); })
+              .catch(err => console.error(`[Popup] Re-checking ${p.id} failed:`, err));
+          };
+          document.addEventListener('visibilitychange', recheck);
+          return;
+        }
         if (checked && isOptionalPlatform(p)) {
           let granted = false;
           try {
