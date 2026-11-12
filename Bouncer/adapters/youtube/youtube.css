@@ -547,10 +547,10 @@ body.site-youtube .yt-card-reasoning {
 }
 
 /* ===== "Bounce this video" action button ===== */
-/* Per-card cancel icon — sized to match YT's own 24×24 icon-button so it
- * reads as a native sibling of the 3-dot "More actions" menu, then tinted
- * with the Bouncer brand orange so users can recognise it as our control.
- * The 34px default sizing from content.css is overridden here. */
+/* Per-card trash button — sized to match YT's own 24×24 icon-button so it
+ * reads as a native sibling of the 3-dot "More actions" menu, filled with
+ * the Bouncer brand orange (from content.css) so users can recognise it as
+ * our control. The 34px default sizing from content.css is overridden here. */
 
 .ff-why-annoying-btn.ff-yt-under-menu,
 .ff-why-annoying-btn.ff-yt-inline-meta {
@@ -560,29 +560,19 @@ body.site-youtube .yt-card-reasoning {
    * with the 3-dot button next to it. */
   width: 24px;
   height: 24px;
-  /* Bouncer brand accent. Defined in content.css :root as
-   * `--bouncer-brand-rgb`. */
-  color: rgb(var(--bouncer-brand-rgb));
 }
 
-/* For the next-to-menu placement we can't rely on inherited `color` driving
- * `stroke: currentcolor` — YT's `.ytSpecButtonShapeNext*` rules set their own
- * `color` on the host. Force `stroke` directly on the SVG so the brand orange
- * wins regardless of YT's icon-color cascade. */
+/* The next-to-menu placement carries YT's `.ytSpecButtonShapeNext*` classes,
+ * which set their own background and `color` on the host. Re-assert the
+ * orange fill, and force `stroke` directly on the SVG so the white icon wins
+ * regardless of YT's icon-color cascade. */
+.ff-why-annoying-btn.ff-yt-next-to-menu,
+.ff-why-annoying-btn.ff-yt-next-to-menu:hover {
+  background-color: rgb(var(--bouncer-brand-rgb));
+}
+
 .ff-why-annoying-btn.ff-yt-next-to-menu svg {
-  stroke: rgb(var(--bouncer-brand-rgb));
-}
-
-.ff-why-annoying-btn.ff-yt-under-menu:hover,
-.ff-why-annoying-btn.ff-yt-inline-meta:hover {
-  background: rgba(0, 0, 0, 0.05);
-}
-
-html[dark] .ff-why-annoying-btn.ff-yt-under-menu:hover,
-html[dark] .ff-why-annoying-btn.ff-yt-inline-meta:hover,
-html[darker-dark-theme] body.ff-ios .ff-why-annoying-btn.ff-yt-under-menu:hover,
-html[darker-dark-theme] body.ff-ios .ff-why-annoying-btn.ff-yt-inline-meta:hover {
-  background: rgba(255, 255, 255, 0.1);
+  stroke: white;
 }
 
 .ff-why-annoying-btn.ff-yt-under-menu svg,
@@ -630,9 +620,7 @@ html[darker-dark-theme] body.ff-ios .ff-why-annoying-btn.ff-yt-inline-meta:hover
 
 /* Mobile Shorts: the title is overlaid on the thumbnail, so the trash can't be
  * inline in it. Place it absolutely just under the 3-dot menu (a top-right
- * overlay on the shorts host), with a scrim so it's legible over any
- * thumbnail — hence theme-independent white-on-dark rather than the inherited
- * metadata color. */
+ * overlay on the shorts host). */
 .ff-why-annoying-btn.ff-yt-short-menu {
   position: absolute;
   top: 40px;
@@ -640,13 +628,6 @@ html[darker-dark-theme] body.ff-ios .ff-why-annoying-btn.ff-yt-inline-meta:hover
   z-index: 10;
   width: 28px;
   height: 28px;
-  border-radius: 50%;
-  background: rgba(0, 0, 0, 0.6);
-  color: #fff;
-}
-.ff-why-annoying-btn.ff-yt-short-menu:hover {
-  background: rgba(0, 0, 0, 0.75);
-  color: #fff;
 }
 .ff-why-annoying-btn.ff-yt-short-menu svg {
   width: 16px;

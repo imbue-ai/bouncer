@@ -44,20 +44,11 @@
 
 /* The Bounce control replaces Facebook's "X" (Hide post) in the post header.
  * width/height are set inline at insert time to match the native 36px round
- * button; give it the same circular hover fill. */
+ * button. */
 .ff-why-annoying-btn--facebook-header {
   flex: 0 0 auto;
   align-self: center;
   border-radius: 50%;
-}
-
-.ff-why-annoying-btn--facebook-header:hover {
-  background: rgba(0, 0, 0, 0.05);
-}
-
-.dark-mode .ff-why-annoying-btn--facebook-header:hover,
-html.__fb-dark-mode .ff-why-annoying-btn--facebook-header:hover {
-  background: rgba(255, 255, 255, 0.1);
 }
 
 /* Hidden feed slots. hidePost also sets inline display:none, but the mobile
