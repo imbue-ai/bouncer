@@ -57,6 +57,7 @@ describe('ImbueWebSocket', () => {
     imbueWebSocket.unackedRequests.clear();
     imbueWebSocket.pendingRequests.clear();
     imbueWebSocket.connectPromise = null;
+    imbueWebSocket.lastMessageAt = 0;
     MockWebSocket.lastInstance = null;
     MockWebSocket.instances = [];
   });
@@ -191,6 +192,24 @@ describe('ImbueWebSocket', () => {
       expect(result2.rawResponse).toBe('result-B');
     });
 
+    it('delivers a result that arrives before its ack, without mismatching other requests', async () => {
+      const send1 = imbueWebSocket.send({ action: 'first' });
+      const send2 = imbueWebSocket.send({ action: 'second' });
+      await new Promise(r => setTimeout(r, 10));
+      const ws = MockWebSocket.lastInstance!;
+      const reqId1 = ws.sentMessages[0].requestId;
+      const reqId2 = ws.sentMessages[1].requestId;
+
+      // A fast worker answers job-B before the Lambda's ack for either request.
+      ws.onmessage!({ data: JSON.stringify({ type: 'jobComplete', jobId: 'job-B', rawResponse: 'result-B' }) });
+      ws.onmessage!({ data: JSON.stringify({ requestId: reqId1, jobId: 'job-A' }) });
+      ws.onmessage!({ data: JSON.stringify({ requestId: reqId2, jobId: 'job-B' }) });
+      ws.onmessage!({ data: JSON.stringify({ type: 'jobComplete', jobId: 'job-A', rawResponse: 'result-A' }) });
+
+      expect((await send1).rawResponse).toBe('result-A');
+      expect((await send2).rawResponse).toBe('result-B');
+    });
+
     it('rejects on ack error', async () => {
       const sendPromise = imbueWebSocket.send({ action: 'test' });
       await new Promise(r => setTimeout(r, 10));
@@ -242,6 +261,129 @@ describe('ImbueWebSocket', () => {
       // Wait for timeout
       await expect(sendPromise).rejects.toThrow('timed out');
       expect(imbueWebSocket.pendingRequests.size).toBe(0);
+    });
+  });
+
+  describe('half-open socket detection', () => {
+    it('drops the socket when a request times out with no traffic since it was sent', async () => {
+      const sendPromise = imbueWebSocket.send({ action: 'test' }, { timeout: 50 });
+      await new Promise(r => setTimeout(r, 10));
+      expect(imbueWebSocket.ws).not.toBeNull();
+
+      await expect(sendPromise).rejects.toThrow('timed out');
+      // Total silence for the whole window means the socket is half-open:
+      // it was torn down, so the next send reconnects instead of feeding it.
+      expect(imbueWebSocket.ws).toBeNull();
+      const again = imbueWebSocket.send({ action: 'again' }, { timeout: 5000 });
+      await new Promise(r => setTimeout(r, 10));
+      expect(MockWebSocket.instances.length).toBe(2);
+      // Complete it cleanly so no timer outlives this test.
+      const fresh = MockWebSocket.instances[1];
+      const reqId = fresh.sentMessages[0].requestId;
+      fresh.onmessage!({ data: JSON.stringify({ requestId: reqId, jobId: 'j-fresh' }) });
+      fresh.onmessage!({ data: JSON.stringify({ jobId: 'j-fresh', rawResponse: 'ok' }) });
+      const result = await again;
+      expect(result.rawResponse).toBe('ok');
+    });
+
+    it('resends other in-flight requests on a fresh socket when the socket is dropped', async () => {
+      const fast = imbueWebSocket.send({ action: 'fast' }, { timeout: 50 });
+      const slow = imbueWebSocket.send({ action: 'slow' }, { timeout: 5000 });
+      await new Promise(r => setTimeout(r, 10));
+
+      await expect(fast).rejects.toThrow('timed out');
+      await new Promise(r => setTimeout(r, 10));
+      // The survivor went out again, same requestId, on a new connection.
+      expect(MockWebSocket.instances.length).toBe(2);
+      const fresh = MockWebSocket.instances[1];
+      expect(fresh.sentMessages).toHaveLength(1);
+      expect(fresh.sentMessages[0].action).toBe('slow');
+      const reqId = fresh.sentMessages[0].requestId;
+      fresh.onmessage!({ data: JSON.stringify({ requestId: reqId, jobId: 'j-slow' }) });
+      fresh.onmessage!({ data: JSON.stringify({ jobId: 'j-slow', rawResponse: 'ok' }) });
+      expect((await slow).rawResponse).toBe('ok');
+    });
+
+    it('replaces a silent socket after the ack watchdog and resends, without waiting for the timeout', async () => {
+      imbueWebSocket.ackWatchdogMs = 30;
+      try {
+        const acked = imbueWebSocket.send({ action: 'acked' }, { timeout: 5000 });
+        await new Promise(r => setTimeout(r, 5));
+        const dead = MockWebSocket.lastInstance!;
+        // Acked before the path died: its result would go to the dead connection.
+        const ackedId = dead.sentMessages[0].requestId;
+        dead.onmessage!({ data: JSON.stringify({ requestId: ackedId, jobId: 'j-old' }) });
+        // Liveness is judged to the millisecond; send strictly after that ack.
+        await new Promise(r => setTimeout(r, 5));
+        const silent = imbueWebSocket.send({ action: 'silent' }, { timeout: 5000 });
+
+        await new Promise(r => setTimeout(r, 60));
+        expect(MockWebSocket.instances.length).toBe(2);
+        const fresh = MockWebSocket.instances[1];
+        expect(fresh.sentMessages.map(m => m.action).sort()).toEqual(['acked', 'silent']);
+        for (const m of fresh.sentMessages) {
+          const job = `j-${String(m.action)}`;
+          fresh.onmessage!({ data: JSON.stringify({ requestId: m.requestId, jobId: job }) });
+          fresh.onmessage!({ data: JSON.stringify({ jobId: job, rawResponse: String(m.action) }) });
+        }
+        expect((await acked).rawResponse).toBe('acked');
+        expect((await silent).rawResponse).toBe('silent');
+      } finally {
+        imbueWebSocket.ackWatchdogMs = 15000;
+      }
+    });
+
+    it('fails a request whose replacement socket is silent too', async () => {
+      imbueWebSocket.ackWatchdogMs = 20;
+      try {
+        const doomed = imbueWebSocket.send({ action: 'doomed' }, { timeout: 5000 });
+        await expect(doomed).rejects.toThrow('unresponsive');
+        // Sent once, resent once, then failed: never a third send.
+        expect(MockWebSocket.instances.length).toBe(2);
+        expect(MockWebSocket.instances.map(ws => ws.sentMessages.length)).toEqual([1, 1]);
+        await new Promise(r => setTimeout(r, 60));
+        expect(MockWebSocket.instances.length).toBe(2);
+        expect(imbueWebSocket.unackedRequests.size).toBe(0);
+      } finally {
+        imbueWebSocket.ackWatchdogMs = 15000;
+      }
+    });
+
+    it('keeps the socket when traffic arrived after the timed-out request was sent', async () => {
+      const sendPromise = imbueWebSocket.send({ action: 'test' }, { timeout: 60 });
+      await new Promise(r => setTimeout(r, 10));
+      const ws = MockWebSocket.lastInstance!;
+      const requestId = ws.sentMessages[0].requestId;
+
+      // The ack arrives promptly (result slow, socket healthy) — liveness proven,
+      // so the timeout is just a slow job, not a dead connection.
+      ws.onmessage!({ data: JSON.stringify({ requestId, jobId: 'job-slow' }) });
+
+      await expect(sendPromise).rejects.toThrow('timed out');
+      expect(imbueWebSocket.ws).toBe(ws);
+    });
+
+    it("a replaced socket's late close does not reject requests on the new socket", async () => {
+      await imbueWebSocket.ensureConnected();
+      const old = MockWebSocket.lastInstance!;
+      // Simulate the half-open drop: the manager moved on before the zombie closed.
+      imbueWebSocket.ws = null;
+      imbueWebSocket.connectPromise = null;
+
+      const sendPromise = imbueWebSocket.send({ action: 'test' }, { timeout: 5000 });
+      await new Promise(r => setTimeout(r, 10));
+      const fresh = MockWebSocket.lastInstance!;
+      expect(fresh).not.toBe(old);
+
+      // The zombie's close frame finally lands — it must not nuke the new socket's requests.
+      old.onclose!({ code: 1006, wasClean: false });
+      expect(imbueWebSocket.unackedRequests.size).toBe(1);
+
+      const requestId = fresh.sentMessages[0].requestId;
+      fresh.onmessage!({ data: JSON.stringify({ requestId, jobId: 'j-new' }) });
+      fresh.onmessage!({ data: JSON.stringify({ jobId: 'j-new', rawResponse: 'ok' }) });
+      const result = await sendPromise;
+      expect(result.rawResponse).toBe('ok');
     });
   });
 

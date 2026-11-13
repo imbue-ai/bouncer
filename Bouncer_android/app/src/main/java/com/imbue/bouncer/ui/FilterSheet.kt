@@ -9,20 +9,25 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowCircleUp
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Cancel
 import androidx.compose.material.icons.filled.Share
@@ -38,16 +43,20 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.PrimaryScrollableTabRow
+import androidx.compose.material3.Tab
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.layout
@@ -55,9 +64,11 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.imbue.bouncer.push.PushSite
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 @Composable
@@ -73,6 +84,12 @@ fun FilterSheet(
     debugModeEnabled: Boolean,
     onAdd: (String) -> Unit,
     onRemove: (String) -> Unit,
+    offersSeeMore: Boolean,
+    seeMoreTopics: List<String>,
+    onAddSeeMoreTopic: (String) -> Unit,
+    onRemoveSeeMoreTopic: (String) -> Unit,
+    seeMoreSource: String,
+    onSeeMoreSourceChange: (String) -> Unit,
     onViewFiltered: () -> Unit,
     onShareFilterPack: () -> Unit,
     onToggleAiDetection: () -> Unit,
@@ -86,6 +103,12 @@ fun FilterSheet(
     modifier: Modifier = Modifier,
 ) {
     var showSettings by remember { mutableStateOf(false) }
+    // Which list the sheet edits: a page each, swiped between or picked by
+    // tab. See more only exists on X.
+    val listPager = rememberPagerState(pageCount = { SheetList.entries.size })
+    val scope = rememberCoroutineScope()
+    val list = if (offersSeeMore) SheetList.entries[listPager.currentPage] else SheetList.FilterOut
+    val isSeeMore = list == SheetList.SeeMore
     val focusManager = LocalFocusManager.current
     val imeVisible = WindowInsets.isImeVisible
     LaunchedEffect(imeVisible) {
@@ -141,6 +164,20 @@ fun FilterSheet(
         ) {
             SheetHeader(
                 title = if (showSettings) "Settings" else "Filter out",
+                // On X the tabs take the title's place: they name the list.
+                tabs = if (offersSeeMore && !showSettings) {
+                    {
+                        SheetListTabs(
+                            selected = list,
+                            onSelect = { scope.launch { listPager.animateScrollToPage(it.ordinal) } },
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                } else {
+                    null
+                },
+                // The sparkle and share act on the filter-out list.
+                showFilterActions = !showSettings && !isSeeMore,
                 shareEnabled = phrases.isNotEmpty(),
                 aiDetectionOn = aiDetectionOn,
                 aiDetectionPending = aiDetectionPending,
@@ -163,20 +200,44 @@ fun FilterSheet(
                     onOpenExcludedAccount = onOpenExcludedAccount,
                 )
             } else {
-                // Only let the list participate in scroll/nested-scroll when
+                // Only let the lists participate in scroll/nested-scroll when
                 // the sheet has settled at Expanded. While partial or while
-                // animating, the list passes drags straight through to the
+                // animating, a list passes drags straight through to the
                 // sheet — no nested-scroll handoff fighting the drag, which
                 // is what makes the sheet feel like it "loses grip" with a
                 // populated list. `currentValue` only changes on settle, so
                 // mid-drag it stays at the prior anchor and the list stays
                 // inert until the drag actually ends at Expanded.
-                PhraseList(
-                    phrases = phrases,
-                    onRemove = onRemove,
-                    userScrollEnabled = sheetState.currentValue == SheetValue.Expanded,
-                    modifier = Modifier.weight(1f),
-                )
+                val listScrollEnabled = sheetState.currentValue == SheetValue.Expanded
+                val filterOutList = @Composable { modifier: Modifier ->
+                    PhraseList(
+                        phrases = phrases,
+                        onRemove = onRemove,
+                        userScrollEnabled = listScrollEnabled,
+                        modifier = modifier,
+                    )
+                }
+                if (offersSeeMore) {
+                    // Horizontal swipes page between the lists; vertical
+                    // drags still go to the list or the sheet.
+                    HorizontalPager(
+                        state = listPager,
+                        verticalAlignment = Alignment.Top,
+                        modifier = Modifier.weight(1f),
+                    ) { page ->
+                        when (SheetList.entries[page]) {
+                            SheetList.FilterOut -> filterOutList(Modifier.fillMaxSize())
+                            SheetList.SeeMore -> PhraseList(
+                                phrases = seeMoreTopics,
+                                onRemove = onRemoveSeeMoreTopic,
+                                userScrollEnabled = listScrollEnabled,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
+                    }
+                } else {
+                    filterOutList(Modifier.weight(1f))
+                }
             }
         }
 
@@ -206,15 +267,37 @@ fun FilterSheet(
                     // `containerColor` is passed (see BouncerApp.kt).
                     .background(BottomSheetDefaults.ContainerColor),
             ) {
-                AddPhraseRow(onAdd = onAdd)
-                TextButton(
-                    onClick = onViewFiltered,
-                    enabled = filteredCount > 0,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 8.dp),
-                ) {
-                    Text("View filtered ($filteredCount)")
+                if (isSeeMore) {
+                    val full = seeMoreTopics.size >= MAX_SEE_MORE_TOPICS
+                    AddPhraseRow(
+                        label = if (full) {
+                            "That's $MAX_SEE_MORE_TOPICS topics, the most there can be"
+                        } else {
+                            "Add a topic to see more of"
+                        },
+                        enabled = !full,
+                        onAdd = onAddSeeMoreTopic,
+                    )
+                    // In the View filtered button's spot, so the field
+                    // doesn't move between the lists.
+                    SeeMoreSourceMenu(
+                        source = seeMoreSource,
+                        onChange = onSeeMoreSourceChange,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 8.dp),
+                    )
+                } else {
+                    AddPhraseRow(label = "Add a topic to filter", onAdd = onAdd)
+                    TextButton(
+                        onClick = onViewFiltered,
+                        enabled = filteredCount > 0,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 8.dp),
+                    ) {
+                        Text("View filtered ($filteredCount)")
+                    }
                 }
             }
         }
@@ -224,6 +307,8 @@ fun FilterSheet(
 @Composable
 private fun SheetHeader(
     title: String,
+    tabs: (@Composable RowScope.() -> Unit)?,
+    showFilterActions: Boolean,
     shareEnabled: Boolean,
     aiDetectionOn: Boolean,
     aiDetectionPending: Boolean,
@@ -232,17 +317,25 @@ private fun SheetHeader(
     onShare: () -> Unit,
     onToggle: () -> Unit,
 ) {
+    // Beside the tabs no phone has room for the badge's words (tabs ~200dp,
+    // pill ~150dp, two icons 96dp), so there it's just the sparkle on the
+    // badge's color.
+    val roomForBadgeText = tabs == null
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = 20.dp, end = 8.dp, top = 4.dp, bottom = 4.dp),
+            .padding(start = if (tabs != null) 4.dp else 20.dp, end = 8.dp, top = 4.dp, bottom = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            text = title,
-            style = MaterialTheme.typography.titleLarge,
-            modifier = Modifier.weight(1f),
-        )
+        if (tabs != null) {
+            tabs()
+        } else {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleLarge,
+                modifier = Modifier.weight(1f),
+            )
+        }
         // AI-detection indicator, the native counterpart of the sparkle at
         // the top-right of the desktop filter box (.filter-ai-indicator in
         // content.css) and the iOS sheet's toolbar sparkle. It reports the
@@ -253,50 +346,53 @@ private fun SheetHeader(
         // SLOP?" pill — the desktop indicator's first-run badge (`with-badge`
         // in content.css) — that collapses down to the plain sparkle once
         // detection engages.
-        val showBadge = !aiDetectionOn && !aiBadgeDismissed
-        Surface(
-            onClick = onToggleAiDetection,
-            enabled = !aiDetectionPending,
-            shape = CircleShape,
-            color = if (showBadge) MaterialTheme.colorScheme.primary else Color.Transparent,
-            contentColor = when {
-                showBadge -> MaterialTheme.colorScheme.onPrimary
-                aiDetectionOn -> MaterialTheme.colorScheme.primary
-                else -> MaterialTheme.colorScheme.onSurfaceVariant
-            },
-            modifier = Modifier.alpha(if (aiDetectionPending) 0.55f else 1f),
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                modifier = Modifier
-                    .animateContentSize()
-                    .padding(
-                        horizontal = 12.dp,
-                        vertical = if (showBadge) 8.dp else 12.dp,
-                    ),
+        if (showFilterActions) {
+            val showBadge = !aiDetectionOn && !aiBadgeDismissed
+            val showBadgeText = showBadge && roomForBadgeText
+            Surface(
+                onClick = onToggleAiDetection,
+                enabled = !aiDetectionPending,
+                shape = CircleShape,
+                color = if (showBadge) MaterialTheme.colorScheme.primary else Color.Transparent,
+                contentColor = when {
+                    showBadge -> MaterialTheme.colorScheme.onPrimary
+                    aiDetectionOn -> MaterialTheme.colorScheme.primary
+                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                },
+                modifier = Modifier.alpha(if (aiDetectionPending) 0.55f else 1f),
             ) {
-                Icon(
-                    Icons.Default.AutoAwesome,
-                    contentDescription = if (aiDetectionOn) {
-                        "Removing AI-generated content — your filter phrases ask for it. Tap to stop (removes those phrases)."
-                    } else {
-                        "Tap to remove AI-generated content from your feed (adds the filter phrase \"AI slop\")."
-                    },
-                    modifier = Modifier.size(if (showBadge) 16.dp else 24.dp),
-                )
-                if (showBadge) {
-                    Text(
-                        "REMOVE AI SLOP?",
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    modifier = Modifier
+                        .animateContentSize()
+                        .padding(
+                            horizontal = 12.dp,
+                            vertical = if (showBadgeText) 8.dp else 12.dp,
+                        ),
+                ) {
+                    Icon(
+                        Icons.Default.AutoAwesome,
+                        contentDescription = if (aiDetectionOn) {
+                            "Removing AI-generated content — your filter phrases ask for it. Tap to stop (removes those phrases)."
+                        } else {
+                            "Tap to remove AI-generated content from your feed (adds the filter phrase \"AI slop\")."
+                        },
+                        modifier = Modifier.size(if (showBadgeText) 16.dp else 24.dp),
                     )
+                    if (showBadgeText) {
+                        Text(
+                            "REMOVE AI SLOP?",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                        )
+                    }
                 }
             }
-        }
-        IconButton(onClick = onShare, enabled = shareEnabled) {
-            Icon(Icons.Default.Share, contentDescription = "Share filters")
+            IconButton(onClick = onShare, enabled = shareEnabled) {
+                Icon(Icons.Default.Share, contentDescription = "Share filters")
+            }
         }
         IconButton(onClick = onToggle) {
             Icon(Icons.Default.Tune, contentDescription = "Settings")
@@ -319,9 +415,10 @@ private fun PhraseList(
             contentAlignment = Alignment.Center,
         ) {
             Text(
-                "No filter topics added yet.",
+                "No topics added yet.",
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
             )
         }
         return
@@ -363,10 +460,10 @@ private fun PhraseRow(phrase: String, onRemove: () -> Unit) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun AddPhraseRow(onAdd: (String) -> Unit) {
+private fun AddPhraseRow(label: String, onAdd: (String) -> Unit, enabled: Boolean = true) {
     var text by remember { mutableStateOf("") }
     val trimmed = text.trim()
-    val canSubmit = trimmed.isNotEmpty()
+    val canSubmit = enabled && trimmed.isNotEmpty()
 
     fun submit() {
         if (!canSubmit) return
@@ -377,7 +474,8 @@ private fun AddPhraseRow(onAdd: (String) -> Unit) {
     OutlinedTextField(
         value = text,
         onValueChange = { text = it },
-        label = { Text("Add a topic to filter") },
+        label = { Text(label) },
+        enabled = enabled,
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 4.dp),
@@ -385,4 +483,74 @@ private fun AddPhraseRow(onAdd: (String) -> Unit) {
         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
         keyboardActions = KeyboardActions(onSend = { submit() }),
     )
+}
+
+// The two lists the sheet edits. See more mixes posts about its topics into
+// the X timeline (content/bluesky-see-more.ts in the extension).
+enum class SheetList { FilterOut, SeeMore }
+
+private const val MAX_SEE_MORE_TOPICS = 10 // MAX_SEE_MORE_TOPICS in shared/bluesky.ts
+
+// Android's idiom for switching between two views of one surface: tabs,
+// whose indicator slides between them (iOS uses a segmented control). Sized
+// to their labels, so they share the header row with its buttons.
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SheetListTabs(selected: SheetList, onSelect: (SheetList) -> Unit, modifier: Modifier = Modifier) {
+    val options = listOf(SheetList.FilterOut to "Filter out", SheetList.SeeMore to "See more")
+    // Clipped: a tab row given less room than it needs draws past it,
+    // over whatever sits beside it.
+    PrimaryScrollableTabRow(
+        selectedTabIndex = options.indexOfFirst { it.first == selected },
+        modifier = modifier.clipToBounds(),
+        // Blend into the sheet rather than drawing a bar of its own.
+        containerColor = BottomSheetDefaults.ContainerColor,
+        edgePadding = 0.dp,
+        divider = {},
+    ) {
+        options.forEach { (value, label) ->
+            Tab(
+                selected = selected == value,
+                onClick = { onSelect(value) },
+                text = { Text(label, style = MaterialTheme.typography.titleSmall) },
+                unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+// Where See more's posts come from, by the extension's seeMoreSource_twitter
+// values. Both comes first: it's the default.
+private val SEE_MORE_SOURCES = listOf(
+    "both" to "X and Bluesky",
+    "x" to "X only",
+    "bluesky" to "Bluesky only",
+)
+
+// "From X and Bluesky ▾": a text button that opens a menu of the sources,
+// the counterpart of the iOS sheet's pull-down menu.
+@Composable
+private fun SeeMoreSourceMenu(source: String, onChange: (String) -> Unit, modifier: Modifier = Modifier) {
+    var expanded by remember { mutableStateOf(false) }
+    val label = SEE_MORE_SOURCES.firstOrNull { it.first == source }?.second ?: SEE_MORE_SOURCES[0].second
+    Box(modifier = modifier, contentAlignment = Alignment.Center) {
+        Box {
+            TextButton(onClick = { expanded = true }) {
+                Text("From $label")
+                Icon(
+                    Icons.Default.ArrowDropDown,
+                    contentDescription = null,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+            if (expanded) {
+                MenuAbove(
+                    options = SEE_MORE_SOURCES,
+                    selected = source,
+                    onSelect = { if (it != source) onChange(it) },
+                    onDismiss = { expanded = false },
+                )
+            }
+        }
+    }
 }

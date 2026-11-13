@@ -1,9 +1,11 @@
 // iOS FAB, filtered modal, native sheet bridge
 
 import type { IOSDeps, DescriptionKey, SiteId } from '../types';
-import { clampThreshold, clampImageThreshold, clampReplyThreshold, getDescriptions, setDescriptions, getStorage, setStorage, aiIntentActiveForSite, getExcludedAccounts, setExcludedAccounts, normalizeAccountIdentity, identifiesAccountsByName } from '../shared/storage';
+import { clampThreshold, clampImageThreshold, clampReplyThreshold, getDescriptions, setDescriptions, getStorage, setStorage, removeStorage, aiIntentActiveForSite, getExcludedAccounts, setExcludedAccounts, normalizeAccountIdentity, identifiesAccountsByName } from '../shared/storage';
 import { platformById, descriptionsStorageKey } from '../shared/platforms';
 import { parseHTML } from '../shared/utils';
+import { SEE_MORE_SOURCE_KEY, SEE_MORE_TOPICS_KEY, clampSeeMoreSource } from '../shared/bluesky';
+import { addTopic, removeTopic } from './bluesky-see-more';
 import { shareFilterPackForIOS, toggleAiDetectionViaPhrases } from './ui';
 
 // Bridge globals exposed to native Swift (added to window) and WebKit message
@@ -24,6 +26,15 @@ interface FFWindow {
   __ff_getExcludedAccounts?: (siteId: string) => Promise<string[]>;
   __ff_addExcludedAccount?: (siteId: string, text: string) => Promise<boolean>;
   __ff_removeExcludedAccount?: (siteId: string, account: string) => Promise<void>;
+  // "See more" topics (X only; one list, so no siteId). Add returns false
+  // for an empty or duplicate topic, or when the list is full.
+  __ff_getSeeMoreTopics?: () => Promise<string[]>;
+  __ff_addSeeMoreTopic?: (text: string) => Promise<boolean>;
+  __ff_removeSeeMoreTopic?: (topic: string) => Promise<void>;
+  // Where See more's posts come from ("both" / "x" / "bluesky"), with the
+  // default applied when none is stored; reset clears it back to that.
+  __ff_getSeeMoreSource?: () => Promise<string>;
+  __ff_resetSeeMoreSource?: () => Promise<void>;
   __ff_showFilteredModal?: () => void;
   // AI-detection state is driven entirely by the user's natural-language
   // filter phrases — there are no direct on/off setters, and the state is
@@ -149,6 +160,14 @@ export function initIOS(deps: IOSDeps) {
     const cur = await getExcludedAccounts(siteId as SiteId);
     await setExcludedAccounts(siteId as SiteId, cur.filter(a => a !== identity));
   };
+
+  w.__ff_getSeeMoreTopics = async (): Promise<string[]> =>
+    (await getStorage([SEE_MORE_TOPICS_KEY]))[SEE_MORE_TOPICS_KEY] ?? [];
+  w.__ff_addSeeMoreTopic = (text: string): Promise<boolean> => addTopic(text || '');
+  w.__ff_removeSeeMoreTopic = (topic: string): Promise<void> => removeTopic(topic);
+  w.__ff_getSeeMoreSource = async (): Promise<string> =>
+    clampSeeMoreSource((await getStorage([SEE_MORE_SOURCE_KEY]))[SEE_MORE_SOURCE_KEY]);
+  w.__ff_resetSeeMoreSource = (): Promise<void> => removeStorage([SEE_MORE_SOURCE_KEY]);
 
   const _showFilteredModal = showIOSFilteredModal;
   w.__ff_showFilteredModal = () => _showFilteredModal();

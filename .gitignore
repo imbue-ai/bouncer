@@ -22,6 +22,7 @@ Bouncer/.env.dev
 Bouncer_xcode/iOS (App)/GoogleService-Info.plist
 Bouncer_xcode/iOS (App)/GoogleService-Info-Dev.plist
 Bouncer_android/app/google-services.json
+Bouncer_android/app/src/debug/google-services.json
 
 # Node
 node_modules/

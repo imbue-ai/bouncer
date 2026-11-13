@@ -12,6 +12,8 @@
   var PORT_NAME = "bouncer-content";
   var INBOUND_TAG = "__ff_bouncer";
   var OUTBOUND_TAG = "__ff_bouncer_native";
+  var MEDIA_REQUEST_TAG = "__ff_bouncer_media";
+  var MEDIA_REPLY_TAG = "__ff_bouncer_media_reply";
   var port;
 
   try {
@@ -32,6 +34,22 @@
     } catch (err) {
       console.error("[Bouncer/iso] port post failed", d.name, err);
     }
+  });
+
+  // Remote media for "See more" (bridge_page.js __ff_fetchRemoteMedia):
+  // MAIN asks, background.js fetches, the bytes come back to MAIN.
+  window.addEventListener("message", function (e) {
+    if (e.source !== window) return;
+    var d = e.data;
+    if (!d || d.tag !== MEDIA_REQUEST_TAG) return;
+    browser.runtime.sendMessage({ kind: "fetchRemoteMedia", url: d.url }).then(
+      function (r) {
+        window.postMessage({ tag: MEDIA_REPLY_TAG, id: d.id, type: r.type, buffer: r.buffer }, "*");
+      },
+      function (err) {
+        window.postMessage({ tag: MEDIA_REPLY_TAG, id: d.id, error: String(err && err.message || err) }, "*");
+      }
+    );
   });
 
   // background → ISOLATED → MAIN.

@@ -410,6 +410,13 @@ fun BouncerApp(viewModel: BouncerViewModel = viewModel()) {
                 debugModeEnabled = state.debugModeEnabled,
                 onAdd = viewModel::addPhrase,
                 onRemove = viewModel::removePhrase,
+                // See more mixes posts into the X timeline only.
+                offersSeeMore = state.activePlatformId == "twitter",
+                seeMoreTopics = state.seeMoreTopics,
+                onAddSeeMoreTopic = viewModel::addSeeMoreTopic,
+                onRemoveSeeMoreTopic = viewModel::removeSeeMoreTopic,
+                seeMoreSource = state.seeMoreSource,
+                onSeeMoreSourceChange = viewModel::setSeeMoreSource,
                 onViewFiltered = viewModel::openFilteredModal,
                 onShareFilterPack = viewModel::shareFilterPack,
                 onToggleAiDetection = viewModel::toggleAiDetection,
