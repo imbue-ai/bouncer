@@ -19,6 +19,7 @@
 // through the normal evaluatePost pipeline before they're shown.
 
 import type Hls from 'hls.js';
+import type { Loader, LoaderCallbacks, LoaderContext, LoaderStats } from 'hls.js';
 import type { PlatformAdapter, PipelineResponse, PostContent } from '../types';
 import { filteringPausedKeyFor, getDescriptions, getFilteringPaused, getStorage, setStorage } from '../shared/storage';
 import { findStructuralMatch } from '../shared/structural-filters';
@@ -266,7 +267,10 @@ async function refill(topic: string): Promise<void> {
   if (!pool || pool.busy || Date.now() < pool.retryAt) return;
   // Background tabs don't search: each open X tab pages every topic on its
   // own, and only the visible one is being read. They catch up when shown.
-  if (document.hidden) return;
+  // Nor do pages without the home timeline, where posts are never placed
+  // (like the Android app's off-screen push-settings tab, which Gecko counts
+  // as visible); placing posts on /home calls this again.
+  if (document.hidden || !onHomeTimeline()) return;
   pool.busy = true;
   try {
     while (pools.get(topic) === pool && pool.ready.length < READY_TARGET) {
@@ -1004,7 +1008,8 @@ function loadWithRetry(image: HTMLImageElement, url: string, onGiveUp: () => voi
 // app's WebKit) plays natively, so hls.js transmuxes into Media Source
 // elsewhere. It's ~370 KB, so it's imported on the first video rather
 // than bundled into content.js. Its blob: source is allowed by x.com's
-// media-src; its fetches are the content script's, not the page's. A video
+// media-src; its fetches are the content script's, not the page's (in the
+// Android app, which runs in the page world, BridgeLoader's). A video
 // that can't play falls back to the poster, which opens the post.
 // The apps can't import from an extension URL. They run hls.js's script
 // build instead, which defines a global Hls: the Android app injects it on
@@ -1053,6 +1058,67 @@ const reducedMotion = () => window.matchMedia?.('(prefers-reduced-motion: reduce
 
 const isHls = (url: string) => new URL(url).pathname.endsWith('.m3u8');
 
+const newLoaderStats = (): LoaderStats => ({
+  aborted: false, loaded: 0, retry: 0, total: 0, chunkCount: 0, bwEstimate: 0,
+  loading: { start: 0, first: 0, end: 0 },
+  parsing: { start: 0, end: 0 },
+  buffering: { start: 0, first: 0, end: 0 },
+});
+
+/** hls.js loader for the Android app: there x.com's CSP blocks the page
+ *  world's fetches from video.bsky.app, so the playlist and segments come
+ *  through the bridge extension (__ff_fetchRemoteMedia), like the images. */
+class BridgeLoader implements Loader<LoaderContext> {
+  context: LoaderContext | null = null;
+  stats = newLoaderStats();
+  private callbacks: LoaderCallbacks<LoaderContext> | null = null;
+  private loadId = 0;
+
+  load(context: LoaderContext, _config: unknown, callbacks: LoaderCallbacks<LoaderContext>): void {
+    const id = ++this.loadId;
+    const stats = this.stats = newLoaderStats();
+    this.context = context;
+    this.callbacks = callbacks;
+    stats.loading.start = performance.now();
+    window.__ff_fetchRemoteMedia!(context.url).then(({ buffer }) => {
+      if (id !== this.loadId) return;
+      this.callbacks = null;
+      // rangeEnd is exclusive, as in hls.js's own loaders.
+      const data = context.rangeStart || context.rangeEnd
+        ? buffer.slice(context.rangeStart ?? 0, context.rangeEnd || undefined)
+        : buffer;
+      stats.loading.first = stats.loading.end = performance.now();
+      stats.loaded = stats.total = data.byteLength;
+      stats.chunkCount = 1;
+      callbacks.onSuccess({
+        url: context.url,
+        data: context.responseType === 'arraybuffer' ? data : new TextDecoder().decode(data),
+        code: 200,
+      }, stats, context, null);
+    }, err => {
+      if (id !== this.loadId) return;
+      this.callbacks = null;
+      callbacks.onError({ code: 0, text: String(err) }, context, null, stats);
+    });
+  }
+
+  abort(): void {
+    this.loadId++;
+    const callbacks = this.callbacks;
+    this.callbacks = null;
+    if (!callbacks || !this.context) return;
+    this.stats.aborted = true;
+    callbacks.onAbort?.(this.stats, this.context, null);
+  }
+
+  destroy(): void {
+    this.loadId++;
+    this.callbacks = null;
+    this.context = null;
+  }
+}
+
+
 function attachVideo(video: HTMLVideoElement, player: Player): Promise<void> {
   player.ready ??= (async () => {
     if (!isHls(player.url)) {
@@ -1062,7 +1128,11 @@ function attachVideo(video: HTMLVideoElement, player: Player): Promise<void> {
     const HlsCtor = await loadHls();
     if (!players.has(video)) return; // stopped while loading
     if (HlsCtor) {
-      const hls = new HlsCtor({ enableWorker: false, capLevelToPlayerSize: true });
+      const hls = new HlsCtor({
+        enableWorker: false,
+        capLevelToPlayerSize: true,
+        ...(window.__ff_fetchRemoteMedia ? { loader: BridgeLoader } : {}),
+      });
       player.hls = hls;
       await new Promise<void>(resolve => {
         hls.on(HlsCtor.Events.MANIFEST_PARSED, () => resolve());
