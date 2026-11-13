@@ -31,6 +31,17 @@ div[data-testid="BottomBar"] {
 }
 
 
+.ff-why-annoying-wrapper--x {
+  display: flex;
+  align-items: center;
+}
+
+/* Match X's 34.75px action-bar icon buttons. */
+.ff-why-annoying-btn.ff-why-annoying-btn--x {
+  width: 34.75px;
+  height: 34.75px;
+}
+
 /* ==============================================
    Dim mode styles — unique to Twitter
    (rgb(21, 32, 43) blue-gray theme)

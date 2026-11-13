@@ -749,26 +749,35 @@
   cursor: default;
 }
 
-/* Inline "why annoying" button */
+/* Inline "why annoying" (Bounce) button: white trash icon on a filled
+   brand-orange circle, on every platform. Adapters that size the button to a
+   native control (header placements) set width/height inline. */
 .ff-why-annoying-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  flex: 0 0 auto;
   width: 34px;
+  height: 34px;
   border: none;
-  background: transparent;
-  color: rgb(var(--bouncer-brand-rgb));
+  background-color: rgb(var(--bouncer-brand-rgb));
+  color: white;
   border-radius: 50%;
   cursor: pointer;
   padding: 0;
   margin-left: 4px;
-  transition: background 0.2s;
+  transition: opacity 0.2s;
   position: relative;
   vertical-align: middle;
 }
 
+.ff-why-annoying-btn:hover {
+  opacity: 0.9;
+}
+
 .ff-why-annoying-btn.ff-unfilter-btn {
   width: unset;
+  height: unset;
   background-color: rgb(27 147 228);
   color: white;
   border-radius: 4px;
@@ -781,6 +790,7 @@
 
 .ff-why-annoying-btn svg {
   pointer-events: none;
+  stroke-width: 2;
 }
 
 /* Prevent article from clipping the tooltip */
