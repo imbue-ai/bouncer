@@ -208,11 +208,15 @@ function copyLitertlmAssets() {
 // hls.js for the See more inline video player (content/bluesky-see-more.ts),
 // which imports it on the first video instead of bundling it into
 // content.js. The light build: no subtitles, alternate audio or DRM.
+// The module build is what browsers import(). The apps can't import from an
+// extension URL, so they load the script build, which defines a global Hls.
 function copyHlsAsset() {
-  fs.copyFileSync(
-    path.join(__dirname, 'node_modules/hls.js/dist/hls.light.min.mjs'),
-    path.join(__dirname, 'dist/hls.light.min.mjs'),
-  );
+  for (const file of ['hls.light.min.mjs', 'hls.light.min.js']) {
+    fs.copyFileSync(
+      path.join(__dirname, 'node_modules/hls.js/dist', file),
+      path.join(__dirname, 'dist', file),
+    );
+  }
 }
 
 async function build() {

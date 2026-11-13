@@ -87,6 +87,10 @@ struct FilteredWebView: UIViewRepresentable {
             // Reply-style handler backing chrome.storage.local/sync with a native
             // UserDefaults store, shared across origins (x.com, m.youtube.com, linkedin.com).
             contentController.addScriptMessageHandler(coordinator, contentWorld: world, name: "feedfilterStorage")
+            // "See more" posts on X: Bluesky media x.com's CSP blocks, and
+            // hls.js for their videos (see SeeMoreMedia below).
+            contentController.addScriptMessageHandler(coordinator, contentWorld: world, name: SeeMoreMedia.remoteMediaHandler)
+            contentController.addScriptMessageHandler(coordinator, contentWorld: world, name: SeeMoreMedia.loadScriptHandler)
             // iOS Local Inference: classify/detect bridges for the on-device Gemma model.
             contentController.add(coordinator, contentWorld: world, name: "feedfilterLocalClassify")
             contentController.add(coordinator, contentWorld: world, name: "feedfilterLocalAiTextDetect")
@@ -620,6 +624,24 @@ struct FilteredWebView: UIViewRepresentable {
                 return
             }
 
+            if message.name == SeeMoreMedia.remoteMediaHandler {
+                let url = message.body as? String
+                Task { @MainActor in
+                    let (result, error) = await SeeMoreMedia.fetch(url)
+                    replyHandler(result, error)
+                }
+                return
+            }
+            if message.name == SeeMoreMedia.loadScriptHandler {
+                let name = message.body as? String
+                let webView = message.webView
+                Task { @MainActor in
+                    let (result, error) = await SeeMoreMedia.loadScript(name, into: webView)
+                    replyHandler(result, error)
+                }
+                return
+            }
+
             guard message.name == "feedfilterStorage",
                   let body = message.body as? [String: Any],
                   let op = body["op"] as? String,
@@ -963,5 +985,68 @@ extension UIView {
             responder = next
         }
         return nil
+    }
+}
+
+// MARK: - "See more" media
+
+// "See more" mixes Bluesky posts into the X timeline. The extension runs in a
+// WebKit content world, where x.com's CSP still blocks <img> and <video>
+// loads from Bluesky's hosts (fetch and XHR are exempt), so:
+//  - images come through here and show from blob: URLs, which x.com allows
+//    (setImageSrc in content/bluesky-see-more.ts);
+//  - videos play through hls.js into Media Source (blob: again). The
+//    extension can't import its module build from a page, so its script
+//    build is run in the content world on request (loadHls there).
+enum SeeMoreMedia {
+    static let remoteMediaHandler = "feedfilterRemoteMedia"
+    static let loadScriptHandler = "feedfilterLoadScript"
+
+    // Only Bluesky's media hosts: everything else the posts show is on
+    // X's own hosts, which x.com's CSP allows.
+    private static let allowedHosts: Set<String> = ["cdn.bsky.app", "video.bsky.app"]
+    private static let maxBytes = 20 * 1024 * 1024
+    // Scripts the extension may ask for, by name: the dist file it maps to.
+    private static let scripts = ["hls": "hls.light.min"]
+
+    /// Fetches an allowed media URL. Replies {type, data} with the bytes as
+    /// base64 (a message reply can't carry binary).
+    static func fetch(_ urlString: String?) async -> (Any?, String?) {
+        guard let urlString, let url = URL(string: urlString), url.scheme == "https",
+              let host = url.host, allowedHosts.contains(host) else {
+            return (nil, "\(remoteMediaHandler): URL not allowed")
+        }
+        do {
+            let (data, response) = try await URLSession.shared.data(from: url)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                return (nil, "\(remoteMediaHandler): HTTP \((response as? HTTPURLResponse)?.statusCode ?? 0)")
+            }
+            guard data.count <= maxBytes else { return (nil, "\(remoteMediaHandler): too large") }
+            let type = http.mimeType ?? "application/octet-stream"
+            return (["type": type, "data": data.base64EncodedString()], nil)
+        } catch {
+            return (nil, "\(remoteMediaHandler): \(error.localizedDescription)")
+        }
+    }
+
+    /// Runs a bundled dist script in the asking webview's extension world.
+    @MainActor
+    static func loadScript(_ name: String?, into webView: WKWebView?) async -> (Any?, String?) {
+        guard let name, let file = scripts[name],
+              let url = Bundle.main.url(forResource: file, withExtension: "js", subdirectory: "dist"),
+              let source = try? String(contentsOf: url, encoding: .utf8) else {
+            return (nil, "\(loadScriptHandler): no script \(name ?? "nil")")
+        }
+        guard let webView else { return (nil, "\(loadScriptHandler): webview gone") }
+        // Ends in `true`: a script whose value is undefined reports an
+        // unsupported-type error even though it ran.
+        return await withCheckedContinuation { continuation in
+            webView.evaluateJavaScript(source + "\n;true", in: nil, in: FilteredWebView.extensionWorld) { result in
+                switch result {
+                case .success: continuation.resume(returning: (true, nil))
+                case .failure(let error): continuation.resume(returning: (nil, "\(loadScriptHandler): \(error.localizedDescription)"))
+                }
+            }
+        }
     }
 }

@@ -107,4 +107,28 @@
   } catch (e) {
     console.error("[Bouncer/bg] webRequest UA rewrite unavailable", e);
   }
+
+  // "See more" (content/bluesky-see-more.ts) mixes Bluesky posts into the X
+  // timeline. Here the extension runs in x.com's page world, so x.com's CSP
+  // blocks its <img>/<video> loads from Bluesky's media hosts (and rewriting
+  // the CSP header doesn't reach the policy the page enforces). So the page
+  // asks for the bytes instead (bridge_page.js __ff_fetchRemoteMedia, via
+  // bridge_iso.js): fetched here, under the extension's host permissions,
+  // and shown from a blob: URL, which x.com allows. Only these hosts, so a
+  // page can't use this to fetch anything else.
+  var REMOTE_MEDIA_HOSTS = ["cdn.bsky.app", "video.bsky.app"];
+  browser.runtime.onMessage.addListener(function (msg) {
+    if (!msg || msg.kind !== "fetchRemoteMedia") return;
+    var url;
+    try { url = new URL(msg.url); } catch (e) { return Promise.reject(new Error("bad url")); }
+    if (url.protocol !== "https:" || REMOTE_MEDIA_HOSTS.indexOf(url.hostname) < 0) {
+      return Promise.reject(new Error("host not allowed: " + url.hostname));
+    }
+    return fetch(url.href, { credentials: "omit", referrerPolicy: "no-referrer" }).then(function (res) {
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      return res.arrayBuffer().then(function (buffer) {
+        return { type: res.headers.get("content-type") || "", buffer: buffer };
+      });
+    });
+  });
 })();

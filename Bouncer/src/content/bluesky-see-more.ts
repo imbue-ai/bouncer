@@ -179,9 +179,11 @@ function teachAdapter(a: PlatformAdapter): void {
   // trashcan only where there's one, and puts it right after.
   const openAction = (el: HTMLElement) => el.querySelector<HTMLElement>('.bsky-x-actions > .bsky-x-action-open');
   a.getShareButton = el => (post(el) ? openAction(el) : orig.getShareButton(el));
+  // The tweet's filled trashcan; the bar centers it, so no wrapper.
   a.insertActionButton = (el, button) => {
-    if (post(el)) openAction(el)?.after(button);
-    else orig.insertActionButton(el, button);
+    if (!post(el)) { orig.insertActionButton(el, button); return; }
+    button.classList.add('ff-why-annoying-btn--x');
+    openAction(el)?.after(button);
   };
   a.extractPostContent = el => { const p = post(el); return p ? postContentFor(p) : orig.extractPostContent(el); };
   a.extractPostContentFromStore = async el => { const p = post(el); return p ? postContentFor(p) : orig.extractPostContentFromStore(el); };
@@ -903,13 +905,76 @@ function renderFoldableText(post: BskyFeedPost): HTMLElement[] {
   return [folded, button];
 }
 
+// ==================== Media in the apps ====================
+
+// In the apps, x.com's CSP applies to this script's <img> and <video> loads,
+// and Bluesky's media hosts aren't on x.com's img-src list. The iOS app runs
+// it in a WebKit content world, the Android app in x.com's page world. So
+// the app fetches that media itself and it shows from a blob: URL, which
+// img-src allows: iOS natively (feedfilterRemoteMedia, base64 reply),
+// Android from its bridge extension's background (__ff_fetchRemoteMedia,
+// web_ext_gecko/bridge_page.js). Chrome exempts a content script's <img>s
+// from the page's CSP, so it doesn't need this.
+// A handler the app registered with a reply: postMessage resolves to it.
+interface NativeReplyHandler { postMessage(message: unknown): Promise<unknown> }
+const nativeHandler = (name: string): NativeReplyHandler | undefined =>
+  typeof webkit === 'undefined' ? undefined : webkit.messageHandlers?.[name] as unknown as NativeReplyHandler | undefined;
+const NATIVE_MEDIA_HOSTS = new Set(['cdn.bsky.app', 'video.bsky.app']);
+const canFetchNatively = () => !!window.__ff_fetchRemoteMedia || !!nativeHandler('feedfilterRemoteMedia');
+const needsNativeFetch = (url: string) =>
+  canFetchNatively() && NATIVE_MEDIA_HOSTS.has(new URL(url).hostname);
+
+async function fetchNatively(url: string): Promise<Blob> {
+  if (window.__ff_fetchRemoteMedia) {
+    const reply = await window.__ff_fetchRemoteMedia(url);
+    return new Blob([reply.buffer], { type: reply.type });
+  }
+  const reply = await nativeHandler('feedfilterRemoteMedia')!.postMessage(url) as { type: string; data: string };
+  const bytes = Uint8Array.from(atob(reply.data), c => c.charCodeAt(0));
+  return new Blob([bytes], { type: reply.type });
+}
+
+// Blob URLs by media URL: an avatar shows up again and again, and the
+// lightbox reuses a post's images. The oldest are revoked past the cap; an
+// image already showing one keeps its picture.
+const MAX_BLOB_URLS = 60;
+const blobUrls = new Map<string, Promise<string>>();
+
+function blobUrlFor(url: string): Promise<string> {
+  let blobUrl = blobUrls.get(url);
+  if (blobUrl) {
+    blobUrls.delete(url); // most recently used goes last
+  } else {
+    blobUrl = fetchNatively(url).then(blob => URL.createObjectURL(blob));
+    blobUrl.catch(() => blobUrls.delete(url));
+    if (blobUrls.size >= MAX_BLOB_URLS) {
+      const [oldest, evicted] = blobUrls.entries().next().value!;
+      blobUrls.delete(oldest);
+      void evicted.then(u => URL.revokeObjectURL(u), () => {});
+    }
+  }
+  blobUrls.set(url, blobUrl);
+  return blobUrl;
+}
+
+/** Sets an image's src, via the app when x.com's CSP would block it.
+ *  A failed native fetch is reported as the image's error event. */
+function setImageSrc(image: HTMLImageElement, url: string): void {
+  if (!needsNativeFetch(url)) { image.src = url; return; }
+  blobUrlFor(url).then(
+    blobUrl => { image.src = blobUrl; },
+    err => {
+      console.warn('[Bouncer] See more: native image fetch failed:', url, err);
+      image.dispatchEvent(new Event('error'));
+    },
+  );
+}
+
 // A load can fail transiently (network blip, a request Chrome cancels while
 // X loads its own media, a momentary CDN error), so retry once with a
-// cache-busting query before giving up. Some browsers (Safari, the iOS app)
-// may also apply x.com's CSP to these images; that fails both attempts.
-// Until the image loads it carries IMG_PENDING_CLASS, which keeps it
-// invisible (no broken-image icon during the retry wait) and lets its
-// container show a skeleton instead.
+// cache-busting query before giving up. Until the image loads it carries
+// IMG_PENDING_CLASS, which keeps it invisible (no broken-image icon during
+// the retry wait) and lets its container show a skeleton instead.
 const IMAGE_RETRY_DELAY_MS = 1500;
 const IMG_PENDING_CLASS = 'bsky-x-img-pending';
 
@@ -920,13 +985,13 @@ function loadWithRetry(image: HTMLImageElement, url: string, onGiveUp: () => voi
   image.addEventListener('error', () => {
     if (!retried) {
       retried = true;
-      setTimeout(() => { image.src = `${url}${url.includes('?') ? '&' : '?'}retry=1`; }, IMAGE_RETRY_DELAY_MS);
+      setTimeout(() => setImageSrc(image, `${url}${url.includes('?') ? '&' : '?'}retry=1`), IMAGE_RETRY_DELAY_MS);
       return;
     }
     console.warn('[Bouncer] See more: image failed to load after a retry:', url);
     onGiveUp();
   });
-  image.src = url;
+  setImageSrc(image, url);
 }
 
 // ==================== Inline video ====================
@@ -941,6 +1006,10 @@ function loadWithRetry(image: HTMLImageElement, url: string, onGiveUp: () => voi
 // than bundled into content.js. Its blob: source is allowed by x.com's
 // media-src; its fetches are the content script's, not the page's. A video
 // that can't play falls back to the poster, which opens the post.
+// The apps can't import from an extension URL. They run hls.js's script
+// build instead, which defines a global Hls: the Android app injects it on
+// x.com, and the iOS app runs it in this content world when asked
+// (feedfilterLoadScript).
 const HLS_MODULE_PATH = 'dist/hls.light.min.mjs';
 const VIDEO_AUTOPLAY_RATIO = 0.5;
 // Start fetching the playlist a screen before the video scrolls in.
@@ -950,8 +1019,12 @@ let hlsModule: Promise<typeof Hls | null> | null = null;
 function loadHls(): Promise<typeof Hls | null> {
   hlsModule ??= (async () => {
     try {
-      const mod = await import(chrome.runtime.getURL(HLS_MODULE_PATH)) as { default: typeof Hls };
-      return mod.default.isSupported() ? mod.default : null;
+      const global = globalThis as { Hls?: typeof Hls };
+      const loadScript = nativeHandler('feedfilterLoadScript');
+      if (!global.Hls && loadScript) await loadScript.postMessage('hls');
+      const HlsCtor = global.Hls
+        ?? (await import(chrome.runtime.getURL(HLS_MODULE_PATH)) as { default: typeof Hls }).default;
+      return HlsCtor.isSupported() ? HlsCtor : null;
     } catch (err) {
       console.warn('[Bouncer] See more: hls.js unavailable, trying native HLS:', err);
       return null;
@@ -1077,7 +1150,8 @@ function renderVideo(post: Pick<BskyFeedPost, 'images' | 'isGif'> & { videoUrl: 
   const cell = el('div', 'bsky-x-media-cell');
   cell.style.aspectRatio = String(Math.min(2, Math.max(0.75, poster.aspectRatio ?? 16 / 9)));
   const video = el('video', 'bsky-x-video');
-  video.poster = poster.url;
+  if (needsNativeFetch(poster.url)) void blobUrlFor(poster.url).then(u => { video.poster = u; }, () => {});
+  else video.poster = poster.url;
   video.muted = true;
   video.playsInline = true;
   video.controls = !post.isGif;
@@ -1155,12 +1229,12 @@ function openLightbox(images: BskyFeedPost['images'], start: number, from: HTMLE
     index = i;
     const img = images[i];
     image.alt = img.alt;
-    image.src = img.url;
+    setImageSrc(image, img.url);
     if (img.fullUrl !== img.url) {
       const full = new Image();
       full.referrerPolicy = 'no-referrer';
-      full.onload = () => { if (index === i) image.src = img.fullUrl; };
-      full.src = img.fullUrl;
+      full.onload = () => { if (index === i) image.src = full.src; };
+      setImageSrc(full, img.fullUrl);
     }
     prev.hidden = i === 0;
     next.hidden = i === images.length - 1;
@@ -1513,11 +1587,10 @@ export function mountSeeMoreRow(row: HTMLElement): void {
     }
   };
   const submit = (raw: string) => {
-    const topic = normalizeTopic(raw);
     input.value = '';
     renderTopicChips(row);
     autosize();
-    if (topic) void addTopic(topic);
+    void addTopic(raw);
   };
   input.addEventListener('input', () => { renderTopicChips(row); autosize(); });
   input.addEventListener('keydown', (e) => e.stopPropagation()); // keep X's keyboard shortcuts out of the field
@@ -1559,15 +1632,20 @@ function renderTopicChips(row: HTMLElement): void {
   if (andInput) andInput.style.display = topics.length >= MAX_SEE_MORE_TOPICS ? 'none' : '';
 }
 
-async function addTopic(topic: string): Promise<void> {
+/** Adds a topic unless it's empty, already there, or the list is full.
+ *  Also how the apps' sheets add one (see ios.ts). */
+export async function addTopic(raw: string): Promise<boolean> {
+  const topic = normalizeTopic(raw);
+  if (!topic) return false;
   const current = (await getStorage([SEE_MORE_TOPICS_KEY]))[SEE_MORE_TOPICS_KEY] ?? [];
-  if (current.some(t => t.toLowerCase() === topic.toLowerCase())) return;
-  if (current.length >= MAX_SEE_MORE_TOPICS) return;
+  if (current.some(t => t.toLowerCase() === topic.toLowerCase())) return false;
+  if (current.length >= MAX_SEE_MORE_TOPICS) return false;
   introTopics.add(topic);
   await setStorage({ [SEE_MORE_TOPICS_KEY]: [...current, topic] });
+  return true;
 }
 
-async function removeTopic(topic: string): Promise<void> {
+export async function removeTopic(topic: string): Promise<void> {
   const current = (await getStorage([SEE_MORE_TOPICS_KEY]))[SEE_MORE_TOPICS_KEY] ?? [];
   await setStorage({ [SEE_MORE_TOPICS_KEY]: current.filter(t => t !== topic) });
 }

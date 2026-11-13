@@ -216,6 +216,34 @@ class FilterSheetViewModel: ObservableObject {
     }
     static let lastSelectedPlatformKey = "lastSelectedPlatform"
 
+    // The sheet edits one of two lists: topics to filter out, or (on X)
+    // topics to see more of. "See more" mixes posts about its topics into the
+    // X timeline (content/bluesky-see-more.ts in the extension); it's one
+    // list for the app, not per platform.
+    enum SheetList: Hashable { case filterOut, seeMore }
+    @Published var sheetList: SheetList = .filterOut
+    @Published var seeMoreTopics: [String] = []
+    static let maxSeeMoreTopics = 10  // MAX_SEE_MORE_TOPICS in shared/bluesky.ts
+    var offersSeeMore: Bool { selectedPlatform == "twitter" }
+    // Where See more's posts come from: the extension's
+    // seeMoreSource_twitter. The extension owns its default
+    // (clampSeeMoreSource in shared/bluesky.ts); `.both` here only shows
+    // until the first load.
+    enum SeeMoreSource: String, CaseIterable {
+        case both, x, bluesky
+        var label: String {
+            switch self {
+            case .both: return "X and Bluesky"
+            case .x: return "X only"
+            case .bluesky: return "Bluesky only"
+            }
+        }
+    }
+    @Published var seeMoreSource: SeeMoreSource = .both
+    static let seeMoreSourceKey = "seeMoreSource_twitter"
+    // What the sheet shows: See more only exists on X.
+    var activeSheetList: SheetList { offersSeeMore ? sheetList : .filterOut }
+
     // Per-platform WKWebView cache. Lazy so we can pass `self` into the
     // Coordinator's init without a chicken-and-egg problem. Held strongly by
     // the ViewModel; the Coordinator holds a strong sheetViewModel back —
@@ -363,6 +391,91 @@ class FilterSheetViewModel: ObservableObject {
             _ = try? await webView.callAsyncJavaScript(
                 "return await window.__ff_removePhraseFor(siteId, phrase)",
                 arguments: ["siteId": platform, "phrase": phrase],
+                in: nil,
+                contentWorld: Self.contentWorld
+            )
+        }
+    }
+
+    func loadSeeMoreTopics() {
+        guard let webView = webView else { return }
+        Task { @MainActor in
+            do {
+                let result = try await webView.callAsyncJavaScript(
+                    "return await window.__ff_getSeeMoreTopics()",
+                    arguments: [:],
+                    in: nil,
+                    contentWorld: Self.contentWorld
+                )
+                if let arr = result as? [Any] {
+                    self.seeMoreTopics = arr.compactMap { $0 as? String }
+                }
+            } catch {
+                print("[FeedFilter] loadSeeMoreTopics error: \(error)")
+            }
+        }
+    }
+
+    func loadSeeMoreSource() {
+        guard let webView = webView else { return }
+        Task { @MainActor in
+            let result = try? await webView.callAsyncJavaScript(
+                "return await window.__ff_getSeeMoreSource()",
+                arguments: [:],
+                in: nil,
+                contentWorld: Self.contentWorld
+            )
+            if let source = (result as? String).flatMap(SeeMoreSource.init(rawValue:)) {
+                self.seeMoreSource = source
+            }
+        }
+    }
+
+    // Debug reset: clears the stored choice, then shows whatever the
+    // extension's default is.
+    func resetSeeMoreSourceForDebug() {
+        guard let webView = webView else { return }
+        Task { @MainActor in
+            _ = try? await webView.callAsyncJavaScript(
+                "return await window.__ff_resetSeeMoreSource()",
+                arguments: [:],
+                in: nil,
+                contentWorld: Self.contentWorld
+            )
+            self.loadSeeMoreSource()
+        }
+    }
+
+    func setSeeMoreSource(_ source: SeeMoreSource) {
+        seeMoreSource = source
+        Task { await setStorage([Self.seeMoreSourceKey: source.rawValue]) }
+    }
+
+    // No optimistic insert: the extension normalizes the topic and may turn
+    // it away (a duplicate, or the list is full), so show what it stored.
+    func addSeeMoreTopic(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty, let webView = webView else { return }
+        Task { @MainActor in
+            _ = try? await webView.callAsyncJavaScript(
+                "return await window.__ff_addSeeMoreTopic(text)",
+                arguments: ["text": trimmed],
+                in: nil,
+                contentWorld: Self.contentWorld
+            )
+            self.loadSeeMoreTopics()
+        }
+    }
+
+    func removeSeeMoreTopic(_ topic: String) {
+        withAnimation {
+            seeMoreTopics.removeAll { $0 == topic }
+        }
+        guard let webView = webView else { return }
+        Task { @MainActor in
+            _ = try? await webView.callAsyncJavaScript(
+                "return await window.__ff_removeSeeMoreTopic(topic)",
+                arguments: ["topic": topic],
                 in: nil,
                 contentWorld: Self.contentWorld
             )
@@ -1003,8 +1116,15 @@ struct PersistentKeyboardTextField: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: UITextField, context: Context) {
+        context.coordinator.parent = self
         if uiView.text != text {
             uiView.text = text
+        }
+        if uiView.attributedPlaceholder?.string != placeholder {
+            uiView.attributedPlaceholder = NSAttributedString(
+                string: placeholder,
+                attributes: [.foregroundColor: UIColor.secondaryLabel]
+            )
         }
     }
 
@@ -1101,45 +1221,59 @@ struct FilterPhraseSheet: View {
     var body: some View {
         NavigationStack {
             List {
-                if viewModel.phrases.isEmpty {
-                    Text("No filter topics added yet.")
+                if items.isEmpty {
+                    Text("No topics added yet.")
                         .font(.system(size: 16, weight: .medium))
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
                         .frame(maxWidth: .infinity, alignment: .center)
                         .padding(.vertical, 30)
+                        .padding(.horizontal, 12)
                         .listRowBackground(Color.clear)
                         .listRowSeparator(.hidden)
                 } else {
-                    ForEach(viewModel.phrases.reversed(), id: \.self) { phrase in
+                    ForEach(items.reversed(), id: \.self) { item in
                         HStack {
-                            Text(phrase)
+                            Text(item)
                                 .font(.system(size: 19, weight: .regular))
                                 .foregroundStyle(.primary)
                                 .padding(.leading, 8)
                             Spacer()
                             Button {
-                                viewModel.removePhrase(phrase)
+                                remove(item)
                             } label: {
                                 Image(systemName: "xmark.circle.fill")
                                     .font(.system(size: 20))
                                     .foregroundStyle(.tertiary)
                             }
                             .buttonStyle(.plain)
+                            .accessibilityLabel("Remove \(item)")
                         }
                         .padding(.vertical, 8)
                         .listRowBackground(Color.clear)
                     }
                     .onDelete { offsets in
-                        let reversed = viewModel.phrases.reversed()
+                        let reversed = Array(items.reversed())
                         for index in offsets {
-                            let phrase = Array(reversed)[index]
-                            viewModel.removePhrase(phrase)
+                            remove(reversed[index])
                         }
                     }
                 }
             }
             .listStyle(.plain)
+            // Filter out | See more, on X (the only platform with See more).
+            // The control names the list, so it stands in for the title.
+            .safeAreaInset(edge: .top) {
+                if viewModel.offersSeeMore {
+                    Picker("List", selection: $viewModel.sheetList) {
+                        Text("Filter out").tag(FilterSheetViewModel.SheetList.filterOut)
+                        Text("See more").tag(FilterSheetViewModel.SheetList.seeMore)
+                    }
+                    .pickerStyle(.segmented)
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 8)
+                }
+            }
             .padding(.bottom, 1)
             .onTapGesture {
                 UIApplication.shared.sendAction(
@@ -1152,7 +1286,7 @@ struct FilterPhraseSheet: View {
                     HStack(spacing: 0) {
                         PersistentKeyboardTextField(
                             text: $newPhrase,
-                            placeholder: "Add a topic to filter...",
+                            placeholder: placeholder,
                             onSubmit: { submitPhrase() }
                         )
                         .frame(height: 20)
@@ -1166,7 +1300,7 @@ struct FilterPhraseSheet: View {
                                 .foregroundStyle(.tint)
                         }
                         .buttonStyle(.plain)
-                        .disabled(newPhrase.trimmingCharacters(in: .whitespaces).isEmpty)
+                        .disabled(newPhrase.trimmingCharacters(in: .whitespaces).isEmpty || seeMoreFull)
                     }
                     .padding(.leading, 14)
                     .padding(.trailing, 6)
@@ -1174,22 +1308,45 @@ struct FilterPhraseSheet: View {
                     .background(Color(.tertiarySystemFill))
                     .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
 
-                    Button {
-                        viewModel.isPresented = false
-                        viewModel.openFilteredModal()
-                    } label: {
-                        Text("View filtered posts (\(viewModel.filteredCount))")
+                    // One quiet line under the field on either list.
+                    if isSeeMore {
+                        Menu {
+                            Picker("Posts from", selection: Binding(
+                                get: { viewModel.seeMoreSource },
+                                set: { viewModel.setSeeMoreSource($0) }
+                            )) {
+                                ForEach(FilterSheetViewModel.SeeMoreSource.allCases, id: \.self) { source in
+                                    Text(source.label).tag(source)
+                                }
+                            }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Text("From \(viewModel.seeMoreSource.label)")
+                                Image(systemName: "chevron.up.chevron.down")
+                                    .font(.caption2.weight(.semibold))
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .controlSize(.small)
+                        .foregroundStyle(.tint)
+                    } else {
+                        Button {
+                            viewModel.isPresented = false
+                            viewModel.openFilteredModal()
+                        } label: {
+                            Text("View filtered posts (\(viewModel.filteredCount))")
+                        }
+                        .buttonStyle(.plain)
+                        .controlSize(.small)
+                        .foregroundStyle(.tint)
                     }
-                    .buttonStyle(.plain)
-                    .controlSize(.small)
-                    .foregroundStyle(.tint)
                 }
                 .padding(.horizontal, 20)
                 .padding(.bottom, 8)
                 .animation(.none, value: newPhrase)
                 .transaction { $0.animation = nil }
         }
-            .navigationTitle("Filter out")
+            .navigationTitle(viewModel.offersSeeMore ? "" : "Filter out")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 #if DEBUG
@@ -1203,6 +1360,8 @@ struct FilterPhraseSheet: View {
                         // Also restore the first-run "Remove AI Slop?" badge
                         // (turns detection off and clears the dismissal flag).
                         viewModel.resetAiBadgeForDebug()
+                        // And See more's sources, back to the default.
+                        viewModel.resetSeeMoreSourceForDebug()
                         viewModel.isPresented = false
                     } label: {
                         Image(systemName: "ladybug")
@@ -1221,35 +1380,38 @@ struct FilterPhraseSheet: View {
                 // "Remove AI Slop?" capsule — the desktop indicator's
                 // first-run badge (`with-badge` in content.css) — that
                 // shrinks down into the plain sparkle on tap.
-                if showAiBadge || viewModel.aiBadgeCollapsing {
-                    if #available(iOS 26.0, *) {
-                        ToolbarItem(placement: .topBarTrailing) {
-                            collapsingAiBadgeButton
+                // The sparkle and share act on the filter-out list.
+                if !isSeeMore {
+                    if showAiBadge || viewModel.aiBadgeCollapsing {
+                        if #available(iOS 26.0, *) {
+                            ToolbarItem(placement: .topBarTrailing) {
+                                collapsingAiBadgeButton
+                            }
+                            // The wide item draws its own capsule; keeping it out
+                            // of the toolbar's shared glass group stops the system
+                            // from stretching a glass background across the item's
+                            // (transparent) collapse footprint.
+                            .sharedBackgroundVisibility(.hidden)
+                        } else {
+                            ToolbarItem(placement: .topBarTrailing) {
+                                collapsingAiBadgeButton
+                            }
                         }
-                        // The wide item draws its own capsule; keeping it out
-                        // of the toolbar's shared glass group stops the system
-                        // from stretching a glass background across the item's
-                        // (transparent) collapse footprint.
-                        .sharedBackgroundVisibility(.hidden)
                     } else {
                         ToolbarItem(placement: .topBarTrailing) {
-                            collapsingAiBadgeButton
+                            plainAiSparkleButton
                         }
                     }
-                } else {
                     ToolbarItem(placement: .topBarTrailing) {
-                        plainAiSparkleButton
+                        Button {
+                            viewModel.shareFilterPack()
+                        } label: {
+                            Image(systemName: "square.and.arrow.up")
+                                .font(.system(size: 17, weight: .regular))
+                        }
+                        .accessibilityLabel("Share filters")
+                        .disabled(viewModel.phrases.isEmpty)
                     }
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        viewModel.shareFilterPack()
-                    } label: {
-                        Image(systemName: "square.and.arrow.up")
-                            .font(.system(size: 17, weight: .regular))
-                    }
-                    .accessibilityLabel("Share filters")
-                    .disabled(viewModel.phrases.isEmpty)
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     NavigationLink {
@@ -1267,7 +1429,23 @@ struct FilterPhraseSheet: View {
             viewModel.loadAiDetectionState()
             viewModel.syncPlatformToCurrentSite()
             viewModel.loadPhrases()
+            viewModel.loadSeeMoreTopics()
+            viewModel.loadSeeMoreSource()
         }
+    }
+
+    private var isSeeMore: Bool { viewModel.activeSheetList == .seeMore }
+    private var items: [String] { isSeeMore ? viewModel.seeMoreTopics : viewModel.phrases }
+    private var seeMoreFull: Bool {
+        isSeeMore && viewModel.seeMoreTopics.count >= FilterSheetViewModel.maxSeeMoreTopics
+    }
+    private var placeholder: String {
+        if seeMoreFull { return "That's \(FilterSheetViewModel.maxSeeMoreTopics) topics, the most there can be" }
+        return isSeeMore ? "Add a topic to see more of..." : "Add a topic to filter..."
+    }
+
+    private func remove(_ item: String) {
+        if isSeeMore { viewModel.removeSeeMoreTopic(item) } else { viewModel.removePhrase(item) }
     }
 
     // First-run badge visibility — mirrors the desktop indicator's
@@ -1346,8 +1524,8 @@ struct FilterPhraseSheet: View {
 
     private func submitPhrase() {
         let text = newPhrase.trimmingCharacters(in: .whitespaces)
-        guard !text.isEmpty else { return }
-        viewModel.addPhrase(text)
+        guard !text.isEmpty, !seeMoreFull else { return }
+        if isSeeMore { viewModel.addSeeMoreTopic(text) } else { viewModel.addPhrase(text) }
         newPhrase = ""
     }
 }
