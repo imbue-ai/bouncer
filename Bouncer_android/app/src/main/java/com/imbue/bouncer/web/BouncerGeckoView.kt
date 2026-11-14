@@ -353,7 +353,11 @@ object BouncerGeckoView {
             "prefs:\n" +
                 "  permissions.default.desktop-notification: 1\n" +
                 "  dom.interactive_widget_default_resizes_visual: false\n" +
-                "  device.sensors.enabled: false\n"
+                "  device.sensors.enabled: false\n" +
+                "  fission.autostart: false\n" +
+                "  dom.ipc.processPrelaunch.enabled: false\n" +
+                "  image.mem.surfacecache.max_size_kb: 102400\n" +
+                "  layers.gpu-process.enabled: false\n"
         )
         cfg.absolutePath
     }.getOrNull()
@@ -659,6 +663,22 @@ object BouncerGeckoView {
                 session: GeckoSession,
                 perm: GeckoSession.PermissionDelegate.ContentPermission,
             ): GeckoResult<Int>? {
+                // Feed videos must autoplay. With fission.autostart=false (see
+                // writeGeckoConfig) Gecko routes autoplay through this delegate
+                // (x.com's stored permissions are PROMPT), and the default null
+                // answer denies every play() — feeds go static. Audible too:
+                // once the user unmutes a video, x.com remembers (localStorage
+                // volume=1) and autoplays unmuted without a muted fallback.
+                // This matches the pre-fission-off behavior.
+                if (perm.permission ==
+                    GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_INAUDIBLE ||
+                    perm.permission ==
+                    GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_AUDIBLE
+                ) {
+                    return GeckoResult.fromValue(
+                        GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW,
+                    )
+                }
                 if (perm.permission !=
                     GeckoSession.PermissionDelegate.PERMISSION_DESKTOP_NOTIFICATION
                 ) {
