@@ -178,8 +178,11 @@ object BouncerGeckoView {
             // gated by the Android POST_NOTIFICATIONS runtime permission.
             val configPath = writeGeckoConfig(appCtx)
             val settingsBuilder = GeckoRuntimeSettings.Builder()
-                .consoleOutput(true)
-                .debugLogging(true)
+                // Verbose Gecko logging costs two logcat lines per painted frame
+                // (GeckoViewProgress MozAfterPaint) plus every page console
+                // message; keep it to debug builds.
+                .consoleOutput(com.imbue.bouncer.BuildConfig.DEBUG)
+                .debugLogging(com.imbue.bouncer.BuildConfig.DEBUG)
                 // Debug builds expose the Firefox DevTools socket
                 // (firefox-debugger-socket in the app dir) so a frozen page's
                 // live DOM can be inspected from a desktop:
@@ -335,12 +338,22 @@ object BouncerGeckoView {
     // too (interactive-widget=resizes-content, like iOS) rather than only the
     // visual viewport, so x.com's fixed-bottom composer bars sit right above
     // the keyboard instead of the whole page panning up.
+    //
+    // device.sensors.enabled=false: x.com's scripts add devicemotion /
+    // deviceorientation listeners, and GeckoAppShell answers by registering the
+    // accelerometer + gyroscope at the hardware max (~480 Hz each, plus two
+    // 200 Hz rotation vectors) and dispatching every sample on the Android UI
+    // thread, then over IPC to the content process. Measured on a Pixel 9a:
+    // ~1 CPU core burned while idle on the feed, with keystrokes queued behind
+    // the sensor events (1-2 s typing lag under memory pressure). No supported
+    // site needs motion sensors.
     private fun writeGeckoConfig(appCtx: Context): String? = runCatching {
         val cfg = java.io.File(appCtx.filesDir, "geckoview-config.yaml")
         cfg.writeText(
             "prefs:\n" +
                 "  permissions.default.desktop-notification: 1\n" +
-                "  dom.interactive_widget_default_resizes_visual: false\n"
+                "  dom.interactive_widget_default_resizes_visual: false\n" +
+                "  device.sensors.enabled: false\n"
         )
         cfg.absolutePath
     }.getOrNull()
