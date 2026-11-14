@@ -356,8 +356,7 @@ object BouncerGeckoView {
                 "  device.sensors.enabled: false\n" +
                 "  fission.autostart: false\n" +
                 "  dom.ipc.processPrelaunch.enabled: false\n" +
-                "  image.mem.surfacecache.max_size_kb: 102400\n" +
-                "  layers.gpu-process.enabled: false\n"
+                "  image.mem.surfacecache.max_size_kb: 102400\n"
         )
         cfg.absolutePath
     }.getOrNull()
