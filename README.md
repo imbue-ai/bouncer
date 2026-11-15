@@ -18,7 +18,7 @@
 - **AI detection**: remove slop text and images using our custom-trained AI detector model
 - **On-device inference**: local models run entirely in your browser with zero data sent externally
 - **Image-aware filtering**: multimodal models can classify posts based on images, not just text
-- **Multiple AI backends**: run models locally on your GPU, or use cloud APIs (OpenAI, Google Gemini, Anthropic, OpenRouter)
+- **Multiple AI backends**: run models locally on your GPU, or use cloud APIs (OpenAI, Google Gemini, Anthropic, OpenRouter, Requesty)
 - **Theme-aware UI**: adapts to light, dim, and dark modes automatically
 
 ## Quick Start

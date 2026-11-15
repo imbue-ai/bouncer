@@ -323,6 +323,7 @@ function buildDetectorStates(
 // Map API names to their corresponding settings key for API key lookup
 const API_KEY_SETTINGS: Record<string, keyof Settings> = {
   openrouter: 'openrouterApiKey',
+  requesty: 'requestyApiKey',
   openai: 'openaiApiKey',
   gemini: 'geminiApiKey',
   anthropic: 'anthropicApiKey'
@@ -518,7 +519,7 @@ export async function getSettings(siteId?: SiteId, pauseScope: PauseScope = 'cor
   // need to extend this list when a new platform is added.
   const platformEnabledKeys = PLATFORMS.map(p => enabledStorageKey(p.id));
   const settingsKeys = [
-    'apiKey', 'openaiApiKey', 'openaiApiBase', 'openrouterApiKey', 'geminiApiKey',
+    'apiKey', 'openaiApiKey', 'openaiApiBase', 'openrouterApiKey', 'requestyApiKey', 'geminiApiKey',
     'anthropicApiKey', 'enabled', 'useEmbeddings', 'selectedModel',
     'customModels', 'predefinedModelKwargs', 'aiTextDetectionThreshold',
     'aiTextReplyDetectionThreshold', 'aiImageDetectionThreshold',
@@ -568,6 +569,7 @@ export async function getSettings(siteId?: SiteId, pauseScope: PauseScope = 'cor
     openaiApiKey: data.openaiApiKey || '',
     openaiApiBase: data.openaiApiBase || '',
     openrouterApiKey: data.openrouterApiKey || '',
+    requestyApiKey: data.requestyApiKey || '',
     geminiApiKey: data.geminiApiKey || '',
     anthropicApiKey: data.anthropicApiKey || '',
     enabled: data.enabled !== false,
@@ -600,7 +602,7 @@ export async function getSettings(siteId?: SiteId, pauseScope: PauseScope = 'cor
 // Broadcast unified error status to all tabs
 export async function broadcastErrorStatus(): Promise<void> {
   const settings = await getSettings();
-  const hasAlternativeApis = !!(settings.openaiApiKey || settings.geminiApiKey || settings.openrouterApiKey || settings.anthropicApiKey);
+  const hasAlternativeApis = !!(settings.openaiApiKey || settings.geminiApiKey || settings.openrouterApiKey || settings.requestyApiKey || settings.anthropicApiKey);
 
   const status: BackgroundToContentMessage = {
     type: 'errorStatusUpdate',
@@ -699,7 +701,7 @@ export function getLatencySampleCount(): number {
 
 async function broadcastLatencyStatus(): Promise<void> {
   const settings = await getSettings();
-  const hasAlternativeApis = !!(settings.openaiApiKey || settings.geminiApiKey || settings.openrouterApiKey || settings.anthropicApiKey);
+  const hasAlternativeApis = !!(settings.openaiApiKey || settings.geminiApiKey || settings.openrouterApiKey || settings.requestyApiKey || settings.anthropicApiKey);
 
   const status: BackgroundToContentMessage = {
     type: 'latencyUpdate',
@@ -1350,7 +1352,7 @@ export async function handleSettingsChange(changes: Record<string, chrome.storag
     await clearEvaluationCache();
   }
 
-  if ((changes.selectedModel || changes.openaiApiKey || changes.geminiApiKey || changes.openrouterApiKey || changes.anthropicApiKey) && errorState.count > 0) {
+  if ((changes.selectedModel || changes.openaiApiKey || changes.geminiApiKey || changes.openrouterApiKey || changes.requestyApiKey || changes.anthropicApiKey) && errorState.count > 0) {
     triggerErrorRetry().catch(err => console.error('[Error] triggerErrorRetry failed:', err));
   }
 }
