@@ -178,8 +178,11 @@ object BouncerGeckoView {
             // gated by the Android POST_NOTIFICATIONS runtime permission.
             val configPath = writeGeckoConfig(appCtx)
             val settingsBuilder = GeckoRuntimeSettings.Builder()
-                .consoleOutput(true)
-                .debugLogging(true)
+                // Verbose Gecko logging costs two logcat lines per painted frame
+                // (GeckoViewProgress MozAfterPaint) plus every page console
+                // message; keep it to debug builds.
+                .consoleOutput(com.imbue.bouncer.BuildConfig.DEBUG)
+                .debugLogging(com.imbue.bouncer.BuildConfig.DEBUG)
                 // Debug builds expose the Firefox DevTools socket
                 // (firefox-debugger-socket in the app dir) so a frozen page's
                 // live DOM can be inspected from a desktop:
@@ -335,12 +338,25 @@ object BouncerGeckoView {
     // too (interactive-widget=resizes-content, like iOS) rather than only the
     // visual viewport, so x.com's fixed-bottom composer bars sit right above
     // the keyboard instead of the whole page panning up.
+    //
+    // device.sensors.enabled=false: x.com's scripts add devicemotion /
+    // deviceorientation listeners, and GeckoAppShell answers by registering the
+    // accelerometer + gyroscope at the hardware max (~480 Hz each, plus two
+    // 200 Hz rotation vectors) and dispatching every sample on the Android UI
+    // thread, then over IPC to the content process. Measured on a Pixel 9a:
+    // ~1 CPU core burned while idle on the feed, with keystrokes queued behind
+    // the sensor events (1-2 s typing lag under memory pressure). No supported
+    // site needs motion sensors.
     private fun writeGeckoConfig(appCtx: Context): String? = runCatching {
         val cfg = java.io.File(appCtx.filesDir, "geckoview-config.yaml")
         cfg.writeText(
             "prefs:\n" +
                 "  permissions.default.desktop-notification: 1\n" +
-                "  dom.interactive_widget_default_resizes_visual: false\n"
+                "  dom.interactive_widget_default_resizes_visual: false\n" +
+                "  device.sensors.enabled: false\n" +
+                "  fission.autostart: false\n" +
+                "  dom.ipc.processPrelaunch.enabled: false\n" +
+                "  image.mem.surfacecache.max_size_kb: 102400\n"
         )
         cfg.absolutePath
     }.getOrNull()
@@ -646,6 +662,22 @@ object BouncerGeckoView {
                 session: GeckoSession,
                 perm: GeckoSession.PermissionDelegate.ContentPermission,
             ): GeckoResult<Int>? {
+                // Feed videos must autoplay. With fission.autostart=false (see
+                // writeGeckoConfig) Gecko routes autoplay through this delegate
+                // (x.com's stored permissions are PROMPT), and the default null
+                // answer denies every play() — feeds go static. Audible too:
+                // once the user unmutes a video, x.com remembers (localStorage
+                // volume=1) and autoplays unmuted without a muted fallback.
+                // This matches the pre-fission-off behavior.
+                if (perm.permission ==
+                    GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_INAUDIBLE ||
+                    perm.permission ==
+                    GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_AUDIBLE
+                ) {
+                    return GeckoResult.fromValue(
+                        GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW,
+                    )
+                }
                 if (perm.permission !=
                     GeckoSession.PermissionDelegate.PERMISSION_DESKTOP_NOTIFICATION
                 ) {
