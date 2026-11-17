@@ -401,7 +401,9 @@ export interface ChatMessage {
 export type ContentToBackgroundMessage =
   | { type: 'pageLoad' }
   | { type: 'evaluatePost'; evaluationId: string; post: string; rawText: string; imageUrls: string[]; quotedImageUrls?: string[]; postUrl: string | null; siteId: SiteId; isReply?: boolean; pauseScope?: PauseScope }
-  | { type: 'suggestAnnoyingReasons'; post: string; imageUrls: string[]; siteId?: SiteId }
+  // quiet: no annoyingProgress messages back to the tab (the feed check-in
+  // card asks in the background; progress would drive an open trash-can tooltip).
+  | { type: 'suggestAnnoyingReasons'; post: string; imageUrls: string[]; siteId?: SiteId; quiet?: boolean }
   | { type: 'clearCache' }
   // Sent by the settings popup after the user grants an optional platform's
   // host permission; resolves once its content script is registered.

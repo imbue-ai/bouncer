@@ -46,6 +46,7 @@ import {
 
 import { formatPostForEvaluation, phraseAddNeedsReEvaluation } from '../shared/utils';
 import { initBlueskySeeMore, noteTimelinePost, INJECTED_POST_SELECTOR } from './bluesky-see-more';
+import { initFeedCheckin, noteCheckinPost } from './feed-checkin';
 import {
   findStructuralMatch,
   structuralFilterKind,
@@ -196,6 +197,7 @@ import {
   });
 
   initBlueskySeeMore(adapter, { processPost: article => processPost(article) });
+  initFeedCheckin(adapter);
 
   initIOS({
     adapter,
@@ -639,6 +641,10 @@ import {
 
     // "See more …": maybe slot a Bluesky post into this tweet's cell
     noteTimelinePost(article);
+
+    // Every so often, a card offering filters for the posts around it,
+    // or a "See more" topic field
+    noteCheckinPost(article);
 
     if (forceForYou || adapter.shouldProcessCurrentPage()) {
       evaluatePost(article).catch(err => console.error('[Bouncer] evaluatePost failed:', err));

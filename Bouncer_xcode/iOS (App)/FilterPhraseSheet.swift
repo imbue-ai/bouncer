@@ -1218,6 +1218,18 @@ struct FilterPhraseSheet: View {
     @ObservedObject var viewModel: FilterSheetViewModel
     @State private var newPhrase = ""
 
+    init(viewModel: FilterSheetViewModel) {
+        self.viewModel = viewModel
+        // The segmented Picker ignores .font, so size its labels here. The
+        // default 13pt reads too small next to the 19pt rows; this is the
+        // app's only segmented control.
+        let segmented = UISegmentedControl.appearance()
+        segmented.setTitleTextAttributes(
+            [.font: UIFont.systemFont(ofSize: 16, weight: .medium)], for: .normal)
+        segmented.setTitleTextAttributes(
+            [.font: UIFont.systemFont(ofSize: 16, weight: .semibold)], for: .selected)
+    }
+
     var body: some View {
         NavigationStack {
             List {
