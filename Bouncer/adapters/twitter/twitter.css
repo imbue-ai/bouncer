@@ -756,6 +756,18 @@ html.twitter-light .bouncer-checkin {
   cursor: pointer;
   transition: background-color 0.2s ease, color 0.2s ease;
 }
+/* The −, + and ✓ marks (markIcon), sized to the text. */
+.bouncer-checkin-mark {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin-right: 6px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
 .bouncer-checkin-pill-label {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -796,10 +808,34 @@ html.twitter-light .bouncer-checkin-pill--loading { --checkin-shimmer: rgba(255,
   .bouncer-checkin-pill--loading { animation: none; }
 }
 
-.bouncer-checkin-see-more {
+.bouncer-checkin-chips {
+  /* Chips and the text field share CHIP height; don't stretch a line to
+     its tallest item. */
+  --checkin-chip-height: 36px;
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
+  margin-bottom: 8px;
+}
+.bouncer-checkin-chips:empty { display: none; }
+/* A just-added topic while its first post loads: the desktop filter box's
+   pulse (.bsky-see-more-loading, keyframes above). */
+.bouncer-checkin-chip.bouncer-checkin-chip--loading { animation: bsky-see-more-pulse 1.2s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .bouncer-checkin-chip.bouncer-checkin-chip--loading { animation: none; opacity: 0.6; }
+}
+.bouncer-checkin-pill.bouncer-checkin-chip {
+  box-sizing: border-box;
+  height: var(--checkin-chip-height);
+  min-height: 0;
+  padding: 0 14px;
+}
+.bouncer-checkin-see-more {
+  display: flex;
+  flex: 0 1 180px;
+  min-width: 120px;
+  margin: 0;
 }
 .bouncer-checkin-field {
   position: relative;
@@ -807,13 +843,20 @@ html.twitter-light .bouncer-checkin-pill--loading { --checkin-shimmer: rgba(255,
   flex: 1;
   min-width: 0;
 }
+/* Shaped like a topic chip (.bouncer-checkin-chip). */
 .bouncer-checkin-input {
   flex: 1;
   min-width: 0;
   width: 100%;
-  min-height: 44px;
-  padding: 10px 12px;
+  box-sizing: border-box;
+  height: var(--checkin-chip-height);
+  min-height: 0;
+  margin: 0;
+  padding: 0 14px;
+  -webkit-appearance: none;
+  appearance: none;
   font: inherit;
+  line-height: normal;
   /* 16px+ keeps iOS from zooming the page when the field takes focus. */
   font-size: 16px;
   color: var(--checkin-text);
@@ -823,23 +866,9 @@ html.twitter-light .bouncer-checkin-pill--loading { --checkin-shimmer: rgba(255,
   outline: none;
 }
 .bouncer-checkin-input:focus { border-color: var(--checkin-accent); }
-/* The cycling placeholder (content.css .filter-placeholder-cycle), sized
-   and inset to sit where the field's own text goes. The track and its
-   items share one font-size, since the keyframes step in 1.2em. */
-.bouncer-checkin .bouncer-checkin-cycle {
-  top: 50%;
-  left: 13px;
-  right: 12px;
-  transform: translateY(-50%);
-  font-size: 16px;
-}
-.bouncer-checkin .bouncer-checkin-cycle .filter-placeholder-track > span {
-  font-size: 16px;
-  color: var(--checkin-secondary);
-}
-.bouncer-checkin-submit { flex: 0 0 auto; padding: 10px 16px; }
+.bouncer-checkin-input::placeholder { color: var(--checkin-secondary); opacity: 1; }
 .bouncer-checkin-status {
-  flex-basis: 100%;
+  margin-top: 8px;
   color: var(--checkin-secondary);
 }
 .bouncer-checkin-status:empty { display: none; }

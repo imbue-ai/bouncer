@@ -9,27 +9,46 @@
 //
 // Placement follows bluesky-see-more.ts: the card is appended INSIDE a real
 // tweet's cellInnerDiv, below the tweet, so X's virtualized list makes room
-// for it. Every CHECKIN_EVERY posts (tweets and "See more" posts alike) one
-// becomes due. Once it comes within PLACE_AHEAD_MARGIN of the viewport the
+// for it. One becomes due every checkinEvery() posts (tweets and "See more"
+// posts alike): often at first, backing off as cards are placed. Once it comes within PLACE_AHEAD_MARGIN of the viewport the
 // card goes in — a filter card with placeholder buttons that fill in when
 // the suggestions arrive (or turn it into a See-more card if there are
 // none) — but only while its spot is still below the screen, so nothing
 // pops in where the user is looking; a slot already on screen passes to the
-// next tweet. The card element itself is kept by host tweet, so a remounted
-// cell gets it back as the user left it.
+// next tweet. The card element itself is kept by the tweet it hangs off, so
+// a remounted cell gets it back as the user left it.
+//
+// Hiding a tweet hides its whole cell, card included — and the tweet above
+// the card is one of its own suggestions' sources. So when the card's cell
+// is hidden, the card moves to the top of the next visible tweet's cell
+// (keepCardVisible), which keeps it in the same spot on screen.
 
 import type { PlatformAdapter, PostContent } from '../types';
-import { getDescriptions } from '../shared/storage';
+import { getDescriptions, getStorage } from '../shared/storage';
+import { SEE_MORE_TOPICS_KEY } from '../shared/bluesky';
 import { formatPostForEvaluation } from '../shared/utils';
-import { addTopic, isInjectedPost, INJECTED_POST_SELECTOR, TOPIC_PLACEHOLDERS } from './bluesky-see-more';
+import {
+  addTopic, removeTopic, isInjectedPost, isTopicLoading, onTopicLoadingChange, INJECTED_POST_SELECTOR, TOPIC_PLACEHOLDERS,
+} from './bluesky-see-more';
 import { bouncePost } from './bounce-quote';
 import { addFilterPhrase, removeFilterPhrase } from './ui';
 
-const CHECKIN_EVERY = 25;          // posts between cards
+// Posts between cards: FIRST_EVERY after the startup card, STEP_EVERY more
+// after each card placed since, up to MAX_EVERY (10, 15, 20, 25, 25…).
+const FIRST_EVERY = 10;
+const STEP_EVERY = 5;
+const MAX_EVERY = 25;
 const MIDDLE_SOURCES = 2;          // posts two or more notches above
 const MIN_SOURCE_TEXT = 20;        // shorter text-only posts get poor suggestions
 const MAX_CELLS_WALKED = 12;
 const PLACE_AHEAD_MARGIN = '0px 0px 200% 0px';
+// The startup card: placed this long after the first Home post is seen
+// (once the timeline has laid out a screenful), retried while there isn't
+// a screenful yet.
+const STARTUP_DELAY_MS = 1000;
+const STARTUP_TRIES = 5;
+const HEADER_PX = 120;             // X's sticky header (and then some)
+const SEE_MORE_CHOICES = 4;        // preselected topics on a See-more card
 const CARD_CLASS = 'bouncer-checkin';
 
 /** A post a suggestion is about: its key, content, and cellInnerDiv (the
@@ -42,10 +61,15 @@ type CardKind = 'filter' | 'seeMore';
 let adapter: PlatformAdapter | null = null;
 const countedKeys = new Set<string>();
 let tweetsSince = 0;
+let cardsPlaced = 0;              // since the startup card
+let startupScheduled = false;
+const checkinEvery = () => Math.min(MAX_EVERY, FIRST_EVERY + STEP_EVERY * cardsPlaced);
 let slot: { key: string; cell: HTMLElement } | null = null;
-// Placed cards by host tweet; null once dismissed, so a remount doesn't
-// bring it back.
+// Placed cards by the tweet they hang off (below it, or above it once
+// moved); null once dismissed, so a remount doesn't bring it back.
 const cards = new Map<string, HTMLElement | null>();
+// Watches the cells holding cards for being hidden.
+let hideObserver: MutationObserver | null = null;
 let observer: IntersectionObserver | null = null;
 let slotNear = false;
 let nextKind: CardKind = 'filter';
@@ -53,6 +77,7 @@ let nextKind: CardKind = 'filter';
 export function initFeedCheckin(platformAdapter: PlatformAdapter): void {
   if (platformAdapter.siteId !== 'twitter') return;
   adapter = platformAdapter;
+  onTopicLoadingChange(syncTopicChipsLoading);
   console.log('[Checkin] enabled');
 }
 
@@ -73,6 +98,10 @@ export function noteCheckinPost(article: HTMLElement): void {
   if (cell === article && !injected) return;
   const key = adapter.getPostContentKey(article);
   if (!key) return;
+  if (!startupScheduled) {
+    startupScheduled = true;
+    setTimeout(() => placeStartupCard(STARTUP_TRIES), STARTUP_DELAY_MS);
+  }
   if (injected) { count(key); return; }
 
   cell.querySelectorAll<HTMLElement>(`:scope > .${CARD_CLASS}`).forEach(e => {
@@ -80,30 +109,51 @@ export function noteCheckinPost(article: HTMLElement): void {
   });
   if (cards.has(key)) {
     const card = cards.get(key);
-    if (card && card.parentElement !== cell) cell.appendChild(card);
+    if (card && card.parentElement !== cell) attachCard(card, cell);
     return;
   }
   if (slot?.key === key) { slot.cell = cell; watch(cell); return; }
 
   count(key);
   // A slot whose tweet got filtered never comes near (hidden cells don't
-  // intersect), and one the user never scrolled to is stale: pass it on.
-  if (slot && ((hostKeyOf(slot.cell) === slot.key && slot.cell.dataset.filteredByExtension) || tweetsSince >= CHECKIN_EVERY)) {
-    releaseSlot(true);
-  }
-  if (slot || tweetsSince < CHECKIN_EVERY) return;
-  if (cell.dataset.filteredByExtension) return;
-  // Not under a tweet that already hosts a "See more" post, and not wedged
-  // between the tweets of a self-thread.
-  if (cell.querySelector(':scope > .bsky-x-post')) return;
-  const next = cell.nextElementSibling;
-  const threaded = (adapter as unknown as { _isReplyInThread?: (el: Element) => boolean })._isReplyInThread;
-  if (next && threaded?.call(adapter, next)) return;
+  // intersect): pass it down. One the user never scrolled to is stale.
+  if (slot && hostKeyOf(slot.cell) === slot.key && slot.cell.dataset.filteredByExtension) passSlotDown();
+  if (slot && tweetsSince >= checkinEvery()) releaseSlot(true);
+  if (slot || tweetsSince < checkinEvery()) return;
+  if (!canHost(cell)) return;
 
   tweetsSince = 0;
   slot = { key, cell };
   console.log('[Checkin] slot due under', key);
   watch(cell);
+}
+
+/** Whether a card can go under this cell's tweet: it's visible, has no card
+ *  (or dismissed one) yet, doesn't already host a "See more" post, and
+ *  isn't followed by the rest of a self-thread. */
+function canHost(cell: Element): cell is HTMLElement {
+  const key = cell instanceof HTMLElement ? hostKeyOf(cell) : null;
+  if (!key || cards.has(key) || (cell as HTMLElement).dataset.filteredByExtension) return false;
+  if (cell.querySelector(':scope > .bsky-x-post')) return false;
+  const next = cell.nextElementSibling;
+  const threaded = (adapter as unknown as { _isReplyInThread?: (el: Element) => boolean })._isReplyInThread;
+  return !(next && threaded?.call(adapter, next));
+}
+
+/** Moves the slot to the first tweet below it that X has already rendered
+ *  and that's below the screen. Waiting for the next newly rendered tweet
+ *  instead would skip everything X renders ahead (several posts). */
+function passSlotDown(): void {
+  let cell = slot?.cell.nextElementSibling ?? null;
+  for (let i = 0; cell && i < MAX_CELLS_WALKED * 2; i++, cell = cell.nextElementSibling) {
+    if (!canHost(cell) || cell.getBoundingClientRect().bottom <= window.innerHeight) continue;
+    const key = hostKeyOf(cell)!;
+    slot = { key, cell };
+    console.log('[Checkin] slot moved down to', key);
+    watch(cell);
+    return;
+  }
+  releaseSlot(true);
 }
 
 function count(key: string): void {
@@ -136,7 +186,7 @@ function releaseSlot(nextTweetTakesOver: boolean): void {
   observer?.disconnect();
   slot = null;
   slotNear = false;
-  if (nextTweetTakesOver) tweetsSince = CHECKIN_EVERY;
+  if (nextTweetTakesOver) tweetsSince = checkinEvery();
 }
 
 // ==================== Source posts ====================
@@ -231,10 +281,48 @@ function tryPlace(): void {
   const { key, cell } = slot;
   if (hostKeyOf(cell) !== key) return; // recycled; the tweet comes back via noteCheckinPost
   if (cell.dataset.filteredByExtension || cell.getBoundingClientRect().bottom <= window.innerHeight) {
-    console.log('[Checkin] slot already on screen; passing to the next tweet');
-    releaseSlot(true);
+    console.log('[Checkin] slot already on screen; moving it down');
+    passSlotDown();
     return;
   }
+  placeCard(key, cell);
+  cardsPlaced++;
+  console.log(`[Checkin] next card in ${checkinEvery()} posts`);
+  releaseSlot(false);
+}
+
+/** The first card of a page load goes in right away, in view or just below
+ *  it: under the last tweet that ends on screen, so the card shows at the
+ *  bottom of the screen — or, when that tweet can't hold it, under the tweet
+ *  crossing the bottom edge, just below the screen. It doesn't count toward
+ *  the backoff; the count starts over from it. */
+function placeStartupCard(triesLeft: number): void {
+  if (!adapter || !onHomeTimeline()) return;
+  const seen = new Set<HTMLElement>();
+  const cells: HTMLElement[] = [];
+  for (const article of document.querySelectorAll<HTMLElement>(adapter.selectors.post)) {
+    const cell = adapter.getPostContainer(article);
+    if (cell === article || seen.has(cell) || isCellHidden(cell)) continue;
+    seen.add(cell);
+    cells.push(cell);
+  }
+  const fold = cells.findIndex(c => c.getBoundingClientRect().bottom >= window.innerHeight);
+  if (fold === -1) {
+    // Not a screenful of tweets yet.
+    if (triesLeft > 1) setTimeout(() => placeStartupCard(triesLeft - 1), STARTUP_DELAY_MS);
+    return;
+  }
+  const inView = cells.slice(0, fold).reverse()
+    .find(c => c.getBoundingClientRect().bottom > HEADER_PX && canHost(c));
+  const host = inView ?? cells.slice(fold).find(c => canHost(c));
+  if (!host) return;
+  if (slot) releaseSlot(false);
+  placeCard(hostKeyOf(host)!, host);
+  tweetsSince = 0;
+  console.log(`[Checkin] startup card placed; next in ${checkinEvery()} posts`);
+}
+
+function placeCard(key: string, cell: HTMLElement): void {
   let card: HTMLElement;
   if (nextKind === 'filter') {
     const filterCard = renderFilterCard(key);
@@ -246,10 +334,56 @@ function tryPlace(): void {
     card = renderSeeMoreCard(key);
   }
   cards.set(key, card);
-  cell.appendChild(card);
-  console.log(`[Checkin] ${nextKind} card placed under`, key);
+  attachCard(card, cell);
+  console.log(`[Checkin] ${nextKind} card placed under ${key}`);
   nextKind = nextKind === 'filter' ? 'seeMore' : 'filter';
-  releaseSlot(false);
+}
+
+// ==================== Keeping cards visible ====================
+
+const isCellHidden = (cell: HTMLElement) => !!cell.dataset.filteredByExtension || cell.style.display === 'none';
+
+/** Puts a card in its cell — below the tweet, or above it once moved — and
+ *  starts watching the cell for being hidden. */
+function attachCard(card: HTMLElement, cell: HTMLElement): void {
+  if (card.dataset.slot === 'above') cell.prepend(card);
+  else cell.appendChild(card);
+  hideObserver ??= new MutationObserver(records => {
+    for (const { target } of records) {
+      const watched = target as HTMLElement;
+      const held = watched.querySelector<HTMLElement>(`:scope > .${CARD_CLASS}`);
+      if (held && isCellHidden(watched)) keepCardVisible(held, watched);
+    }
+  });
+  hideObserver.observe(cell, { attributes: true, attributeFilter: ['style', 'data-filtered-by-extension'] });
+  if (isCellHidden(cell)) keepCardVisible(card, cell);
+}
+
+/** Moves a card out of a hidden cell: to the top of the next visible
+ *  tweet's cell, or, at the end of what X has rendered, below the previous
+ *  visible tweet. */
+function keepCardVisible(card: HTMLElement, from: HTMLElement): void {
+  const visible = (c: Element | null): c is HTMLElement =>
+    c instanceof HTMLElement && !isCellHidden(c) && !!hostKeyOf(c);
+  let to: Element | null = from.nextElementSibling;
+  let slot: 'above' | 'below' = 'above';
+  for (let i = 0; to && !visible(to) && i < MAX_CELLS_WALKED; i++) to = to.nextElementSibling;
+  if (!visible(to)) {
+    slot = 'below';
+    to = from.previousElementSibling;
+    for (let i = 0; to && !visible(to) && i < MAX_CELLS_WALKED; i++) to = to.previousElementSibling;
+  }
+  if (!visible(to)) return;
+  const oldKey = card.dataset.hostKey;
+  const newKey = hostKeyOf(to)!;
+  if (oldKey && cards.get(oldKey) === card) cards.delete(oldKey);
+  // A tweet that already has a card keeps it; this one goes.
+  if (cards.get(newKey)) { card.remove(); return; }
+  card.dataset.hostKey = newKey;
+  card.dataset.slot = slot;
+  cards.set(newKey, card);
+  console.log(`[Checkin] card's tweet hidden; moved ${slot} ${newKey}`);
+  attachCard(card, to);
 }
 
 // ==================== Card ====================
@@ -275,7 +409,7 @@ function renderCard(hostKey: string, title: string, body: HTMLElement): HTMLElem
   close.type = 'button';
   close.setAttribute('aria-label', 'Dismiss');
   close.addEventListener('click', () => {
-    cards.set(hostKey, null);
+    cards.set(card.dataset.hostKey ?? hostKey, null);
     card.remove();
   });
   header.appendChild(close);
@@ -293,7 +427,7 @@ function renderFilterCard(hostKey: string): HTMLElement {
   for (let i = 0; i < LOADING_PLACEHOLDERS; i++) {
     filters.appendChild(el('div', 'bouncer-checkin-pill bouncer-checkin-pill--loading'));
   }
-  return renderCard(hostKey, 'Filter out?', filters);
+  return renderCard(hostKey, 'Hide posts like these?', filters);
 }
 
 function fillFilterCard(card: HTMLElement, suggestions: Suggestion[]): void {
@@ -302,7 +436,7 @@ function fillFilterCard(card: HTMLElement, suggestions: Suggestion[]): void {
   if (!suggestions.length) {
     // Nothing to filter after all: the card offers See more instead, and
     // the next one goes back to filters.
-    const title = 'See more of?';
+    const title = 'Want more posts about…?';
     card.setAttribute('aria-label', title);
     const titleEl = card.querySelector('.bouncer-checkin-title');
     if (titleEl) titleEl.textContent = title;
@@ -317,7 +451,7 @@ function fillFilterCard(card: HTMLElement, suggestions: Suggestion[]): void {
 }
 
 function renderSeeMoreCard(hostKey: string): HTMLElement {
-  return renderCard(hostKey, 'See more of?', seeMoreForm());
+  return renderCard(hostKey, 'Want more posts about…?', seeMoreForm());
 }
 
 /** The source post's element if it's still mounted, else null. */
@@ -332,12 +466,12 @@ function sourceArticle({ key, cell }: SourcePost): HTMLElement | null {
 function filterButton({ phrase, source }: Suggestion): HTMLButtonElement {
   const btn = el('button', 'bouncer-checkin-pill');
   btn.type = 'button';
-  const label = el('span', 'bouncer-checkin-pill-label', phrase);
-  btn.appendChild(label);
+  btn.append(markIcon('minus'), el('span', 'bouncer-checkin-pill-label', phrase));
+  // − marks the button as "hide this" (the + on topic chips is "add this"), ✓ that it's done.
   const setAdded = (added: boolean) => {
     btn.classList.toggle('bouncer-checkin-pill--done', added);
     btn.setAttribute('aria-pressed', String(added));
-    label.textContent = added ? `✓ ${phrase}` : phrase;
+    btn.firstElementChild!.replaceWith(markIcon(added ? 'check' : 'minus'));
   };
   setAdded(false);
   btn.addEventListener('click', () => {
@@ -375,45 +509,124 @@ function filterButton({ phrase, source }: Suggestion): HTMLButtonElement {
   return btn;
 }
 
+// Drawn rather than typed: X's font sets − as a short, thin dash next to +.
+const MARK_PATHS = { minus: 'M5 12h14', plus: 'M12 5v14M5 12h14', check: 'M5 12.5l4.5 4.5L19 7.5' };
+
+function markIcon(kind: keyof typeof MARK_PATHS): SVGSVGElement {
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('class', 'bouncer-checkin-mark');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('aria-hidden', 'true');
+  const path = document.createElementNS(ns, 'path');
+  path.setAttribute('d', MARK_PATHS[kind]);
+  svg.appendChild(path);
+  return svg;
+}
+
+const TOPIC_LOADING_CLASS = 'bouncer-checkin-chip--loading';
+
+/** Pulses the topic chips whose topic was just added and is still loading
+ *  its first post, like the desktop filter box's See-more chips. */
+function setChipLoading(chip: HTMLElement, topic: string): void {
+  const loading = isTopicLoading(topic);
+  chip.classList.toggle(TOPIC_LOADING_CLASS, loading);
+  if (loading) chip.setAttribute('aria-busy', 'true');
+  else chip.removeAttribute('aria-busy');
+}
+
+function syncTopicChipsLoading(): void {
+  document.querySelectorAll<HTMLElement>('.bouncer-checkin-chip[data-topic]').forEach(chip => {
+    setChipLoading(chip, chip.dataset.topic ?? '');
+  });
+}
+
+/** A See-more topic as a toggle: tap to add it, tap again to remove it. */
+function topicChip(topic: string, added: boolean, status: HTMLElement): HTMLButtonElement {
+  const chip = el('button', 'bouncer-checkin-pill bouncer-checkin-chip');
+  chip.type = 'button';
+  chip.dataset.topic = topic;
+  const setAdded = (on: boolean) => {
+    chip.classList.toggle('bouncer-checkin-pill--done', on);
+    chip.setAttribute('aria-pressed', String(on));
+    chip.replaceChildren(markIcon(on ? 'check' : 'plus'), el('span', '', topic)); // + marks it as "add this"
+
+    setChipLoading(chip, topic);
+  };
+  setAdded(added);
+  chip.addEventListener('click', () => {
+    const adding = !chip.classList.contains('bouncer-checkin-pill--done');
+    chip.disabled = true;
+    status.textContent = '';
+    void (async () => {
+      if (!adding) { await removeTopic(topic); setAdded(false); return; }
+      if (await addTopic(topic)) setAdded(true);
+      else status.textContent = 'Topic list is full';
+    })().catch(err => console.error('[Bouncer] check-in topic toggle failed:', err))
+      .finally(() => { chip.disabled = false; });
+  });
+  return chip;
+}
+
 function seeMoreForm(): HTMLElement {
+  const wrapper = el('div', 'bouncer-checkin-see-more-body');
+  const status = el('div', 'bouncer-checkin-status');
+
+  // A few topics to tap, picked at random from the field's examples,
+  // leaving out ones already followed.
+  const chips = el('div', 'bouncer-checkin-chips');
+  void getStorage([SEE_MORE_TOPICS_KEY]).then(d => {
+    const current = new Set((d[SEE_MORE_TOPICS_KEY] ?? []).map(t => t.toLowerCase()));
+    const choices = TOPIC_PLACEHOLDERS.filter(t => !current.has(t.toLowerCase()))
+      .map(t => ({ t, r: Math.random() })).sort((a, b) => a.r - b.r).slice(0, SEE_MORE_CHOICES).map(x => x.t);
+    chips.prepend(...choices.map(t => topicChip(t, false, status)));
+  });
+  // The field sits at the end of the topic row, shaped like a topic.
+  chips.appendChild(topicField(chips, status));
+  wrapper.append(chips, status);
+  return wrapper;
+}
+
+/** A topic-shaped text field. What's typed in it is added on Enter / the
+ *  keyboard's Done key, or on tapping away; the field then turns into that
+ *  topic's chip, switched on, and a fresh field follows it. */
+function topicField(chips: HTMLElement, status: HTMLElement): HTMLElement {
   const form = el('form', 'bouncer-checkin-see-more');
   const input = el('input', 'bouncer-checkin-input');
   input.type = 'text';
   input.enterKeyHint = 'done';
   input.setAttribute('aria-label', 'See more posts about a topic');
   input.addEventListener('keydown', e => e.stopPropagation()); // keep X's keyboard shortcuts out of the field
-  // Cycling examples in the empty field, like the desktop "See more" row:
-  // the same topics, on the ff-placeholder-scroll keyframes ui.ts injects.
-  // bsky-see-more-track keeps setKeepOnlyMode from swapping its contents.
+  input.placeholder = 'something else';
   const field = el('span', 'bouncer-checkin-field');
-  const cycle = el('span', 'filter-placeholder-cycle bouncer-checkin-cycle');
-  cycle.setAttribute('aria-hidden', 'true');
-  const track = el('span', 'filter-placeholder-track bsky-see-more-track');
-  for (const t of [...TOPIC_PLACEHOLDERS, TOPIC_PLACEHOLDERS[0]]) track.appendChild(el('span', '', t));
-  cycle.appendChild(track);
-  field.append(input, cycle);
-  input.addEventListener('input', () => cycle.classList.toggle('hidden', input.value !== ''));
-  const submit = el('button', 'bouncer-checkin-pill bouncer-checkin-submit', 'Add');
-  submit.type = 'submit';
-  const status = el('div', 'bouncer-checkin-status');
-  form.append(field, submit, status);
-  form.addEventListener('submit', e => {
-    e.preventDefault();
+  field.appendChild(input);
+  // No submit button: a lone text field submits on Enter (implicit submission).
+  form.appendChild(field);
+
+  let committing = false;
+  const commit = () => {
     const topic = input.value.trim();
-    if (!topic) { input.focus(); return; }
-    submit.disabled = true;
+    if (!topic || committing) return;
+    committing = true;
+    status.textContent = '';
     void addTopic(topic).then(added => {
-      if (added) {
-        input.blur();
-        form.replaceChildren(el('div', 'bouncer-checkin-status', `✓ ${topic}`));
-      } else {
-        submit.disabled = false;
+      if (!added) {
         status.textContent = 'Already added or list full';
+        committing = false;
+        return;
       }
+      form.replaceWith(topicChip(topic, true, status));
+      chips.appendChild(topicField(chips, status));
     }).catch(err => {
       console.error('[Bouncer] check-in add topic failed:', err);
-      submit.disabled = false;
+      committing = false;
     });
+  };
+  form.addEventListener('submit', e => {
+    e.preventDefault();
+    input.blur(); // dismisses the keyboard; the blur handler commits
+    commit();
   });
+  input.addEventListener('blur', commit);
   return form;
 }

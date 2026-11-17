@@ -132,6 +132,19 @@ let nextTopic = 0;
 // ready, and that post is then slid into view (introducePost) instead of
 // waiting for the user to scroll to the next slot.
 const introTopics = new Set<string>();
+// Told whenever a topic starts or stops loading (feed-checkin.ts pulses its
+// topic chips the way renderTopicChips does the filter box's).
+const loadingListeners = new Set<() => void>();
+const notifyLoading = () => loadingListeners.forEach(fn => fn());
+
+/** Whether a just-added topic's first post is still loading. */
+export function isTopicLoading(topic: string): boolean {
+  return introTopics.has(topic);
+}
+
+export function onTopicLoadingChange(fn: () => void): void {
+  loadingListeners.add(fn);
+}
 let sweepTimer: ReturnType<typeof setInterval> | null = null;
 const topicRows = new Set<HTMLElement>();
 
@@ -259,6 +272,7 @@ function setTopics(next: string[]): void {
   if (topics.length && !sweepTimer) sweepTimer = setInterval(sweep, SWEEP_INTERVAL_MS);
   if (!topics.length && sweepTimer) { clearInterval(sweepTimer); sweepTimer = null; }
   topicRows.forEach(row => { if (row.isConnected) renderTopicChips(row); else topicRows.delete(row); });
+  notifyLoading();
 }
 
 // ==================== Candidate pool ====================
@@ -336,6 +350,7 @@ function endIntro(topic: string, failure: string | null): void {
   introTopics.delete(topic);
   if (failure) console.log(`[Bouncer] See more: didn't slide in a post for new topic "${topic}": ${failure}`);
   topicRows.forEach(row => { if (row.isConnected) renderTopicChips(row); });
+  notifyLoading();
 }
 
 // Screens a candidate against the user's Filter Out phrases the way a real
