@@ -30,6 +30,7 @@ import {
   type BskyFeedPost, type BskyQuotedPost, type BskySearchResult, type SeeMoreSource,
 } from '../shared/bluesky';
 import { currentPauseScope } from './ui';
+import { hostsCheckin } from './feed-checkin';
 
 const READY_TARGET = 3;          // screened posts to keep on hand per topic
 const HIDE_CHECK_CONCURRENCY = 4; // candidates screened against hide filters at once
@@ -556,6 +557,7 @@ export function noteTimelinePost(article: HTMLElement): void {
   const threaded = (adapter as unknown as { _isReplyInThread?: (el: Element) => boolean })._isReplyInThread;
   if (next && threaded?.call(adapter, next)) return;
   if (cell.dataset.filteredByExtension) return;
+  if (hostsCheckin(cell)) return; // the apps' feed check-in card has it
 
   tweetsSinceInject = 0;
   dueHosts.add(hostKey);
@@ -1610,7 +1612,7 @@ function renderPost(post: BskyFeedPost, hostKey: string, slot: Slot): HTMLElemen
 // Cycling examples in the empty topic field. Exactly as many as the "Filter
 // out" placeholder has (PLACEHOLDER_PHRASES in ui.ts), because both tracks
 // run on the same ff-placeholder-scroll keyframes, which step once per item.
-const TOPIC_PLACEHOLDERS = ['optimism', 'cute animals', 'urban planning', 'space exploration', 'woodworking', 'local news',
+export const TOPIC_PLACEHOLDERS = ['optimism', 'cute animals', 'urban planning', 'space exploration', 'woodworking', 'local news',
   'birdwatching', 'people being kind', 'indie games', 'gardening', 'science breakthroughs', 'cooking'];
 
 /** Fills the "See more …" row in an X filter box. It is built from the

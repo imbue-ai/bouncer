@@ -233,6 +233,30 @@ export function sendMissedFeedback(article: HTMLElement, content: PostContent): 
   }).catch(err => console.error('[Bouncer] Missed feedback error:', err));
 }
 
+// Hides a post for good: listed in the filtered-posts panel, faded out of
+// the feed, and pinned hidden in the evaluation cache so re-evaluation
+// doesn't bring it back. `matches` ties it to its phrases, so removing them
+// all restores it (decideFilterRemoval); without, a removal re-evaluates it.
+// With no article (scrolled away and unmounted), only the cache pin applies,
+// which hides it when it comes back.
+export function bouncePost(article: HTMLElement | null, content: PostContent, reasoning: string, phrase: string | null, matches: string[] | null = null): void {
+  if (article) {
+    storeFilteredPost(article, content, reasoning, '', phrase, matches);
+    article.style.transition = 'opacity 0.3s ease';
+    article.style.opacity = '0';
+    setTimeout(() => hidePost(article), 300);
+  }
+  chrome.runtime.sendMessage({
+    type: 'overrideCacheEntry',
+    post: formatPostForEvaluation(content),
+    imageUrls: content.imageUrls || [],
+    postUrl: content.postUrl || null,
+    siteId: deps().adapter.siteId,
+    shouldHide: true,
+    reasoning,
+  }).catch(err => console.error('[Bouncer] Override cache error:', err));
+}
+
 // Shared end-state for every "bounce this post" path in the annoying-reasons
 // tooltip — chip click, custom-input submit, and the "missed" link. Hides the
 // post, overrides the cache, optionally adds a filter phrase (block paths
@@ -248,23 +272,7 @@ export async function applyBounceAction(opts: {
   const quoteEnabled = tooltip.querySelector<HTMLInputElement>('.ff-bounce-quote-toggle')?.checked ?? false;
   console.log('[Bouncer/bounce-quote] applyBounceAction start', { phrase, quoteEnabled, reasoning });
   tooltip.remove();
-  if (phrase !== null) {
-    storeFilteredPost(article, content, reasoning, '', phrase);
-  } else {
-    storeFilteredPost(article, content, reasoning);
-  }
-  article.style.transition = 'opacity 0.3s ease';
-  article.style.opacity = '0';
-  setTimeout(() => hidePost(article), 300);
-  chrome.runtime.sendMessage({
-    type: 'overrideCacheEntry',
-    post: formatPostForEvaluation(content),
-    imageUrls: content.imageUrls || [],
-    postUrl: content.postUrl || null,
-    siteId: deps().adapter.siteId,
-    shouldHide: true,
-    reasoning,
-  }).catch(err => console.error('[Bouncer] Override cache error:', err));
+  bouncePost(article, content, reasoning, phrase);
 
   const file = (phrase !== null && quoteEnabled)
     ? await captureBouncerScreenshot(phrase).catch(err => {

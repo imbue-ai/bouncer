@@ -681,3 +681,165 @@ html.twitter-light .bsky-x-post {
 }
 .bsky-see-more-row:empty { display: none; }
 .bsky-see-more-row.input-wraps .filter-phrases-and-input { flex-basis: 100%; }
+
+/* ==================== Feed check-in card ==================== */
+/* Injected by src/content/feed-checkin.ts inside a real tweet's
+   cellInnerDiv, like the "See more" posts above, in the extension and the
+   apps alike. The buttons copy the apps' filtered-posts modal actions
+   ("Never filter @handle"): stacked full-width outlined rectangles, purple
+   when pressed (and, with a mouse, on hover). */
+
+.bouncer-checkin {
+  --checkin-text: rgb(231, 233, 234);
+  --checkin-secondary: rgb(139, 152, 165);
+  --checkin-border: rgb(47, 51, 54);
+  --checkin-accent: #8b5cf6;
+  display: block;
+  padding: 12px 16px 16px;
+  border-bottom: 1px solid var(--checkin-border);
+  color: var(--checkin-text);
+  font-family: TwitterChirp, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 15px;
+  line-height: 20px;
+  cursor: default;
+}
+html.twitter-dim .bouncer-checkin {
+  --checkin-text: rgb(247, 249, 249);
+  --checkin-border: rgb(56, 68, 77);
+}
+html.twitter-light .bouncer-checkin {
+  --checkin-text: rgb(15, 20, 25);
+  --checkin-secondary: rgb(83, 100, 113);
+  --checkin-border: rgb(239, 243, 244);
+}
+
+.bouncer-checkin-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.bouncer-checkin-title {
+  font-size: 17px;
+  font-weight: 700;
+}
+.bouncer-checkin-close {
+  width: 32px;
+  height: 32px;
+  margin-right: -8px;
+  border: none;
+  border-radius: 9999px;
+  background: none;
+  color: var(--checkin-secondary);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.bouncer-checkin-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.bouncer-checkin-pill {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 10px 12px;
+  font: inherit;
+  font-weight: 500;
+  color: var(--checkin-secondary);
+  background: transparent;
+  border: 1px solid var(--checkin-border);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+.bouncer-checkin-pill-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bouncer-checkin-pill:active:not(:disabled),
+.bouncer-checkin-pill--done {
+  color: var(--checkin-accent);
+  background: rgba(139, 92, 246, 0.13);
+}
+.bouncer-checkin-pill:disabled { cursor: default; }
+@media (hover: hover) {
+  .bouncer-checkin-pill:hover:not(:disabled):not(.bouncer-checkin-pill--loading) {
+    color: var(--checkin-accent);
+    background: rgba(139, 92, 246, 0.13);
+  }
+  .bouncer-checkin-close:hover {
+    color: var(--checkin-accent);
+    background: rgba(139, 92, 246, 0.13);
+  }
+}
+/* Placeholder buttons while the suggestions load. */
+.bouncer-checkin-pill--loading {
+  --checkin-shimmer: rgba(255, 255, 255, 0.06);
+  border-color: transparent;
+  background-color: var(--checkin-border);
+  background-image: linear-gradient(90deg, transparent 0%, var(--checkin-shimmer) 50%, transparent 100%);
+  background-size: 200% 100%;
+  animation: bouncer-checkin-shimmer 1.4s ease-in-out infinite;
+  cursor: default;
+}
+html.twitter-light .bouncer-checkin-pill--loading { --checkin-shimmer: rgba(255, 255, 255, 0.6); }
+@keyframes bouncer-checkin-shimmer {
+  from { background-position: 100% 0; }
+  to { background-position: -100% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bouncer-checkin-pill--loading { animation: none; }
+}
+
+.bouncer-checkin-see-more {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.bouncer-checkin-field {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+}
+.bouncer-checkin-input {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  font: inherit;
+  /* 16px+ keeps iOS from zooming the page when the field takes focus. */
+  font-size: 16px;
+  color: var(--checkin-text);
+  background: transparent;
+  border: 1px solid var(--checkin-border);
+  border-radius: 12px;
+  outline: none;
+}
+.bouncer-checkin-input:focus { border-color: var(--checkin-accent); }
+/* The cycling placeholder (content.css .filter-placeholder-cycle), sized
+   and inset to sit where the field's own text goes. The track and its
+   items share one font-size, since the keyframes step in 1.2em. */
+.bouncer-checkin .bouncer-checkin-cycle {
+  top: 50%;
+  left: 13px;
+  right: 12px;
+  transform: translateY(-50%);
+  font-size: 16px;
+}
+.bouncer-checkin .bouncer-checkin-cycle .filter-placeholder-track > span {
+  font-size: 16px;
+  color: var(--checkin-secondary);
+}
+.bouncer-checkin-submit { flex: 0 0 auto; padding: 10px 16px; }
+.bouncer-checkin-status {
+  flex-basis: 100%;
+  color: var(--checkin-secondary);
+}
+.bouncer-checkin-status:empty { display: none; }

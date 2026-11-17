@@ -364,7 +364,7 @@ async function handleMessage(
     case 'suggestAnnoyingReasons': {
       try {
         const imageUrls = message.imageUrls || [];
-        const reasons = await suggestAnnoyingReasons(message.post, imageUrls, message.siteId || 'twitter', sender.tab?.id);
+        const reasons = await suggestAnnoyingReasons(message.post, imageUrls, message.siteId || 'twitter', message.quiet ? undefined : sender.tab?.id);
         return { reasons, hadImages: imageUrls.length > 0 };
       } catch (err) {
         console.error('[Bouncer] suggestAnnoyingReasons error:', err);
