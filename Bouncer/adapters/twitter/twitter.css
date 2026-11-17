@@ -837,6 +837,14 @@ html.twitter-light .bouncer-checkin-pill--loading { --checkin-shimmer: rgba(255,
   min-width: 120px;
   margin: 0;
 }
+/* A filter card's own-phrase field (phraseField): full width and shaped
+   like the card's buttons. */
+.bouncer-checkin-phrase {
+  display: flex;
+  margin: 0;
+  --checkin-chip-height: 44px;
+}
+.bouncer-checkin-phrase .bouncer-checkin-input { text-align: center; }
 .bouncer-checkin-field {
   position: relative;
   display: flex;

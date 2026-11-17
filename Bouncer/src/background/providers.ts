@@ -203,12 +203,15 @@ export async function callAnthropicAPI(messages: ChatMessage[], apiConfig: APICo
 // Auth token is not sent — the WS gateway authenticates the connection itself
 // via the App Check token at handshake time.
 export async function callImbueAPI(tweetData: EvaluationPostData, categories: string[] | undefined, reason: 'filterPost' | 'validatePhrase', aiCategories?: string[]): Promise<ImbueFilterResponse>;
-export async function callImbueAPI(tweetData: EvaluationPostData, categories: string[] | undefined, reason: 'suggestAnnoying'): Promise<ImbueSuggestResponse>;
+// style 'checkin': the feed check-in card's labeled topic/tone prompt instead
+// of the trash-can's (lambda build_checkin_suggest_messages).
+export async function callImbueAPI(tweetData: EvaluationPostData, categories: string[] | undefined, reason: 'suggestAnnoying', aiCategories?: undefined, opts?: { style?: 'checkin' }): Promise<ImbueSuggestResponse>;
 export async function callImbueAPI(
   tweetData: EvaluationPostData,
   categories: string[] | undefined,
   reason: string,
   aiCategories?: string[],
+  opts?: { style?: 'checkin' },
 ): Promise<ImbueFilterResponse | ImbueSuggestResponse> {
   const message: Record<string, unknown> = {
     action: "tweetFilter",
@@ -220,6 +223,7 @@ export async function callImbueAPI(
   if (aiCategories && aiCategories.length > 0) {
     message.aiCategories = aiCategories;
   }
+  if (opts?.style) message.style = opts.style;
 
   console.log('[Filter] → request:', message);
   const startedAt = Date.now();

@@ -13,7 +13,7 @@ import {
   scheduleBatch, broadcastQueueStatus, getSettings, sendToTab,
   errorState, triggerErrorRetry,
   evaluationCache, clearEvaluationCache,
-  handleSettingsChange, handleFilterPackChange, handlePageLoad, suggestAnnoyingReasons,
+  handleSettingsChange, handleFilterPackChange, handlePageLoad, suggestAnnoyingReasons, suggestCheckinReasons,
   replayDetectorStates,
 } from './pipeline';
 import { sendFeedback } from './providers';
@@ -369,6 +369,15 @@ async function handleMessage(
       } catch (err) {
         console.error('[Bouncer] suggestAnnoyingReasons error:', err);
         return { reasons: [], error: (err as Error).message };
+      }
+    }
+
+    case 'suggestCheckinReasons': {
+      try {
+        return await suggestCheckinReasons(message.post, message.imageUrls || [], message.siteId || 'twitter');
+      } catch (err) {
+        console.error('[Bouncer] suggestCheckinReasons error:', err);
+        return { topics: [], tones: [] };
       }
     }
 

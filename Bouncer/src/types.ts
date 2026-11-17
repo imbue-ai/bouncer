@@ -404,6 +404,8 @@ export type ContentToBackgroundMessage =
   // quiet: no annoyingProgress messages back to the tab (the feed check-in
   // card asks in the background; progress would drive an open trash-can tooltip).
   | { type: 'suggestAnnoyingReasons'; post: string; imageUrls: string[]; siteId?: SiteId; quiet?: boolean }
+  // The feed check-in card's own suggestions: topics and tones, validated.
+  | { type: 'suggestCheckinReasons'; post: string; imageUrls: string[]; siteId?: SiteId }
   | { type: 'clearCache' }
   // Sent by the settings popup after the user grants an optional platform's
   // host permission; resolves once its content script is registered.

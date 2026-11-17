@@ -1,7 +1,10 @@
-// Feed check-in card (X home timeline: browser extension and apps): every so often a
-// card slots into the timeline. Cards alternate between two kinds: filters
-// for the posts around it (the trash-can's "Why is this annoying?"
-// suggestions for them), and a field to add a "See more" topic.
+// Feed check-in card (X home timeline and tweet replies: browser extension
+// and apps): every so often a card slots into the timeline. Cards alternate
+// between two kinds: filters for the posts around it (suggested phrases for
+// them, about half topics and half tones; see fetchSuggestions), and a field
+// to add a "See more" topic. Among a tweet's replies only filter cards go
+// in ("See more" posts only show on Home), and one with no suggestions is
+// dropped.
 //
 // A filter card's buttons line up with the posts around it, top to bottom:
 // the post directly above, then posts two or more notches above (up to
@@ -33,10 +36,9 @@ import {
 import { bouncePost } from './bounce-quote';
 import { addFilterPhrase, removeFilterPhrase } from './ui';
 
-// Posts between cards: FIRST_EVERY after the startup card, STEP_EVERY more
-// after each card placed since, up to MAX_EVERY (10, 15, 20, 25, 25…).
-const FIRST_EVERY = 10;
-const STEP_EVERY = 5;
+// Posts between cards: FIRST_EVERY after the startup card, up to MAX_EVERY.
+const FIRST_EVERY = 5;
+// const STEP_EVERY = 5;           // backoff, off for now: 5, 10, 15, 20, 25, 25…
 const MAX_EVERY = 25;
 const MIDDLE_SOURCES = 2;          // posts two or more notches above
 const MIN_SOURCE_TEXT = 20;        // shorter text-only posts get poor suggestions
@@ -61,9 +63,10 @@ type CardKind = 'filter' | 'seeMore';
 let adapter: PlatformAdapter | null = null;
 const countedKeys = new Set<string>();
 let tweetsSince = 0;
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- read by the backoff (STEP_EVERY), off for now
 let cardsPlaced = 0;              // since the startup card
 let startupScheduled = false;
-const checkinEvery = () => Math.min(MAX_EVERY, FIRST_EVERY + STEP_EVERY * cardsPlaced);
+const checkinEvery = () => Math.min(MAX_EVERY, FIRST_EVERY /* + STEP_EVERY * cardsPlaced */);
 let slot: { key: string; cell: HTMLElement } | null = null;
 // Placed cards by the tweet they hang off (below it, or above it once
 // moved); null once dismissed, so a remount doesn't bring it back.
@@ -82,6 +85,7 @@ export function initFeedCheckin(platformAdapter: PlatformAdapter): void {
 }
 
 const onHomeTimeline = () => location.pathname === '/home';
+const onCheckinPage = () => onHomeTimeline() || !!adapter?.isPermalinkView();
 
 const hostKeyOf = (cell: HTMLElement): string | null => {
   const article = cell.isConnected && adapter ? cell.querySelector<HTMLElement>(adapter.selectors.post) : null;
@@ -90,7 +94,7 @@ const hostKeyOf = (cell: HTMLElement): string | null => {
 
 /** Called for every post the post observer processes (including recycled ones). */
 export function noteCheckinPost(article: HTMLElement): void {
-  if (!adapter || !onHomeTimeline()) return;
+  if (!adapter || !onCheckinPage()) return;
   // "See more" posts count toward the interval but don't host a card: they
   // sit inside a tweet's cell themselves.
   const injected = isInjectedPost(article);
@@ -235,44 +239,57 @@ function sourcesAround(hostCell: HTMLElement): { above: SourcePost | null; middl
   return { above, middle, below: belowPost ? toSource(belowPost) : null };
 }
 
-async function suggestFor(source: SourcePost): Promise<string[]> {
+interface Choices { topics: string[]; tones: string[] }
+
+/** Topic and tone phrases for a post (lowercase, best first), from the
+ *  check-in prompt — not the trash-can's (pipeline.ts suggestCheckinReasons). */
+async function suggestFor(source: SourcePost): Promise<Choices> {
   try {
-    const reply: { reasons?: string[] } | undefined = await chrome.runtime.sendMessage({
-      type: 'suggestAnnoyingReasons',
+    const reply: Partial<Choices> | undefined = await chrome.runtime.sendMessage({
+      type: 'suggestCheckinReasons',
       post: source.content.text,
       imageUrls: source.content.imageUrls || [],
       siteId: adapter!.siteId,
-      quiet: true,
     });
-    return reply?.reasons ?? [];
+    return { topics: reply?.topics ?? [], tones: reply?.tones ?? [] };
   } catch (err) {
     console.warn('[Bouncer] check-in suggestions failed:', err);
-    return [];
+    return { topics: [], tones: [] };
   }
 }
 
 /** One phrase per source post, in card order (above, middle, below). The
  *  direct neighbors pick first, so a phrase they share with a middle post
- *  stays on the neighbor's button. */
+ *  stays on the neighbor's button. Each pick goes to whichever kind the card
+ *  has fewer of so far (topics on a tie), falling back to the other kind, so
+ *  a card comes out about half topics, half tones. */
 async function fetchSuggestions(hostCell: HTMLElement): Promise<Suggestion[]> {
   const { above, middle, below } = sourcesAround(hostCell);
   const ordered = [above, ...middle, below];
   console.log(`[Checkin] fetching suggestions (above: ${!!above}, middle: ${middle.length}, below: ${!!below})`);
-  const replies = await Promise.all(ordered.map(s => (s ? suggestFor(s) : Promise.resolve([]))));
+  const none: Choices = { topics: [], tones: [] };
+  const replies = await Promise.all(ordered.map(s => (s ? suggestFor(s) : Promise.resolve(none))));
   const existing = new Set((await getDescriptions(`descriptions_${adapter!.siteId}`)).map(d => d.toLowerCase()));
   const picked = new Map<number, string>();
+  const used = new Set<string>();
+  let topics = 0, tones = 0;
   const last = ordered.length - 1;
   for (const i of [0, last, ...middle.map((_, j) => j + 1)]) {
-    const phrase = replies[i].find(p => !existing.has(p.toLowerCase())
-      && ![...picked.values()].some(q => q.toLowerCase() === p.toLowerCase()));
-    if (phrase) picked.set(i, phrase);
+    const fresh = (list: string[]) => list.find(p => !existing.has(p) && !used.has(p));
+    const preferTopic = topics <= tones;
+    const { topics: t, tones: q } = replies[i];
+    const phrase = preferTopic ? fresh(t) ?? fresh(q) : fresh(q) ?? fresh(t);
+    if (!phrase) continue;
+    picked.set(i, phrase);
+    used.add(phrase);
+    if (t.includes(phrase)) topics++; else tones++;
   }
   const result: Suggestion[] = [];
   ordered.forEach((source, i) => {
     const phrase = picked.get(i);
     if (source && phrase) result.push({ phrase, source });
   });
-  console.log('[Checkin] suggestions:', result.map(r => r.phrase));
+  console.log(`[Checkin] suggestions (${topics} topics, ${tones} tones):`, result.map(r => r.phrase));
   return result;
 }
 
@@ -297,7 +314,7 @@ function tryPlace(): void {
  *  crossing the bottom edge, just below the screen. It doesn't count toward
  *  the backoff; the count starts over from it. */
 function placeStartupCard(triesLeft: number): void {
-  if (!adapter || !onHomeTimeline()) return;
+  if (!adapter || !onCheckinPage()) return;
   const seen = new Set<HTMLElement>();
   const cells: HTMLElement[] = [];
   for (const article of document.querySelectorAll<HTMLElement>(adapter.selectors.post)) {
@@ -323,9 +340,10 @@ function placeStartupCard(triesLeft: number): void {
 }
 
 function placeCard(key: string, cell: HTMLElement): void {
+  const kind: CardKind = onHomeTimeline() ? nextKind : 'filter';
   let card: HTMLElement;
-  if (nextKind === 'filter') {
-    const filterCard = renderFilterCard(key);
+  if (kind === 'filter') {
+    const filterCard = renderFilterCard(key, !onHomeTimeline());
     card = filterCard;
     void fetchSuggestions(cell)
       .then(result => fillFilterCard(filterCard, result))
@@ -335,8 +353,8 @@ function placeCard(key: string, cell: HTMLElement): void {
   }
   cards.set(key, card);
   attachCard(card, cell);
-  console.log(`[Checkin] ${nextKind} card placed under ${key}`);
-  nextKind = nextKind === 'filter' ? 'seeMore' : 'filter';
+  console.log(`[Checkin] ${kind} card placed under ${key}`);
+  if (onHomeTimeline()) nextKind = nextKind === 'filter' ? 'seeMore' : 'filter';
 }
 
 // ==================== Keeping cards visible ====================
@@ -420,19 +438,28 @@ function renderCard(hostKey: string, title: string, body: HTMLElement): HTMLElem
 
 const LOADING_PLACEHOLDERS = 2 + MIDDLE_SOURCES;
 
-/** A filter card whose buttons are placeholders until fillFilterCard. */
-function renderFilterCard(hostKey: string): HTMLElement {
+/** A filter card whose buttons are placeholders until fillFilterCard.
+ *  `inReplies`: it's among a tweet's replies rather than on Home. */
+function renderFilterCard(hostKey: string, inReplies: boolean): HTMLElement {
   const filters = el('div', 'bouncer-checkin-actions');
   filters.setAttribute('aria-busy', 'true');
   for (let i = 0; i < LOADING_PLACEHOLDERS; i++) {
     filters.appendChild(el('div', 'bouncer-checkin-pill bouncer-checkin-pill--loading'));
   }
-  return renderCard(hostKey, 'Hide posts like these?', filters);
+  const card = renderCard(hostKey, inReplies ? 'Hide replies like these?' : 'Hide posts like these?', filters);
+  if (inReplies) card.dataset.inReplies = 'true';
+  return card;
 }
 
 function fillFilterCard(card: HTMLElement, suggestions: Suggestion[]): void {
   const body = card.querySelector<HTMLElement>('.bouncer-checkin-body');
   if (!body) return;
+  if (!suggestions.length && card.dataset.inReplies) {
+    // Nothing to filter, and See more doesn't apply to replies: drop it.
+    cards.set(card.dataset.hostKey!, null);
+    card.remove();
+    return;
+  }
   if (!suggestions.length) {
     // Nothing to filter after all: the card offers See more instead, and
     // the next one goes back to filters.
@@ -447,7 +474,7 @@ function fillFilterCard(card: HTMLElement, suggestions: Suggestion[]): void {
     return;
   }
   body.removeAttribute('aria-busy');
-  body.replaceChildren(...suggestions.map(filterButton));
+  body.replaceChildren(...suggestions.map(filterButton), phraseField());
 }
 
 function renderSeeMoreCard(hostKey: string): HTMLElement {
@@ -500,6 +527,35 @@ function filterButton({ phrase, source }: Suggestion): HTMLButtonElement {
           imageUrls: source.content.imageUrls || [],
           postUrl: source.content.postUrl || null,
         });
+        await removeFilterPhrase(phrase);
+        setAdded(false);
+      }
+    })().catch(err => console.error('[Bouncer] check-in filter toggle failed:', err))
+      .finally(() => { btn.disabled = false; });
+  });
+  return btn;
+}
+
+/** A filter the user typed into the card (phraseField): tap to remove it,
+ *  tap again to add it back. No source post to hide right away; the filter
+ *  itself takes care of the feed. */
+function ownPhraseButton(phrase: string): HTMLButtonElement {
+  const btn = el('button', 'bouncer-checkin-pill');
+  btn.type = 'button';
+  const setAdded = (added: boolean) => {
+    btn.classList.toggle('bouncer-checkin-pill--done', added);
+    btn.setAttribute('aria-pressed', String(added));
+    btn.replaceChildren(markIcon(added ? 'check' : 'minus'), el('span', 'bouncer-checkin-pill-label', phrase));
+  };
+  setAdded(true);
+  btn.addEventListener('click', () => {
+    const adding = !btn.classList.contains('bouncer-checkin-pill--done');
+    btn.disabled = true;
+    void (async () => {
+      if (adding) {
+        await addFilterPhrase(phrase);
+        setAdded((await getDescriptions(`descriptions_${adapter!.siteId}`)).includes(phrase));
+      } else {
         await removeFilterPhrase(phrase);
         setAdded(false);
       }
@@ -591,11 +647,35 @@ function seeMoreForm(): HTMLElement {
  *  keyboard's Done key, or on tapping away; the field then turns into that
  *  topic's chip, switched on, and a fresh field follows it. */
 function topicField(chips: HTMLElement, status: HTMLElement): HTMLElement {
-  const form = el('form', 'bouncer-checkin-see-more');
+  return entryField('bouncer-checkin-see-more', 'See more posts about a topic', async topic => {
+    status.textContent = '';
+    if (await addTopic(topic)) return topicChip(topic, true, status);
+    status.textContent = 'Already added or list full';
+    return null;
+  }, () => topicField(chips, status));
+}
+
+/** A filter card's field for a phrase of the user's own, shaped like its
+ *  buttons. What's typed is added as a filter the same way as topicField's
+ *  topics; it then turns into that phrase's button, switched on. */
+function phraseField(): HTMLElement {
+  return entryField('bouncer-checkin-phrase', 'Hide posts about something else', async phrase => {
+    await addFilterPhrase(phrase);
+    // Already a filter counts as added; the length limit shows its own warning.
+    return (await getDescriptions(`descriptions_${adapter!.siteId}`)).includes(phrase) ? ownPhraseButton(phrase) : null;
+  }, phraseField);
+}
+
+/** A text field that adds what's typed in it on Enter / the keyboard's Done
+ *  key, or on tapping away: `add` returns the element that replaces the
+ *  field (null keeps it, to try again), and `next()` a fresh field after it. */
+function entryField(className: string, label: string, add: (text: string) => Promise<HTMLElement | null>,
+  next: () => HTMLElement): HTMLElement {
+  const form = el('form', className);
   const input = el('input', 'bouncer-checkin-input');
   input.type = 'text';
   input.enterKeyHint = 'done';
-  input.setAttribute('aria-label', 'See more posts about a topic');
+  input.setAttribute('aria-label', label);
   input.addEventListener('keydown', e => e.stopPropagation()); // keep X's keyboard shortcuts out of the field
   input.placeholder = 'something else';
   const field = el('span', 'bouncer-checkin-field');
@@ -605,20 +685,15 @@ function topicField(chips: HTMLElement, status: HTMLElement): HTMLElement {
 
   let committing = false;
   const commit = () => {
-    const topic = input.value.trim();
-    if (!topic || committing) return;
+    const text = input.value.trim();
+    if (!text || committing) return;
     committing = true;
-    status.textContent = '';
-    void addTopic(topic).then(added => {
-      if (!added) {
-        status.textContent = 'Already added or list full';
-        committing = false;
-        return;
-      }
-      form.replaceWith(topicChip(topic, true, status));
-      chips.appendChild(topicField(chips, status));
+    void add(text).then(added => {
+      if (!added) { committing = false; return; }
+      form.replaceWith(added);
+      added.after(next());
     }).catch(err => {
-      console.error('[Bouncer] check-in add topic failed:', err);
+      console.error('[Bouncer] check-in add failed:', err);
       committing = false;
     });
   };
