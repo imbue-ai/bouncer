@@ -116,6 +116,29 @@ Overall it matches sports.</reasoning>
     expect(result.shouldHide).toBe(true);
     expect(result.reasoning).toContain('multiple topics');
   });
+
+  // The system prompt shows the sentinel in quotes
+  // (`<category>category or "no match"</category>`), so models often copy the quotes.
+  it.each([
+    '"no match"',
+    "'no match'",
+    '"No Match"',
+    'no match.',
+    '"unknown"',
+  ])('treats quoted/punctuated sentinel %s as SHOW', (category) => {
+    const content = `<reasoning>This is a recipe.</reasoning><category>${category}</category>`;
+    expect(parseAPIResponse(content)).toEqual({ shouldHide: false, reasoning: 'This is a recipe.', category: null });
+  });
+
+  it('treats a quoted "no match" as SHOW in the legacy <post> format', () => {
+    const content = '<post>1</post><reasoning>Unrelated.</reasoning><category>"no match"</category>';
+    expect(parseAPIResponse(content).shouldHide).toBe(false);
+  });
+
+  it('strips quotes from a matched category', () => {
+    const content = '<reasoning>About crypto.</reasoning><category>"crypto"</category>';
+    expect(parseAPIResponse(content)).toEqual({ shouldHide: true, reasoning: 'About crypto.', category: 'crypto' });
+  });
 });
 
 // ==================== generateCacheKey ====================
