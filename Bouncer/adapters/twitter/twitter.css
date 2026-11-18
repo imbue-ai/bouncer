@@ -814,6 +814,8 @@ html.twitter-light .bouncer-checkin-pill--loading { --checkin-shimmer: rgba(255,
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  /* Each row centered under the centered title. */
+  justify-content: center;
   gap: 8px;
   margin-bottom: 8px;
 }
