@@ -109,6 +109,23 @@ const BouncerLinkedInAdapter = class LinkedInAdapter implements PlatformAdapter 
     return raw.replace(/\s+/g, ' ').trim();
   }
 
+  // linkedin adaptation: on a reshare the first text box is the resharer's own
+  // comment and the reshared post's body is the last one (the same element the
+  // quote extractors use). Fold that body into the classified text, as the
+  // Twitter adapter does for quote tweets, so the filter judges what the user
+  // actually sees rather than just the comment.
+  private _withQuotedText(
+    mainTextEl: Element | null,
+    quote: QuoteContent | null,
+    textBoxes: NodeListOf<Element>
+  ): string {
+    const text = this._cleanText(mainTextEl?.textContent ?? '');
+    if (!quote) return text;
+    const quoted = this._cleanText(textBoxes[textBoxes.length - 1]?.textContent ?? '');
+    if (!quoted) return text;
+    return text ? `${text} [Quoted: ${quoted}]` : `[Quoted: ${quoted}]`;
+  }
+
   // Strip interactive controls (LinkedIn's "…more" expander, action buttons)
   // before snapshotting innerHTML for the filtered-posts panel. The expander
   // in particular carries an `inset-inline-start: <N>px` style computed
@@ -144,7 +161,6 @@ const BouncerLinkedInAdapter = class LinkedInAdapter implements PlatformAdapter 
     const timeText = this._extractDesktopTimestamp(article);
 
     const textEl = article.querySelector('[data-testid="expandable-text-box"]');
-    const text = this._cleanText(textEl?.textContent ?? '');
     const textHtml = this._cleanTextHtml(textEl);
 
     const postUrl = this.getPostUrl(article);
@@ -152,6 +168,7 @@ const BouncerLinkedInAdapter = class LinkedInAdapter implements PlatformAdapter 
     const hasMediaContainer = imageUrls.length > 0;
 
     const quote = this._extractDesktopQuote(article, textEl);
+    const text = this._withQuotedText(textEl, quote, article.querySelectorAll('[data-testid="expandable-text-box"]'));
 
     return {
       text,
@@ -355,7 +372,6 @@ const BouncerLinkedInAdapter = class LinkedInAdapter implements PlatformAdapter 
     const degree = this._extractMobileDegree(lockup);
 
     const textEl = article.querySelector('.attributed-text-segment-list__content');
-    const text = this._cleanText(textEl?.textContent ?? '');
     const textHtml = this._cleanTextHtml(textEl);
 
     const postUrl = this.getPostUrl(article);
@@ -364,6 +380,7 @@ const BouncerLinkedInAdapter = class LinkedInAdapter implements PlatformAdapter 
       || article.querySelector('.feed-article-content, video, img.w-main-feed-card-media') !== null;
 
     const quote = this._extractMobileQuote(article);
+    const text = this._withQuotedText(textEl, quote, article.querySelectorAll('.attributed-text-segment-list__content'));
 
     return {
       text,

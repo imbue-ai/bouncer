@@ -208,6 +208,60 @@ describe('LinkedIn desktop wrapper layout (componentkey on parent of listitem)',
   });
 });
 
+// A reshare: the resharer's own comment, a "reposted this" marker, and the
+// reshared post's body in a second expandable-text-box.
+const RESHARE_BODY = `
+<p>Jane Doe reposted this</p>
+<div data-testid="expandable-text-box">Worth a read</div>
+<div>
+  <button aria-label="Open control menu for post by Original Author"></button>
+  <div data-testid="expandable-text-box">The reshared post about crypto markets</div>
+</div>
+`;
+
+describe('LinkedIn reshares', () => {
+  let adapter: PlatformAdapter;
+  beforeEach(() => {
+    document.body.replaceChildren();
+    adapter = new LinkedInAdapter();
+  });
+
+  it('desktop: includes the reshared body in the text sent for classification', () => {
+    const post = makeDesktopPost(ACTOR_HEADER + RESHARE_BODY);
+    const content = adapter.extractPostContent(post);
+    expect(content.quote).not.toBeNull();
+    expect(content.text).toBe('Worth a read [Quoted: The reshared post about crypto markets]');
+  });
+
+  it('desktop: a reshare with no comment of its own is not duplicated', () => {
+    const post = makeDesktopPost(ACTOR_HEADER + `
+<p>Jane Doe reposted this</p>
+<div data-testid="expandable-text-box">The reshared post about crypto markets</div>`);
+    const content = adapter.extractPostContent(post);
+    expect(content.quote).toBeNull();
+    expect(content.text).toBe('The reshared post about crypto markets');
+  });
+
+  it('desktop: a regular post keeps its text unchanged', () => {
+    const post = makeDesktopPost(ACTOR_HEADER + '<div data-testid="expandable-text-box">Just a post</div>');
+    const content = adapter.extractPostContent(post);
+    expect(content.quote).toBeNull();
+    expect(content.text).toBe('Just a post');
+  });
+
+  it('mobile: includes the nested reshared body in the text sent for classification', () => {
+    const article = document.createElement('article');
+    article.setAttribute('data-id', 'main-feed-card');
+    article.innerHTML = `
+<div class="attributed-text-segment-list__content">Worth a read</div>
+<div class="attributed-text-segment-list__content">The reshared post about crypto markets</div>`;
+    document.body.appendChild(article);
+    const content = adapter.extractPostContent(article);
+    expect(content.quote).not.toBeNull();
+    expect(content.text).toBe('Worth a read [Quoted: The reshared post about crypto markets]');
+  });
+});
+
 describe('LinkedIn page gating', () => {
   const at = (path: string) => {
     (window as unknown as { happyDOM: { setURL(url: string): void } })
