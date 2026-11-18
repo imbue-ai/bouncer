@@ -736,11 +736,6 @@ html.twitter-light .bouncer-checkin {
   cursor: pointer;
 }
 
-.bouncer-checkin-actions {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
 .bouncer-checkin-pill {
   display: flex;
   align-items: center;
@@ -837,14 +832,10 @@ html.twitter-light .bouncer-checkin-pill--loading { --checkin-shimmer: rgba(255,
   min-width: 120px;
   margin: 0;
 }
-/* A filter card's own-phrase field (phraseField): full width and shaped
-   like the card's buttons. */
-.bouncer-checkin-phrase {
-  display: flex;
-  margin: 0;
-  --checkin-chip-height: 44px;
-}
-.bouncer-checkin-phrase .bouncer-checkin-input { text-align: center; }
+/* A filter card's placeholder chips while its suggestions load, in a few widths. */
+.bouncer-checkin-pill--loading.bouncer-checkin-chip { width: 112px; }
+.bouncer-checkin-pill--loading.bouncer-checkin-chip:nth-child(2n) { width: 88px; }
+.bouncer-checkin-pill--loading.bouncer-checkin-chip:nth-child(3n) { width: 136px; }
 .bouncer-checkin-field {
   position: relative;
   display: flex;

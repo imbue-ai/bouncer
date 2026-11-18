@@ -96,6 +96,16 @@ let flushTimer: ReturnType<typeof setTimeout> | null = null;
 // tweet; introducePost can also put one above it, so a host has up to two.
 // A recycled cell re-renders them from here in the same spots.
 const postBySlot = new Map<string, BskyFeedPost>();
+// Posts of topics added from a feed check-in card (feed-checkin.ts), by the
+// tweet the card hangs under, newest first: each went in right after the
+// card, above everything already below it. Kept apart from postBySlot so they
+// never take a slot's place, and put back in this order when X remounts the
+// cell.
+// Each remembers the order its topic was tapped in (`tap`), so a later tap's
+// post sits above an earlier one's even when it loads first.
+const cardPosts = new Map<string, Array<{ post: BskyFeedPost; tap: number }>>();
+const CARD_POST_ATTR = 'cardPost';
+let taps = 0;
 type Slot = 'above' | 'below';
 const slotKey = (hostKey: string, slot: Slot) => `${slot}:${hostKey}`;
 // "1 in N posts" (the popup's frequency slider): after N - 1 tweets, the
@@ -132,6 +142,10 @@ let nextTopic = 0;
 // ready, and that post is then slid into view (introducePost) instead of
 // waiting for the user to scroll to the next slot.
 const introTopics = new Set<string>();
+// The feed check-in card a just-added topic was added from (feed-checkin.ts),
+// and its tap number: its first post goes in right after the card
+// (anchoredSlot), above earlier taps' posts.
+const introAnchors = new Map<string, { card: HTMLElement; tap: number }>();
 // Told whenever a topic starts or stops loading (feed-checkin.ts pulses its
 // topic chips the way renderTopicChips does the filter box's).
 const loadingListeners = new Set<() => void>();
@@ -266,6 +280,7 @@ function setTopics(next: string[]): void {
   topics = next.slice(0, MAX_SEE_MORE_TOPICS);
   for (const t of [...pools.keys()]) if (!topics.includes(t)) pools.delete(t);
   for (const t of [...introTopics]) if (!topics.includes(t)) introTopics.delete(t);
+  for (const t of [...introAnchors.keys()]) if (!topics.includes(t)) introAnchors.delete(t);
   releasePosts(post => !topics.includes(post.topic));
   for (const t of topics) if (!pools.has(t)) pools.set(t, { ready: [], unchecked: [], busy: false, retryAt: 0 });
   for (const t of topics) void refill(t);
@@ -348,6 +363,7 @@ async function refill(topic: string): Promise<void> {
 /** `failure` says why the new topic's first post wasn't slid in (null: it was). */
 function endIntro(topic: string, failure: string | null): void {
   introTopics.delete(topic);
+  introAnchors.delete(topic);
   if (failure) console.log(`[Bouncer] See more: didn't slide in a post for new topic "${topic}": ${failure}`);
   topicRows.forEach(row => { if (row.isConnected) renderTopicChips(row); });
   notifyLoading();
@@ -552,7 +568,8 @@ export function noteTimelinePost(article: HTMLElement): void {
   cell.querySelectorAll<HTMLElement>(`:scope > .${INJECTED_CLASS}`).forEach(e => {
     if (e.dataset.hostKey !== hostKey) e.remove();
   });
-  let assigned = false;
+  restoreCardPosts(cell, hostKey);
+  let assigned = cardPosts.has(hostKey);
   for (const slot of ['above', 'below'] as const) {
     const post = postBySlot.get(slotKey(hostKey, slot));
     if (!post) continue;
@@ -644,7 +661,16 @@ function releasePosts(drop: (post: BskyFeedPost) => boolean): void {
     postBySlot.delete(key);
     if (key.startsWith('below:')) dueHosts.add(key.slice('below:'.length));
   }
+  for (const [hostKey, posts] of cardPosts) {
+    const kept = posts.filter(p => !drop(p.post));
+    if (kept.length) cardPosts.set(hostKey, kept);
+    else cardPosts.delete(hostKey);
+  }
   document.querySelectorAll<HTMLElement>(`.${INJECTED_CLASS}`).forEach(el => {
+    if (el.dataset[CARD_POST_ATTR]) {
+      if (!cardPosts.get(el.dataset.hostKey ?? '')?.some(p => p.post.uri === el.dataset.uri)) el.remove();
+      return;
+    }
     const slot: Slot = el.dataset.slot === 'above' ? 'above' : 'below';
     if (postBySlot.has(slotKey(el.dataset.hostKey ?? '', slot))) return;
     const cell = el.parentElement;
@@ -654,7 +680,26 @@ function releasePosts(drop: (post: BskyFeedPost) => boolean): void {
 }
 
 function injectedIn(cell: Element, slot: Slot): boolean {
-  return !!cell.querySelector(`:scope > .${INJECTED_CLASS}[data-slot="${slot}"]`);
+  return !!cell.querySelector(`:scope > .${INJECTED_CLASS}[data-slot="${slot}"]:not([data-card-post])`);
+}
+
+/** Puts a remounted cell's card posts back, newest first, right after its
+ *  check-in card (or, before the card is back, ahead of the slot's own post;
+ *  feed-checkin's attachCard then puts the card in front of them). */
+function restoreCardPosts(cell: HTMLElement, hostKey: string): void {
+  const posts = cardPosts.get(hostKey);
+  if (!posts?.length || cell.querySelector(`:scope > [data-card-post]`)) return;
+  const roots = posts.map(({ post, tap }) => {
+    const root = renderPost(post, hostKey, 'below');
+    root.dataset[CARD_POST_ATTR] = String(tap);
+    return root;
+  });
+  const card = cell.querySelector<HTMLElement>(':scope > .bouncer-checkin');
+  const before = cell.querySelector(`:scope > .${INJECTED_CLASS}[data-slot="below"]`);
+  if (card) card.after(...roots);
+  else if (before) before.before(...roots);
+  else cell.append(...roots);
+  roots.forEach(root => processPost?.(root));
 }
 
 function placePost(cell: Element, root: HTMLElement, slot: Slot): void {
@@ -673,7 +718,8 @@ const INTRO_MIN_ROOM_PX = 240;       // visible space wanted below the gap
 const INTRO_MAX_SCROLL_RATIO = 1.5;  // farthest fallback gap, in viewports
 const INTRO_ANIMATION_MS = 450;
 
-interface IntroSlot { cell: HTMLElement; hostKey: string; slot: Slot; y: number }
+// `after`: the card to insert the post right after, instead of the slot.
+interface IntroSlot { cell: HTMLElement; hostKey: string; slot: Slot; y: number; after?: HTMLElement; tap?: number }
 
 /** Free gaps between timeline tweets, top to bottom: above and below each
  *  tweet, where it doesn't have a See more post yet. */
@@ -695,17 +741,36 @@ function introSlots(): IntroSlot[] {
   return slots;
 }
 
-/** Put `topic`'s first ready post in view right away, in a gap between
- *  tweets, with a slide-in. Returns false when there's no gap within reach
- *  (not on the home timeline, say); the post then stays in the pool for the
- *  normal rotation. */
+/** Right after the card the topic was added from (see addTopic): its
+ *  first post is inserted there, above whatever is already below the card.
+ *  Nothing else is checked. Null once X has recycled the card's cell. */
+function anchoredSlot(topic: string): IntroSlot | null {
+  const anchor = introAnchors.get(topic);
+  if (!anchor) return null;
+  const { card, tap } = anchor;
+  const cell = card.isConnected ? card.parentElement : null;
+  const hostKey = card.dataset.hostKey;
+  if (!cell || !hostKey) {
+    console.log(`[Bouncer] See more: the card "${topic}" was added from is gone (cell recycled); placing its first post in a free gap`);
+    return null;
+  }
+  const slot: Slot = card.dataset.slot === 'above' ? 'above' : 'below';
+  return { cell, hostKey, slot, y: card.getBoundingClientRect().bottom, after: card, tap };
+}
+
+/** Put `topic`'s first ready post in view right away, with a slide-in:
+ *  directly below the element it was added from, if any, else in a gap
+ *  between tweets. Returns false when there's no gap within reach (not on the
+ *  home timeline, say); the post then stays in the pool for the normal
+ *  rotation. */
 function introducePost(topic: string): boolean {
   if (!adapter || !onHomeTimeline()) return false;
   const pool = pools.get(topic);
   if (!pool) return false;
   const slots = introSlots().filter(s => s.y >= INTRO_MIN_Y_PX);
   const maxY = window.innerHeight - INTRO_MIN_ROOM_PX;
-  const slot = slots.find(s => s.y <= maxY)
+  const slot = anchoredSlot(topic)
+    ?? slots.find(s => s.y <= maxY)
     ?? slots.find(s => s.y <= window.innerHeight * INTRO_MAX_SCROLL_RATIO);
   if (!slot) return false;
 
@@ -714,12 +779,29 @@ function introducePost(topic: string): boolean {
   void refill(topic);
   if (!post) return false;
   for (const uri of shownUris(post)) seenUris.add(uri);
-  postBySlot.set(slotKey(slot.hostKey, slot.slot), post);
-  if (slot.slot === 'below' && dueHosts.delete(slot.hostKey)) unwatch(slot.cell);
   const root = renderPost(post, slot.hostKey, slot.slot);
-  placePost(slot.cell, root, slot.slot);
+  if (slot.after) {
+    // Inserted right after the card, above everything already below it;
+    // nothing is moved or replaced. No scroll: the user just tapped there.
+    console.log(`[Bouncer] See more: "${topic}"'s first post goes in right below the card`);
+    const tap = slot.tap ?? ++taps;
+    root.dataset[CARD_POST_ATTR] = String(tap);
+    const list = [...(cardPosts.get(slot.hostKey) ?? []), { post, tap }].sort((a, b) => b.tap - a.tap);
+    cardPosts.set(slot.hostKey, list);
+    // After the card and any later taps' posts, so above every earlier one.
+    let at: Element = slot.after;
+    while (at.nextElementSibling instanceof HTMLElement && Number(at.nextElementSibling.dataset[CARD_POST_ATTR]) > tap) {
+      at = at.nextElementSibling;
+    }
+    at.after(root);
+    processPost?.(root);
+  } else {
+    postBySlot.set(slotKey(slot.hostKey, slot.slot), post);
+    if (slot.slot === 'below' && dueHosts.delete(slot.hostKey)) unwatch(slot.cell);
+    placePost(slot.cell, root, slot.slot);
+  }
   slideIn(root);
-  if (slot.y > maxY) {
+  if (!slot.after && slot.y > maxY) {
     const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     window.scrollBy({ top: slot.y - window.innerHeight / 2, behavior: reduceMotion ? 'auto' : 'smooth' });
   }
@@ -761,6 +843,12 @@ function sweep(): void {
     const article = cell?.querySelector<HTMLElement>(adapter.selectors.post);
     const hostKey = el.dataset.hostKey ?? '';
     if (!cell || !article || adapter.getPostContentKey(article) !== hostKey) {
+      el.remove();
+      return;
+    }
+    if (cell.dataset.filteredByExtension && el.dataset[CARD_POST_ATTR]) {
+      // Their card moves on to the next tweet (feed-checkin keepCardVisible); they don't.
+      cardPosts.delete(hostKey);
       el.remove();
       return;
     }
@@ -1630,6 +1718,28 @@ function renderPost(post: BskyFeedPost, hostKey: string, slot: Slot): HTMLElemen
 export const TOPIC_PLACEHOLDERS = ['optimism', 'cute animals', 'urban planning', 'space exploration', 'woodworking', 'local news',
   'birdwatching', 'people being kind', 'indie games', 'gardening', 'science breakthroughs', 'cooking'];
 
+/** Topics to suggest: the backend's list (cached by the background), or
+ *  TOPIC_PLACEHOLDERS without one. */
+export async function getTopicSuggestions(): Promise<string[]> {
+  try {
+    const reply: { topics?: string[] } | undefined = await chrome.runtime.sendMessage({ type: 'getSeeMoreSuggestions' });
+    if (reply?.topics?.length) return reply.topics;
+  } catch (err) {
+    console.warn('[Bouncer] See more suggestions failed:', err);
+  }
+  return TOPIC_PLACEHOLDERS;
+}
+
+/** The cycling placeholder's items: the suggestions, topped up with the
+ *  built-in examples. Always TOPIC_PLACEHOLDERS.length of them, the count the
+ *  shared ff-placeholder-scroll keyframes are built for (see ui.ts). */
+function placeholderTopics(suggestions: string[]): string[] {
+  const seen = new Set<string>();
+  return [...suggestions, ...TOPIC_PLACEHOLDERS]
+    .filter(t => !seen.has(t.toLowerCase()) && seen.add(t.toLowerCase()))
+    .slice(0, TOPIC_PLACEHOLDERS.length);
+}
+
 /** Fills the "See more …" row in an X filter box. It is built from the
  *  same pieces as the "Filter out [phrases] and [input]" sentence above it,
  *  so it reads and behaves the same: chips with Oxford commas, "and", an
@@ -1652,7 +1762,10 @@ export function mountSeeMoreRow(row: HTMLElement): void {
   // bsky-see-more-track: excluded from setKeepOnlyMode's swap of the filter
   // examples into every placeholder track.
   const track = el('span', 'filter-placeholder-track bsky-see-more-track');
-  for (const t of [...TOPIC_PLACEHOLDERS, TOPIC_PLACEHOLDERS[0]]) track.appendChild(el('span', '', t));
+  const fillTrack = (topics: string[]) =>
+    track.replaceChildren(...[...topics, topics[0]].map(t => el('span', '', t)));
+  fillTrack(TOPIC_PLACEHOLDERS);
+  void getTopicSuggestions().then(s => fillTrack(placeholderTopics(s)));
   cycle.appendChild(track);
   wrapper.append(input, cycle);
   andInput.appendChild(wrapper);
@@ -1720,14 +1833,18 @@ function renderTopicChips(row: HTMLElement): void {
 }
 
 /** Adds a topic unless it's empty, already there, or the list is full.
- *  Also how the apps' sheets add one (see ios.ts). */
-export async function addTopic(raw: string): Promise<boolean> {
+ *  Also how the apps' sheets add one (see ios.ts). `anchor`: an element in
+ *  a tweet's cell the topic was added from (with that tweet's hostKey, and
+ *  `slot` 'above' when it sits above the tweet); the topic's first post is
+ *  inserted right after it. */
+export async function addTopic(raw: string, anchor?: HTMLElement): Promise<boolean> {
   const topic = normalizeTopic(raw);
   if (!topic) return false;
   const current = (await getStorage([SEE_MORE_TOPICS_KEY]))[SEE_MORE_TOPICS_KEY] ?? [];
   if (current.some(t => t.toLowerCase() === topic.toLowerCase())) return false;
   if (current.length >= MAX_SEE_MORE_TOPICS) return false;
   introTopics.add(topic);
+  if (anchor) introAnchors.set(topic, { card: anchor, tap: ++taps });
   await setStorage({ [SEE_MORE_TOPICS_KEY]: [...current, topic] });
   return true;
 }

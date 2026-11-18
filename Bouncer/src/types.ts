@@ -404,6 +404,8 @@ export type ContentToBackgroundMessage =
   // quiet: no annoyingProgress messages back to the tab (the feed check-in
   // card asks in the background; progress would drive an open trash-can tooltip).
   | { type: 'suggestAnnoyingReasons'; post: string; imageUrls: string[]; siteId?: SiteId; quiet?: boolean }
+  // Topics to suggest under "See more" (the backend's list, cached).
+  | { type: 'getSeeMoreSuggestions' }
   // The feed check-in card's own suggestions: topics and tones, validated.
   | { type: 'suggestCheckinReasons'; post: string; imageUrls: string[]; siteId?: SiteId }
   | { type: 'clearCache' }
@@ -598,6 +600,9 @@ export type StorageSchema = SettingsBase & {
   // A mismatch with experimentOptIn / the current UID (failed send, or a
   // sign-in change) is re-sent on the next connection.
   experimentOptInSynced: { uid: string; optIn: boolean };
+  /** The backend's "See more" topic suggestions, cached (see
+   *  getSeeMoreSuggestions in background/index.ts). */
+  seeMoreSuggestions: { topics: string[]; fetchedAt: number };
   // Durable once-per-install latch for the install-conversion landing page:
   // set the first time onInstalled 'install' opens it and never cleared, so
   // repeat 'install' events that keep storage (Chrome Repair, synthetic

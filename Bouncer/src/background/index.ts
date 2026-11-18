@@ -16,7 +16,7 @@ import {
   handleSettingsChange, handleFilterPackChange, handlePageLoad, suggestAnnoyingReasons, suggestCheckinReasons,
   replayDetectorStates,
 } from './pipeline';
-import { sendFeedback } from './providers';
+import { sendFeedback, callImbueSeeMoreSuggestions } from './providers';
 import { imbueWebSocket, type ForceLoginMessage } from './ws-manager';
 import { launchAuthFlow, signInAnon, isAnonymousUser, refreshAuthToken, getAuthToken, handleAppleSignIn, signOut, setOnIdentityChanged, getCurrentUid, IS_SAFARI } from './auth';
 import { initOptionalPlatforms, syncOptionalPlatformScripts } from './optional-platforms';
@@ -140,6 +140,32 @@ imbueWebSocket.onConnected = () => {
   syncExperimentOptIn().catch(err =>
     console.error('[Experiment] Failed to sync opt-in:', (err as Error).message));
 };
+
+// The backend's "See more" topic suggestions, cached in storage so every tab
+// (and every in-feed card) shares one request per SEE_MORE_SUGGESTIONS_TTL_MS.
+// Empty when there's no backend or it can't be reached; the content script
+// then falls back to its built-in examples.
+const SEE_MORE_SUGGESTIONS_TTL_MS = 30 * 60 * 1000;
+let seeMoreSuggestionsInFlight: Promise<string[]> | null = null;
+
+async function getSeeMoreSuggestions(): Promise<string[]> {
+  if (process.env.HAS_IMBUE_BACKEND !== 'true') return [];
+  const { seeMoreSuggestions } = await getStorage(['seeMoreSuggestions']);
+  if (seeMoreSuggestions && Date.now() - seeMoreSuggestions.fetchedAt < SEE_MORE_SUGGESTIONS_TTL_MS) {
+    return seeMoreSuggestions.topics;
+  }
+  seeMoreSuggestionsInFlight ??= callImbueSeeMoreSuggestions()
+    .then(async topics => {
+      if (topics.length) await setStorage({ seeMoreSuggestions: { topics, fetchedAt: Date.now() } });
+      return topics;
+    })
+    .catch(err => {
+      console.warn('[SeeMoreSuggestions] fetch failed:', (err as Error).message);
+      return seeMoreSuggestions?.topics ?? []; // a stale list beats none
+    })
+    .finally(() => { seeMoreSuggestionsInFlight = null; });
+  return seeMoreSuggestionsInFlight;
+}
 
 // ==================== Startup ====================
 
@@ -371,6 +397,9 @@ async function handleMessage(
         return { reasons: [], error: (err as Error).message };
       }
     }
+
+    case 'getSeeMoreSuggestions':
+      return { topics: await getSeeMoreSuggestions() };
 
     case 'suggestCheckinReasons': {
       try {

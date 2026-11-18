@@ -283,6 +283,18 @@ export async function callImbueDetectAiIntent(
 // Each search returns the best posts not in `seen`; the worker judges
 // candidates in batches until `want` pass (capped at ~5 s), and the route is
 // rate-limited to 60 requests/min per user.
+// The topics the backend suggests under "See more" (seeMoreSuggestions
+// route, which answers directly).
+export async function callImbueSeeMoreSuggestions(): Promise<string[]> {
+  const reply = await imbueWebSocket.sendAndAwaitReply({
+    action: 'seeMoreSuggestions',
+    version: chrome.runtime.getManifest().version,
+  });
+  const topics = Array.isArray(reply.topics) ? reply.topics.filter((t): t is string => typeof t === 'string') : [];
+  console.log('[SeeMoreSuggestions] ←', reply.source, topics);
+  return topics;
+}
+
 export async function callImbueBlueskySearch(
   topic: string,
   sources: Array<'bluesky' | 'x'>,

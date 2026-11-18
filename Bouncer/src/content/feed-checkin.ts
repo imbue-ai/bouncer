@@ -31,7 +31,7 @@ import { getDescriptions, getStorage } from '../shared/storage';
 import { SEE_MORE_TOPICS_KEY } from '../shared/bluesky';
 import { formatPostForEvaluation } from '../shared/utils';
 import {
-  addTopic, removeTopic, isInjectedPost, isTopicLoading, onTopicLoadingChange, INJECTED_POST_SELECTOR, TOPIC_PLACEHOLDERS,
+  addTopic, removeTopic, isInjectedPost, isTopicLoading, onTopicLoadingChange, INJECTED_POST_SELECTOR, getTopicSuggestions,
 } from './bluesky-see-more';
 import { bouncePost } from './bounce-quote';
 import { addFilterPhrase, removeFilterPhrase } from './ui';
@@ -364,8 +364,16 @@ const isCellHidden = (cell: HTMLElement) => !!cell.dataset.filteredByExtension |
 /** Puts a card in its cell — below the tweet, or above it once moved — and
  *  starts watching the cell for being hidden. */
 function attachCard(card: HTMLElement, cell: HTMLElement): void {
-  if (card.dataset.slot === 'above') cell.prepend(card);
-  else cell.appendChild(card);
+  if (card.dataset.slot === 'above') {
+    cell.prepend(card);
+  } else {
+    // Above a See-more post placed below the tweet (a topic added from this
+    // card puts its first post right after it), whichever comes back first
+    // when X remounts the cell.
+    const post = cell.querySelector(`:scope > ${INJECTED_POST_SELECTOR}[data-slot="below"]`);
+    if (post) post.before(card);
+    else cell.appendChild(card);
+  }
   hideObserver ??= new MutationObserver(records => {
     for (const { target } of records) {
       const watched = target as HTMLElement;
@@ -441,10 +449,11 @@ const LOADING_PLACEHOLDERS = 2 + MIDDLE_SOURCES;
 /** A filter card whose buttons are placeholders until fillFilterCard.
  *  `inReplies`: it's among a tweet's replies rather than on Home. */
 function renderFilterCard(hostKey: string, inReplies: boolean): HTMLElement {
-  const filters = el('div', 'bouncer-checkin-actions');
+  // A row of topic-sized chips, like the See-more card's.
+  const filters = el('div', 'bouncer-checkin-chips bouncer-checkin-filters');
   filters.setAttribute('aria-busy', 'true');
   for (let i = 0; i < LOADING_PLACEHOLDERS; i++) {
-    filters.appendChild(el('div', 'bouncer-checkin-pill bouncer-checkin-pill--loading'));
+    filters.appendChild(el('div', 'bouncer-checkin-pill bouncer-checkin-chip bouncer-checkin-pill--loading'));
   }
   const card = renderCard(hostKey, inReplies ? 'Hide replies like these?' : 'Hide posts like these?', filters);
   if (inReplies) card.dataset.inReplies = 'true';
@@ -491,14 +500,13 @@ function sourceArticle({ key, cell }: SourcePost): HTMLElement | null {
 /** Toggles the phrase as a filter. Adding it hides its source post right
  *  away, the way the trash-can does; removing it restores that post. */
 function filterButton({ phrase, source }: Suggestion): HTMLButtonElement {
-  const btn = el('button', 'bouncer-checkin-pill');
+  const btn = el('button', 'bouncer-checkin-pill bouncer-checkin-chip');
   btn.type = 'button';
-  btn.append(markIcon('minus'), el('span', 'bouncer-checkin-pill-label', phrase));
-  // − marks the button as "hide this" (the + on topic chips is "add this"), ✓ that it's done.
+  // Just the phrase until it's added; then a ✓ in front of it.
   const setAdded = (added: boolean) => {
     btn.classList.toggle('bouncer-checkin-pill--done', added);
     btn.setAttribute('aria-pressed', String(added));
-    btn.firstElementChild!.replaceWith(markIcon(added ? 'check' : 'minus'));
+    btn.replaceChildren(...(added ? [markIcon('check')] : []), el('span', 'bouncer-checkin-pill-label', phrase));
   };
   setAdded(false);
   btn.addEventListener('click', () => {
@@ -540,12 +548,12 @@ function filterButton({ phrase, source }: Suggestion): HTMLButtonElement {
  *  tap again to add it back. No source post to hide right away; the filter
  *  itself takes care of the feed. */
 function ownPhraseButton(phrase: string): HTMLButtonElement {
-  const btn = el('button', 'bouncer-checkin-pill');
+  const btn = el('button', 'bouncer-checkin-pill bouncer-checkin-chip');
   btn.type = 'button';
   const setAdded = (added: boolean) => {
     btn.classList.toggle('bouncer-checkin-pill--done', added);
     btn.setAttribute('aria-pressed', String(added));
-    btn.replaceChildren(markIcon(added ? 'check' : 'minus'), el('span', 'bouncer-checkin-pill-label', phrase));
+    btn.replaceChildren(...(added ? [markIcon('check')] : []), el('span', 'bouncer-checkin-pill-label', phrase));
   };
   setAdded(true);
   btn.addEventListener('click', () => {
@@ -565,8 +573,8 @@ function ownPhraseButton(phrase: string): HTMLButtonElement {
   return btn;
 }
 
-// Drawn rather than typed: X's font sets − as a short, thin dash next to +.
-const MARK_PATHS = { minus: 'M5 12h14', plus: 'M12 5v14M5 12h14', check: 'M5 12.5l4.5 4.5L19 7.5' };
+// Drawn rather than typed, to match X's icon weight.
+const MARK_PATHS = { plus: 'M12 5v14M5 12h14', check: 'M5 12.5l4.5 4.5L19 7.5' };
 
 function markIcon(kind: keyof typeof MARK_PATHS): SVGSVGElement {
   const ns = 'http://www.w3.org/2000/svg';
@@ -616,7 +624,8 @@ function topicChip(topic: string, added: boolean, status: HTMLElement): HTMLButt
     status.textContent = '';
     void (async () => {
       if (!adding) { await removeTopic(topic); setAdded(false); return; }
-      if (await addTopic(topic)) setAdded(true);
+      // Its first post goes right below this card.
+      if (await addTopic(topic, chip.closest<HTMLElement>(`.${CARD_CLASS}`) ?? undefined)) setAdded(true);
       else status.textContent = 'Topic list is full';
     })().catch(err => console.error('[Bouncer] check-in topic toggle failed:', err))
       .finally(() => { chip.disabled = false; });
@@ -628,12 +637,12 @@ function seeMoreForm(): HTMLElement {
   const wrapper = el('div', 'bouncer-checkin-see-more-body');
   const status = el('div', 'bouncer-checkin-status');
 
-  // A few topics to tap, picked at random from the field's examples,
-  // leaving out ones already followed.
+  // A few topics to tap, picked at random from the suggestions (the
+  // backend's, else the field's examples), leaving out ones already followed.
   const chips = el('div', 'bouncer-checkin-chips');
-  void getStorage([SEE_MORE_TOPICS_KEY]).then(d => {
+  void Promise.all([getStorage([SEE_MORE_TOPICS_KEY]), getTopicSuggestions()]).then(([d, suggestions]) => {
     const current = new Set((d[SEE_MORE_TOPICS_KEY] ?? []).map(t => t.toLowerCase()));
-    const choices = TOPIC_PLACEHOLDERS.filter(t => !current.has(t.toLowerCase()))
+    const choices = suggestions.filter(t => !current.has(t.toLowerCase()))
       .map(t => ({ t, r: Math.random() })).sort((a, b) => a.r - b.r).slice(0, SEE_MORE_CHOICES).map(x => x.t);
     chips.prepend(...choices.map(t => topicChip(t, false, status)));
   });
@@ -649,17 +658,17 @@ function seeMoreForm(): HTMLElement {
 function topicField(chips: HTMLElement, status: HTMLElement): HTMLElement {
   return entryField('bouncer-checkin-see-more', 'See more posts about a topic', async topic => {
     status.textContent = '';
-    if (await addTopic(topic)) return topicChip(topic, true, status);
+    if (await addTopic(topic, status.closest<HTMLElement>(`.${CARD_CLASS}`) ?? undefined)) return topicChip(topic, true, status);
     status.textContent = 'Already added or list full';
     return null;
   }, () => topicField(chips, status));
 }
 
 /** A filter card's field for a phrase of the user's own, shaped like its
- *  buttons. What's typed is added as a filter the same way as topicField's
- *  topics; it then turns into that phrase's button, switched on. */
+ *  chips (as topicField is). What's typed is added as a filter the same way
+ *  as topicField's topics; it then turns into that phrase's chip, switched on. */
 function phraseField(): HTMLElement {
-  return entryField('bouncer-checkin-phrase', 'Hide posts about something else', async phrase => {
+  return entryField('bouncer-checkin-see-more', 'Hide posts about something else', async phrase => {
     await addFilterPhrase(phrase);
     // Already a filter counts as added; the length limit shows its own warning.
     return (await getDescriptions(`descriptions_${adapter!.siteId}`)).includes(phrase) ? ownPhraseButton(phrase) : null;
