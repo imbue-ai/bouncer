@@ -329,6 +329,22 @@ async function refill(topic: string): Promise<void> {
         pool.unchecked.push(...shuffled(res.posts.filter(p => allowed(p) && !alreadyShown(p))));
         continue;
       }
+      // A new topic's first post goes in without waiting for its filter check:
+      // placed, it's screened like a tweet anyway (dimmed while pending,
+      // faded out if a filter matches), and the check is the slowest step
+      // between the tap and the post. Only the instant structural phrases
+      // ("no reposts", …) are checked first.
+      if (introTopics.has(topic)) {
+        const first = pool.unchecked.findIndex(p => !alreadyShown(p) && allowed(p));
+        if (first >= 0) {
+          const [post] = pool.unchecked.splice(first, 1);
+          if (!await structurallyHidden(post) && pools.get(topic) === pool) {
+            pool.ready.unshift(post);
+            endIntro(topic, introducePost(topic) ? null : 'no free gap in reach on screen');
+          }
+          continue;
+        }
+      }
       // A few at a time, in parallel; each post joins the pool as soon as it
       // passes, so a new topic's first post isn't held up by slower checks.
       const batch = pool.unchecked.splice(0, HIDE_CHECK_CONCURRENCY).filter(p => !alreadyShown(p) && allowed(p));
@@ -375,6 +391,13 @@ function endIntro(topic: string, failure: string | null): void {
 // pipeline. Only a definite "show" verdict passes. A timeout, error, or
 // "retry" (local model not downloaded yet) is 'unknown': the post's filters
 // never ran, so it waits (SCREEN_RETRY_MS) rather than being shown.
+/** Whether a structural phrase ("no reposts", "videos") hides the post:
+ *  screen's instant, local part. */
+async function structurallyHidden(post: BskyFeedPost): Promise<boolean> {
+  if (await getFilteringPaused(adapter.siteId, currentPauseScope())) return false;
+  return !!findStructuralMatch(await getDescriptions(`descriptions_${adapter.siteId}`), postContentFor(post));
+}
+
 async function screen(post: BskyFeedPost): Promise<'show' | 'hide' | 'unknown'> {
   const content = postContentFor(post);
   try {
@@ -1830,6 +1853,17 @@ function renderTopicChips(row: HTMLElement): void {
   row.querySelector('.filter-placeholder-cycle')?.classList.toggle('hidden', topics.length > 0 || !!input?.value);
   const andInput = row.querySelector<HTMLElement>('.filter-phrases-and-input');
   if (andInput) andInput.style.display = topics.length >= MAX_SEE_MORE_TOPICS ? 'none' : '';
+}
+
+let lastWarm = 0;
+
+/** Opens the backend connection ahead of a likely search (a See-more card on
+ *  screen, a finger on one of its chips), so tapping a topic doesn't start
+ *  with reconnecting. At most every few seconds. */
+export function warmBackend(): void {
+  if (Date.now() - lastWarm < 5000) return;
+  lastWarm = Date.now();
+  chrome.runtime.sendMessage({ type: 'warmBackend' }).catch(() => { /* no backend */ });
 }
 
 /** Adds a topic unless it's empty, already there, or the list is full.

@@ -714,15 +714,19 @@ html.twitter-light .bouncer-checkin {
 }
 
 .bouncer-checkin-header {
-  display: flex;
+  /* Title centered across the card: equal side columns, the × in the right. */
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
-  justify-content: space-between;
   margin-bottom: 8px;
 }
 .bouncer-checkin-title {
+  grid-column: 2;
   font-size: 17px;
   font-weight: 700;
+  text-align: center;
 }
+.bouncer-checkin-header .bouncer-checkin-close { grid-column: 3; justify-self: end; }
 .bouncer-checkin-close {
   width: 32px;
   height: 32px;
@@ -814,6 +818,20 @@ html.twitter-light .bouncer-checkin-pill--loading { --checkin-shimmer: rgba(255,
   margin-bottom: 8px;
 }
 .bouncer-checkin-chips:empty { display: none; }
+/* A just-added chip's ghost on its way to the Bouncer UI (flyToBouncer). */
+.bouncer-checkin.bouncer-checkin-ghost {
+  position: fixed;
+  z-index: 2147483647;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  pointer-events: none;
+  /* Hugs the chip, so its center (the transform origin) is the chip's. */
+  width: max-content;
+  transform-origin: center;
+}
+.bouncer-checkin-ghost > * { margin: 0; flex: none; }
 /* A just-added topic while its first post loads: the desktop filter box's
    pulse (.bsky-see-more-loading, keyframes above). */
 .bouncer-checkin-chip.bouncer-checkin-chip--loading { animation: bsky-see-more-pulse 1.2s ease-in-out infinite; }
@@ -828,8 +846,9 @@ html.twitter-light .bouncer-checkin-pill--loading { --checkin-shimmer: rgba(255,
 }
 .bouncer-checkin-see-more {
   display: flex;
-  flex: 0 1 180px;
-  min-width: 120px;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
   margin: 0;
 }
 /* A filter card's placeholder chips while its suggestions load, in a few widths. */
@@ -839,15 +858,17 @@ html.twitter-light .bouncer-checkin-pill--loading { --checkin-shimmer: rgba(255,
 .bouncer-checkin-field {
   position: relative;
   display: flex;
-  flex: 1;
   min-width: 0;
 }
-/* Shaped like a topic chip (.bouncer-checkin-chip). */
+/* Looks like one more chip (.bouncer-checkin-pill.bouncer-checkin-chip):
+   as wide as its text, the chips' type and colors, their hover and press
+   tint; only focus gives it away as a field. */
 .bouncer-checkin-input {
-  flex: 1;
   min-width: 0;
-  width: 100%;
+  max-width: 100%;
+  field-sizing: content;
   box-sizing: border-box;
+  cursor: pointer;
   height: var(--checkin-chip-height);
   min-height: 0;
   margin: 0;
@@ -855,17 +876,48 @@ html.twitter-light .bouncer-checkin-pill--loading { --checkin-shimmer: rgba(255,
   -webkit-appearance: none;
   appearance: none;
   font: inherit;
+  font-weight: 500;
   line-height: normal;
-  /* 16px+ keeps iOS from zooming the page when the field takes focus. */
-  font-size: 16px;
+  /* The chips' size; 16px while it's being edited (below). */
+  font-size: 15px;
   color: var(--checkin-text);
+  transition: background-color 0.2s ease, color 0.2s ease;
   background: transparent;
   border: 1px solid var(--checkin-border);
   border-radius: 12px;
   outline: none;
 }
-.bouncer-checkin-input:focus { border-color: var(--checkin-accent); }
-.bouncer-checkin-input::placeholder { color: var(--checkin-secondary); opacity: 1; }
+.bouncer-checkin-input:focus { border-color: var(--checkin-accent); cursor: text; }
+/* iOS zooms the page into a focused field under 16px. A touch switches the
+   field to 16px before it takes focus (feed-checkin.ts entryField), so it
+   only grows while it's being typed in. */
+.bouncer-checkin-input:focus,
+.bouncer-checkin-input.bouncer-checkin-input--editing { font-size: 16px; }
+/* A field with the chips' leading mark (+ on the See-more card), laid over
+   its left padding where a chip's icon sits. */
+.bouncer-checkin-field--marked .bouncer-checkin-mark {
+  position: absolute;
+  left: 14px;
+  top: 50%;
+  margin: 0;
+  transform: translateY(-50%);
+  color: var(--checkin-secondary);
+  pointer-events: none;
+  transition: color 0.2s ease;
+}
+.bouncer-checkin-field--marked .bouncer-checkin-input { padding-left: 36px; }
+.bouncer-checkin-field--marked:focus-within .bouncer-checkin-mark,
+.bouncer-checkin-field--marked:active .bouncer-checkin-mark { color: var(--checkin-accent); }
+@media (hover: hover) {
+  .bouncer-checkin-field--marked:hover .bouncer-checkin-mark { color: var(--checkin-accent); }
+}
+.bouncer-checkin-input::placeholder { color: var(--checkin-secondary); opacity: 1; transition: color 0.2s ease; }
+.bouncer-checkin-input:active:not(:focus) { background: rgba(139, 92, 246, 0.13); }
+.bouncer-checkin-input:active:not(:focus)::placeholder { color: var(--checkin-accent); }
+@media (hover: hover) {
+  .bouncer-checkin-input:hover:not(:focus) { background: rgba(139, 92, 246, 0.13); }
+  .bouncer-checkin-input:hover:not(:focus)::placeholder { color: var(--checkin-accent); }
+}
 .bouncer-checkin-status {
   margin-top: 8px;
   color: var(--checkin-secondary);

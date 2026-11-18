@@ -32,6 +32,7 @@ import { SEE_MORE_TOPICS_KEY } from '../shared/bluesky';
 import { formatPostForEvaluation } from '../shared/utils';
 import {
   addTopic, removeTopic, isInjectedPost, isTopicLoading, onTopicLoadingChange, INJECTED_POST_SELECTOR, getTopicSuggestions,
+  warmBackend,
 } from './bluesky-see-more';
 import { bouncePost } from './bounce-quote';
 import { addFilterPhrase, removeFilterPhrase } from './ui';
@@ -484,6 +485,7 @@ function fillFilterCard(card: HTMLElement, suggestions: Suggestion[]): void {
   }
   body.removeAttribute('aria-busy');
   body.replaceChildren(...suggestions.map(filterButton), phraseField());
+  packChips(body);
 }
 
 function renderSeeMoreCard(hostKey: string): HTMLElement {
@@ -524,6 +526,7 @@ function filterButton({ phrase, source }: Suggestion): HTMLButtonElement {
         bouncePost(article && !article.dataset.filteredByExtension ? article : null,
           source.content, `User blocked: ${phrase}`, phrase, [phrase]);
         setAdded(true);
+        flyToBouncer(btn);
       } else {
         // The descriptions listener restores posts hidden under the phrase,
         // the source among them (its matches are just this phrase). Its
@@ -562,7 +565,9 @@ function ownPhraseButton(phrase: string): HTMLButtonElement {
     void (async () => {
       if (adding) {
         await addFilterPhrase(phrase);
-        setAdded((await getDescriptions(`descriptions_${adapter!.siteId}`)).includes(phrase));
+        const added = (await getDescriptions(`descriptions_${adapter!.siteId}`)).includes(phrase);
+        setAdded(added);
+        if (added) flyToBouncer(btn);
       } else {
         await removeFilterPhrase(phrase);
         setAdded(false);
@@ -571,6 +576,52 @@ function ownPhraseButton(phrase: string): HTMLButtonElement {
       .finally(() => { btn.disabled = false; });
   });
   return btn;
+}
+
+// ==================== Flying to the Bouncer UI ====================
+
+const GHOST_CORNER_PX = 32;        // how far in from the screen's corner the ghost lands
+const GHOST_MS = 750;
+
+/** Where the main Bouncer UI is: the filter box in X's sidebar (desktop)
+ *  when it's on screen, else the bottom-right corner — next to the apps'
+ *  Bouncer button, just below the web view. */
+function bouncerTarget(): { x: number; y: number } {
+  const box = document.querySelector<HTMLElement>('.filter-phrases-sidebar')?.getBoundingClientRect();
+  if (box && box.width > 0 && box.bottom > 0 && box.top < window.innerHeight) {
+    return { x: box.left + box.width / 2, y: box.top + Math.min(box.height / 2, 60) };
+  }
+  return { x: window.innerWidth - GHOST_CORNER_PX, y: window.innerHeight - GHOST_CORNER_PX };
+}
+
+/** A ghost of a just-added chip flies off to the main Bouncer UI, to show
+ *  where the filter or topic now lives. */
+function flyToBouncer(chip: HTMLElement): void {
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const from = chip.getBoundingClientRect();
+  if (!from.width) return;
+  // Wrapped in a card-classed box so it keeps the card's colors (and theme).
+  const ghost = el('div', `${CARD_CLASS} bouncer-checkin-ghost`);
+  ghost.setAttribute('aria-hidden', 'true');
+  const copy = chip.cloneNode(true) as HTMLElement;
+  copy.classList.remove('bouncer-checkin-chip--loading');
+  copy.style.width = `${from.width}px`;
+  copy.style.height = `${from.height}px`;
+  ghost.appendChild(copy);
+  ghost.style.left = `${from.left}px`;
+  ghost.style.top = `${from.top}px`;
+  document.body.appendChild(ghost);
+  const to = bouncerTarget();
+  const dx = to.x - (from.left + from.width / 2);
+  const dy = to.y - (from.top + from.height / 2);
+  // A slight lift first, then off into the corner, shrinking and fading.
+  const flight = ghost.animate([
+    { transform: 'translate(0, 0) scale(1)', opacity: 0.9 },
+    { transform: `translate(${dx * 0.25}px, ${dy * 0.25 - 24}px) scale(0.9)`, opacity: 0.9, offset: 0.3 },
+    { transform: `translate(${dx}px, ${dy}px) scale(0.2)`, opacity: 0 },
+  ], { duration: GHOST_MS, easing: 'cubic-bezier(0.45, 0, 0.55, 1)' });
+  const done = () => ghost.remove();
+  flight.finished.then(done, done);
 }
 
 // Drawn rather than typed, to match X's icon weight.
@@ -603,6 +654,26 @@ function syncTopicChipsLoading(): void {
   document.querySelectorAll<HTMLElement>('.bouncer-checkin-chip[data-topic]').forEach(chip => {
     setChipLoading(chip, chip.dataset.topic ?? '');
   });
+  flyLoadedTopics();
+}
+
+// Just-added topics' chips waiting for their pulse (first post loading) to
+// end before their ghost flies to the Bouncer UI.
+const pendingFlights = new Map<string, HTMLElement>();
+
+/** Sends `chip`'s ghost to the Bouncer UI once `topic` stops loading. */
+function flyAfterLoading(chip: HTMLElement, topic: string): void {
+  pendingFlights.set(topic, chip);
+  // The chip may not be in place yet (a typed topic's), nor loading yet.
+  requestAnimationFrame(flyLoadedTopics);
+}
+
+function flyLoadedTopics(): void {
+  for (const [topic, chip] of [...pendingFlights]) {
+    if (isTopicLoading(topic)) continue;
+    pendingFlights.delete(topic);
+    if (chip.isConnected) flyToBouncer(chip);
+  }
 }
 
 /** A See-more topic as a toggle: tap to add it, tap again to remove it. */
@@ -623,9 +694,12 @@ function topicChip(topic: string, added: boolean, status: HTMLElement): HTMLButt
     chip.disabled = true;
     status.textContent = '';
     void (async () => {
-      if (!adding) { await removeTopic(topic); setAdded(false); return; }
+      if (!adding) { pendingFlights.delete(topic); await removeTopic(topic); setAdded(false); return; }
       // Its first post goes right below this card.
-      if (await addTopic(topic, chip.closest<HTMLElement>(`.${CARD_CLASS}`) ?? undefined)) setAdded(true);
+      if (await addTopic(topic, chip.closest<HTMLElement>(`.${CARD_CLASS}`) ?? undefined)) {
+        setAdded(true);
+        flyAfterLoading(chip, topic);
+      }
       else status.textContent = 'Topic list is full';
     })().catch(err => console.error('[Bouncer] check-in topic toggle failed:', err))
       .finally(() => { chip.disabled = false; });
@@ -635,6 +709,10 @@ function topicChip(topic: string, added: boolean, status: HTMLElement): HTMLButt
 
 function seeMoreForm(): HTMLElement {
   const wrapper = el('div', 'bouncer-checkin-see-more-body');
+  // Topics are about to be tapped: have the backend connection ready (again
+  // on a touch, in case it dropped since).
+  warmBackend();
+  wrapper.addEventListener('pointerdown', warmBackend);
   const status = el('div', 'bouncer-checkin-status');
 
   // A few topics to tap, picked at random from the suggestions (the
@@ -645,11 +723,39 @@ function seeMoreForm(): HTMLElement {
     const choices = suggestions.filter(t => !current.has(t.toLowerCase()))
       .map(t => ({ t, r: Math.random() })).sort((a, b) => a.r - b.r).slice(0, SEE_MORE_CHOICES).map(x => x.t);
     chips.prepend(...choices.map(t => topicChip(t, false, status)));
+    packChips(chips);
   });
   // The field sits at the end of the topic row, shaped like a topic.
   chips.appendChild(topicField(chips, status));
   wrapper.append(chips, status);
   return wrapper;
+}
+
+const CHIP_GAP_PX = 8;              // .bouncer-checkin-chips gap
+
+/** Reorders a card's chips (and its text field) so the rows they wrap into
+ *  come out as full as they'll go: first-fit, widest first, the field into
+ *  the first row with room for it. Chips keep their natural size, the same
+ *  on both cards. Needs the row laid out (waits a frame if it isn't yet). */
+function packChips(row: HTMLElement, retried = false): void {
+  const width = row.clientWidth;
+  const items = [...row.children] as HTMLElement[];
+  if (!width || items.some(i => !i.offsetWidth)) {
+    if (!retried) requestAnimationFrame(() => packChips(row, true));
+    return;
+  }
+  const field = items.find(i => i.tagName === 'FORM');
+  const chips = items.filter(i => i !== field).sort((a, b) => b.offsetWidth - a.offsetWidth);
+  const rows: { left: number; items: HTMLElement[] }[] = [];
+  const place = (item: HTMLElement) => {
+    const w = item.offsetWidth + CHIP_GAP_PX;
+    const fit = rows.find(r => r.left >= w - CHIP_GAP_PX);
+    if (fit) { fit.items.push(item); fit.left -= w; }
+    else rows.push({ left: width - w, items: [item] });
+  };
+  chips.forEach(place);
+  if (field) place(field);
+  row.append(...rows.flatMap(r => r.items));
 }
 
 /** A topic-shaped text field. What's typed in it is added on Enter / the
@@ -658,10 +764,14 @@ function seeMoreForm(): HTMLElement {
 function topicField(chips: HTMLElement, status: HTMLElement): HTMLElement {
   return entryField('bouncer-checkin-see-more', 'See more posts about a topic', async topic => {
     status.textContent = '';
-    if (await addTopic(topic, status.closest<HTMLElement>(`.${CARD_CLASS}`) ?? undefined)) return topicChip(topic, true, status);
+    if (await addTopic(topic, status.closest<HTMLElement>(`.${CARD_CLASS}`) ?? undefined)) {
+      const chip = topicChip(topic, true, status);
+      flyAfterLoading(chip, topic);
+      return chip;
+    }
     status.textContent = 'Already added or list full';
     return null;
-  }, () => topicField(chips, status));
+  }, () => topicField(chips, status), 'plus'); // + like the topic chips beside it
 }
 
 /** A filter card's field for a phrase of the user's own, shaped like its
@@ -671,7 +781,10 @@ function phraseField(): HTMLElement {
   return entryField('bouncer-checkin-see-more', 'Hide posts about something else', async phrase => {
     await addFilterPhrase(phrase);
     // Already a filter counts as added; the length limit shows its own warning.
-    return (await getDescriptions(`descriptions_${adapter!.siteId}`)).includes(phrase) ? ownPhraseButton(phrase) : null;
+    if (!(await getDescriptions(`descriptions_${adapter!.siteId}`)).includes(phrase)) return null;
+    const btn = ownPhraseButton(phrase);
+    requestAnimationFrame(() => flyToBouncer(btn)); // once it's taken the field's place
+    return btn;
   }, phraseField);
 }
 
@@ -679,16 +792,36 @@ function phraseField(): HTMLElement {
  *  key, or on tapping away: `add` returns the element that replaces the
  *  field (null keeps it, to try again), and `next()` a fresh field after it. */
 function entryField(className: string, label: string, add: (text: string) => Promise<HTMLElement | null>,
-  next: () => HTMLElement): HTMLElement {
+  next: () => HTMLElement, mark?: keyof typeof MARK_PATHS): HTMLElement {
   const form = el('form', className);
   const input = el('input', 'bouncer-checkin-input');
   input.type = 'text';
   input.enterKeyHint = 'done';
   input.setAttribute('aria-label', label);
   input.addEventListener('keydown', e => e.stopPropagation()); // keep X's keyboard shortcuts out of the field
+  // 16px from the first touch, before focus, so iOS doesn't zoom in on it
+  // (it's the chips' 15px otherwise; see .bouncer-checkin-input--editing).
+  input.addEventListener('touchstart', () => input.classList.add('bouncer-checkin-input--editing'), { passive: true });
+  const notEditing = () => input.classList.remove('bouncer-checkin-input--editing');
+  input.addEventListener('blur', notEditing);
+  // A touch that scrolled the page instead never focuses it.
+  const settle = () => setTimeout(() => { if (document.activeElement !== input) notEditing(); }, 300);
+  input.addEventListener('touchend', settle, { passive: true });
+  input.addEventListener('touchcancel', settle, { passive: true });
   input.placeholder = 'something else';
+  // As wide as its text, like a chip: CSS field-sizing where the browser has
+  // it (older WebKit doesn't), else the size attribute, kept up as it's typed.
+  const fit = () => { input.size = Math.max(input.placeholder.length, input.value.length) + 1; };
+  fit();
+  input.addEventListener('input', fit);
   const field = el('span', 'bouncer-checkin-field');
   field.appendChild(input);
+  // The chips' leading mark, drawn over the field's padding (a field can't
+  // hold an icon itself).
+  if (mark) {
+    field.classList.add('bouncer-checkin-field--marked');
+    field.appendChild(markIcon(mark));
+  }
   // No submit button: a lone text field submits on Enter (implicit submission).
   form.appendChild(field);
 

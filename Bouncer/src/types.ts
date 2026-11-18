@@ -406,6 +406,8 @@ export type ContentToBackgroundMessage =
   | { type: 'suggestAnnoyingReasons'; post: string; imageUrls: string[]; siteId?: SiteId; quiet?: boolean }
   // Topics to suggest under "See more" (the backend's list, cached).
   | { type: 'getSeeMoreSuggestions' }
+  // Open the backend connection now, ahead of a likely See-more search.
+  | { type: 'warmBackend' }
   // The feed check-in card's own suggestions: topics and tones, validated.
   | { type: 'suggestCheckinReasons'; post: string; imageUrls: string[]; siteId?: SiteId }
   | { type: 'clearCache' }

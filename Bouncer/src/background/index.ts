@@ -398,6 +398,13 @@ async function handleMessage(
       }
     }
 
+    case 'warmBackend':
+      if (process.env.HAS_IMBUE_BACKEND === 'true') {
+        imbueWebSocket.ensureConnected().catch(err =>
+          console.warn('[Bouncer] backend warm-up failed:', (err as Error).message));
+      }
+      return { ok: true };
+
     case 'getSeeMoreSuggestions':
       return { topics: await getSeeMoreSuggestions() };
 
