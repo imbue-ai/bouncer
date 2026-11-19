@@ -5,7 +5,7 @@
     "manifestHost": "https://x.com/*",
     "adapterScript": "dist/TwitterAdapter.js",
     "cssPath": "adapters/twitter/twitter.css",
-    "extraWebAccessible": ["adapters/twitter/fiber-extractor.js"]
+    "extraWebAccessible": ["adapters/twitter/fiber-extractor.js", "dist/hls.light.min.mjs"]
   },
   {
     "id": "linkedin",

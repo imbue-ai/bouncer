@@ -122,7 +122,7 @@ abstract class CopyExtensionAssetsTask : org.gradle.api.DefaultTask() {
         if (root.exists()) root.deleteRecursively()
         val out = root.resolve("web_ext_gecko")
         out.mkdirs()
-        listOf("background-app.js", "content.js", "TwitterAdapter.js", "LinkedInAdapter.js", "FacebookAdapter.js", "popup-app.js").forEach { name ->
+        listOf("background-app.js", "content.js", "TwitterAdapter.js", "LinkedInAdapter.js", "FacebookAdapter.js", "popup-app.js", "hls.light.min.js").forEach { name ->
             bouncer.resolve("dist/$name").copyTo(out.resolve("dist/$name").also { it.parentFile.mkdirs() }, overwrite = true)
         }
         listOf("dompurify.js", "content.css", "popup.html", "popup.css").forEach { name ->
@@ -150,16 +150,19 @@ abstract class CopyExtensionAssetsTask : org.gradle.api.DefaultTask() {
 
 // Rebuild the extension JS before packaging it, so the APK can never ship a
 // stale Bouncer/dist (gradle only ever copied dist/, it never rebuilt it).
+// Debug builds talk to the dev backend (`npm run build:dev`, .env.dev) and
+// release builds to prod (`npm run build`, .env.prod), so each build type
+// gets its own build + copy pair.
 // Runs through a login shell because Android Studio's Gradle daemon doesn't
 // inherit the interactive PATH, so plain "npm" wouldn't resolve under nvm or
 // Homebrew installs.
-val buildExtensionJs = tasks.register<Exec>("buildExtensionJs") {
+fun registerBuildExtensionJs(name: String, npmScript: String) = tasks.register<Exec>(name) {
     val bouncer = rootDir.parentFile.resolve("Bouncer")
     workingDir = bouncer
     if (System.getProperty("os.name").startsWith("Windows")) {
-        commandLine("cmd", "/c", "npm run build")
+        commandLine("cmd", "/c", "npm run $npmScript")
     } else {
-        commandLine("/bin/zsh", "-lc", "([ -d node_modules ] || npm install) && npm run build")
+        commandLine("/bin/zsh", "-lc", "([ -d node_modules ] || npm install) && npm run $npmScript")
     }
     inputs.dir(bouncer.resolve("src"))
     inputs.dir(bouncer.resolve("adapters"))
@@ -175,34 +178,49 @@ val buildExtensionJs = tasks.register<Exec>("buildExtensionJs") {
     outputs.dir(bouncer.resolve("dist"))
 }
 
-val copyExtensionAssets = tasks.register<CopyExtensionAssetsTask>("copyExtensionAssets") {
-    dependsOn(buildExtensionJs)
-    val bouncer = rootDir.parentFile.resolve("Bouncer")
-    val iosShell = rootDir.parentFile.resolve("Bouncer_xcode/iOS (App)")
-    bouncerDir.set(bouncer)
-    iosShellDir.set(iosShell)
-    sources.from(
-        bouncer.resolve("dist/background-app.js"),
-        bouncer.resolve("dist/content.js"),
-        bouncer.resolve("dist/TwitterAdapter.js"),
-        bouncer.resolve("dist/LinkedInAdapter.js"),
-        bouncer.resolve("dist/popup-app.js"),
-        bouncer.resolve("dompurify.js"),
-        bouncer.resolve("content.css"),
-        bouncer.resolve("popup.html"),
-        bouncer.resolve("popup.css"),
-        bouncer.resolve("adapters/twitter/twitter.css"),
-        bouncer.resolve("adapters/twitter/fiber-extractor.js"),
-        bouncer.resolve("adapters/linkedin/linkedin.css"),
-        iosShell.resolve("ChromePolyfill.js"),
-    )
-    outputDir.set(layout.buildDirectory.dir("generated/bouncerAssets"))
-}
+fun registerCopyExtensionAssets(name: String, buildJs: TaskProvider<Exec>, outDir: String) =
+    tasks.register<CopyExtensionAssetsTask>(name) {
+        dependsOn(buildJs)
+        val bouncer = rootDir.parentFile.resolve("Bouncer")
+        val iosShell = rootDir.parentFile.resolve("Bouncer_xcode/iOS (App)")
+        bouncerDir.set(bouncer)
+        iosShellDir.set(iosShell)
+        sources.from(
+            bouncer.resolve("dist/background-app.js"),
+            bouncer.resolve("dist/content.js"),
+            bouncer.resolve("dist/TwitterAdapter.js"),
+            bouncer.resolve("dist/LinkedInAdapter.js"),
+            bouncer.resolve("dist/popup-app.js"),
+            bouncer.resolve("dist/hls.light.min.js"),
+            bouncer.resolve("dompurify.js"),
+            bouncer.resolve("content.css"),
+            bouncer.resolve("popup.html"),
+            bouncer.resolve("popup.css"),
+            bouncer.resolve("adapters/twitter/twitter.css"),
+            bouncer.resolve("adapters/twitter/fiber-extractor.js"),
+            bouncer.resolve("adapters/linkedin/linkedin.css"),
+            iosShell.resolve("ChromePolyfill.js"),
+        )
+        outputDir.set(layout.buildDirectory.dir(outDir))
+    }
+
+val buildExtensionJsDebug = registerBuildExtensionJs("buildExtensionJsDebug", "build:dev")
+val buildExtensionJsRelease = registerBuildExtensionJs("buildExtensionJsRelease", "build")
+val copyExtensionAssetsDebug =
+    registerCopyExtensionAssets("copyExtensionAssetsDebug", buildExtensionJsDebug, "generated/bouncerAssets/debug")
+val copyExtensionAssetsRelease =
+    registerCopyExtensionAssets("copyExtensionAssetsRelease", buildExtensionJsRelease, "generated/bouncerAssets/release")
+
+// Both builds write Bouncer/dist, so when one invocation builds both types
+// (e.g. `assemble`), finish copying the dev bundle before the prod build
+// replaces it.
+buildExtensionJsRelease.configure { mustRunAfter(copyExtensionAssetsDebug) }
 
 androidComponents {
     onVariants { variant ->
+        val copyAssets = if (variant.buildType == "release") copyExtensionAssetsRelease else copyExtensionAssetsDebug
         variant.sources.assets?.addGeneratedSourceDirectory(
-            copyExtensionAssets,
+            copyAssets,
             CopyExtensionAssetsTask::outputDir,
         )
     }

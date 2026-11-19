@@ -2,7 +2,8 @@
 
 import { PREDEFINED_MODELS } from '../shared/models';
 import { cacheKeyFor, GUEST_FILTER_LIMIT, isEmbeddedApp } from '../shared/utils';
-import { getStorage, setStorage, removeStorage, phraseSetKey } from '../shared/storage';
+import { getStorage, setStorage, removeStorage, phraseSetKey, getDescriptions } from '../shared/storage';
+import { SEE_MORE_LIKED_KEY, SEE_MORE_SOURCE_KEY, SEE_MORE_TOPICS_KEY, clampSeeMoreSource, seeMoreSources } from '../shared/bluesky';
 import type { AiFilterIntentState, ContentToBackgroundMessage, LocalModelStatus } from '../types';
 import { refreshAiFilterIntent, pruneAiFilterPhrases, canJudgeAiIntent } from './ai-intent';
 import { STRUCTURAL_FILTER_SITES, structuralFilterKind } from '../shared/structural-filters';
@@ -13,13 +14,14 @@ import {
   scheduleBatch, broadcastQueueStatus, getSettings, sendToTab,
   errorState, triggerErrorRetry,
   evaluationCache, clearEvaluationCache,
-  handleSettingsChange, handleFilterPackChange, handlePageLoad, suggestAnnoyingReasons,
+  handleSettingsChange, handleFilterPackChange, handlePageLoad, suggestAnnoyingReasons, suggestCheckinReasons,
   replayDetectorStates,
 } from './pipeline';
-import { sendFeedback } from './providers';
+import { sendFeedback, callImbueSeeMorePicks, callImbueSeeMoreSuggestions } from './providers';
 import { imbueWebSocket, type ForceLoginMessage } from './ws-manager';
 import { launchAuthFlow, signInAnon, isAnonymousUser, refreshAuthToken, getAuthToken, handleAppleSignIn, signOut, setOnIdentityChanged, getCurrentUid, IS_SAFARI } from './auth';
 import { initOptionalPlatforms, syncOptionalPlatformScripts } from './optional-platforms';
+import { searchBlueskyPosts } from './bluesky';
 import { CURRENT_TARGET, optionalPlatforms } from '../shared/platforms';
 
 // Register/unregister content scripts for user-granted optional platforms.
@@ -139,6 +141,139 @@ imbueWebSocket.onConnected = () => {
   syncExperimentOptIn().catch(err =>
     console.error('[Experiment] Failed to sync opt-in:', (err as Error).message));
 };
+
+// The backend's "See more" topic suggestions, cached in storage so every tab
+// (and every in-feed card) shares one request per SEE_MORE_SUGGESTIONS_TTL_MS.
+// Empty when there's no backend or it can't be reached; the content script
+// then falls back to its built-in examples.
+const SEE_MORE_SUGGESTIONS_TTL_MS = 30 * 60 * 1000;
+let seeMoreSuggestionsInFlight: Promise<string[]> | null = null;
+
+async function getSeeMoreSuggestions(): Promise<string[]> {
+  if (process.env.HAS_IMBUE_BACKEND !== 'true') return [];
+  const { seeMoreSuggestions } = await getStorage(['seeMoreSuggestions']);
+  if (seeMoreSuggestions && Date.now() - seeMoreSuggestions.fetchedAt < SEE_MORE_SUGGESTIONS_TTL_MS) {
+    return seeMoreSuggestions.topics;
+  }
+  seeMoreSuggestionsInFlight ??= callImbueSeeMoreSuggestions()
+    .then(async topics => {
+      if (topics.length) await setStorage({ seeMoreSuggestions: { topics, fetchedAt: Date.now() } });
+      return topics;
+    })
+    .catch(err => {
+      console.warn('[SeeMoreSuggestions] fetch failed:', (err as Error).message);
+      return seeMoreSuggestions?.topics ?? []; // a stale list beats none
+    })
+    .finally(() => { seeMoreSuggestionsInFlight = null; });
+  return seeMoreSuggestionsInFlight;
+}
+
+// Topics this user would like, grouped by the interest each serves: the
+// backend's filter model reads a digest of their taste (posts they liked on
+// X, the topics they follow, the phrases they filter), writes candidate
+// topics, and keeps the ones whose feed would fill right now (seeMorePicks
+// route). Cards draw from several groups, so no one interest takes over, and
+// fill the rest from the suggestions above. Only for the Imbue model, the
+// one whose users already send us their posts.
+//
+// Re-picked as soon as the digest changes (the storage listener below), so
+// the next card is current: right away for a followed topic or filter
+// changed, at most every SEE_MORE_LIKES_GAP_MS for likes, which come one
+// at a time. A card shows the last picks meanwhile.
+const SEE_MORE_CHANGE_DEBOUNCE_MS = 1500;
+const SEE_MORE_LIKES_GAP_MS = 60 * 1000;
+const SEE_MORE_PICKS_TTL_MS = 24 * 60 * 60 * 1000;
+const SEE_MORE_PICKS_MIN_LIKED = 3;   // without a followed topic, fewer likes say too little
+const SEE_MORE_DIGEST_CHARS = 2000;   // under the route's 2,500
+const SEE_MORE_LIKED_HEADER = 'Recently liked posts:';
+// Bumped when the answer's format changes, so picks made in the old one are
+// redone even though the digest is the same.
+const SEE_MORE_PICKS_FORMAT = 'v3';
+let seeMorePicksInFlight: Promise<void> | null = null;
+let seeMorePicksAgain = false;        // the digest changed during a refresh
+let seeMorePicksTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** The taste digest the picks are made from, or null when there's too little
+ *  to go on. Newest likes first, as many as fit. */
+async function seeMoreTasteDigest(): Promise<string | null> {
+  const d = await getStorage([SEE_MORE_TOPICS_KEY, SEE_MORE_LIKED_KEY]);
+  const following = d[SEE_MORE_TOPICS_KEY] ?? [];
+  const liked = [...(d[SEE_MORE_LIKED_KEY] ?? [])].reverse();
+  if (!following.length && liked.length < SEE_MORE_PICKS_MIN_LIKED) return null;
+  const filtering = await getDescriptions('descriptions_twitter');
+  let digest = `Following: ${following.join(', ') || '(none yet)'}\n`
+    + `Filtering out: ${filtering.join(', ') || '(nothing)'}\n`
+    + SEE_MORE_LIKED_HEADER;
+  for (const post of liked) {
+    const line = `\n- ${post}`;
+    if (digest.length + line.length > SEE_MORE_DIGEST_CHARS) break;
+    digest += line;
+  }
+  if (!liked.length) digest += ' (none yet)';
+  return digest;
+}
+
+/** The part of a basis a deliberate change touches: format, sources,
+ *  followed topics, filters (everything before the liked posts). */
+const choicesPart = (basis: string) => basis.split(SEE_MORE_LIKED_HEADER)[0];
+
+/** Re-picks if the digest has changed since the last picks (or they're a
+ *  day old). Returns the ms until likes-only changes may be picked again,
+ *  when that's what held it back. */
+async function refreshSeeMorePicks(): Promise<number | null> {
+  if (process.env.HAS_IMBUE_BACKEND !== 'true') return null;
+  const settings = await getSettings('twitter');
+  if (settings.selectedModel !== 'imbue') return null;
+  const digest = await seeMoreTasteDigest();
+  if (!digest) return null;
+  const source = clampSeeMoreSource((await getStorage([SEE_MORE_SOURCE_KEY]))[SEE_MORE_SOURCE_KEY]);
+  const basis = `${SEE_MORE_PICKS_FORMAT} ${source}\n${digest}`;
+  const { seeMorePicks } = await getStorage(['seeMorePicks']);
+  const current = seeMorePicks?.groups ? seeMorePicks : null; // older entries had no groups
+  const age = current ? Date.now() - current.fetchedAt : Infinity;
+  if (current?.basis === basis && age < SEE_MORE_PICKS_TTL_MS) return null;
+  if (current && choicesPart(current.basis) === choicesPart(basis) && age < SEE_MORE_LIKES_GAP_MS) {
+    return SEE_MORE_LIKES_GAP_MS - age;
+  }
+
+  const byInterest = new Map<string, string[]>();
+  for (const { interest, topic } of await callImbueSeeMorePicks(digest, seeMoreSources(source))) {
+    byInterest.set(interest, [...(byInterest.get(interest) ?? []), topic]);
+  }
+  const groups = [...byInterest.values()];
+  console.log('[SeeMoreSuggestions] picks:', groups);
+  await setStorage({ seeMorePicks: { groups, basis, fetchedAt: Date.now() } });
+  return null;
+}
+
+/** Runs refreshSeeMorePicks, one at a time: a change that lands mid-refresh
+ *  runs it again afterwards, and likes held back by the gap get a timer. */
+function updateSeeMorePicks(): void {
+  if (seeMorePicksInFlight) { seeMorePicksAgain = true; return; }
+  seeMorePicksInFlight = refreshSeeMorePicks()
+    .then(waitMs => {
+      if (waitMs !== null) scheduleSeeMorePicks(waitMs);
+    })
+    .catch(err => console.warn('[SeeMoreSuggestions] picks failed:', (err as Error).message))
+    .finally(() => {
+      seeMorePicksInFlight = null;
+      if (seeMorePicksAgain) { seeMorePicksAgain = false; updateSeeMorePicks(); }
+    });
+}
+
+function scheduleSeeMorePicks(delayMs: number): void {
+  if (seeMorePicksTimer) clearTimeout(seeMorePicksTimer);
+  seeMorePicksTimer = setTimeout(() => { seeMorePicksTimer = null; updateSeeMorePicks(); }, delayMs);
+}
+
+/** The last picks, by interest (refreshing them in the background when due:
+ *  this also covers changes made while the service worker was asleep). */
+async function getSeeMorePicks(): Promise<string[][]> {
+  if (process.env.HAS_IMBUE_BACKEND !== 'true') return [];
+  const { seeMorePicks } = await getStorage(['seeMorePicks']);
+  updateSeeMorePicks();
+  return seeMorePicks?.groups ?? [];
+}
 
 // ==================== Startup ====================
 
@@ -332,7 +467,7 @@ async function handleMessage(
       // Check if already in queue - add another resolver for this item
       if (tabId !== undefined && isKeyPending(tabId, cacheKey)) {
         return new Promise(resolve => {
-          const item = { evaluationId: message.evaluationId, post: message.post, rawText: message.rawText, imageUrls, resolve, cacheKey, tabId, postUrl: message.postUrl, siteId: message.siteId, isReply: message.isReply === true, pauseScope };
+          const item = { evaluationId: message.evaluationId, post: message.post, rawText: message.rawText, imageUrls, quotedImageUrls: message.quotedImageUrls, resolve, cacheKey, tabId, postUrl: message.postUrl, siteId: message.siteId, isReply: message.isReply === true, pauseScope };
           enqueuePost(tabId, item);
         });
       }
@@ -340,7 +475,7 @@ async function handleMessage(
       // Queue for batch processing
       // processBatch will prioritize posts closest to viewport center for local models
       const resultPromise = new Promise(resolve => {
-        const item = { evaluationId: message.evaluationId, post: message.post, rawText: message.rawText, imageUrls, resolve, cacheKey, tabId, postUrl: message.postUrl, siteId: message.siteId, isReply: message.isReply === true, pauseScope };
+        const item = { evaluationId: message.evaluationId, post: message.post, rawText: message.rawText, imageUrls, quotedImageUrls: message.quotedImageUrls, resolve, cacheKey, tabId, postUrl: message.postUrl, siteId: message.siteId, isReply: message.isReply === true, pauseScope };
         enqueuePost(tabId!, item);
       });
       console.log('[Bouncer][diag] evaluatePost enqueued for tab', tabId);
@@ -363,11 +498,32 @@ async function handleMessage(
     case 'suggestAnnoyingReasons': {
       try {
         const imageUrls = message.imageUrls || [];
-        const reasons = await suggestAnnoyingReasons(message.post, imageUrls, message.siteId || 'twitter', sender.tab?.id);
+        const reasons = await suggestAnnoyingReasons(message.post, imageUrls, message.siteId || 'twitter', message.quiet ? undefined : sender.tab?.id);
         return { reasons, hadImages: imageUrls.length > 0 };
       } catch (err) {
         console.error('[Bouncer] suggestAnnoyingReasons error:', err);
         return { reasons: [], error: (err as Error).message };
+      }
+    }
+
+    case 'warmBackend':
+      if (process.env.HAS_IMBUE_BACKEND === 'true') {
+        imbueWebSocket.ensureConnected().catch(err =>
+          console.warn('[Bouncer] backend warm-up failed:', (err as Error).message));
+      }
+      return { ok: true };
+
+    case 'getSeeMoreSuggestions': {
+      const topics = await getSeeMoreSuggestions();
+      return { topics, pickGroups: await getSeeMorePicks() };
+    }
+
+    case 'suggestCheckinReasons': {
+      try {
+        return await suggestCheckinReasons(message.post, message.imageUrls || [], message.siteId || 'twitter');
+      } catch (err) {
+        console.error('[Bouncer] suggestCheckinReasons error:', err);
+        return { topics: [], tones: [] };
       }
     }
 
@@ -481,6 +637,15 @@ async function handleMessage(
       });
       await saveCache(true);
       return { success: true };
+    }
+
+    case 'fetchBlueskyPosts': {
+      try {
+        return await searchBlueskyPosts(message.topic, message.sources, message.seen ?? null, message.want);
+      } catch (err) {
+        console.warn('[Background] Bluesky search failed:', err);
+        return { posts: [], returned: [], exhausted: false, error: String(err) };
+      }
     }
 
     case 'getStats': {
@@ -865,6 +1030,12 @@ chrome.runtime.onMessage.addListener((message: ContentToBackgroundMessage, sende
 chrome.storage.onChanged.addListener((changes, areaName) => {
   (async () => {
     if (areaName !== 'local') return;
+
+    // What the See-more picks are made from (seeMoreTasteDigest).
+    if (changes[SEE_MORE_TOPICS_KEY] || changes[SEE_MORE_LIKED_KEY] || changes.descriptions_twitter || changes.selectedModel
+      || changes[SEE_MORE_SOURCE_KEY]) {
+      scheduleSeeMorePicks(SEE_MORE_CHANGE_DEBOUNCE_MS);
+    }
 
     if (changes.selectedModel) {
       // If switching away from local model, unload the engine to free GPU memory

@@ -575,6 +575,67 @@
     }).catch(function () {});
   };
 
+  // "See more" topics, the same round trip as excluded accounts above. One
+  // list (X only), so no siteId; the reply's key is seeMoreTopics. Its
+  // source setting ("x" / "bluesky" / "both", unset = both) comes along
+  // as seeMoreSource, with the extension's default applied.
+  window.__ff_loadSeeMoreTopics = function () {
+    if (typeof window.__ff_resolveAndPost !== 'function') return;
+    if (typeof window.__ff_getSeeMoreTopics !== 'function') return;
+    window.__ff_resolveAndPost(
+      window.__ff_getSeeMoreTopics(),
+      'feedfilterAiSettings',
+      'seeMoreTopics'
+    );
+    if (typeof window.__ff_getSeeMoreSource !== 'function') return;
+    window.__ff_resolveAndPost(
+      window.__ff_getSeeMoreSource(),
+      'feedfilterAiSettings',
+      'seeMoreSource'
+    );
+  };
+  window.__ff_mutateSeeMoreTopic = function (op, text) {
+    var fn = op === 'add'
+      ? window.__ff_addSeeMoreTopic
+      : window.__ff_removeSeeMoreTopic;
+    if (typeof fn !== 'function') return;
+    Promise.resolve(fn(text)).then(function () {
+      window.__ff_loadSeeMoreTopics();
+    }).catch(function () {});
+  };
+
+  // "See more" media: x.com's CSP blocks <img>/<video> loads from Bluesky's
+  // media hosts in this world, so content/bluesky-see-more.ts asks for the
+  // bytes and shows them from a blob: URL. background.js does the fetch
+  // (bridge_iso.js relays). Resolves to { type, buffer }.
+  var MEDIA_REQUEST_TAG = "__ff_bouncer_media";
+  var MEDIA_REPLY_TAG = "__ff_bouncer_media_reply";
+  var MEDIA_TIMEOUT_MS = 30000;
+  var mediaRequests = new Map();
+  var nextMediaId = 0;
+  window.addEventListener("message", function (e) {
+    if (e.source !== window) return;
+    var d = e.data;
+    if (!d || d.tag !== MEDIA_REPLY_TAG) return;
+    var req = mediaRequests.get(d.id);
+    if (!req) return;
+    mediaRequests.delete(d.id);
+    clearTimeout(req.timer);
+    if (d.error) req.reject(new Error(d.error));
+    else req.resolve({ type: d.type, buffer: d.buffer });
+  });
+  window.__ff_fetchRemoteMedia = function (url) {
+    return new Promise(function (resolve, reject) {
+      var id = ++nextMediaId;
+      var timer = setTimeout(function () {
+        mediaRequests.delete(id);
+        reject(new Error("timed out"));
+      }, MEDIA_TIMEOUT_MS);
+      mediaRequests.set(id, { resolve: resolve, reject: reject, timer: timer });
+      window.postMessage({ tag: MEDIA_REQUEST_TAG, id: id, url: String(url) }, "*");
+    });
+  };
+
   // Native → MAIN dispatcher. bridge_iso.js relays each port message here
   // via window.postMessage; we route by payload.kind.
   window.addEventListener("message", function (e) {

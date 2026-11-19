@@ -12,6 +12,7 @@
 import { formatPostForEvaluation } from '../shared/utils';
 import { encodeFilterPackCode, buildFilterPackShareUrl } from '../shared/share-encoding';
 import type { ContentUIDeps, PostContent } from '../types';
+import { injectedPostSource } from './bluesky-see-more';
 import {
   addFilterPhrase,
   attachImageToMobileComposer,
@@ -55,9 +56,54 @@ export async function captureBouncerScreenshot(phrase: string): Promise<File | n
   }
 }
 
+// Opens X's quote composer for a tweet: its Repost button, then Quote.
+async function openQuoteComposer(article: HTMLElement): Promise<boolean> {
+  const retweetBtn = article.querySelector<HTMLElement>('[data-testid="retweet"]');
+  console.log('[Bouncer/bounce-quote] retweet button lookup', {
+    found: !!retweetBtn,
+    articleConnected: article.isConnected,
+    articleHidden: window.getComputedStyle(article).display === 'none',
+  });
+  if (!retweetBtn) {
+    console.warn('[Bouncer/bounce-quote] retweet button missing — abort');
+    return false;
+  }
+  retweetBtn.click();
+  console.log('[Bouncer/bounce-quote] retweet button clicked');
+
+  // Quote option is an <a href="/compose/post"> inside the dropdown menu.
+  // Prefer the menu-scoped selector; fall back to the bare link if X's menu
+  // structure changes.
+  const quoteLink =
+    (await waitForElement<HTMLAnchorElement>('[role="menu"] a[href="/compose/post"]', 1200))
+    ?? (await waitForElement<HTMLAnchorElement>('a[href="/compose/post"]', 600));
+  console.log('[Bouncer/bounce-quote] quote link lookup', { found: !!quoteLink });
+  if (!quoteLink) {
+    console.warn('[Bouncer/bounce-quote] quote link missing — abort');
+    return false;
+  }
+  quoteLink.click();
+  console.log('[Bouncer/bounce-quote] quote link clicked');
+  return true;
+}
+
+// Opens X's new-post composer, the way the sidebar's Post button does.
+function openNewPostComposer(): boolean {
+  const composeLink = document.querySelector<HTMLElement>('a[href="/compose/post"]');
+  if (!composeLink) {
+    console.warn('[Bouncer/bounce-quote] compose link missing — abort');
+    return false;
+  }
+  composeLink.click();
+  console.log('[Bouncer/bounce-quote] compose link clicked');
+  return true;
+}
+
 // Drive X's native quote-tweet flow in-page: click the article's Repost
 // button, click the resulting Quote menu link, then attach the bouncer
-// screenshot and inject the bounce message into the compose textarea. Stays
+// screenshot and inject the bounce message into the compose textarea. An
+// injected X post (See more) has no Repost button, so it gets a new post
+// ending in the post's link instead, which X turns into a quote. Stays
 // in the same tab so the action feels native. Caller pre-captures the
 // screenshot to avoid a race with addFilterPhrase's syncFilterPhrases
 // re-render — the substitution in captureBouncerScreenshot needs the live
@@ -87,34 +133,12 @@ export async function openBounceQuoteComposer(
       console.error('[Bouncer/bounce-quote] Failed to build share URL:', err);
     }
   }
+  // An injected X post: X quotes the tweet a post's text ends with.
+  const quotedUrl = injectedPostSource(article) === 'x' ? deps().adapter.getPostUrl(article) : null;
+  if (quotedUrl) text = `${text}\n${quotedUrl}`;
   console.log('[Bouncer/bounce-quote] text prepared', { text });
 
-  const retweetBtn = article.querySelector<HTMLElement>('[data-testid="retweet"]');
-  console.log('[Bouncer/bounce-quote] retweet button lookup', {
-    found: !!retweetBtn,
-    articleConnected: article.isConnected,
-    articleHidden: window.getComputedStyle(article).display === 'none',
-  });
-  if (!retweetBtn) {
-    console.warn('[Bouncer/bounce-quote] retweet button missing — abort');
-    return;
-  }
-  retweetBtn.click();
-  console.log('[Bouncer/bounce-quote] retweet button clicked');
-
-  // Quote option is an <a href="/compose/post"> inside the dropdown menu.
-  // Prefer the menu-scoped selector; fall back to the bare link if X's menu
-  // structure changes.
-  const quoteLink =
-    (await waitForElement<HTMLAnchorElement>('[role="menu"] a[href="/compose/post"]', 1200))
-    ?? (await waitForElement<HTMLAnchorElement>('a[href="/compose/post"]', 600));
-  console.log('[Bouncer/bounce-quote] quote link lookup', { found: !!quoteLink });
-  if (!quoteLink) {
-    console.warn('[Bouncer/bounce-quote] quote link missing — abort');
-    return;
-  }
-  quoteLink.click();
-  console.log('[Bouncer/bounce-quote] quote link clicked');
+  if (!(quotedUrl ? openNewPostComposer() : await openQuoteComposer(article))) return;
 
   // Desktop renders the quote composer as a DraftJS contenteditable inside a
   // [role="dialog"]; mobile X (touch UA — the iOS/Android app WebViews)
@@ -209,6 +233,30 @@ export function sendMissedFeedback(article: HTMLElement, content: PostContent): 
   }).catch(err => console.error('[Bouncer] Missed feedback error:', err));
 }
 
+// Hides a post for good: listed in the filtered-posts panel, faded out of
+// the feed, and pinned hidden in the evaluation cache so re-evaluation
+// doesn't bring it back. `matches` ties it to its phrases, so removing them
+// all restores it (decideFilterRemoval); without, a removal re-evaluates it.
+// With no article (scrolled away and unmounted), only the cache pin applies,
+// which hides it when it comes back.
+export function bouncePost(article: HTMLElement | null, content: PostContent, reasoning: string, phrase: string | null, matches: string[] | null = null): void {
+  if (article) {
+    storeFilteredPost(article, content, reasoning, '', phrase, matches);
+    article.style.transition = 'opacity 0.3s ease';
+    article.style.opacity = '0';
+    setTimeout(() => hidePost(article), 300);
+  }
+  chrome.runtime.sendMessage({
+    type: 'overrideCacheEntry',
+    post: formatPostForEvaluation(content),
+    imageUrls: content.imageUrls || [],
+    postUrl: content.postUrl || null,
+    siteId: deps().adapter.siteId,
+    shouldHide: true,
+    reasoning,
+  }).catch(err => console.error('[Bouncer] Override cache error:', err));
+}
+
 // Shared end-state for every "bounce this post" path in the annoying-reasons
 // tooltip — chip click, custom-input submit, and the "missed" link. Hides the
 // post, overrides the cache, optionally adds a filter phrase (block paths
@@ -224,23 +272,7 @@ export async function applyBounceAction(opts: {
   const quoteEnabled = tooltip.querySelector<HTMLInputElement>('.ff-bounce-quote-toggle')?.checked ?? false;
   console.log('[Bouncer/bounce-quote] applyBounceAction start', { phrase, quoteEnabled, reasoning });
   tooltip.remove();
-  if (phrase !== null) {
-    storeFilteredPost(article, content, reasoning, '', phrase);
-  } else {
-    storeFilteredPost(article, content, reasoning);
-  }
-  article.style.transition = 'opacity 0.3s ease';
-  article.style.opacity = '0';
-  setTimeout(() => hidePost(article), 300);
-  chrome.runtime.sendMessage({
-    type: 'overrideCacheEntry',
-    post: formatPostForEvaluation(content),
-    imageUrls: content.imageUrls || [],
-    postUrl: content.postUrl || null,
-    siteId: deps().adapter.siteId,
-    shouldHide: true,
-    reasoning,
-  }).catch(err => console.error('[Bouncer] Override cache error:', err));
+  bouncePost(article, content, reasoning, phrase);
 
   const file = (phrase !== null && quoteEnabled)
     ? await captureBouncerScreenshot(phrase).catch(err => {

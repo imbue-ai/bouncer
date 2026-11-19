@@ -629,7 +629,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "# The dist/ folder reference copies the whole extension build into the\n# bundle, including files only the desktop browsers use. iOS runs inference\n# through the native LiteRT-LM frameworks and loads only the *-app bundles,\n# so the wasm runtime (~21-108 MB) and the desktop service-worker bundles are\n# dead weight — strip them from the packaged app.\nset -e\nRES=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}\"\nrm -rf \"$RES/dist/litertlm-wasm\"\nrm -f \"$RES/dist/background.js\" \"$RES/dist/offscreen.js\" \"$RES/dist/popup.js\" \"$RES/dist/onboarding.js\"\necho \"[Bouncer] pruned desktop-only extension files from app bundle\"\n";
+			shellScript = "# The dist/ folder reference copies the whole extension build into the\n# bundle, including files only the desktop browsers use. iOS runs inference\n# through the native LiteRT-LM frameworks and loads only the *-app bundles,\n# so the wasm runtime (~21-108 MB) and the desktop service-worker bundles are\n# dead weight — strip them from the packaged app.\nset -e\nRES=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}\"\nrm -rf \"$RES/dist/litertlm-wasm\"\nrm -f \"$RES/dist/background.js\" \"$RES/dist/offscreen.js\" \"$RES/dist/popup.js\" \"$RES/dist/onboarding.js\"\n# Browsers import hls.js's module build; the app runs its script build.\nrm -f \"$RES/dist/hls.light.min.mjs\"\necho \"[Bouncer] pruned desktop-only extension files from app bundle\"\n";
 		};
 		SF00002000000000000000SF /* Build Extension JS */ = {
 			isa = PBXShellScriptBuildPhase;

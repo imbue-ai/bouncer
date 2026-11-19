@@ -15,6 +15,9 @@ data class BouncerUiState(
     val canGoForward: Boolean = false,
     val currentUrl: String = "",
     val isSheetPresented: Boolean = false,
+    // The sheet opens on its See more list (a tap on a See more post's
+    // "From …" line) rather than Filter out.
+    val sheetOpensOnSeeMore: Boolean = false,
     val isFilteredModalOpen: Boolean = false,
     // AI detection (text + images, one signal) has no manual on/off switch —
     // it is driven entirely by the user's natural-language filter phrases
@@ -44,6 +47,15 @@ data class BouncerUiState(
     // classified or hidden. Edited from the settings sheet; also grows when
     // the user taps "Never filter @x" in the filtered-posts modal.
     val excludedAccounts: List<String> = emptyList(),
+    // "See more" topics (X only): posts about them are mixed into the X
+    // timeline (content/bluesky-see-more.ts). Mirrored from the extension's
+    // `seeMoreTopics_twitter` storage via __ff_loadSeeMoreTopics; edited from
+    // the sheet's See more list. One list, not per platform.
+    val seeMoreTopics: List<String> = emptyList(),
+    // Where See more's posts come from: "both", "x" or "bluesky" — the
+    // extension's `seeMoreSource_twitter`, default applied by the extension
+    // (__ff_getSeeMoreSource). "both" only shows until the first load.
+    val seeMoreSource: String = "both",
     val hasCompletedOnboarding: Boolean = false,
     val hasLoggedIn: Boolean = false,
     // Set once we actually observe the /home timeline this session — the

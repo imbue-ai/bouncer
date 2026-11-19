@@ -157,8 +157,13 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
     // ----- JS → native (called on Main) -----
 
     fun onShowSheet(json: String) {
+        // A See more post's "From …" line opens the sheet on See more.
+        if (runCatching { JSONObject(json).optString("list") }.getOrNull() == "seeMore") {
+            setSheetPresented(true, onSeeMore = true)
+            return
+        }
         applyPhrasesJson(null, json)
-        _state.update { it.copy(isSheetPresented = !it.isSheetPresented) }
+        _state.update { it.copy(isSheetPresented = !it.isSheetPresented, sheetOpensOnSeeMore = false) }
         // Re-sync settings from storage whenever the sheet becomes visible —
         // the counterpart of the iOS sheet's .onAppear { loadFilterReplies() }.
         // Storage is the truth and JS can change it behind the native UI's
@@ -166,6 +171,7 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
         if (_state.value.isSheetPresented) {
             callJs("__ff_loadAiSettings")
             loadExcludedAccounts()
+            loadSeeMoreTopics()
         }
     }
 
@@ -197,6 +203,7 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
         }
         callJs("__ff_loadAiSettings")
         loadExcludedAccounts()
+        loadSeeMoreTopics()
     }
 
     fun onModalClosed() {
@@ -726,13 +733,14 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
 
     // ----- UI → JS -----
 
-    fun setSheetPresented(open: Boolean) {
-        _state.update { it.copy(isSheetPresented = open) }
+    fun setSheetPresented(open: Boolean, onSeeMore: Boolean = false) {
+        _state.update { it.copy(isSheetPresented = open, sheetOpensOnSeeMore = open && onSeeMore) }
         callJs("__ff_setSheetClass", open)
         // Same on-appear re-sync as onShowSheet: storage is the truth.
         if (open) {
             callJs("__ff_loadAiSettings")
             loadExcludedAccounts()
+            loadSeeMoreTopics()
         }
     }
 
@@ -755,6 +763,29 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
         // re-post confirms (or restores) the real list.
         _state.update { it.copy(excludedAccounts = it.excludedAccounts - account) }
         callJs("__ff_mutateExcludedAccount", "remove", _state.value.activePlatformId, account)
+    }
+
+    // "See more" topics: the same storage-is-the-truth round trip as excluded
+    // accounts. The extension normalizes an added topic and turns away
+    // duplicates and a full list, so there's no optimistic add.
+    private fun loadSeeMoreTopics() {
+        callJs("__ff_loadSeeMoreTopics")
+    }
+
+    fun addSeeMoreTopic(text: String) {
+        val t = text.trim()
+        if (t.isEmpty()) return
+        callJs("__ff_mutateSeeMoreTopic", "add", t)
+    }
+
+    fun removeSeeMoreTopic(topic: String) {
+        _state.update { it.copy(seeMoreTopics = it.seeMoreTopics - topic) }
+        callJs("__ff_mutateSeeMoreTopic", "remove", topic)
+    }
+
+    fun setSeeMoreSource(source: String) {
+        _state.update { it.copy(seeMoreSource = source) }
+        callJs("__ff_setStorage", JSONObject().put("seeMoreSource_twitter", source))
     }
 
     // Open an excluded account's profile in the webview (the app is the
@@ -951,6 +982,10 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
                 excludedAccounts = obj.optJSONArray("excludedAccounts")?.let { arr ->
                     List(arr.length()) { i -> arr.optString(i) }.filter { it.isNotEmpty() }
                 } ?: s.excludedAccounts,
+                seeMoreTopics = obj.optJSONArray("seeMoreTopics")?.let { arr ->
+                    List(arr.length()) { i -> arr.optString(i) }.filter { it.isNotEmpty() }
+                } ?: s.seeMoreTopics,
+                seeMoreSource = obj.optString("seeMoreSource").ifEmpty { s.seeMoreSource },
             )
         }
     }

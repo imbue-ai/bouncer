@@ -3,7 +3,8 @@
 import { convertSystemToUserMessages } from '../shared/utils';
 import { API_BASE_URLS } from '../shared/models';
 import { imbueWebSocket } from './ws-manager';
-import type { ChatMessage, APIConfig, DirectAPIResponse, ImbueFilterResponse, ImbueSuggestResponse, ImbueAiTextResponse, ImbueAiImageResponse, ImbueDetectAiIntentResponse, EvaluationPostData } from '../types';
+import type { ChatMessage, APIConfig, DirectAPIResponse, ImbueFilterResponse, ImbueSuggestResponse, ImbueAiTextResponse, ImbueAiImageResponse, ImbueDetectAiIntentResponse, ImbueBlueskySearchResponse, EvaluationPostData } from '../types';
+import type { SeenFilter } from '../shared/bluesky';
 
 // Call an OpenAI-compatible API directly from the extension via fetch
 // Used for OpenAI, OpenRouter, and Gemini models
@@ -202,12 +203,15 @@ export async function callAnthropicAPI(messages: ChatMessage[], apiConfig: APICo
 // Auth token is not sent — the WS gateway authenticates the connection itself
 // via the App Check token at handshake time.
 export async function callImbueAPI(tweetData: EvaluationPostData, categories: string[] | undefined, reason: 'filterPost' | 'validatePhrase', aiCategories?: string[]): Promise<ImbueFilterResponse>;
-export async function callImbueAPI(tweetData: EvaluationPostData, categories: string[] | undefined, reason: 'suggestAnnoying'): Promise<ImbueSuggestResponse>;
+// style 'checkin': the feed check-in card's labeled topic/tone prompt instead
+// of the trash-can's (lambda build_checkin_suggest_messages).
+export async function callImbueAPI(tweetData: EvaluationPostData, categories: string[] | undefined, reason: 'suggestAnnoying', aiCategories?: undefined, opts?: { style?: 'checkin' }): Promise<ImbueSuggestResponse>;
 export async function callImbueAPI(
   tweetData: EvaluationPostData,
   categories: string[] | undefined,
   reason: string,
   aiCategories?: string[],
+  opts?: { style?: 'checkin' },
 ): Promise<ImbueFilterResponse | ImbueSuggestResponse> {
   const message: Record<string, unknown> = {
     action: "tweetFilter",
@@ -219,6 +223,7 @@ export async function callImbueAPI(
   if (aiCategories && aiCategories.length > 0) {
     message.aiCategories = aiCategories;
   }
+  if (opts?.style) message.style = opts.style;
 
   console.log('[Filter] → request:', message);
   const startedAt = Date.now();
@@ -268,6 +273,79 @@ export async function callImbueDetectAiIntent(
   } catch (err) {
     const wallMs = Date.now() - startedAt;
     console.warn(`[AiIntentDetect] ✗ error after ${wallMs}ms:`, err);
+    throw err;
+  }
+}
+
+// "See more <topic>": one page of Bluesky posts about `topic` from the
+// backend's semantic index (EmbeddingGemma 2 over the Jetstream firehose,
+// then the filter model as a relevance check), via the blueskySearch route.
+// Each search returns the best posts not in `seen`; the worker judges
+// candidates in batches until `want` pass (capped at ~5 s), and the route is
+// rate-limited to 60 requests/min per user.
+// The topics the backend suggests under "See more" (seeMoreSuggestions
+// route, which answers directly).
+export async function callImbueSeeMoreSuggestions(): Promise<string[]> {
+  const reply = await imbueWebSocket.sendAndAwaitReply({
+    action: 'seeMoreSuggestions',
+    version: chrome.runtime.getManifest().version,
+  });
+  const topics = Array.isArray(reply.topics) ? reply.topics.filter((t): t is string => typeof t === 'string') : [];
+  console.log('[SeeMoreSuggestions] ←', reply.source, topics);
+  return topics;
+}
+
+// The "See more" card's personal picks (seeMorePicks route): the search
+// worker has the filter model write candidate topics from the taste digest
+// and keeps those whose first search fills from `sources`, each with the
+// interest it serves. Takes a few seconds (every candidate's supply is
+// checked).
+export async function callImbueSeeMorePicks(
+  digest: string,
+  sources: Array<'bluesky' | 'x'>,
+): Promise<Array<{ interest: string; topic: string }>> {
+  const response = await imbueWebSocket.send({
+    action: 'seeMorePicks',
+    digest,
+    sources,
+    version: chrome.runtime.getManifest().version,
+  }, { timeout: 60000 }) as unknown as { picks?: unknown };
+  if (!Array.isArray(response?.picks)) throw new Error('seeMorePicks returned no picks');
+  return response.picks.filter((p): p is { interest: string; topic: string } =>
+    typeof p?.interest === 'string' && typeof p?.topic === 'string');
+}
+
+export async function callImbueBlueskySearch(
+  topic: string,
+  sources: Array<'bluesky' | 'x'>,
+  seen: SeenFilter | null,
+  want: number,
+): Promise<ImbueBlueskySearchResponse> {
+  const message: Record<string, unknown> = {
+    action: 'blueskySearch',
+    topic,
+    sources,
+    // Posts already seen or fetched, for the backend to skip
+    // (buildSeenFilter). There is no cursor: each search returns the best
+    // posts not in here.
+    seen,
+    // How many matching posts to find before replying; the worker checks
+    // candidates in batches until it has them (or hits its cap).
+    want,
+    version: chrome.runtime.getManifest().version,
+  };
+
+  console.log('[BlueskySearch] → request:', { ...message, seen: seen && `${seen.m} bits` });
+  const startedAt = Date.now();
+
+  try {
+    const response = await imbueWebSocket.send(message, { timeout: 45000 }) as unknown as ImbueBlueskySearchResponse;
+    const wallMs = Date.now() - startedAt;
+    console.log(`[BlueskySearch] ← response (wallMs=${wallMs}):`, response);
+    return response;
+  } catch (err) {
+    const wallMs = Date.now() - startedAt;
+    console.warn(`[BlueskySearch] ✗ error after ${wallMs}ms:`, err);
     throw err;
   }
 }

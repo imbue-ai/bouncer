@@ -977,7 +977,7 @@ async function processBatch(): Promise<void> {
     return;
   }
 
-  const postData = { text: item.post, imageUrls, postUrl: item.postUrl };
+  const postData = { text: item.post, imageUrls, postUrl: item.postUrl, ...(item.quotedImageUrls?.length ? { quotedImageUrls: item.quotedImageUrls } : {}) };
   // Phrases routed to the AI detectors rather than the classifier (see
   // effectiveDescriptions). Sent to the Imbue backend for logging only.
   const aiCategories = settings.descriptions.filter(d => !settings.effectiveDescriptions.includes(d));
@@ -1501,6 +1501,96 @@ async function generateCandidatePhrases(postText: string, imageUrls: string[], c
   return result.map(item => item.toLowerCase());
 }
 
+// ==================== Feed check-in suggestions ====================
+
+// The feed check-in card's prompt: topics and tones in equal measure, each
+// line labeled so the card can balance them. The trash-can keeps
+// generateCandidatePhrases' prompt. Mirrors the backend's
+// build_checkin_suggest_messages (lambda/tweet_filter.py), which the Imbue
+// model gets instead.
+const CHECKIN_PER_KIND = 4;
+const CHECKIN_SUGGEST_PROMPT = (hasImages: boolean) =>
+  `Given a social media post, suggest filter phrases (1-3 words each) that someone might add to hide posts like this one. Give exactly ${CHECKIN_PER_KIND} of each of two kinds:
+- topic: the subject the post is about, as a broad, familiar category people filter (for example dating, politics, crypto, sports betting, celebrity gossip). Name what it is about, not how it is written.
+- tone: an inherently negative descriptor of how it is written or the behavior it shows: a word that is a put-down on its own, even out of context (for example profane, shrill, smug, preachy, whiny, outrage bait, humblebragging). Pick these as an extremely nitpicky, easily offended reader who finds something to object to in every post would: seize on any hint of something grating and name it bluntly. Never a neutral subject word (like construction or artificial intelligence); that is a topic.
+Only use an example if it genuinely fits the post. Each phrase must still work as a category: if another model were asked "does this post relate to [phrase]?", it would say yes. Within each kind, put the best fit first.${hasImages ? ' Consider BOTH the text and any attached images.' : ''} Output exactly ${2 * CHECKIN_PER_KIND} lines and nothing else: the ${CHECKIN_PER_KIND} topics first, each as "topic: <phrase>", then the ${CHECKIN_PER_KIND} tones, each as "tone: <phrase>".`;
+
+export interface CheckinSuggestions { topics: string[]; tones: string[] }
+
+/** Splits "topic: …" / "tone: …" lines. An unlabeled line (an older backend
+ *  answering with the trash-can's prompt) counts as a tone. */
+function parseCheckinLines(lines: string[]): CheckinSuggestions {
+  const out: CheckinSuggestions = { topics: [], tones: [] };
+  for (const line of lines) {
+    const m = line.match(/^(topic|tone)\s*:\s*(.+)$/i);
+    const phrase = (m ? m[2] : line).replace(/[*_`"]/g, '').trim().toLowerCase();
+    const list = m?.[1].toLowerCase() === 'topic' ? out.topics : out.tones;
+    if (phrase && phrase.length <= 40 && !out.topics.includes(phrase) && !out.tones.includes(phrase)) list.push(phrase);
+  }
+  return out;
+}
+
+/** The candidate lines from the configured model, cleaned of list markers. */
+async function generateCheckinLines(postText: string, imageUrls: string[], settings: Settings): Promise<string[]> {
+  const clean = (raw: string) => raw.split('\n')
+    .map(l => l.replace(/^\d+[.)-]\s*/, '').replace(/^[-*•]\s+/, '').trim())
+    .filter(l => l && !l.startsWith('<'));
+  const hasImages = imageUrls.length > 0;
+  if (process.env.HAS_IMBUE_BACKEND === 'true' && settings.selectedModel === 'imbue') {
+    const response = await callImbueAPI({ text: postText, imageUrls }, undefined, 'suggestAnnoying', undefined, { style: 'checkin' });
+    return response.suggestions || [];
+  }
+  if (settings.selectedModel?.startsWith('local:')) {
+    // Text only, like the trash-can's local path.
+    const modelName = settings.selectedModel.split(':')[1];
+    await localEngine.ensureLoaded(modelName);
+    return clean(await localEngine.generate([
+      { role: 'system', content: CHECKIN_SUGGEST_PROMPT(false) },
+      { role: 'user', content: postText },
+    ], 150, { priority: 1, temperature: 0.7 }));
+  }
+  if (settings.selectedModel?.startsWith('iosLocal:')) {
+    const modelName = settings.selectedModel.split(':')[1];
+    return clean(await iosLocalGenerate(CHECKIN_SUGGEST_PROMPT(false), postText, { maxOutputTokens: 150, modelName }));
+  }
+  const [apiName, ...nameParts] = settings.selectedModel.split(':');
+  const apiConfig: APIConfig = { modelName: nameParts.join(':'), apiName, apiKey: (settings[API_KEY_SETTINGS[apiName]] as string) || null };
+  if (apiName === 'openai' && settings.openaiApiBase) apiConfig.apiBase = settings.openaiApiBase;
+  const userContent: ChatMessage['content'] = hasImages
+    ? [{ type: 'text', text: postText }, ...imageUrls.map(url => ({ type: 'image_url', image_url: { url } }))]
+    : postText;
+  const callFn = apiName === 'anthropic' ? callAnthropicAPI : callDirectAPI;
+  return clean(await callFn([
+    { role: 'system', content: CHECKIN_SUGGEST_PROMPT(hasImages) },
+    { role: 'user', content: userContent },
+  ], apiConfig));
+}
+
+/** The phrases among `phrases` that the filter model says match the post:
+ *  one batched call where the model supports it, else one call per phrase. */
+async function validatePhrases(postText: string, imageUrls: string[], phrases: string[], settings: Settings): Promise<string[]> {
+  if (!phrases.length) return [];
+  let batched: string[] | null = null;
+  if (settings.selectedModel?.startsWith('local:')) batched = await validatePhrasesBatchedLocal(postText, imageUrls, phrases, settings);
+  else if (settings.selectedModel?.startsWith('iosLocal:')) batched = await validatePhrasesBatchedIosLocal(postText, imageUrls, phrases, settings);
+  else if (process.env.HAS_IMBUE_BACKEND === 'true' && settings.selectedModel === 'imbue') batched = await validatePhrasesBatchedImbue(postText, imageUrls, phrases);
+  if (batched) return batched;
+  const passes = await Promise.all(phrases.map(phrase =>
+    validateFilterPhrase(postText, imageUrls, phrase, settings).catch(() => false)));
+  return phrases.filter((_, i) => passes[i]);
+}
+
+/** Topic and tone filter phrases for a post, each kind best first, all
+ *  validated against the filter model. */
+export async function suggestCheckinReasons(postText: string, imageUrls: string[], siteId?: SiteId): Promise<CheckinSuggestions> {
+  const settings = await getSettings(siteId);
+  const candidates = parseCheckinLines(await generateCheckinLines(postText, imageUrls, settings));
+  const valid = new Set(await validatePhrases(postText, imageUrls, [...candidates.topics, ...candidates.tones], settings));
+  const result = { topics: candidates.topics.filter(p => valid.has(p)), tones: candidates.tones.filter(p => valid.has(p)) };
+  console.log('[Suggest] check-in candidates:', candidates, 'validated:', result);
+  return result;
+}
+
 // Validate all candidate phrases against the local model in one multi-category
 // inference call. Returns the matched phrases (in candidate order), or null
 // when the call errored or the verdict row was malformed — callers should fall
@@ -1512,6 +1602,21 @@ async function validatePhrasesBatchedLocal(postText: string, imageUrls: string[]
   try {
     const localResult = await callLocalInference(postData, phrases, modelConfig, modelName, { priority: 1 });
     const parsed = parseTableYesnoResponse(localResult.rawResponse ?? null, phrases);
+    return parsed.malformed ? null : parsed.matches;
+  } catch (err) {
+    console.warn('[Suggest] batched validation error:', (err as Error).message);
+    return null;
+  }
+}
+
+// Imbue twin of validatePhrasesBatchedLocal: every candidate as a category of
+// one validatePhrase request (the backend's verdict row is one yes/no per
+// category), instead of a request per phrase against the rate limit.
+async function validatePhrasesBatchedImbue(postText: string, imageUrls: string[], phrases: string[]): Promise<string[] | null> {
+  const postData = { text: postText, imageUrls: imageUrls || [] };
+  try {
+    const response = await callImbueAPI(postData, phrases, 'validatePhrase');
+    const parsed = parseTableYesnoResponse(response.rawResponse ?? null, phrases);
     return parsed.malformed ? null : parsed.matches;
   } catch (err) {
     console.warn('[Suggest] batched validation error:', (err as Error).message);
@@ -1556,18 +1661,22 @@ export async function suggestAnnoyingReasons(postText: string, imageUrls: string
     }
   }
 
-  // Batched fast path for the local model: validate every candidate in one
-  // multi-category call — a single prefill of the post instead of one per
-  // phrase, all on the serial WebGPU queue — using the same verdict-row
-  // format the feed filter runs in production. Falls through to the
+  // Batched fast path for the local models and the Imbue backend: validate
+  // every candidate in one multi-category call — a single prefill of the
+  // post instead of one per phrase (on the serial WebGPU queue locally; one
+  // request instead of nine against the backend's rate limit) — using the
+  // same verdict-row format the feed filter runs in production. Falls through to the
   // per-phrase loop below when the row comes back malformed, so one bad row
   // costs a retry instead of the whole click.
   const isLocal = settings.selectedModel?.startsWith('local:');
   const isIosLocal = settings.selectedModel?.startsWith('iosLocal:');
-  if ((isLocal || isIosLocal) && uniqueCandidates.length > 1) {
+  const isImbue = process.env.HAS_IMBUE_BACKEND === 'true' && settings.selectedModel === 'imbue';
+  if ((isLocal || isIosLocal || isImbue) && uniqueCandidates.length > 1) {
     const matches = isLocal
       ? await validatePhrasesBatchedLocal(postText, imageUrls, uniqueCandidates, settings)
-      : await validatePhrasesBatchedIosLocal(postText, imageUrls, uniqueCandidates, settings);
+      : isIosLocal
+        ? await validatePhrasesBatchedIosLocal(postText, imageUrls, uniqueCandidates, settings)
+        : await validatePhrasesBatchedImbue(postText, imageUrls, uniqueCandidates);
     if (matches !== null) {
       const finalValidated = matches.slice(0, 3);
       validatedCount = finalValidated.length;

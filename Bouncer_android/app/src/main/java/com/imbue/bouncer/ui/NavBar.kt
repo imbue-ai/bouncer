@@ -1,21 +1,15 @@
 package com.imbue.bouncer.ui
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
@@ -43,17 +37,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.DpSize
-import androidx.compose.ui.unit.IntOffset
-import androidx.compose.ui.unit.IntRect
-import androidx.compose.ui.unit.IntSize
-import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Popup
-import androidx.compose.ui.window.PopupPositionProvider
-import androidx.compose.ui.window.PopupProperties
 import com.imbue.bouncer.state.Platform
 import com.imbue.bouncer.state.Platforms
 import com.imbue.bouncer.ui.theme.BouncerPurple
@@ -134,7 +120,6 @@ private fun PlatformSelector(
     // currentUrl mislabeled it whenever the URL mapped to no platform (Google
     // auth → the Twitter fallback) or hadn't caught up to a switch yet.
     val current = Platforms.byId(activePlatformId) ?: Platforms.all.first()
-    val density = LocalDensity.current
 
     Box(modifier) {
         Surface(
@@ -163,65 +148,12 @@ private fun PlatformSelector(
         }
 
         if (expanded) {
-            // Material's DropdownMenu hard-clamps ~48dp off the screen edge, so
-            // it can't sit flush above a bottom-bar anchor. A custom Popup with
-            // our own position provider drops it right onto the chip.
-            val gapPx = with(density) { 6.dp.roundToPx() }
-            val marginPx = with(density) { 8.dp.roundToPx() }
-            Popup(
-                onDismissRequest = { expanded = false },
-                properties = PopupProperties(focusable = true),
-                popupPositionProvider = object : PopupPositionProvider {
-                    override fun calculatePosition(
-                        anchorBounds: IntRect,
-                        windowSize: IntSize,
-                        layoutDirection: LayoutDirection,
-                        popupContentSize: IntSize,
-                    ): IntOffset {
-                        val x = (anchorBounds.left + anchorBounds.width / 2 - popupContentSize.width / 2)
-                            .coerceIn(marginPx, (windowSize.width - popupContentSize.width - marginPx).coerceAtLeast(marginPx))
-                        val y = anchorBounds.top - popupContentSize.height - gapPx
-                        return IntOffset(x, y)
-                    }
-                },
-            ) {
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                    tonalElevation = 3.dp,
-                    shadowElevation = 8.dp,
-                ) {
-                    Column(modifier = Modifier.width(IntrinsicSize.Max).padding(vertical = 4.dp)) {
-                        Platforms.all.forEach { platform ->
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable {
-                                        expanded = false
-                                        onSelectPlatform(platform)
-                                    }
-                                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                            ) {
-                                Text(
-                                    platform.displayName,
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    modifier = Modifier.weight(1f),
-                                )
-                                if (platform.id == current.id) {
-                                    Spacer(Modifier.width(16.dp))
-                                    Icon(
-                                        Icons.Default.Check,
-                                        contentDescription = "Current",
-                                        tint = MaterialTheme.colorScheme.primary,
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            MenuAbove(
+                options = Platforms.all.map { it to it.displayName },
+                selected = current,
+                onSelect = onSelectPlatform,
+                onDismiss = { expanded = false },
+            )
         }
     }
 }

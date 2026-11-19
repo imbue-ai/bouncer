@@ -19,6 +19,9 @@ declare global {
     __feedfilterPopup?: { html: string; css: string };
     /** Screen color picker (Chrome 95+; absent on Firefox/Safari — feature-detect). */
     EyeDropper?: new () => { open(): Promise<{ sRGBHex: string }> };
+    /** Android app (web_ext_gecko/bridge_page.js): fetches Bluesky media that
+     *  x.com's CSP blocks in the page world. */
+    __ff_fetchRemoteMedia?: (url: string) => Promise<{ type: string; buffer: ArrayBuffer }>;
   }
 
   // Extend chrome namespace for iOS polyfill flag

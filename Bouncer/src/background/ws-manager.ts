@@ -9,6 +9,10 @@ import type { ImbueAPIResponse } from '../types';
 const IMBUE_WS_URL = process.env.IMBUE_WS_URL || '';
 
 const DEFAULT_TIMEOUT_MS = 60000;
+// The gateway acks every request within about a second, even when the result
+// is slow. A socket that has said nothing at all this long after a send is
+// half-open, so it is replaced and the stranded requests are resent.
+const ACK_WATCHDOG_MS = 15000;
 
 /** Internal state for a request that has been sent but not yet fully resolved. */
 interface PendingRequest {
@@ -18,6 +22,12 @@ interface PendingRequest {
   reject: (reason: Error) => void;
   timeoutId: ReturnType<typeof setTimeout>;
   submissionTime: number | null;
+  /** The serialized request, kept so it can be resent on a fresh socket. */
+  payload: string;
+  /** When it last went out on a socket. */
+  sentAt: number;
+  /** Already resent once after a dead socket; a second death fails it. */
+  resent: boolean;
 }
 
 interface DirectReply {
@@ -106,6 +116,9 @@ function validateWSMessage(raw: unknown): (WSAckMessage & WSResultMessage) | nul
   return msg as unknown as WSAckMessage & WSResultMessage;
 }
 
+// How long a result that beat its ack is kept waiting for that ack.
+const EARLY_RESULT_TTL_MS = 60_000;
+
 class ImbueWebSocket {
   ws: WebSocket | null;
   connectPromise: Promise<WebSocket> | null;
@@ -120,6 +133,17 @@ class ImbueWebSocket {
   // Requests answered by a single reply echoing their requestId (see
   // sendAndAwaitReply), keyed by requestId.
   directReplies: Map<string, DirectReply>;
+  // Results (jobComplete/jobFailed) that arrived before their request's ack,
+  // keyed by jobId, with arrival time. A fast worker (e.g. a cached
+  // blueskySearch page, ~0.25 s) can beat the Lambda's route response; the
+  // result is delivered when the ack with its jobId lands.
+  earlyResults: Map<string, { data: WSAckMessage & WSResultMessage; at: number }>;
+  // When the current socket last delivered ANY message. Liveness signal for
+  // spotting a half-open socket (see _watch).
+  lastMessageAt = 0;
+  // How long a send may go without ANY reply before its socket is presumed
+  // half-open. Instance field so tests can shorten it.
+  ackWatchdogMs = ACK_WATCHDOG_MS;
   // Invoked after each new connection opens. Set by the background entry
   // point to retry work that needs the backend (e.g. an unsent opt-in).
   onConnected: (() => void) | null;
@@ -131,6 +155,7 @@ class ImbueWebSocket {
     this.pendingRequests = new Map();
     this.onForceLogin = null;
     this.directReplies = new Map();
+    this.earlyResults = new Map();
     this.onConnected = null;
   }
 
@@ -217,6 +242,7 @@ class ImbueWebSocket {
       };
 
       ws.onmessage = (event: MessageEvent) => {
+        this.lastMessageAt = Date.now();
         try {
           const parsed: unknown = JSON.parse(event.data as string);
           // forceLogin is an out-of-band push (requestId may be null) — handle
@@ -245,8 +271,13 @@ class ImbueWebSocket {
       ws.onclose = (event) => {
         clearTimeout(connectTimeout);
         console.log(`[WS Manager] Closed (code: ${event.code}, clean: ${event.wasClean})`);
-        this.ws = null;
-        this._rejectAll(new Error(`WebSocket closed (code: ${event.code})`));
+        // Only tear down state that still belongs to this socket. A socket
+        // already replaced (dropped as half-open, or reconnect()) closes late,
+        // and its stale close must not reject requests riding the new one.
+        if (this.ws === ws || this.ws === null) {
+          this.ws = null;
+          this._rejectAll(new Error(`WebSocket closed (code: ${event.code})`));
+        }
       };
     });
   }
@@ -259,33 +290,107 @@ class ImbueWebSocket {
     message.requestId = requestId;
 
     return new Promise((resolve, reject) => {
-      const timeoutId = setTimeout(() => {
-        // Clean up from whichever map the request is in
-        const unacked = this.unackedRequests.get(requestId);
-        if (unacked) {
-          this.unackedRequests.delete(requestId);
-        } else {
-          // Already acked — find and remove from pendingRequests by jobId
-          for (const [jobId, pending] of this.pendingRequests) {
-            if (pending.requestId === requestId) {
-              this.pendingRequests.delete(jobId);
-              break;
-            }
-          }
-        }
-        reject(new Error(`Request timed out after ${Math.round(timeout / 1000)} seconds.`));
-      }, timeout);
-
-      this.unackedRequests.set(requestId, {
+      const request: PendingRequest = {
         requestId,
         jobId: null,
         resolve,
         reject,
-        timeoutId,
+        timeoutId: setTimeout(() => {
+          // Clean up from whichever map the request is in
+          if (this.unackedRequests.get(requestId) === request) {
+            this.unackedRequests.delete(requestId);
+          } else {
+            for (const [jobId, pending] of this.pendingRequests) {
+              if (pending === request) {
+                this.pendingRequests.delete(jobId);
+                break;
+              }
+            }
+          }
+          // Total silence since this went out: the socket is half-open, even
+          // if the watchdog hasn't fired yet (a timeout shorter than it).
+          if (this.ws && this.lastMessageAt < request.sentAt) this._replaceDeadSocket(this.ws);
+          reject(new Error(`Request timed out after ${Math.round(timeout / 1000)} seconds.`));
+        }, timeout),
         submissionTime: null,
-      });
+        payload: JSON.stringify(message),
+        sentAt: 0,
+        resent: false,
+      };
+      this.unackedRequests.set(requestId, request);
+      this._transmit(ws, request);
+    });
+  }
 
-      ws.send(JSON.stringify(message));
+  // Put a request on the wire and arm the watchdog for it.
+  private _transmit(ws: WebSocket, request: PendingRequest): void {
+    request.sentAt = Date.now();
+    ws.send(request.payload);
+    this._watch(ws, request.sentAt);
+  }
+
+  // Nothing came back on the socket after a send, not even the gateway's
+  // immediate ack: the half-open signature. The network path died without a
+  // close frame (device slept, app suspended, network switched, or the
+  // gateway dropped an idle connection unseen), readyState still says OPEN,
+  // and every send since has gone into the void.
+  private _watch(ws: WebSocket, sentAt: number): void {
+    setTimeout(() => {
+      if (this.ws === ws && this.lastMessageAt < sentAt) this._replaceDeadSocket(ws);
+    }, this.ackWatchdogMs);
+  }
+
+  // Drop a half-open socket and resend everything that was riding on it over a
+  // fresh connection. Results for jobs acked on the dead socket would be
+  // delivered to its connection id and lost, so those are resent too. A
+  // request that already survived one dead socket fails instead of looping.
+  // Single-reply requests just fail; their callers retry.
+  private _replaceDeadSocket(dead: WebSocket): void {
+    console.warn('[WS Manager] No traffic since the last send; replacing half-open socket');
+    if (this.ws === dead) this.ws = null;
+    // Its late close must not reject the requests we're about to move.
+    dead.onclose = null;
+    dead.onmessage = null;
+    dead.onerror = null;
+    try { dead.close(); } catch { /* already dead */ }
+
+    for (const [, reply] of this.directReplies) {
+      clearTimeout(reply.timeoutId);
+      reply.reject(new Error('WebSocket unresponsive; reconnecting'));
+    }
+    this.directReplies.clear();
+    this.earlyResults.clear();
+
+    const stranded = [...this.unackedRequests.values(), ...this.pendingRequests.values()];
+    this.unackedRequests.clear();
+    this.pendingRequests.clear();
+    const retry: PendingRequest[] = [];
+    for (const request of stranded) {
+      if (request.resent) {
+        clearTimeout(request.timeoutId);
+        request.reject(new Error('WebSocket unresponsive; reconnecting on next request'));
+        continue;
+      }
+      request.resent = true;
+      request.jobId = null;
+      request.submissionTime = null;
+      this.unackedRequests.set(request.requestId, request);
+      retry.push(request);
+    }
+    if (retry.length === 0) return;
+
+    this.ensureConnected().then((ws) => {
+      // Skip anything that timed out (or was settled) while we reconnected.
+      for (const request of retry) {
+        if (this.unackedRequests.get(request.requestId) === request) this._transmit(ws, request);
+      }
+    }).catch((err: Error) => {
+      for (const request of retry) {
+        if (this.unackedRequests.get(request.requestId) !== request) continue;
+        this.unackedRequests.delete(request.requestId);
+        clearTimeout(request.timeoutId);
+        request.reject(err);
+      }
     });
   }
 
@@ -302,6 +407,7 @@ class ImbueWebSocket {
       }, timeout);
       this.directReplies.set(requestId, { resolve, reject, timeoutId });
       ws.send(JSON.stringify({ ...message, requestId }));
+      this._watch(ws, Date.now());
     });
   }
 
@@ -337,6 +443,18 @@ class ImbueWebSocket {
       return;
     }
 
+    // A result whose ack hasn't arrived yet. Never treat it as an ack (the
+    // FIFO fallback below would hand it to the wrong request); hold it for
+    // _handleAck.
+    if (data.jobId && (data.type === 'jobComplete' || data.type === 'jobFailed')) {
+      const now = Date.now();
+      for (const [jobId, early] of this.earlyResults) {
+        if (now - early.at > EARLY_RESULT_TTL_MS) this.earlyResults.delete(jobId);
+      }
+      this.earlyResults.set(data.jobId, { data, at: now });
+      return;
+    }
+
     // Fallback: FIFO ordering for ack messages (oldest unacked request)
     if (this.unackedRequests.size > 0) {
       const [firstRequestId, firstRequest] = this.unackedRequests.entries().next().value as [string, PendingRequest];
@@ -364,6 +482,12 @@ class ImbueWebSocket {
 
     // Move to pendingRequests keyed by jobId
     if (data.jobId) {
+      const early = this.earlyResults.get(data.jobId);
+      if (early) {
+        this.earlyResults.delete(data.jobId);
+        this._handleResult(early.data, request);
+        return;
+      }
       this.pendingRequests.set(data.jobId, request);
     }
   }
@@ -429,6 +553,7 @@ class ImbueWebSocket {
     }
     this.unackedRequests.clear();
     this.pendingRequests.clear();
+    this.earlyResults.clear();
     this.directReplies.clear();
   }
 
