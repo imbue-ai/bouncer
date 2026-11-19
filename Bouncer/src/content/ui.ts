@@ -3416,7 +3416,10 @@ export function renderFilteredPostsView(container: Element) {
   // Render posts in reverse order (newest first); YouTube uses video lockups,
   // every other platform uses the tweet-style card.
   [...filteredPosts].reverse().forEach((post) => {
-    postsContainer.appendChild(isYouTube ? buildYouTubeCard(post) : buildTwitterCard(post));
+    const card = isYouTube ? buildYouTubeCard(post) : buildTwitterCard(post);
+    // Lets the feed's filtered-posts gallery scroll the panel to a post.
+    card.dataset.filteredKey = post.post.postUrl || post.evaluationText.substring(0, 200);
+    postsContainer.appendChild(card);
   });
 }
 

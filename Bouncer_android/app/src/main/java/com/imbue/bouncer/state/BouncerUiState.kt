@@ -15,6 +15,9 @@ data class BouncerUiState(
     val canGoForward: Boolean = false,
     val currentUrl: String = "",
     val isSheetPresented: Boolean = false,
+    // The sheet opens on its See more list (a tap on a See more post's
+    // "From …" line) rather than Filter out.
+    val sheetOpensOnSeeMore: Boolean = false,
     val isFilteredModalOpen: Boolean = false,
     // AI detection (text + images, one signal) has no manual on/off switch —
     // it is driven entirely by the user's natural-language filter phrases

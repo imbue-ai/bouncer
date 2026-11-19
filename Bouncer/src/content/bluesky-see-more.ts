@@ -26,7 +26,7 @@ import { findStructuralMatch } from '../shared/structural-filters';
 import { formatPostForEvaluation } from '../shared/utils';
 import {
   SEE_MORE_TOPICS_KEY, SEE_MORE_EVERY_KEY, SEE_MORE_SEEN_KEY, MAX_SEE_MORE_TOPICS, mergeSeenUris, MAX_SEE_MORE_TOPIC_LENGTH, clampSeeMoreEvery, formatCount, formatRelativeTime, normalizeTopic,
-  SEE_MORE_SOURCE_KEY, SEE_MORE_SHOW_NSFW_KEY, buildSeenFilter, clampSeeMoreSource, seeMoreSources,
+  SEE_MORE_SOURCE_KEY, SEE_MORE_SHOW_NSFW_KEY, buildSeenFilter, clampSeeMoreSource, seeMoreSources, roundRobin,
   type BskyFeedPost, type BskyQuotedPost, type BskySearchResult, type SeeMoreSource,
 } from '../shared/bluesky';
 import { currentPauseScope } from './ui';
@@ -1642,6 +1642,23 @@ function renderParent(parent: BskyQuotedPost): HTMLElement {
   return row;
 }
 
+/** Opens where the See more topics are edited: in the apps, the Bouncer
+ *  sheet on its See more list; on desktop, the sidebar's topic field. False
+ *  when there's neither (e.g. the sidebar isn't showing). */
+function editSeeMoreTopics(): boolean {
+  const showSheet = typeof webkit === 'undefined' ? undefined : webkit.messageHandlers?.feedfilterShowSheet;
+  if (showSheet) {
+    showSheet.postMessage(JSON.stringify({ list: 'seeMore' }));
+    return true;
+  }
+  const row = [...topicRows].find(r => r.isConnected && r.offsetParent);
+  const input = row?.querySelector<HTMLTextAreaElement>('.bsky-see-more-input');
+  if (!input) return false;
+  input.scrollIntoView({ block: 'nearest' });
+  input.focus();
+  return true;
+}
+
 function renderPost(post: BskyFeedPost, hostKey: string, slot: Slot): HTMLElement {
   const root = el('div', INJECTED_CLASS);
   root.dataset.hostKey = hostKey;
@@ -1655,6 +1672,9 @@ function renderPost(post: BskyFeedPost, hostKey: string, slot: Slot): HTMLElemen
   if (post.nsfw) root.dataset.nsfw = '';
   observeImpression(root, post.uri);
   root.setAttribute('role', 'article');
+  // iOS WebKit only applies :active (the press underline) under a touchstart
+  // listener.
+  root.addEventListener('touchstart', () => {}, { passive: true });
   const sourceName = SOURCE_NAME[post.source];
   root.setAttribute('aria-label', `${sourceName} post by ${post.authorName}`);
 
@@ -1662,7 +1682,13 @@ function renderPost(post: BskyFeedPost, hostKey: string, slot: Slot): HTMLElemen
   // a badge by the author's name.
   const context = el('div', `bsky-x-context bsky-x-source-${post.source}`);
   context.appendChild(sourceLogo(post.source, 'bsky-x-context-icon'));
-  context.appendChild(el('span', '', `From ${sourceName} · See more ${post.topic}`));
+  context.appendChild(el('span', 'bsky-x-context-text', `From ${sourceName} · See more ${post.topic}`));
+  // A click goes to where the topics are added and removed.
+  context.setAttribute('role', 'button');
+  context.setAttribute('aria-label', `See more ${post.topic}: edit your See more topics`);
+  context.addEventListener('click', (e) => {
+    if (editSeeMoreTopics()) e.stopPropagation();
+  });
   root.appendChild(context);
   if (post.parent) root.appendChild(renderParent(post.parent));
 
@@ -1742,15 +1768,17 @@ export const TOPIC_PLACEHOLDERS = ['optimism', 'cute animals', 'urban planning',
   'birdwatching', 'people being kind', 'indie games', 'gardening', 'science breakthroughs', 'cooking'];
 
 /** Topics to suggest: the backend's list (cached by the background), or
- *  TOPIC_PLACEHOLDERS without one. */
-export async function getTopicSuggestions(): Promise<string[]> {
+ *  TOPIC_PLACEHOLDERS without one; and `pickGroups`, the ones on it chosen
+ *  for this user from what they like, one group per interest (none until
+ *  there are some). */
+export async function getTopicSuggestions(): Promise<{ topics: string[]; pickGroups: string[][] }> {
   try {
-    const reply: { topics?: string[] } | undefined = await chrome.runtime.sendMessage({ type: 'getSeeMoreSuggestions' });
-    if (reply?.topics?.length) return reply.topics;
+    const reply: { topics?: string[]; pickGroups?: string[][] } | undefined = await chrome.runtime.sendMessage({ type: 'getSeeMoreSuggestions' });
+    if (reply?.topics?.length) return { topics: reply.topics, pickGroups: reply.pickGroups ?? [] };
   } catch (err) {
     console.warn('[Bouncer] See more suggestions failed:', err);
   }
-  return TOPIC_PLACEHOLDERS;
+  return { topics: TOPIC_PLACEHOLDERS, pickGroups: [] };
 }
 
 /** The cycling placeholder's items: the suggestions, topped up with the
@@ -1788,7 +1816,7 @@ export function mountSeeMoreRow(row: HTMLElement): void {
   const fillTrack = (topics: string[]) =>
     track.replaceChildren(...[...topics, topics[0]].map(t => el('span', '', t)));
   fillTrack(TOPIC_PLACEHOLDERS);
-  void getTopicSuggestions().then(s => fillTrack(placeholderTopics(s)));
+  void getTopicSuggestions().then(s => fillTrack(placeholderTopics([...roundRobin(s.pickGroups), ...s.topics])));
   cycle.appendChild(track);
   wrapper.append(input, cycle);
   andInput.appendChild(wrapper);

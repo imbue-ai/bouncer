@@ -17,10 +17,10 @@ export const SEE_MORE_TOPICS_KEY = 'seeMoreTopics_twitter';
 export const MAX_SEE_MORE_TOPICS = 10;
 export const MAX_SEE_MORE_TOPIC_LENGTH = 60;
 /** One Bluesky post per this many timeline tweets. Set from the desktop
- *  popup's slider, from 1 in 10 up to 1 in 2. */
+ *  popup's slider, from 1 in 10 up to 1 in 3. */
 export const SEE_MORE_EVERY_KEY = 'seeMoreEvery_twitter';
-export const DEFAULT_SEE_MORE_EVERY = 2;
-export const MIN_SEE_MORE_EVERY = 2;
+export const DEFAULT_SEE_MORE_EVERY = 3;
+export const MIN_SEE_MORE_EVERY = 3;
 export const MAX_SEE_MORE_EVERY = 10;
 
 /** Where "See more" draws posts from (the desktop popup's "Draw from"
@@ -65,6 +65,20 @@ export function mergeSeenUris(stored: string[], added: Iterable<string>, cap = M
   }
   const all = [...merged];
   return all.length > cap ? all.slice(all.length - cap) : all;
+}
+
+/** Posts the user liked on X, newest last ("author: text", trimmed), for
+ *  picking the "See more" topics they'd like (getSeeMorePicks in
+ *  background/index.ts). Stays on the device until a pick request. */
+export const SEE_MORE_LIKED_KEY = 'seeMoreLiked_twitter';
+export const MAX_SEE_MORE_LIKED = 20;
+export const MAX_SEE_MORE_LIKED_CHARS = 200;
+
+/** Groups' items interleaved: every group's first, then every second, …. */
+export function roundRobin<T>(groups: T[][]): T[] {
+  const out: T[] = [];
+  for (let i = 0; groups.some(g => i < g.length); i++) for (const g of groups) if (i < g.length) out.push(g[i]);
+  return out;
 }
 
 /** Whether "See more" may show adult or graphic posts (the desktop popup's

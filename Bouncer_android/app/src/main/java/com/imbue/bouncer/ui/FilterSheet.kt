@@ -85,6 +85,7 @@ fun FilterSheet(
     onAdd: (String) -> Unit,
     onRemove: (String) -> Unit,
     offersSeeMore: Boolean,
+    opensOnSeeMore: Boolean,
     seeMoreTopics: List<String>,
     onAddSeeMoreTopic: (String) -> Unit,
     onRemoveSeeMoreTopic: (String) -> Unit,
@@ -105,7 +106,10 @@ fun FilterSheet(
     var showSettings by remember { mutableStateOf(false) }
     // Which list the sheet edits: a page each, swiped between or picked by
     // tab. See more only exists on X.
-    val listPager = rememberPagerState(pageCount = { SheetList.entries.size })
+    val listPager = rememberPagerState(
+        initialPage = if (offersSeeMore && opensOnSeeMore) SheetList.SeeMore.ordinal else 0,
+        pageCount = { SheetList.entries.size },
+    )
     val scope = rememberCoroutineScope()
     val list = if (offersSeeMore) SheetList.entries[listPager.currentPage] else SheetList.FilterOut
     val isSeeMore = list == SheetList.SeeMore

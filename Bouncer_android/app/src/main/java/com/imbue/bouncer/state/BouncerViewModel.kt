@@ -157,8 +157,13 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
     // ----- JS → native (called on Main) -----
 
     fun onShowSheet(json: String) {
+        // A See more post's "From …" line opens the sheet on See more.
+        if (runCatching { JSONObject(json).optString("list") }.getOrNull() == "seeMore") {
+            setSheetPresented(true, onSeeMore = true)
+            return
+        }
         applyPhrasesJson(null, json)
-        _state.update { it.copy(isSheetPresented = !it.isSheetPresented) }
+        _state.update { it.copy(isSheetPresented = !it.isSheetPresented, sheetOpensOnSeeMore = false) }
         // Re-sync settings from storage whenever the sheet becomes visible —
         // the counterpart of the iOS sheet's .onAppear { loadFilterReplies() }.
         // Storage is the truth and JS can change it behind the native UI's
@@ -728,8 +733,8 @@ class BouncerViewModel(app: Application) : AndroidViewModel(app) {
 
     // ----- UI → JS -----
 
-    fun setSheetPresented(open: Boolean) {
-        _state.update { it.copy(isSheetPresented = open) }
+    fun setSheetPresented(open: Boolean, onSeeMore: Boolean = false) {
+        _state.update { it.copy(isSheetPresented = open, sheetOpensOnSeeMore = open && onSeeMore) }
         callJs("__ff_setSheetClass", open)
         // Same on-appear re-sync as onShowSheet: storage is the truth.
         if (open) {

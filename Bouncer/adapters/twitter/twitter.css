@@ -357,7 +357,15 @@ html.twitter-light .bsky-x-post {
   .filter-phrase-inline.bsky-see-more-loading { animation: none; opacity: 0.6; }
 }
 .bsky-x-post a { color: inherit; text-decoration: none; }
-.bsky-x-post a:hover { text-decoration: underline; }
+/* As on X, links (and the "From … · See more …" line) underline while
+   pressed, and under a mouse. Touch screens leave :hover stuck on after a
+   tap, so hover underlines only where there's a real hover. */
+.bsky-x-post a:active,
+.bsky-x-context:active .bsky-x-context-text { text-decoration: underline; }
+@media (hover: hover) {
+  .bsky-x-post a:hover,
+  .bsky-x-context:hover .bsky-x-context-text { text-decoration: underline; }
+}
 
 .bsky-x-context {
   display: flex;
@@ -368,6 +376,7 @@ html.twitter-light .bsky-x-post {
   font-size: 13px;
   font-weight: 700;
   line-height: 16px;
+  cursor: pointer;
 }
 .bsky-x-context-icon {
   width: 16px;
@@ -596,7 +605,8 @@ html.twitter-light .bsky-x-post {
   border-radius: 16px;
   overflow: hidden;
 }
-.bsky-x-post a.bsky-x-card:hover { text-decoration: none; }
+.bsky-x-post a.bsky-x-card:hover,
+.bsky-x-post a.bsky-x-card:active { text-decoration: none; }
 .bsky-x-card-thumb { width: 100%; max-height: 260px; object-fit: cover; display: block; }
 .bsky-x-card-meta { padding: 12px; }
 .bsky-x-card-domain { color: var(--bsky-x-secondary); font-size: 13px; }
@@ -662,6 +672,7 @@ html.twitter-light .bsky-x-post {
   font-size: 13px;
   line-height: 16px;
 }
+.bsky-x-post .bsky-x-action:active { text-decoration: none; }
 .bsky-x-post .bsky-x-action:hover { text-decoration: none; color: var(--bsky-x-blue); }
 .bsky-x-post .bsky-x-action-like:hover { color: rgb(249, 24, 128); }
 .bsky-x-post .bsky-x-action-repost:hover { color: rgb(0, 186, 124); }
@@ -925,3 +936,94 @@ html.twitter-light .bouncer-checkin-pill--loading { --checkin-shimmer: rgba(255,
   color: var(--checkin-secondary);
 }
 .bouncer-checkin-status:empty { display: none; }
+
+/* Filtered-posts gallery card (renderGalleryCard): a sideways-scrolling row
+   of blurred tiles, each labeled with the filter that caught it. */
+.bouncer-checkin-gallery {
+  display: flex;
+  gap: 8px;
+  margin: 0 -16px;
+  padding: 0 16px 2px;
+  overflow-x: auto;
+  scroll-snap-type: x proximity;
+  scroll-padding: 0 16px;
+  scrollbar-width: none;
+  overscroll-behavior-x: contain;
+}
+.bouncer-checkin-gallery::-webkit-scrollbar { display: none; }
+/* Centered when the tiles fit; auto margins (unlike justify-content: center)
+   still let an overflowing row scroll to its first tile. */
+.bouncer-checkin-tile:first-child { margin-left: auto; }
+.bouncer-checkin-tile:last-child { margin-right: auto; }
+.bouncer-checkin-tile {
+  position: relative;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 160px;
+  height: 188px;
+  padding: 10px;
+  overflow: hidden;
+  font: inherit;
+  text-align: left;
+  color: var(--checkin-text);
+  background: transparent;
+  border: 1px solid var(--checkin-border);
+  border-radius: 12px;
+  cursor: pointer;
+  scroll-snap-align: start;
+  transition: background-color 0.2s ease;
+}
+.bouncer-checkin-tile:active { background: rgba(139, 92, 246, 0.08); }
+.bouncer-checkin-tile-author {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 16px;
+}
+.bouncer-checkin-tile-author img { flex: none; width: 20px; height: 20px; border-radius: 50%; }
+.bouncer-checkin-tile-author span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The post itself stays blurred: the user filtered it for a reason. */
+.bouncer-checkin-tile-body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  color: var(--checkin-secondary);
+  font-size: 13px;
+  line-height: 17px;
+  filter: blur(5px);
+  transition: filter 0.25s ease;
+  pointer-events: none;
+}
+.bouncer-checkin-tile-body img {
+  display: block;
+  width: 100%;
+  height: 72px;
+  margin-bottom: 6px;
+  object-fit: cover;
+  border-radius: 8px;
+}
+.bouncer-checkin-tile-text { overflow-wrap: anywhere; }
+.bouncer-checkin-tile-reason {
+  align-self: flex-start;
+  max-width: 100%;
+  padding: 2px 8px;
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 16px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--checkin-accent);
+  background: rgba(139, 92, 246, 0.15);
+  border-radius: 9999px;
+}
+@media (hover: hover) {
+  .bouncer-checkin-tile:hover { background: rgba(139, 92, 246, 0.08); }
+  .bouncer-checkin-tile:hover .bouncer-checkin-tile-body { filter: blur(2px); }
+}
+

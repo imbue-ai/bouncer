@@ -412,6 +412,7 @@ fun BouncerApp(viewModel: BouncerViewModel = viewModel()) {
                 onRemove = viewModel::removePhrase,
                 // See more mixes posts into the X timeline only.
                 offersSeeMore = state.activePlatformId == "twitter",
+                opensOnSeeMore = state.sheetOpensOnSeeMore,
                 seeMoreTopics = state.seeMoreTopics,
                 onAddSeeMoreTopic = viewModel::addSeeMoreTopic,
                 onRemoveSeeMoreTopic = viewModel::removeSeeMoreTopic,

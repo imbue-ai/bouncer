@@ -6,6 +6,10 @@
 // in ("See more" posts only show on Home), and one with no suggestions is
 // dropped.
 //
+// On Home a third kind joins the rotation once enough posts have been
+// filtered since the last one: a gallery of them (blurred, labeled with the
+// filter that caught them) that opens the "View filtered" panel.
+//
 // A filter card's buttons line up with the posts around it, top to bottom:
 // the post directly above, then posts two or more notches above (up to
 // MIDDLE_SOURCES of them), then the post directly below. One phrase per post.
@@ -18,7 +22,8 @@
 // the suggestions arrive (or turn it into a See-more card if there are
 // none) — but only while its spot is still below the screen, so nothing
 // pops in where the user is looking; a slot already on screen passes to the
-// next tweet. The card element itself is kept by the tweet it hangs off, so
+// next tweet. Cards also go in at most once per MIN_CARD_GAP_MS; a slot
+// that comes near sooner waits it out. The card element itself is kept by the tweet it hangs off, so
 // a remounted cell gets it back as the user left it.
 //
 // Hiding a tweet hides its whole cell, card included — and the tweet above
@@ -26,25 +31,30 @@
 // is hidden, the card moves to the top of the next visible tweet's cell
 // (keepCardVisible), which keeps it in the same spot on screen.
 
-import type { PlatformAdapter, PostContent } from '../types';
+import type { FilteredPost, PlatformAdapter, PostContent } from '../types';
 import { getDescriptions, getStorage } from '../shared/storage';
-import { SEE_MORE_TOPICS_KEY } from '../shared/bluesky';
-import { formatPostForEvaluation } from '../shared/utils';
+import { SEE_MORE_TOPICS_KEY, roundRobin } from '../shared/bluesky';
+import { formatPostForEvaluation, isEmbeddedApp } from '../shared/utils';
 import {
   addTopic, removeTopic, isInjectedPost, isTopicLoading, onTopicLoadingChange, INJECTED_POST_SELECTOR, getTopicSuggestions,
   warmBackend,
 } from './bluesky-see-more';
 import { bouncePost } from './bounce-quote';
-import { addFilterPhrase, removeFilterPhrase } from './ui';
+import {
+  addFilterPhrase, removeFilterPhrase, getFilteredPosts, toggleFilteredTab, updateFilteredToggleButtons,
+} from './ui';
 
 // Posts between cards: FIRST_EVERY after the startup card, up to MAX_EVERY.
-const FIRST_EVERY = 5;
-// const STEP_EVERY = 5;           // backoff, off for now: 5, 10, 15, 20, 25, 25…
+const FIRST_EVERY = 10;
+// const STEP_EVERY = 5;           // backoff, off for now: 10, 15, 20, 25, 25…
 const MAX_EVERY = 25;
 const MIDDLE_SOURCES = 2;          // posts two or more notches above
 const MIN_SOURCE_TEXT = 20;        // shorter text-only posts get poor suggestions
 const MAX_CELLS_WALKED = 12;
 const PLACE_AHEAD_MARGIN = '0px 0px 200% 0px';
+// Cards go in at most this often, however fast the user scrolls: a due slot
+// waits out the rest of it (and passes down if it reaches the screen first).
+const MIN_CARD_GAP_MS = 10000;
 // The startup card: placed this long after the first Home post is seen
 // (once the timeline has laid out a screenful), retried while there isn't
 // a screenful yet.
@@ -52,14 +62,19 @@ const STARTUP_DELAY_MS = 1000;
 const STARTUP_TRIES = 5;
 const HEADER_PX = 120;             // X's sticky header (and then some)
 const SEE_MORE_CHOICES = 4;        // preselected topics on a See-more card
+const SEE_MORE_PICKED_CHOICES = 3; // of them from the user's picks; one left to explore
 const CARD_CLASS = 'bouncer-checkin';
+const GALLERY_MIN_NEW = 2;         // filtered posts since the last gallery for another one
+const GALLERY_MAX = 10;            // tiles on a gallery card
 
 /** A post a suggestion is about: its key, content, and cellInnerDiv (the
  *  post's own root for a "See more" post). */
 interface SourcePost { key: string; content: PostContent; cell: HTMLElement }
 /** A phrase and the post it was suggested for (and validated against). */
 interface Suggestion { phrase: string; source: SourcePost }
-type CardKind = 'filter' | 'seeMore';
+type CardKind = 'filter' | 'seeMore' | 'filtered';
+// Home's rotation; among replies every card is a filter card.
+const NEXT_KIND: Record<CardKind, CardKind> = { filter: 'seeMore', seeMore: 'filtered', filtered: 'filter' };
 
 let adapter: PlatformAdapter | null = null;
 const countedKeys = new Set<string>();
@@ -67,6 +82,8 @@ let tweetsSince = 0;
 // eslint-disable-next-line @typescript-eslint/no-unused-vars -- read by the backoff (STEP_EVERY), off for now
 let cardsPlaced = 0;              // since the startup card
 let startupScheduled = false;
+let lastCardAt = 0;
+let cooldownTimer: ReturnType<typeof setTimeout> | null = null;
 const checkinEvery = () => Math.min(MAX_EVERY, FIRST_EVERY /* + STEP_EVERY * cardsPlaced */);
 let slot: { key: string; cell: HTMLElement } | null = null;
 // Placed cards by the tweet they hang off (below it, or above it once
@@ -77,11 +94,14 @@ let hideObserver: MutationObserver | null = null;
 let observer: IntersectionObserver | null = null;
 let slotNear = false;
 let nextKind: CardKind = 'filter';
+// When the newest post on the last gallery card was filtered.
+let galleryShownUpTo = 0;
 
 export function initFeedCheckin(platformAdapter: PlatformAdapter): void {
   if (platformAdapter.siteId !== 'twitter') return;
   adapter = platformAdapter;
   onTopicLoadingChange(syncTopicChipsLoading);
+  document.addEventListener('bouncer:filtered-count-changed', syncGalleries);
   console.log('[Checkin] enabled');
 }
 
@@ -303,6 +323,11 @@ function tryPlace(): void {
     passSlotDown();
     return;
   }
+  const wait = lastCardAt + MIN_CARD_GAP_MS - Date.now();
+  if (wait > 0) {
+    cooldownTimer ??= setTimeout(() => { cooldownTimer = null; tryPlace(); }, wait);
+    return;
+  }
   placeCard(key, cell);
   cardsPlaced++;
   console.log(`[Checkin] next card in ${checkinEvery()} posts`);
@@ -341,9 +366,13 @@ function placeStartupCard(triesLeft: number): void {
 }
 
 function placeCard(key: string, cell: HTMLElement): void {
-  const kind: CardKind = onHomeTimeline() ? nextKind : 'filter';
+  let kind: CardKind = onHomeTimeline() ? nextKind : 'filter';
+  // Not enough newly filtered posts for a gallery: a filter card instead.
+  if (kind === 'filtered' && unseenFiltered().length < GALLERY_MIN_NEW) kind = 'filter';
   let card: HTMLElement;
-  if (kind === 'filter') {
+  if (kind === 'filtered') {
+    card = renderGalleryCard(key);
+  } else if (kind === 'filter') {
     const filterCard = renderFilterCard(key, !onHomeTimeline());
     card = filterCard;
     void fetchSuggestions(cell)
@@ -354,8 +383,9 @@ function placeCard(key: string, cell: HTMLElement): void {
   }
   cards.set(key, card);
   attachCard(card, cell);
+  lastCardAt = Date.now();
   console.log(`[Checkin] ${kind} card placed under ${key}`);
-  if (onHomeTimeline()) nextKind = nextKind === 'filter' ? 'seeMore' : 'filter';
+  if (onHomeTimeline()) nextKind = NEXT_KIND[kind];
 }
 
 // ==================== Keeping cards visible ====================
@@ -480,7 +510,7 @@ function fillFilterCard(card: HTMLElement, suggestions: Suggestion[]): void {
     const form = seeMoreForm();
     form.classList.add('bouncer-checkin-body');
     body.replaceWith(form);
-    nextKind = 'filter';
+    nextKind = NEXT_KIND.seeMore;
     return;
   }
   body.removeAttribute('aria-busy');
@@ -490,6 +520,132 @@ function fillFilterCard(card: HTMLElement, suggestions: Suggestion[]): void {
 
 function renderSeeMoreCard(hostKey: string): HTMLElement {
   return renderCard(hostKey, 'Want more posts about…?', seeMoreForm());
+}
+
+// ==================== Filtered-posts gallery ====================
+
+const filteredKey = (fp: FilteredPost) => fp.post.postUrl || fp.evaluationText.substring(0, 200);
+const unseenFiltered = () => getFilteredPosts().filter(fp => fp.timestamp > galleryShownUpTo);
+
+const PANEL_CONTENT = '.filtered-modal-content, .ff-ios-filtered-modal-content';
+
+/** Opens the "View filtered" panel (the apps' in-page sheet, else the
+ *  desktop modal) scrolled to the post with `key`. */
+function openFilteredPanel(key: string): void {
+  const showAppModal = (window as Window & { __ff_showFilteredModal?: () => void }).__ff_showFilteredModal;
+  if (isEmbeddedApp() && showAppModal) {
+    showAppModal();
+  } else {
+    toggleFilteredTab(true);
+    updateFilteredToggleButtons();
+  }
+  scrollPanelTo(key);
+}
+
+const PANEL_POST_GAP_PX = 12;      // between the panel's top edge and the post
+const PANEL_PIN_MS = 3000;         // longest the post is held in place while the panel settles
+
+/** Layout position (offsetTop chain): unlike getBoundingClientRect it
+ *  ignores the desktop panel's scale-in transform. */
+const layoutTop = (node: HTMLElement): number => {
+  let y = 0;
+  for (let n: HTMLElement | null = node; n; n = n.offsetParent as HTMLElement | null) y += n.offsetTop;
+  return y;
+};
+
+/** Scrolls the open panel so the post with `key` sits just below its top,
+ *  and flashes it so it's easy to spot. Both panels render synchronously,
+ *  but the images above the post load afterwards and push it down, so it's
+ *  pinned there as the panel resizes, until the user scrolls or touches it
+ *  (or PANEL_PIN_MS passes). */
+function scrollPanelTo(key: string): void {
+  const selector = `[data-filtered-key="${CSS.escape(key)}"]`;
+  const content = [...document.querySelectorAll<HTMLElement>(PANEL_CONTENT)].find(c => c.querySelector(selector));
+  const post = content?.querySelector<HTMLElement>(selector);
+  if (!content || !post) return;
+  const pin = () => {
+    // Looked up again: the panel re-renders its posts when the count changes.
+    const target = content.querySelector<HTMLElement>(selector);
+    if (!target) return;
+    content.scrollTop = layoutTop(target) - layoutTop(content) - content.clientTop - PANEL_POST_GAP_PX;
+  };
+  pin();
+  const resizes = new ResizeObserver(pin);
+  resizes.observe(content);
+  const list = content.firstElementChild;
+  if (list) resizes.observe(list);
+  const userEvents = ['wheel', 'touchstart', 'pointerdown', 'keydown'] as const;
+  const release = () => {
+    resizes.disconnect();
+    clearTimeout(timer);
+    userEvents.forEach(type => content.removeEventListener(type, release));
+  };
+  const timer = setTimeout(release, PANEL_PIN_MS);
+  userEvents.forEach(type => content.addEventListener(type, release, { passive: true }));
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  post.animate([
+    { backgroundColor: 'rgba(139, 92, 246, 0.22)' },
+    { backgroundColor: 'rgba(139, 92, 246, 0)' },
+  ], { duration: 1600, delay: 250, easing: 'ease-out', fill: 'backwards' });
+}
+
+/** A row of the most recently filtered posts, newest first. Each tile shows
+ *  who posted it and the filter that caught it; the post itself stays
+ *  blurred (the user asked not to see it), and a tap opens the panel. */
+function renderGalleryCard(hostKey: string): HTMLElement {
+  const unseen = unseenFiltered().length;
+  const all = getFilteredPosts();
+  const shown = all.slice(-GALLERY_MAX).reverse();
+  const title = `Bouncer hid ${unseen}${galleryShownUpTo ? ' more' : ''} post${unseen === 1 ? '' : 's'}`;
+  galleryShownUpTo = all[all.length - 1]?.timestamp ?? galleryShownUpTo;
+
+  const row = el('div', 'bouncer-checkin-gallery');
+  row.append(...shown.map(galleryTile));
+  return renderCard(hostKey, title, row);
+}
+
+function galleryTile(fp: FilteredPost): HTMLButtonElement {
+  const { post } = fp;
+  const tile = el('button', 'bouncer-checkin-tile');
+  tile.type = 'button';
+  tile.dataset.filteredKey = filteredKey(fp);
+  tile.setAttribute('aria-label', `Post by ${post.author || post.handle} hidden${fp.category ? ` for ${fp.category}` : ''}`);
+  tile.addEventListener('click', () => openFilteredPanel(filteredKey(fp)));
+
+  const author = el('div', 'bouncer-checkin-tile-author');
+  if (post.avatarUrl) {
+    const avatar = el('img', '');
+    avatar.src = post.avatarUrl;
+    avatar.alt = '';
+    author.appendChild(avatar);
+  }
+  author.appendChild(el('span', '', post.author || post.handle || 'Post'));
+
+  const content = el('div', 'bouncer-checkin-tile-body');
+  content.setAttribute('aria-hidden', 'true');
+  const image = (post.displayImageUrls ?? post.imageUrls)?.[0];
+  if (image) {
+    const img = el('img', '');
+    img.src = image;
+    img.alt = '';
+    img.loading = 'lazy';
+    content.appendChild(img);
+  }
+  if (post.text) content.appendChild(el('div', 'bouncer-checkin-tile-text', post.text));
+
+  tile.append(author, content);
+  const reason = fp.category?.split(',')[0]?.trim();
+  if (reason) tile.appendChild(el('span', 'bouncer-checkin-tile-reason', reason));
+  return tile;
+}
+
+/** Keeps placed galleries current: drops tiles of posts restored (or
+ *  evicted) since. */
+function syncGalleries(): void {
+  const tiles = document.querySelectorAll<HTMLElement>('.bouncer-checkin-tile');
+  if (!tiles.length) return;
+  const keys = new Set(getFilteredPosts().map(filteredKey));
+  tiles.forEach(tile => { if (!keys.has(tile.dataset.filteredKey ?? '')) tile.remove(); });
 }
 
 /** The source post's element if it's still mounted, else null. */
@@ -715,13 +871,20 @@ function seeMoreForm(): HTMLElement {
   wrapper.addEventListener('pointerdown', warmBackend);
   const status = el('div', 'bouncer-checkin-status');
 
-  // A few topics to tap, picked at random from the suggestions (the
-  // backend's, else the field's examples), leaving out ones already followed.
+  // A few topics to tap, leaving out ones already followed: most from the
+  // picks for this user, one from each of a few of their interests (chosen at
+  // random, so cards vary and no one interest takes over), the rest at random
+  // from the suggestions (the backend's, else the field's examples), which
+  // also fill in while there are no picks yet.
   const chips = el('div', 'bouncer-checkin-chips');
-  void Promise.all([getStorage([SEE_MORE_TOPICS_KEY]), getTopicSuggestions()]).then(([d, suggestions]) => {
+  void Promise.all([getStorage([SEE_MORE_TOPICS_KEY]), getTopicSuggestions()]).then(([d, { topics, pickGroups }]) => {
     const current = new Set((d[SEE_MORE_TOPICS_KEY] ?? []).map(t => t.toLowerCase()));
-    const choices = suggestions.filter(t => !current.has(t.toLowerCase()))
-      .map(t => ({ t, r: Math.random() })).sort((a, b) => a.r - b.r).slice(0, SEE_MORE_CHOICES).map(x => x.t);
+    const shuffle = <T,>(list: T[]) => list.map(t => ({ t, r: Math.random() })).sort((a, b) => a.r - b.r).map(x => x.t);
+    const unfollowed = (list: string[]) => list.filter(t => !current.has(t.toLowerCase()));
+    const personal = roundRobin(shuffle(pickGroups.map(g => shuffle(unfollowed(g))).filter(g => g.length)))
+      .slice(0, SEE_MORE_PICKED_CHOICES);
+    const taken = new Set(personal.map(t => t.toLowerCase()));
+    const choices = [...personal, ...shuffle(unfollowed(topics)).filter(t => !taken.has(t.toLowerCase()))].slice(0, SEE_MORE_CHOICES);
     chips.prepend(...choices.map(t => topicChip(t, false, status)));
     packChips(chips);
   });

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  roundRobin,
   bskyPostUrl,
   buildSeenFilter,
   seenFilterHas,
@@ -255,3 +256,9 @@ describe('buildSeenFilter', () => {
   });
 });
 
+
+describe('roundRobin', () => {
+  it('interleaves groups', () => {
+    expect(roundRobin([['a1', 'a2'], ['b1'], ['c1', 'c2', 'c3']])).toEqual(['a1', 'b1', 'c1', 'a2', 'c2', 'c3']);
+  });
+});

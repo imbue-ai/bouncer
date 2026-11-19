@@ -295,6 +295,26 @@ export async function callImbueSeeMoreSuggestions(): Promise<string[]> {
   return topics;
 }
 
+// The "See more" card's personal picks (seeMorePicks route): the search
+// worker has the filter model write candidate topics from the taste digest
+// and keeps those whose first search fills from `sources`, each with the
+// interest it serves. Takes a few seconds (every candidate's supply is
+// checked).
+export async function callImbueSeeMorePicks(
+  digest: string,
+  sources: Array<'bluesky' | 'x'>,
+): Promise<Array<{ interest: string; topic: string }>> {
+  const response = await imbueWebSocket.send({
+    action: 'seeMorePicks',
+    digest,
+    sources,
+    version: chrome.runtime.getManifest().version,
+  }, { timeout: 60000 }) as unknown as { picks?: unknown };
+  if (!Array.isArray(response?.picks)) throw new Error('seeMorePicks returned no picks');
+  return response.picks.filter((p): p is { interest: string; topic: string } =>
+    typeof p?.interest === 'string' && typeof p?.topic === 'string');
+}
+
 export async function callImbueBlueskySearch(
   topic: string,
   sources: Array<'bluesky' | 'x'>,

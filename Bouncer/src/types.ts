@@ -605,6 +605,10 @@ export type StorageSchema = SettingsBase & {
   /** The backend's "See more" topic suggestions, cached (see
    *  getSeeMoreSuggestions in background/index.ts). */
   seeMoreSuggestions: { topics: string[]; fetchedAt: number };
+  /** The topics picked from those for this user, grouped by the interest
+   *  each serves (best first within a group), and the taste digest they were
+   *  picked for (see getSeeMorePicks in background/index.ts). */
+  seeMorePicks: { groups: string[][]; basis: string; fetchedAt: number };
   // Durable once-per-install latch for the install-conversion landing page:
   // set the first time onInstalled 'install' opens it and never cleared, so
   // repeat 'install' events that keep storage (Chrome Repair, synthetic
@@ -654,6 +658,8 @@ export type StorageSchema = SettingsBase & {
   seeMoreEvery_twitter: number;
   // Bluesky posts already seen on screen, oldest first (mergeSeenUris).
   seeMoreSeen_twitter: string[];
+  // Posts liked on X, newest last (SEE_MORE_LIKED_KEY).
+  seeMoreLiked_twitter: string[];
   // Where "See more" posts come from: Bluesky, X, or both (clampSeeMoreSource).
   seeMoreSource_twitter: 'bluesky' | 'x' | 'both';
   // Show adult/graphic "See more" posts (absent = off).

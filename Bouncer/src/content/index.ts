@@ -47,6 +47,7 @@ import {
 import { formatPostForEvaluation, phraseAddNeedsReEvaluation } from '../shared/utils';
 import { initBlueskySeeMore, noteTimelinePost, INJECTED_POST_SELECTOR } from './bluesky-see-more';
 import { initFeedCheckin, noteCheckinPost } from './feed-checkin';
+import { initLikedPosts } from './liked-posts';
 import {
   findStructuralMatch,
   structuralFilterKind,
@@ -198,6 +199,7 @@ import {
 
   initBlueskySeeMore(adapter, { processPost: article => processPost(article) });
   initFeedCheckin(adapter);
+  initLikedPosts(adapter);
 
   initIOS({
     adapter,
@@ -656,6 +658,60 @@ import {
     posts.forEach(article => processPost(article, forceForYou));
   }
 
+  // A phrase add wipes the verdict cache, and X can hold 150+ posts in the
+  // DOM (plus injected See-more posts) — re-sending all of them at once blew
+  // through the backend's per-user tweetFilter rate limit (200/min). Only
+  // posts within a couple of screens are re-evaluated immediately; the rest
+  // keep their old verdict until they scroll near (flushDeferredReEvaluations).
+  const REEVAL_NEAR_SCREENS = 2;
+  const deferredReEvaluations = new Set<HTMLElement>();
+
+  function isNearViewport(article: HTMLElement): boolean {
+    const rect = article.getBoundingClientRect();
+    if (rect.height === 0) return false; // detached or display:none
+    const vh = window.innerHeight;
+    return rect.bottom > -vh * REEVAL_NEAR_SCREENS && rect.top < vh * (REEVAL_NEAR_SCREENS + 1);
+  }
+
+  function reEvaluatePost(article: HTMLElement) {
+    processedPosts.delete(article);
+
+    // Defer the pending indicator — cache hits resolve quickly and we don't
+    // want posts to flash the dim/bar state when the evaluation comes back
+    // before the timer fires. If the evaluation resolves before the timer
+    // fires, the post never goes through the pending UI; true cache misses
+    // still show pending after the short delay.
+    const pendingTimer = setTimeout(() => markPostPending(article), 120);
+    evaluatePost(article)
+      .catch(err => console.error('[Bouncer] evaluatePost failed:', err))
+      .finally(() => clearTimeout(pendingTimer));
+  }
+
+  function flushDeferredReEvaluations() {
+    for (const article of deferredReEvaluations) {
+      if (!article.isConnected) {
+        deferredReEvaluations.delete(article);
+        continue;
+      }
+      if (adapter.getPostContainer(article).dataset.filteredByExtension) {
+        deferredReEvaluations.delete(article);
+        continue;
+      }
+      if (!isNearViewport(article)) continue;
+      deferredReEvaluations.delete(article);
+      reEvaluatePost(article);
+    }
+  }
+
+  let deferredFlushTimer: ReturnType<typeof setTimeout> | null = null;
+  window.addEventListener('scroll', () => {
+    if (deferredReEvaluations.size === 0 || deferredFlushTimer) return;
+    deferredFlushTimer = setTimeout(() => {
+      deferredFlushTimer = null;
+      flushDeferredReEvaluations();
+    }, 250);
+  }, { passive: true });
+
   function reEvaluateAllPosts() {
     const posts = findPosts();
     const skipReplies = !filterReplies && adapter.isPermalinkView();
@@ -666,17 +722,12 @@ import {
       if (adapter.isMainPost(article)) return;
       if (skipReplies) return;
 
-      processedPosts.delete(article);
-
-      // Defer the pending indicator — cache hits resolve quickly and we don't
-      // want posts to flash the dim/bar state when the evaluation comes back
-      // before the timer fires. If the evaluation resolves before the timer
-      // fires, the post never goes through the pending UI; true cache misses
-      // still show pending after the short delay.
-      const pendingTimer = setTimeout(() => markPostPending(article), 120);
-      evaluatePost(article)
-        .catch(err => console.error('[Bouncer] evaluatePost failed:', err))
-        .finally(() => clearTimeout(pendingTimer));
+      if (!isNearViewport(article)) {
+        deferredReEvaluations.add(article);
+        return;
+      }
+      deferredReEvaluations.delete(article);
+      reEvaluatePost(article);
     });
   }
 

@@ -595,7 +595,14 @@ struct FilteredWebView: UIViewRepresentable {
                     }
 
                     if message.name == "feedfilterShowSheet" {
-                        vm.isPresented.toggle()
+                        // A See more post's "From …" line opens the sheet
+                        // on the See more list.
+                        if json["list"] as? String == "seeMore" {
+                            vm.sheetList = .seeMore
+                            vm.isPresented = true
+                        } else {
+                            vm.isPresented.toggle()
+                        }
                     }
                 }
                 return
