@@ -29,6 +29,10 @@ import {
   SEE_MORE_SOURCE_KEY, SEE_MORE_SHOW_NSFW_KEY, buildSeenFilter, clampSeeMoreSource, seeMoreSources, roundRobin,
   type BskyFeedPost, type BskyQuotedPost, type BskySearchResult, type SeeMoreSource,
 } from '../shared/bluesky';
+import {
+  SEE_MORE_PACING_KEY, decayBoost, dwellRate, emptyPacing, engagementFromDwell, meanOf, median, nextGap, parsePacing,
+  rankTopics, recordOutcome, targetShare, type PacingState,
+} from '../shared/see-more-pacing';
 import { currentPauseScope } from './ui';
 import { hostsCheckin } from './feed-checkin';
 
@@ -108,8 +112,8 @@ const CARD_POST_ATTR = 'cardPost';
 let taps = 0;
 type Slot = 'above' | 'below';
 const slotKey = (hostKey: string, slot: Slot) => `${slot}:${hostKey}`;
-// "1 in N posts" (the popup's frequency slider): after N - 1 tweets, the
-// next post shown is a Bluesky one.
+// "Up to 1 in N posts" (the popup's frequency slider): the most the timeline
+// gets. How much of that it actually gets is learned (see-more-pacing.ts).
 let injectEvery = clampSeeMoreEvery(undefined);
 // The popup's "Draw from" setting: Bluesky, X, or both.
 let sourceSetting = clampSeeMoreSource(undefined);
@@ -121,10 +125,11 @@ const allowed = (post: BskyFeedPost) => showNsfw || !post.nsfw;
 const shownUris = (post: BskyFeedPost) => (post.parent ? [post.uri, post.parent.uri] : [post.uri]);
 const alreadyShown = (post: BskyFeedPost) => shownUris(post).some(u => seenUris.has(u) || impressedUris.has(u));
 const SOURCE_NAME: Record<SeeMoreSource, string> = { bluesky: 'Bluesky', x: 'X' };
-// Tweets already counted toward injectEvery, so remounts and re-scrolls
+// Tweets already counted toward the gap, so remounts and re-scrolls
 // don't raise the injection rate.
 const countedHostKeys = new Set<string>();
-let tweetsSinceInject = 0;
+// Tweets still to count before the next one becomes due (nextSlotGap).
+let gapRemaining = 0;
 // Where posts go is decided as tweets render (every Nth one becomes due);
 // which post goes there is decided late, once the tweet comes within
 // FILL_AHEAD_MARGIN of the viewport. X renders well ahead of the screen, so
@@ -137,7 +142,37 @@ let fillObserver: IntersectionObserver | null = null;
 // Cells of due hosts being watched, and those currently within the margin.
 const watchedCells = new Set<HTMLElement>();
 const nearCells = new Set<HTMLElement>();
-let nextTopic = 0;
+
+// ==================== Pacing (see-more-pacing.ts) ====================
+//
+// Engagement and topic scores, saved across page loads.
+let pacing: PacingState = emptyPacing();
+// A just-added topic lifts the rate toward the ceiling; fades per tweet.
+let boost = 0;
+// Tweets Bouncer hid since the last slot: each makes a later gap the
+// ceiling's, so the posts fill in for what was filtered out first.
+let hiddenCredits = 0;
+const MAX_HIDDEN_CREDITS = 3;
+const creditedHosts = new Set<string>();
+// Recent tweets' dwellRate, the yardstick an injected post is judged by.
+const tweetRates: number[] = [];
+const MAX_TWEET_SAMPLES = 60;
+const MIN_TWEET_SAMPLES = 5;
+// Longer than this on screen: the user wasn't scrolling (stepped away, or
+// opened something on top); says nothing about the post.
+const MAX_DWELL_MS = 20000;
+// Posts judged by dwell / by a click in this page load.
+const dwellJudged = new Set<string>();
+const clickJudged = new Set<string>();
+// Two injected posts' edges no closer than this many viewports.
+const MIN_POST_SPACING = 0.75;
+const PACING_SAVE_MS = 5000;
+let pacingSaveTimer: ReturnType<typeof setTimeout> | null = null;
+let pacingObserver: IntersectionObserver | null = null;
+const pacedEls = new Set<HTMLElement>();
+const visibleSince = new WeakMap<Element, { at: number; height: number }>();
+// Topics already known, so only ones added since count as new (boost).
+let knownTopics: Set<string> | null = null;
 // Topics just added in this tab: their chip pulses until the first post is
 // ready, and that post is then slid into view (introducePost) instead of
 // waiting for the user to scroll to the next slot.
@@ -220,7 +255,7 @@ function teachAdapter(a: PlatformAdapter): void {
   // it's on or below the screen; above it, marked for the scroll handler).
   // Never the threaded-reply walk: the post's siblings are its host tweet.
   a.hidePost = el => {
-    if (!post(el)) { orig.hidePost(el); return; }
+    if (!post(el)) { noteTweetHidden(orig.getPostContentKey(el)); orig.hidePost(el); return; }
     el.dataset.filteredByExtension = 'true';
     if (el.getBoundingClientRect().bottom > 0) el.style.display = 'none';
   };
@@ -231,8 +266,11 @@ export function initBlueskySeeMore(platformAdapter: PlatformAdapter, hooks: { pr
   adapter = platformAdapter;
   processPost = hooks.processPost;
   teachAdapter(adapter);
-  void getStorage([SEE_MORE_TOPICS_KEY, SEE_MORE_EVERY_KEY, SEE_MORE_SEEN_KEY, SEE_MORE_SOURCE_KEY, SEE_MORE_SHOW_NSFW_KEY]).then(d => {
+  gapRemaining = nextSlotGap();
+  void getStorage([SEE_MORE_TOPICS_KEY, SEE_MORE_EVERY_KEY, SEE_MORE_SEEN_KEY, SEE_MORE_SOURCE_KEY, SEE_MORE_SHOW_NSFW_KEY, SEE_MORE_PACING_KEY]).then(d => {
     injectEvery = clampSeeMoreEvery(d[SEE_MORE_EVERY_KEY]);
+    pacing = parsePacing(d[SEE_MORE_PACING_KEY]);
+    gapRemaining = Math.min(gapRemaining, nextSlotGap());
     sourceSetting = clampSeeMoreSource(d[SEE_MORE_SOURCE_KEY]);
     showNsfw = d[SEE_MORE_SHOW_NSFW_KEY] === true;
     for (const uri of d[SEE_MORE_SEEN_KEY] ?? []) impressedUris.add(uri);
@@ -241,8 +279,13 @@ export function initBlueskySeeMore(platformAdapter: PlatformAdapter, hooks: { pr
   // Save pending impressions when the tab is hidden or closed, rather than
   // losing up to IMPRESSION_FLUSH_MS of them.
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'hidden') void flushImpressions();
-    else for (const t of topics) void refill(t); // searches skipped while hidden
+    if (document.visibilityState === 'hidden') {
+      void flushImpressions();
+      flushPacing();
+    } else {
+      for (const t of topics) void refill(t); // searches skipped while hidden
+    }
+    restartDwellTiming();
   });
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local') return;
@@ -278,6 +321,11 @@ export function initBlueskySeeMore(platformAdapter: PlatformAdapter, hooks: { pr
 
 function setTopics(next: string[]): void {
   topics = next.slice(0, MAX_SEE_MORE_TOPICS);
+  // Added since the page loaded (here or in another tab): the user just
+  // asked for more.
+  if (knownTopics && topics.some(t => !knownTopics!.has(t))) boost = 1;
+  knownTopics = new Set(topics);
+  for (const t of Object.keys(pacing.topics)) if (!topics.includes(t)) delete pacing.topics[t];
   for (const t of [...pools.keys()]) if (!topics.includes(t)) pools.delete(t);
   for (const t of [...introTopics]) if (!topics.includes(t)) introTopics.delete(t);
   for (const t of [...introAnchors.keys()]) if (!topics.includes(t)) introAnchors.delete(t);
@@ -556,20 +604,122 @@ async function flushImpressions(): Promise<void> {
   }
 }
 
+/** The next post, from the topic that wins this round of Thompson sampling
+ *  (rankTopics) among those with one ready. */
 function takePost(): BskyFeedPost | null {
-  for (let i = 0; i < topics.length; i++) {
-    const topic = topics[(nextTopic + i) % topics.length];
+  for (const topic of rankTopics(topics, pacing)) {
     const pool = pools.get(topic);
     if (!pool) continue;
     let post = pool.ready.shift();
     while (post && (alreadyShown(post) || !allowed(post))) post = pool.ready.shift();
     void refill(topic);
     if (!post) continue;
-    nextTopic = (nextTopic + i + 1) % topics.length;
     for (const uri of shownUris(post)) seenUris.add(uri);
     return post;
   }
   return null;
+}
+
+// ==================== Pacing ====================
+
+/** Tweets to count before the next slot: at the ceiling while there are
+ *  hidden tweets to make up for, else at the learned rate. */
+function nextSlotGap(): number {
+  if (hiddenCredits > 0) {
+    hiddenCredits--;
+    return nextGap(1 / injectEvery, injectEvery);
+  }
+  return nextGap(targetShare(meanOf(pacing.global), injectEvery, boost), injectEvery);
+}
+
+function noteTweetHidden(hostKey: string | null): void {
+  if (!hostKey || !countedHostKeys.has(hostKey) || creditedHosts.has(hostKey)) return;
+  creditedHosts.add(hostKey);
+  hiddenCredits = Math.min(MAX_HIDDEN_CREDITS, hiddenCredits + 1);
+}
+
+/** Time `el` (a tweet, or an injected post) on screen, once: tweets set the
+ *  user's normal pace, injected posts are judged against it. */
+function observeDwell(el: HTMLElement): void {
+  if (typeof IntersectionObserver === 'undefined') return;
+  if (isInjectedPost(el) && (dwellJudged.has(el.dataset.uri ?? '') || clickJudged.has(el.dataset.uri ?? ''))) return;
+  pacingObserver ??= new IntersectionObserver(entries => {
+    const now = performance.now();
+    for (const entry of entries) {
+      const target = entry.target as HTMLElement;
+      if (entry.isIntersecting) {
+        if (!visibleSince.has(target)) visibleSince.set(target, { at: now, height: entry.boundingClientRect.height });
+        continue;
+      }
+      const since = visibleSince.get(target);
+      if (!since) continue;
+      stopDwell(target);
+      finishDwell(target, now - since.at, since.height);
+    }
+  });
+  pacingObserver.observe(el);
+  pacedEls.add(el);
+}
+
+function stopDwell(el: HTMLElement): void {
+  pacingObserver?.unobserve(el);
+  pacedEls.delete(el);
+  visibleSince.delete(el);
+}
+
+/** The tab was hidden or shown: time spent hidden isn't dwell. Re-observing
+ *  starts each element's timing over (the observer reports anything already
+ *  on screen right away). */
+function restartDwellTiming(): void {
+  for (const el of pacedEls) {
+    visibleSince.delete(el);
+    pacingObserver?.unobserve(el);
+    if (document.visibilityState === 'visible') pacingObserver?.observe(el);
+  }
+}
+
+function finishDwell(el: HTMLElement, ms: number, height: number): void {
+  if (ms > MAX_DWELL_MS || !height) return;
+  const rate = dwellRate(ms, height, window.innerHeight);
+  const post = placedPosts.get(el);
+  if (!post) {
+    tweetRates.push(rate);
+    if (tweetRates.length > MAX_TWEET_SAMPLES) tweetRates.shift();
+    return;
+  }
+  // Too few tweets yet to know the user's pace; it isn't judged.
+  if (tweetRates.length < MIN_TWEET_SAMPLES || dwellJudged.has(post.uri) || clickJudged.has(post.uri)) return;
+  dwellJudged.add(post.uri);
+  judge(post.topic, engagementFromDwell(rate, median(tweetRates)), `${Math.round(ms)} ms on screen`);
+}
+
+function judge(topic: string, engagement: number, why: string): void {
+  if (!topics.includes(topic)) return;
+  pacing = recordOutcome(pacing, topic, engagement);
+  const share = targetShare(meanOf(pacing.global), injectEvery, boost);
+  console.log(`[Bouncer] See more: "${topic}" post engagement ${engagement.toFixed(2)} (${why}); topic ${meanOf(pacing.topics[topic]).toFixed(2)}, timeline now ~1 in ${(1 / share).toFixed(1)}`);
+  pacingSaveTimer ??= setTimeout(flushPacing, PACING_SAVE_MS);
+}
+
+function flushPacing(): void {
+  if (pacingSaveTimer) clearTimeout(pacingSaveTimer);
+  pacingSaveTimer = null;
+  void setStorage({ [SEE_MORE_PACING_KEY]: pacing }).catch(err => console.warn('[Bouncer] See more: saving pacing failed:', err));
+}
+
+/** Whether a post below `cell` would share the screen with another
+ *  injected post (MIN_POST_SPACING). */
+function nearAnotherPost(cell: HTMLElement): boolean {
+  const top = cell.getBoundingClientRect().bottom;
+  const minGap = window.innerHeight * MIN_POST_SPACING;
+  for (const other of document.querySelectorAll<HTMLElement>(`.${INJECTED_CLASS}`)) {
+    if (other.parentElement === cell) continue;
+    const r = other.getBoundingClientRect();
+    if (!r.height) continue; // hidden
+    const gap = r.top >= top ? r.top - top : top - r.bottom;
+    if (gap < minGap) return true;
+  }
+  return false;
 }
 
 // ==================== Placement ====================
@@ -604,9 +754,11 @@ export function noteTimelinePost(article: HTMLElement): void {
 
   if (!countedHostKeys.has(hostKey)) {
     countedHostKeys.add(hostKey);
-    tweetsSinceInject++;
+    gapRemaining--;
+    boost = decayBoost(boost);
+    observeDwell(article);
   }
-  if (tweetsSinceInject < injectEvery - 1) return;
+  if (gapRemaining > 0) return;
   // Don't wedge a foreign post between the tweets of a self-thread.
   const next = cell.nextElementSibling;
   const threaded = (adapter as unknown as { _isReplyInThread?: (el: Element) => boolean })._isReplyInThread;
@@ -614,7 +766,7 @@ export function noteTimelinePost(article: HTMLElement): void {
   if (cell.dataset.filteredByExtension) return;
   if (hostsCheckin(cell)) return; // the apps' feed check-in card has it
 
-  tweetsSinceInject = 0;
+  gapRemaining = nextSlotGap();
   dueHosts.add(hostKey);
   watchDue(cell);
 }
@@ -656,10 +808,17 @@ function fillNear(): void {
       // Hidden by a filter: the next tweet takes the slot.
       dueHosts.delete(hostKey);
       unwatch(cell);
-      tweetsSinceInject = injectEvery;
+      gapRemaining = 0;
       continue;
     }
     if (cell.getBoundingClientRect().bottom <= window.innerHeight) continue;
+    if (nearAnotherPost(cell)) {
+      // Two on one screen reads as heavy: the next tweet takes the slot.
+      dueHosts.delete(hostKey);
+      unwatch(cell);
+      gapRemaining = 0;
+      continue;
+    }
     const post = takePost();
     if (!post) return;
     dueHosts.delete(hostKey);
@@ -859,6 +1018,7 @@ function slideIn(root: HTMLElement): void {
 // host no longer matches, and give a hidden host's post to a later tweet.
 function sweep(): void {
   for (const root of observedRoots) if (!root.isConnected) stopObserving(root);
+  for (const el of pacedEls) if (!el.isConnected) stopDwell(el);
   for (const cell of watchedCells) if (!cell.isConnected) unwatch(cell);
   for (const video of players.keys()) if (!video.isConnected) stopVideo(video);
   document.querySelectorAll<HTMLElement>(`.${INJECTED_CLASS}`).forEach(el => {
@@ -883,7 +1043,7 @@ function sweep(): void {
       if (post) {
         for (const uri of shownUris(post)) seenUris.delete(uri);
         pools.get(post.topic)?.ready.unshift(post);
-        tweetsSinceInject = injectEvery;
+        gapRemaining = 0;
       }
     }
   });
@@ -1671,6 +1831,14 @@ function renderPost(post: BskyFeedPost, hostKey: string, slot: Slot): HTMLElemen
   if (post.parent) root.dataset.parentUri = post.parent.uri;
   if (post.nsfw) root.dataset.nsfw = '';
   observeImpression(root, post.uri);
+  observeDwell(root);
+  // Any click on it (opening it, its media, a link, "Show more") but the
+  // "See more" line, which is for editing topics.
+  root.addEventListener('click', e => {
+    if ((e.target as Element).closest('.bsky-x-context') || clickJudged.has(post.uri)) return;
+    clickJudged.add(post.uri);
+    judge(post.topic, 1, 'opened');
+  }, true);
   root.setAttribute('role', 'article');
   // iOS WebKit only applies :active (the press underline) under a touchstart
   // listener.

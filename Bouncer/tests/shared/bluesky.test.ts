@@ -203,11 +203,11 @@ describe('formatting', () => {
     });
   });
 
-  it('clamps the see-more frequency to 1 in 2 .. 1 in 10, defaulting to 1 in 2', () => {
-    expect(clampSeeMoreEvery(undefined)).toBe(2);
-    expect(clampSeeMoreEvery('3')).toBe(2);
-    expect(clampSeeMoreEvery(1)).toBe(2);
-    expect(clampSeeMoreEvery(2)).toBe(2);
+  it('clamps the see-more ceiling to 1 in 3 .. 1 in 10, defaulting to 1 in 4', () => {
+    expect(clampSeeMoreEvery(undefined)).toBe(4);
+    expect(clampSeeMoreEvery('3')).toBe(4);
+    expect(clampSeeMoreEvery(1)).toBe(3);
+    expect(clampSeeMoreEvery(2)).toBe(3);
     expect(clampSeeMoreEvery(7.4)).toBe(7);
     expect(clampSeeMoreEvery(50)).toBe(10);
   });

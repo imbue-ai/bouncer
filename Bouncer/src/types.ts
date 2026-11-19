@@ -654,8 +654,11 @@ export type StorageSchema = SettingsBase & {
   // "See more …" topics on X: Bluesky search results for each are
   // injected into the home timeline (src/content/bluesky-see-more.ts).
   seeMoreTopics_twitter: string[];
-  // One Bluesky post per this many timeline tweets (clampSeeMoreEvery).
+  // At most one "See more" post per this many timeline tweets
+  // (clampSeeMoreEvery); the actual rate is learned (see-more-pacing.ts).
   seeMoreEvery_twitter: number;
+  // Learned "See more" engagement scores (parsePacing in see-more-pacing.ts).
+  seeMorePacing_twitter: { global: { a: number; b: number }; topics: Record<string, { a: number; b: number }> };
   // Bluesky posts already seen on screen, oldest first (mergeSeenUris).
   seeMoreSeen_twitter: string[];
   // Posts liked on X, newest last (SEE_MORE_LIKED_KEY).

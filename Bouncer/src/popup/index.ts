@@ -123,11 +123,11 @@ const isIOSDevice = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
 // In-app mode detection
 const isInAppMode = typeof chrome !== 'undefined' && chrome._polyfilled;
 
-/** Show a "See more" frequency (one Bluesky post per `every` tweets).
+/** Show a "See more" ceiling (up to one post per `every` tweets).
  *  With `label`, only the readout changes (mid-drag). */
 function renderSeeMoreEvery(every: number, { label = false } = {}): void {
   const valueEl = document.getElementById('seeMoreEveryValue');
-  if (valueEl) valueEl.textContent = `1 in ${every} posts`;
+  if (valueEl) valueEl.textContent = `Up to 1 in ${every} posts`;
   const input = document.getElementById('seeMoreEvery') as HTMLInputElement | null;
   if (input && !label) input.value = String(every);
 }

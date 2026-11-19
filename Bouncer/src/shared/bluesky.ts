@@ -16,10 +16,11 @@ export const BSKY_GET_POSTS_MAX = 25;
 export const SEE_MORE_TOPICS_KEY = 'seeMoreTopics_twitter';
 export const MAX_SEE_MORE_TOPICS = 10;
 export const MAX_SEE_MORE_TOPIC_LENGTH = 60;
-/** One Bluesky post per this many timeline tweets. Set from the desktop
+/** At most one "See more" post per this many timeline tweets: the ceiling
+ *  the learned rate (see-more-pacing.ts) works under. Set from the desktop
  *  popup's slider, from 1 in 10 up to 1 in 3. */
 export const SEE_MORE_EVERY_KEY = 'seeMoreEvery_twitter';
-export const DEFAULT_SEE_MORE_EVERY = 3;
+export const DEFAULT_SEE_MORE_EVERY = 4;
 export const MIN_SEE_MORE_EVERY = 3;
 export const MAX_SEE_MORE_EVERY = 10;
 

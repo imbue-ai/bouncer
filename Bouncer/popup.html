@@ -73,23 +73,24 @@
       <div id="platformsContainer"></div>
     </section>
 
-    <!-- "See more" on X: how often Bluesky posts are mixed into the
-         timeline, as one per N tweets (seeMoreEvery_twitter, read live by
-         src/content/bluesky-see-more.ts). Desktop only: hidden in the apps'
+    <!-- "See more" on X: the most often posts are mixed into the
+         timeline, as up to one per N tweets (seeMoreEvery_twitter, read live
+         by src/content/bluesky-see-more.ts, which learns the actual rate
+         under it from how the user reads them). Desktop only: hidden in the apps'
          in-page copy of this popup. The range is flipped (rtl) so dragging
          right means more often. -->
     <section class="see-more-frequency-section" id="seeMoreFrequencySection">
       <div class="ai-text-threshold-block">
         <div class="ai-text-threshold-header">
           <span>See More posts</span>
-          <span class="ai-text-threshold-value" id="seeMoreEveryValue">1 in 3 posts</span>
+          <span class="ai-text-threshold-value" id="seeMoreEveryValue">Up to 1 in 4 posts</span>
         </div>
-        <input type="range" id="seeMoreEvery" min="3" max="10" step="1" value="3" dir="rtl" aria-label="How often See More posts appear in your X timeline">
+        <input type="range" id="seeMoreEvery" min="3" max="10" step="1" value="4" dir="rtl" aria-label="How often See More posts appear in your X timeline">
         <div class="ai-text-threshold-scale">
           <span>Less often</span>
           <span>More often</span>
         </div>
-        <p class="hint ai-text-threshold-hint">How often posts from your &ldquo;See More&rdquo; topics appear in your X timeline.</p>
+        <p class="hint ai-text-threshold-hint">The most often posts from your &ldquo;See More&rdquo; topics appear in your X timeline. Bouncer shows more of them when you stop to read, and fewer when you scroll past.</p>
       </div>
       <!-- Where those posts come from (seeMoreSource_twitter: bluesky | x |
            both). X posts are ones other Bouncer users have seen on X. -->

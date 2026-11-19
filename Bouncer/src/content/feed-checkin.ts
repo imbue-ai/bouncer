@@ -1,7 +1,7 @@
 // Feed check-in card (X home timeline and tweet replies: browser extension
 // and apps): every so often a card slots into the timeline. Cards alternate
 // between two kinds: filters for the posts around it (suggested phrases for
-// them, about half topics and half tones; see fetchSuggestions), and a field
+// them, at least two of them tones; see fetchSuggestions), and a field
 // to add a "See more" topic. Among a tweet's replies only filter cards go
 // in ("See more" posts only show on Home), and one with no suggestions is
 // dropped.
@@ -49,6 +49,7 @@ const FIRST_EVERY = 10;
 // const STEP_EVERY = 5;           // backoff, off for now: 10, 15, 20, 25, 25…
 const MAX_EVERY = 25;
 const MIDDLE_SOURCES = 2;          // posts two or more notches above
+const MIN_TONES = 2;               // tone buttons a filter card fills first
 const MIN_SOURCE_TEXT = 20;        // shorter text-only posts get poor suggestions
 const MAX_CELLS_WALKED = 12;
 const PLACE_AHEAD_MARGIN = '0px 0px 200% 0px';
@@ -281,9 +282,10 @@ async function suggestFor(source: SourcePost): Promise<Choices> {
 
 /** One phrase per source post, in card order (above, middle, below). The
  *  direct neighbors pick first, so a phrase they share with a middle post
- *  stays on the neighbor's button. Each pick goes to whichever kind the card
- *  has fewer of so far (topics on a tie), falling back to the other kind, so
- *  a card comes out about half topics, half tones. */
+ *  stays on the neighbor's button. The first MIN_TONES picks are tones
+ *  (the sharp, negative phrases); after that each goes to whichever kind the
+ *  card has fewer of so far (topics on a tie). Either way a pick falls back
+ *  to the other kind when its own has nothing fresh. */
 async function fetchSuggestions(hostCell: HTMLElement): Promise<Suggestion[]> {
   const { above, middle, below } = sourcesAround(hostCell);
   const ordered = [above, ...middle, below];
@@ -297,7 +299,7 @@ async function fetchSuggestions(hostCell: HTMLElement): Promise<Suggestion[]> {
   const last = ordered.length - 1;
   for (const i of [0, last, ...middle.map((_, j) => j + 1)]) {
     const fresh = (list: string[]) => list.find(p => !existing.has(p) && !used.has(p));
-    const preferTopic = topics <= tones;
+    const preferTopic = tones >= MIN_TONES && topics <= tones;
     const { topics: t, tones: q } = replies[i];
     const phrase = preferTopic ? fresh(t) ?? fresh(q) : fresh(q) ?? fresh(t);
     if (!phrase) continue;

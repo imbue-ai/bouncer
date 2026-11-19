@@ -1512,7 +1512,7 @@ const CHECKIN_PER_KIND = 4;
 const CHECKIN_SUGGEST_PROMPT = (hasImages: boolean) =>
   `Given a social media post, suggest filter phrases (1-3 words each) that someone might add to hide posts like this one. Give exactly ${CHECKIN_PER_KIND} of each of two kinds:
 - topic: the subject the post is about, as a broad, familiar category people filter (for example dating, politics, crypto, sports betting, celebrity gossip). Name what it is about, not how it is written.
-- tone: what is grating about how it is written or the behavior it shows (for example outrage bait, humblebragging, doomposting).
+- tone: an inherently negative descriptor of how it is written or the behavior it shows: a word that is a put-down on its own, even out of context (for example profane, shrill, smug, preachy, whiny, outrage bait, humblebragging). Pick these as an extremely nitpicky, easily offended reader who finds something to object to in every post would: seize on any hint of something grating and name it bluntly. Never a neutral subject word (like construction or artificial intelligence); that is a topic.
 Only use an example if it genuinely fits the post. Each phrase must still work as a category: if another model were asked "does this post relate to [phrase]?", it would say yes. Within each kind, put the best fit first.${hasImages ? ' Consider BOTH the text and any attached images.' : ''} Output exactly ${2 * CHECKIN_PER_KIND} lines and nothing else: the ${CHECKIN_PER_KIND} topics first, each as "topic: <phrase>", then the ${CHECKIN_PER_KIND} tones, each as "tone: <phrase>".`;
 
 export interface CheckinSuggestions { topics: string[]; tones: string[] }
