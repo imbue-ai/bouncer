@@ -1175,7 +1175,10 @@ async function injectFilterPhrasesInputImpl() {
   // Preferred target: inside the sidebar wrapper so our z-index can sit between
   // the fixed search bar (z=2, Home only) and scrolling content (z=0). Falls
   // back to the top of sidebarContent if the wrapper can't be found.
-  const wrapper = findSidebarWrapper(sidebarContent);
+  // In-flow adapters: sidebarContent is already a sticky column of cards, so
+  // the box goes in as its first card — no fixed positioning or spacer.
+  const inFlow = !!_deps.adapter.sidebarInFlow;
+  const wrapper = inFlow ? null : findSidebarWrapper(sidebarContent);
   let insertParent: Element;
   let insertBeforeRef: Node | null;
   let usingWrapper = false;
@@ -1197,7 +1200,7 @@ async function injectFilterPhrasesInputImpl() {
   filterPhrasesContainer = document.createElement('div');
   filterPhrasesContainer.className = usingWrapper
     ? 'filter-phrases-sidebar filter-phrases-sidebar--in-wrapper'
-    : 'filter-phrases-sidebar';
+    : inFlow ? 'filter-phrases-sidebar filter-phrases-sidebar--in-flow' : 'filter-phrases-sidebar';
   // linkedin adaptation: raise z-index so LinkedIn promoted/ad cards in the
   // right rail don't overlap the filter box.
   if (_deps.adapter.siteId === 'linkedin') {
@@ -2123,7 +2126,11 @@ const processedImportElements = new WeakSet<HTMLElement>();
 // replace the link (and its leading sentence) with a compact "Import filter
 // pack" button. No-op if the tweet has no link or we've already handled it.
 export function processImportCodeInPost(article: HTMLElement): void {
-  const tweetTextEls = article.querySelectorAll<HTMLElement>('[data-testid="tweetText"]');
+  // The Twitter adapter's text selector covers both X web apps.
+  const textSelector = _deps.adapter.siteId === 'twitter'
+    ? _deps.adapter.selectors.textContent
+    : '[data-testid="tweetText"]';
+  const tweetTextEls = article.querySelectorAll<HTMLElement>(textSelector);
   for (const tweetText of tweetTextEls) {
     if (processedImportElements.has(tweetText)) continue;
     const found = findFirstImportLink(tweetText);
@@ -4263,13 +4270,18 @@ export function addContextMenuHandler(article: HTMLElement) {
     })().catch(err => console.error('[UI] getReasoning handler failed:', err));
   };
 
-  // Desktop: ctrl+right-click
-  article.addEventListener('contextmenu', (e) => {
+  // Desktop: ctrl+right-click. Adapters can widen the hit area to the
+  // post's padded wrapper (x-web insets the <article> inside it).
+  const menuTarget = _deps.adapter.getContextMenuTarget?.(article) ?? article;
+  menuTarget.addEventListener('contextmenu', (e) => {
     if (!e.ctrlKey) {
       return;
     }
 
     e.preventDefault();
+    // A widened target (x-web) also hosts X's own media context menu, which
+    // React opens from the root after us; don't let it stack on our popup.
+    if (menuTarget !== article) e.stopPropagation();
     openPopup(e.clientX, e.clientY);
   });
 

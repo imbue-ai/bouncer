@@ -44,6 +44,48 @@ const RESERVED_TOP_LEVEL_PATHS = new Set([
   'verified-choose', 'who_to_follow', 'connect_people', 'oauth', 'jf',
 ]);
 
+// X is rolling out a rewritten web app ("x-web": Relay, Tailwind, no
+// data-testid hooks, no Redux store). Signed-in users move over country by
+// country; logged-out pages already serve it. Only the new app stamps
+// data-app-version on <html>, and it's in the server-rendered markup, so it's
+// readable from document_start. Both apps are supported until the rollout ends.
+const isXWebApp = () => document.documentElement.hasAttribute('data-app-version');
+
+const LEGACY_SELECTORS: PlatformSelectors = {
+  post: 'article[data-testid="tweet"]',
+  sidebar: '[data-testid="sidebarColumn"]',
+  sidebarContent: 'div[data-testid="sidebarColumn"] > div > div > div > div',
+  primaryColumn: '[data-testid="primaryColumn"]',
+  nav: 'nav[role="navigation"]',
+  bottomBar: 'div[data-testid="BottomBar"]',
+  mutations: '[data-testid="tweetText"]',
+  textContent: '[data-testid="tweetText"]',
+};
+
+// A quoted post renders as a nested <article> inside this frame.
+const XWEB_QUOTE_FRAME = '[data-slot="embedded-tweet-frame"]';
+const XWEB_TEXT = 'div[dir="auto"][lang]';
+
+// x-web timelines are <ul><li> lists. Timeline posts sit in a
+// div[role=link][data-href=/<user>/status/<id>] wrapper; the permalink's main
+// post has no wrapper (it isn't clickable), so match any <li> article that
+// isn't a quoted post.
+const XWEB_SELECTORS: PlatformSelectors = {
+  post: `li article:not(${XWEB_QUOTE_FRAME} article)`,
+  // `main ~ aside`: logged-out pages also render a fixed "see full profile"
+  // sheet as an <aside> inside <main>, ahead of the sidebar in DOM order.
+  sidebar: 'main ~ aside',
+  // The sticky column of sidebar cards (it follows an empty spacer div).
+  sidebarContent: 'main ~ aside > div > div:last-child',
+  primaryColumn: 'main',
+  nav: 'nav[role="navigation"]',
+  bottomBar: '[data-bottom-bar]',
+  mutations: `article ${XWEB_TEXT}`,
+  textContent: `article ${XWEB_TEXT}`,
+};
+
+const STATUS_PATH_RE = /^\/[A-Za-z0-9_]{1,15}\/status\/(\d+)\/?$/;
+
 // Assigned to `window.BouncerAdapter` only when running on an X/Twitter host
 // (see the guarded assignment at the bottom of this file). On iOS both the
 // Twitter and YouTube adapters are injected into every page, so each must
@@ -52,16 +94,10 @@ const BouncerTwitterAdapter = class TwitterAdapter implements PlatformAdapter {
   siteId = 'twitter' as const;
   filterBoxPlacement = 'sidebar' as const;
 
-  selectors: PlatformSelectors = {
-    post: 'article[data-testid="tweet"]',
-    sidebar: '[data-testid="sidebarColumn"]',
-    sidebarContent: 'div[data-testid="sidebarColumn"] > div > div > div > div',
-    primaryColumn: '[data-testid="primaryColumn"]',
-    nav: 'nav[role="navigation"]',
-    bottomBar: 'div[data-testid="BottomBar"]',
-    mutations: '[data-testid="tweetText"]',
-    textContent: '[data-testid="tweetText"]',
-  };
+  private _xweb = isXWebApp();
+  selectors: PlatformSelectors = this._xweb ? XWEB_SELECTORS : LEGACY_SELECTORS;
+  // x-web's sidebar is a sticky flex column of cards; the box joins it.
+  sidebarInFlow = this._xweb;
 
   private _fiberExtractorReady = false;
   private _pendingStoreRequests = new Map<string, (result: StoreResult) => void>();
@@ -97,6 +133,8 @@ const BouncerTwitterAdapter = class TwitterAdapter implements PlatformAdapter {
   }
 
   extractPostContent(article: HTMLElement): PostContent {
+    if (this._xweb) return this._extractXWebPostContent(article);
+
     const authorEl = article.querySelector('[data-testid="User-Name"]');
     const author = authorEl ? (authorEl.textContent ?? '') : '';
 
@@ -186,7 +224,102 @@ const BouncerTwitterAdapter = class TwitterAdapter implements PlatformAdapter {
     }
 
     const postUrl = this.getPostUrl(article);
+    const { imageUrls, hasPotentialMedia } = this._extractMedia(article);
+    const repostHeader = this._getRepostHeader(article);
 
+    return {
+      text, author, handle, avatarUrl, timeText, textHtml, quote, postUrl, imageUrls,
+      hasMediaContainer: hasPotentialMedia,
+      isRepost: repostHeader !== null,
+      repostHeader,
+      hasVideo: this._detectVideo(article),
+    };
+  }
+
+  /** True when `el` belongs to a post quoted inside `article` rather than to
+   *  `article`'s own post. x-web only. */
+  private _inXWebQuote(article: Element, el: Element): boolean {
+    const frame = el.closest(XWEB_QUOTE_FRAME);
+    return !!frame && article.contains(frame);
+  }
+
+  /** Author name, handle, avatar and timestamp from an x-web post header.
+   *  `scope` is the post's article, or a quote frame for the quoted post. */
+  private _extractXWebHeader(scope: Element, ownOnly: boolean) {
+    const own = (el: Element) => !ownOnly || !this._inXWebQuote(scope, el);
+    const header = Array.from(scope.querySelectorAll('[data-anchor-to-hovered-child]')).find(own);
+    let author = '', handle = '', avatarUrl: string | null = null;
+    if (header) {
+      author = header.querySelector('a div[dir="auto"]')?.textContent?.trim() ?? '';
+      for (const span of header.querySelectorAll('a span')) {
+        const t = span.textContent?.trim() ?? '';
+        if (t.startsWith('@')) { handle = t; break; }
+      }
+      // First profile image is the avatar; an org-affiliation badge (also a
+      // profile_images src) follows the display name.
+      const src = header.querySelector<HTMLImageElement>('img[src*="profile_images"]')?.src || '';
+      avatarUrl = src && !src.startsWith('data:') ? src : null;
+    }
+    const statusLink = this._xwebStatusLinks(scope, ownOnly)[0];
+    return { author, handle, avatarUrl, timeText: statusLink?.textContent?.trim() || null };
+  }
+
+  /** Anchors pointing at a bare /<user>/status/<id> path (the timestamp link),
+   *  excluding /photo/N, /analytics and the like. */
+  private _xwebStatusLinks(scope: Element, ownOnly: boolean): HTMLAnchorElement[] {
+    return Array.from(scope.querySelectorAll<HTMLAnchorElement>('a[href*="/status/"]')).filter(a => {
+      if (ownOnly && this._inXWebQuote(scope, a)) return false;
+      try {
+        return STATUS_PATH_RE.test(new URL(a.href, location.href).pathname);
+      } catch {
+        return false;
+      }
+    });
+  }
+
+  private _extractXWebPostContent(article: HTMLElement): PostContent {
+    const { author, handle, avatarUrl, timeText } = this._extractXWebHeader(article, true);
+
+    const textEls = Array.from(article.querySelectorAll<HTMLElement>(XWEB_TEXT));
+    const mainTextEl = textEls.find(el => !this._inXWebQuote(article, el));
+    const quoteFrame = article.querySelector(XWEB_QUOTE_FRAME);
+    const quoteTextEl = quoteFrame?.querySelector<HTMLElement>(XWEB_TEXT) ?? null;
+
+    const clean = (el: Element | null | undefined) => el?.textContent?.replace(/\s+/g, ' ').trim() ?? '';
+    const textParts: string[] = [];
+    if (clean(mainTextEl)) textParts.push(clean(mainTextEl));
+    if (clean(quoteTextEl)) textParts.push(`[Quoted: ${clean(quoteTextEl)}]`);
+
+    let quote: QuoteContent | null = null;
+    if (quoteFrame) {
+      const q = this._extractXWebHeader(quoteFrame, false);
+      quote = {
+        textHtml: quoteTextEl?.innerHTML ?? '',
+        author: q.author,
+        handle: q.handle,
+        avatarUrl: q.avatarUrl,
+        timeText: q.timeText,
+      };
+    }
+
+    const { imageUrls, hasPotentialMedia } = this._extractMedia(article);
+    // TODO(x-web): repost ("<name> reposted") headers haven't been observed in
+    // the new app yet — logged-out profiles don't render them.
+    return {
+      text: textParts.join(' '),
+      author, handle, avatarUrl, timeText,
+      textHtml: mainTextEl?.innerHTML ?? '',
+      quote,
+      postUrl: this.getPostUrl(article),
+      imageUrls,
+      hasMediaContainer: hasPotentialMedia,
+      isRepost: false,
+      repostHeader: null,
+      hasVideo: this._detectVideo(article),
+    };
+  }
+
+  private _extractMedia(article: HTMLElement): { imageUrls: string[]; hasPotentialMedia: boolean } {
     const imageEls = article.querySelectorAll('img[src*="pbs.twimg.com/media"]');
     const imageUrls: string[] = [];
     imageEls.forEach(img => {
@@ -215,8 +348,10 @@ const BouncerTwitterAdapter = class TwitterAdapter implements PlatformAdapter {
       }
     });
 
-    const hasMediaContainer = article.querySelector(
-      '[data-testid="tweetPhoto"], [data-testid="videoPlayer"], [data-testid="card.wrapper"]'
+    const hasMediaContainer = article.querySelector(this._xweb
+      // x-web: media press target, photo permalink, video thumbnail.
+      ? '[data-press-control], a[href*="/photo/"], img[alt="Video thumbnail"]'
+      : '[data-testid="tweetPhoto"], [data-testid="videoPlayer"], [data-testid="card.wrapper"]'
     ) !== null;
 
 
@@ -235,16 +370,7 @@ const BouncerTwitterAdapter = class TwitterAdapter implements PlatformAdapter {
     });
 
     const hasPotentialMedia = hasMediaContainer || hasLargeImages || article.querySelectorAll('video').length > 0;
-
-    const repostHeader = this._getRepostHeader(article);
-
-    return {
-      text, author, handle, avatarUrl, timeText, textHtml, quote, postUrl, imageUrls,
-      hasMediaContainer: hasPotentialMedia,
-      isRepost: repostHeader !== null,
-      repostHeader,
-      hasVideo: this._detectVideo(article),
-    };
+    return { imageUrls, hasPotentialMedia };
   }
 
   /** A repost renders a socialContext header ("<name> reposted") that links to
@@ -377,9 +503,12 @@ const BouncerTwitterAdapter = class TwitterAdapter implements PlatformAdapter {
     if (!pageStatusId) return false;
     // Check every <time>, not just the first: a quoted tweet embeds its own
     // <time>, which precedes the main timestamp in DOM order on desktop.
+    // x-web has no <time>; its timestamp is a bare status link.
+    const hrefs = this._xweb
+      ? this._xwebStatusLinks(article, true).map(a => a.href)
+      : Array.from(article.querySelectorAll('time'), time => time.closest('a')?.href);
     let sawStatusLink = false;
-    for (const time of article.querySelectorAll('time')) {
-      const href = time.closest('a')?.href;
+    for (const href of hrefs) {
       const id = href?.match(/\/status\/(\d+)/)?.[1];
       if (!id) continue;
       sawStatusLink = true;
@@ -389,6 +518,13 @@ const BouncerTwitterAdapter = class TwitterAdapter implements PlatformAdapter {
   }
 
   getPostUrl(article: HTMLElement) {
+    if (this._xweb) {
+      const link = this._xwebStatusLinks(article, true)[0];
+      if (link) return link.href;
+      // Timeline posts' clickable wrapper carries the permalink too.
+      const href = article.parentElement?.closest('[role="link"][data-href]')?.getAttribute('data-href');
+      return href ? new URL(href, location.origin).href : null;
+    }
     const timeLink = article.querySelector('time')?.closest('a');
     return (timeLink as HTMLAnchorElement | null)?.href || null;
   }
@@ -398,12 +534,21 @@ const BouncerTwitterAdapter = class TwitterAdapter implements PlatformAdapter {
   }
 
   getPostContainer(article: HTMLElement): HTMLElement {
+    if (this._xweb) return article.closest<HTMLElement>('li') || article;
     return article.closest<HTMLElement>('[data-testid="cellInnerDiv"]') || article;
+  }
+
+  getContextMenuTarget(article: HTMLElement): HTMLElement {
+    // x-web pads the post's wrapper (12px 16px) around the <article>.
+    if (this._xweb) return article.parentElement?.closest<HTMLElement>('li > div') ?? article;
+    return article;
   }
 
   hidePost(article: HTMLElement) {
     const element = this.getPostContainer(article);
     this._hideCell(element);
+    // TODO(x-web): thread continuations aren't detected in the new app yet.
+    if (this._xweb) return;
 
     // Also hide threaded replies that follow this tweet
     let sibling = element.nextElementSibling as HTMLElement | null;
@@ -439,9 +584,16 @@ const BouncerTwitterAdapter = class TwitterAdapter implements PlatformAdapter {
   }
 
   getThemeMode(): 'light' | 'dim' | 'dark' {
-    const body = document.body;
-    const bgColor = window.getComputedStyle(body).backgroundColor;
-    const match = bgColor.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
+    // x-web may leave <body> transparent and paint <html> or the main
+    // column, so take the first opaque background there.
+    const bgColor = this._xweb
+      ? [document.body, document.documentElement, document.querySelector('main')]
+        .map(el => (el ? window.getComputedStyle(el).backgroundColor : ''))
+        .find(c => /^rgb\(/.test(c) || /^rgba\(.*,\s*(?!0\))[\d.]+\)$/.test(c)) ?? ''
+      : window.getComputedStyle(document.body).backgroundColor;
+    const match = this._xweb
+      ? bgColor.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/)
+      : bgColor.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
     if (match) {
       const [, r, g, b] = match.map(Number);
       if (r > 200 && g > 200 && b > 200) {
@@ -501,6 +653,7 @@ const BouncerTwitterAdapter = class TwitterAdapter implements PlatformAdapter {
    * Combines store extraction and normalization into a single adapter method.
    */
   async extractPostContentFromStore(article: HTMLElement): Promise<PostContent | null> {
+    if (this._xweb) return this._extractXWebFromStore(article);
     const storeData = await this._extractTweetDataFromStore(article);
     if (!storeData) return null;
     const content = this._normalizeStoreData(storeData);
@@ -517,12 +670,49 @@ const BouncerTwitterAdapter = class TwitterAdapter implements PlatformAdapter {
     return content;
   }
 
+  /** x-web: read the tweet's Relay record (the extractor keys it by status
+   *  id), falling back to the DOM. Never returns null — the extension skips
+   *  posts whose store lookup keeps failing. */
+  /** x-web: resolves once the page-world extractor is listening, or after
+   *  1.5s so a missing extractor degrades to DOM extraction. Without this the
+   *  first posts on a page race the extractor's injection and fall back to
+   *  the DOM, which truncates long and quoted text. */
+  private _xwebExtractorReady: Promise<void> | null = null;
+
+  private _waitForXWebExtractor(): Promise<void> {
+    this._xwebExtractorReady ??= new Promise<void>(resolve => {
+      const done = () => {
+        clearTimeout(timer);
+        document.removeEventListener('ff-extractor-ready', done);
+        resolve();
+      };
+      const timer = setTimeout(done, 1500);
+      document.addEventListener('ff-extractor-ready', done);
+      document.dispatchEvent(new CustomEvent('ff-extractor-ping'));
+    });
+    return this._xwebExtractorReady;
+  }
+
+  private async _extractXWebFromStore(article: HTMLElement): Promise<PostContent> {
+    await this._waitForXWebExtractor();
+    const restId = this.getPostUrl(article)?.match(/\/status\/(\d+)/)?.[1];
+    const storeData = restId ? await this._extractTweetDataFromStore(article, restId) : null;
+    if (!storeData) return this.extractPostContent(article);
+    const content = this._normalizeStoreData(storeData);
+    content.hasVideo = content.hasVideo || this._detectVideo(article);
+    return content;
+  }
+
   /**
-   * Extract tweet data from Twitter's Redux store via the injected main-world script.
+   * Extract tweet data from X's Redux store (or x-web's Relay store, when
+   * `relayTweetId` is given) via the injected main-world script.
    * Returns a Promise that resolves to store data or null (on timeout/error).
    */
-  private _extractTweetDataFromStore(article: HTMLElement): Promise<unknown> {
-    const cellInnerDiv = article.closest<HTMLElement>('[data-testid="cellInnerDiv"]') || article;
+  private _extractTweetDataFromStore(article: HTMLElement, relayTweetId?: string): Promise<unknown> {
+    const cellInnerDiv = relayTweetId
+      ? article
+      : article.closest<HTMLElement>('[data-testid="cellInnerDiv"]') || article;
+    if (relayTweetId) cellInnerDiv.setAttribute('data-ff-tweet-id', relayTweetId);
     const requestId = 'ff-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
 
     return new Promise((resolve) => {
@@ -603,7 +793,7 @@ const BouncerTwitterAdapter = class TwitterAdapter implements PlatformAdapter {
 
   cleanupFilteredPostHtml(tweetContent: HTMLElement, imageUrls: string[]) {
     // Remove any hidden state from the injected post
-    const cell = tweetContent.querySelector<HTMLElement>('[data-testid="cellInnerDiv"]');
+    const cell = tweetContent.querySelector<HTMLElement>(this._xweb ? 'li' : '[data-testid="cellInnerDiv"]');
     if (cell) {
       cell.style.display = '';
       cell.style.position = 'relative';
@@ -622,7 +812,9 @@ const BouncerTwitterAdapter = class TwitterAdapter implements PlatformAdapter {
     });
 
     // Find the media section container
-    const firstMediaElement = tweetContent.querySelector('[data-testid="tweetPhoto"], [data-testid="videoPlayer"], img[src*="pbs.twimg.com/media"], video');
+    const firstMediaElement = tweetContent.querySelector(this._xweb
+      ? '[data-press-control], img[src*="pbs.twimg.com/media"], video'
+      : '[data-testid="tweetPhoto"], [data-testid="videoPlayer"], img[src*="pbs.twimg.com/media"], video');
     let mediaInsertionPoint: Element | null = null;
 
     if (firstMediaElement) {
@@ -643,7 +835,9 @@ const BouncerTwitterAdapter = class TwitterAdapter implements PlatformAdapter {
     brokenImages.forEach(img => img.remove());
     const videos = tweetContent.querySelectorAll('video');
     videos.forEach(video => video.remove());
-    const mediaContainers = tweetContent.querySelectorAll('[data-testid="tweetPhoto"], [data-testid="videoPlayer"]');
+    const mediaContainers = tweetContent.querySelectorAll(this._xweb
+      ? '[data-press-control]'
+      : '[data-testid="tweetPhoto"], [data-testid="videoPlayer"]');
     mediaContainers.forEach(c => c.remove());
 
     // Insert fresh images at original media location
@@ -675,6 +869,8 @@ const BouncerTwitterAdapter = class TwitterAdapter implements PlatformAdapter {
   }
 
   getShareButton(article: HTMLElement): HTMLElement | null {
+    // x-web tags every action-bar button, share included.
+    if (this._xweb) return article.querySelector<HTMLElement>('[data-engagement-action="share"]');
     // Fast path: English UI.
     const byLabel = article.querySelector<HTMLElement>('button[aria-label="Share post"]');
     if (byLabel) return byLabel;
@@ -698,7 +894,12 @@ const BouncerTwitterAdapter = class TwitterAdapter implements PlatformAdapter {
     wrapper.className = 'ff-why-annoying-wrapper--x';
     wrapper.appendChild(button);
 
-    if (shareBtn.closest('[role="group"], [data-testid="tweet"]')) {
+    // x-web's share button sits beside bookmark in the action bar's trailing
+    // cluster; going up two levels would add a column to the bar.
+    if (shareBtn.matches('[data-engagement-action]')) {
+      wrapper.classList.add('ff-why-annoying-wrapper--xweb');
+      shareBtn.insertAdjacentElement('afterend', wrapper);
+    } else if (shareBtn.closest('[role="group"], [data-testid="tweet"]')) {
       shareBtn.parentElement?.parentElement?.insertAdjacentElement('afterend', wrapper);
     } else {
       shareBtn.insertAdjacentElement('afterend', wrapper);

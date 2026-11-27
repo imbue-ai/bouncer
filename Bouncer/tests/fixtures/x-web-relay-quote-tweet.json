@@ -1,0 +1,282 @@
+{
+ "__isTweetResult": "Tweet",
+ "__typename": "Tweet",
+ "cashtag_attachments": [],
+ "core": {
+  "user_results": {
+   "id": "VXNlclJlc3VsdHM6NDQxOTYzOTc=",
+   "result": {
+    "__typename": "User",
+    "avatar": {
+     "image_url": "https://pbs.twimg.com/profile_images/2122506092437504001/NSS4RHyZ_normal.jpg"
+    },
+    "core": {
+     "name": "Elon Musk",
+     "screen_name": "elonmusk"
+    },
+    "id": "VXNlcjo0NDE5NjM5Nw==",
+    "location": {
+     "location": ""
+    },
+    "parody_commentary_fan_label": "None",
+    "privacy": {
+     "protected": false
+    },
+    "profile_image_shape": "Circle",
+    "relationship_counts": {
+     "followers": 239744258,
+     "following": 1429
+    },
+    "rest_id": "44196397",
+    "super_follow_eligible": false,
+    "tweet_counts": {
+     "tweets": 112912
+    },
+    "verification": {
+     "is_blue_verified": true
+    }
+   }
+  }
+ },
+ "counts": {
+  "bookmark_count": 123,
+  "favorite_count": 1698,
+  "quote_count": 27,
+  "reply_count": 348,
+  "retweet_count": 203
+ },
+ "details": {
+  "cashtag_entities": [],
+  "created_at_ms": 1795765961000,
+  "display_text_range": [
+   0,
+   4
+  ],
+  "full_text": "True",
+  "hashtag_entities": [],
+  "smarttags": []
+ },
+ "grok_translated_post_with_availability": {
+  "__typename": "ApiGrokTranslateResponse",
+  "is_available": false
+ },
+ "id": "VHdlZXQ6MjEyNjIyMjY2Njk5NDczNzYyMg==",
+ "legacy": {
+  "entities": {},
+  "lang": "en",
+  "quoted_status_permalink": {
+   "expanded": "https://twitter.com/svtrivo/status/2126188487825318156"
+  }
+ },
+ "media_entities2": [],
+ "mention_entities": [],
+ "quoted_tweet_results": {
+  "__typename": "TweetResults",
+  "id": "VHdlZXRSZXN1bHRzOjIxMjYxODg0ODc4MjUzMTgxNTY=",
+  "rest_id": "2126188487825318156",
+  "result": {
+   "__isTweetResult": "Tweet",
+   "__typename": "Tweet",
+   "cashtag_attachments": [],
+   "core": {
+    "user_results": {
+     "id": "VXNlclJlc3VsdHM6OTUxMzQ0NjY=",
+     "result": {
+      "__typename": "User",
+      "avatar": {
+       "image_url": "https://pbs.twimg.com/profile_images/2086666542100746240/RkxZYsIz_normal.jpg"
+      },
+      "core": {
+       "name": "Papa Johns",
+       "screen_name": "SVTrivo"
+      },
+      "id": "VXNlcjo5NTEzNDQ2Ng==",
+      "location": {
+       "location": "San Jose, CA"
+      },
+      "parody_commentary_fan_label": "None",
+      "privacy": {
+       "protected": false
+      },
+      "profile_image_shape": "Circle",
+      "relationship_counts": {
+       "followers": 15562,
+       "following": 1804
+      },
+      "rest_id": "95134466",
+      "super_follow_eligible": false,
+      "tweet_counts": {
+       "tweets": 22942
+      },
+      "verification": {
+       "is_blue_verified": true
+      }
+     }
+    }
+   },
+   "counts": {
+    "favorite_count": 358,
+    "quote_count": 9,
+    "reply_count": 27,
+    "retweet_count": 64
+   },
+   "details": {
+    "cashtag_entities": [],
+    "created_at_ms": 1795757812000,
+    "display_text_range": [
+     0,
+     272
+    ],
+    "full_text": "I used to think Trump Accounts were only for newborns because of the $1,000 government contribution. So I never bothered to set one up for my kids.\\n\\nOut of my three children, two are already adults (over 18), so they aren’t eligible. But my youngest is still under 18, and https://t.co/shinGKCppx",
+    "hashtag_entities": [],
+    "smarttags": []
+   },
+   "grok_translated_post_with_availability": {
+    "__typename": "ApiGrokTranslateResponse",
+    "is_available": false
+   },
+   "id": "VHdlZXQ6MjEyNjE4ODQ4NzgyNTMxODE1Ng==",
+   "legacy": {
+    "entities": {
+     "media": [
+      {
+       "expanded_url": "https://x.com/SVTrivo/status/2126188487825318156/photo/1"
+      },
+      {
+       "expanded_url": "https://x.com/SVTrivo/status/2126188487825318156/photo/2"
+      },
+      {
+       "expanded_url": "https://x.com/EricLDaugh/status/2125943227509248071/video/1"
+      }
+     ]
+    },
+    "lang": "en",
+    "possibly_sensitive": false
+   },
+   "media_entities2": [
+    {
+     "__typename": "ApiMediaEntity",
+     "expanded_url": "https://x.com/SVTrivo/status/2126188487825318156/photo/1",
+     "id_str": "2126188282388299776",
+     "indices": [
+      273,
+      296
+     ],
+     "media_url_https": "https://pbs.twimg.com/media/HYG8-lFaQAAiWHY.jpg",
+     "type": "photo"
+    },
+    {
+     "__typename": "ApiMediaEntity",
+     "expanded_url": "https://x.com/SVTrivo/status/2126188487825318156/photo/2",
+     "id_str": "2126188328370470913",
+     "indices": [
+      273,
+      296
+     ],
+     "media_url_https": "https://pbs.twimg.com/media/HYG9BQYagAEI_04.jpg",
+     "type": "photo"
+    },
+    {
+     "__typename": "ApiMediaEntity",
+     "additional_media_info": {
+      "monetizable": false
+     },
+     "expanded_url": "https://x.com/EricLDaugh/status/2125943227509248071/video/1",
+     "id_str": "2125942421938712576",
+     "indices": [
+      1010,
+      1033
+     ],
+     "media_url_https": "https://pbs.twimg.com/amplify_video_thumb/2125942421938712576/img/HLwNZzjHDACl48Ob.jpg",
+     "source_status_id_str": "2125943227509248071",
+     "source_user_results": {
+      "id": "VXNlclJlc3VsdHM6NzYzMDk0NTc5NDkxMDA4NTEy",
+      "result": {
+       "__typename": "User",
+       "avatar": {
+        "image_url": "https://pbs.twimg.com/profile_images/1946702115037908992/NU6Ro1bl_normal.jpg"
+       },
+       "core": {
+        "name": "Eric Daugherty",
+        "screen_name": "EricLDaugh"
+       },
+       "id": "VXNlcjo3NjMwOTQ1Nzk0OTEwMDg1MTI=",
+       "privacy": {
+        "protected": false
+       },
+       "profile_image_shape": "Circle",
+       "rest_id": "763094579491008512",
+       "verification": {
+        "is_blue_verified": true
+       }
+      }
+     },
+     "type": "video",
+     "video_info": {
+      "duration_millis": 59350,
+      "variants": [
+       {
+        "content_type": "application/x-mpegURL",
+        "url": "https://video.twimg.com/amplify_video/2125942421938712576/pl/8Rib9ngTlH30mvN8.m3u8?tag=29&v=ff3"
+       },
+       {
+        "bitrate": 256000,
+        "content_type": "video/mp4",
+        "url": "https://video.twimg.com/amplify_video/2125942421938712576/vid/avc1/480x270/eiXPpQKGrmyLhGvC.mp4?tag=29"
+       },
+       {
+        "bitrate": 832000,
+        "content_type": "video/mp4",
+        "url": "https://video.twimg.com/amplify_video/2125942421938712576/vid/avc1/640x360/1-5moyyuv6tkirjr.mp4?tag=29"
+       },
+       {
+        "bitrate": 2176000,
+        "content_type": "video/mp4",
+        "url": "https://video.twimg.com/amplify_video/2125942421938712576/vid/avc1/1280x720/cXy5-kJaNr2SyxxE.mp4?tag=29"
+       }
+      ]
+     }
+    }
+   ],
+   "mention_entities": [],
+   "note_tweet": {
+    "is_expandable": true,
+    "note_tweet_results": {
+     "id": "Tm90ZVR3ZWV0UmVzdWx0czoyMTI2MTg4NDg3NjYxNzg5MTg1",
+     "result": {
+      "__typename": "NoteTweet",
+      "entity_set": {
+       "hashtags": [],
+       "smarttags": [],
+       "symbols": [],
+       "urls": [
+        {
+         "display_url": "x.com/EricLDaugh/sta…",
+         "expanded_url": "https://x.com/EricLDaugh/status/2125943227509248071/video/1",
+         "indices": [
+          1010,
+          1033
+         ],
+         "url": "https://t.co/y2uTwUBmn5"
+        }
+       ],
+       "user_mentions": []
+      },
+      "id": "Tm90ZVR3ZWV0OjIxMjYxODg0ODc2NjE3ODkxODU=",
+      "text": "I used to think Trump Accounts were only for newborns because of the $1,000 government contribution. So I never bothered to set one up for my kids.\\n\\nOut of my three children, two are already adults (over 18), so they aren’t eligible. But my youngest is still under 18, and yesterday I finally claimed and activated the account for him.\\n\\nTurns out the account itself isn’t just for babies. Any child under 18 with a Social Security number can have one. The $1,000 seed money is only for kids born between 2025 and 2028, but older kids under 18 can still have the account.\\n\\nTreasury automatically enrolled eligible children back in October 2026, but parents still need to claim and activate the account through the official app or website. Only then can you contribute money or receive outside contributions — including the SpaceX shares that Elon Musk and the company pledged to active accounts.\\n\\nIf you have a child under 18, it might be worth checking and claiming the account now. I almost missed it myself. https://t.co/y2uTwUBmn5"
+     }
+    }
+   },
+   "rest_id": "2126188487825318156",
+   "url_entities": [],
+   "views": {
+    "count": "123420"
+   }
+  }
+ },
+ "rest_id": "2126222666994737622",
+ "url_entities": [],
+ "views": {
+  "count": "478292"
+ }
+}

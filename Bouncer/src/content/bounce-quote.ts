@@ -89,7 +89,9 @@ export async function openBounceQuoteComposer(
   }
   console.log('[Bouncer/bounce-quote] text prepared', { text });
 
-  const retweetBtn = article.querySelector<HTMLElement>('[data-testid="retweet"]');
+  const retweetBtn = article.querySelector<HTMLElement>(
+    '[data-testid="retweet"], [data-engagement-action="retweet"] button',
+  );
   console.log('[Bouncer/bounce-quote] retweet button lookup', {
     found: !!retweetBtn,
     articleConnected: article.isConnected,

@@ -321,6 +321,10 @@ export interface PlatformAdapter {
    *  where the banner should be inserted in the page. Sidebar-style adapters
    *  don't need this — they use `selectors.sidebar`. */
   getFilterBoxAnchor?(): FilterBoxAnchor | null;
+  /** Sidebar placement: when true, `selectors.sidebarContent` is a sticky
+   *  column of cards and the filter box is inserted as its first card in
+   *  normal flow, instead of fixed-positioned over a wrapper. */
+  sidebarInFlow?: boolean;
   extractPostContent(article: HTMLElement): PostContent;
   shouldProcessCurrentPage(): boolean;
   /** True when the current page is one of the extra pages the UI was
@@ -340,6 +344,9 @@ export interface PlatformAdapter {
   getPostUrl(article: HTMLElement): string | null;
   getPostContentKey(article: HTMLElement): string;
   getPostContainer(article: HTMLElement): HTMLElement;
+  /** Element whose ctrl+right-click opens the reasoning popup. Omitted →
+   *  the article itself. */
+  getContextMenuTarget?(article: HTMLElement): HTMLElement;
   hidePost(article: HTMLElement): void;
   getThemeMode(): 'light' | 'dim' | 'dark';
   extractPostContentFromStore(article: HTMLElement): Promise<PostContent | null>;
