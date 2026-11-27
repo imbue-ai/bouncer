@@ -56,6 +56,10 @@ export interface EvaluationResult {
   model?: string;
   /** Set by the background when the result came from the evaluation cache. */
   cached?: boolean;
+  /** The model-visible filter phrases this verdict was computed against.
+   *  A cached verdict answers for the current list only if no phrase was
+   *  added since (verdictCoversPhrases); entries without it are stale. */
+  phrases?: string[];
   /** Per-detector snapshots so a cache hit can rebuild the same tab UI. */
   detectorStates?: { names: string[]; map: Record<string, DetectorSnapshot> };
 }

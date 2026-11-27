@@ -2,7 +2,7 @@
 
 import { toBlob } from 'html-to-image';
 import { asyncHandler } from '../shared/async';
-import { cleanReasoning, escapeHtml, formatPostForEvaluation, parseHTML, GUEST_FILTER_LIMIT, AI_DETECTION_SEED_PHRASE, phraseAddNeedsReEvaluation } from '../shared/utils';
+import { cleanReasoning, escapeHtml, formatPostForEvaluation, parseHTML, GUEST_FILTER_LIMIT, AI_DETECTION_SEED_PHRASE } from '../shared/utils';
 import { decideFilterRemoval, AI_DETECTOR_CATEGORIES } from '../shared/filter-removal';
 import { init as initPopup } from '../popup/index';
 import {
@@ -2467,12 +2467,7 @@ async function confirmAndImportPack(phrases: string[]): Promise<void> {
   // native @Published phrases array stays at its pre-import snapshot until the
   // user opens & closes the sheet.
   if (_deps.IS_IOS) _deps.updateIOSFilteredCount();
-  // Same seed-phrase exception as addFilterPhrase: a pack consisting solely
-  // of the seed phrase engages the detectors via aiFilterIntent, not a sweep.
-  const { aiFilterIntent } = await getStorage(['aiFilterIntent']);
-  if (phraseAddNeedsReEvaluation(existing, next, aiFilterIntent?.aiPhrases)) {
-    _deps.reEvaluateAllPosts();
-  }
+  // The descriptions storage listener in content/index.ts re-evaluates.
 }
 
 function renderPhrasesInContainer(container: Element, descriptions: string[]) {
@@ -2539,13 +2534,9 @@ export async function addFilterPhrase(text: string) {
     await setDescriptions(_deps.descriptionsKey, next);
     console.log('[Bouncer] addFilterPhrase complete');
     void syncFilterPhrases();
-    // Planting the seed phrase alone must not sweep — it is not a filter
-    // category, and the aiFilterIntent write it provokes triggers the sweep
-    // that engages the detectors (see the storage listener in content/index.ts).
-    const { aiFilterIntent } = await getStorage(['aiFilterIntent']);
-    if (phraseAddNeedsReEvaluation(descriptions, next, aiFilterIntent?.aiPhrases)) {
-      _deps.reEvaluateAllPosts();
-    }
+    // No sweep here: the descriptions storage listener in content/index.ts
+    // re-evaluates for every add source (this box, the popup, other tabs,
+    // native sheets), so sweeping here too would classify every post twice.
     return true;
   } catch (err) {
     console.error('[Bouncer] addFilterPhrase error:', err);
