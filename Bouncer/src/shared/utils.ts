@@ -77,6 +77,24 @@ interface ParsedResult {
   category: string | null;
 }
 
+// The prompt spells the "no match" sentinel (and every real category) in
+// quotes, so models often echo them: <category>"no match"</category>. Unwrap
+// surrounding quotes and drop a trailing period before comparing, otherwise the
+// quoted sentinel is read as a matched category and the post is hidden.
+function normalizeCategory(rawCategory: string): string {
+  const stripPeriod = (s: string) => s.replace(/\.$/, '').trim();
+  let category = stripPeriod(rawCategory.trim().toLowerCase());
+  const quoted = /^["'`\u201c\u2018]([\s\S]*)["'`\u201d\u2019]$/.exec(category);
+  if (quoted) category = stripPeriod(quoted[1].trim());
+  return category;
+}
+
+function categoryVerdict(rawCategory: string): { shouldHide: boolean; category: string | null } {
+  const category = normalizeCategory(rawCategory);
+  const shouldHide = category !== 'no match' && category !== 'unknown';
+  return { shouldHide, category: shouldHide ? category : null };
+}
+
 // Parse XML-tagged response from API models
 // Expected format: <post>N</post><reasoning>...</reasoning><category>...</category> (repeated per post)
 export function parseAPIResponse(content: string): ParsedResult {
@@ -84,18 +102,14 @@ export function parseAPIResponse(content: string): ParsedResult {
   const postMatch = /<post>\d+<\/post>\s*<reasoning>([\s\S]*?)<\/reasoning>\s*<category>([\s\S]*?)<\/category>/i.exec(content);
   if (postMatch) {
     const reasoning = postMatch[1].trim();
-    const category = postMatch[2].trim().toLowerCase();
-    const shouldHide = category !== 'no match' && category !== 'unknown';
-    return { shouldHide, reasoning, category: shouldHide ? category : null };
+    return { ...categoryVerdict(postMatch[2]), reasoning };
   }
 
   // Format without <post> tag
   const match = /<reasoning>([\s\S]*?)<\/reasoning>\s*<category>([\s\S]*?)<\/category>/i.exec(content);
   if (match) {
     const reasoning = match[1].trim();
-    const category = match[2].trim().toLowerCase();
-    const shouldHide = category !== 'no match' && category !== 'unknown';
-    return { shouldHide, reasoning, category: shouldHide ? category : null };
+    return { ...categoryVerdict(match[2]), reasoning };
   }
 
   console.warn('[ParseAPI] Could not parse response. Raw content was:', content);
