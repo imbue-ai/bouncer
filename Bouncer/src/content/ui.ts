@@ -1988,8 +1988,9 @@ async function openComposerOnMobile(file: File, shareCode: string, packName?: st
   if (!composeLink) throw new Error('Compose link not found on page');
   composeLink.click();
 
-  const textbox = await waitForElement<HTMLTextAreaElement>('textarea[data-testid="tweetTextarea_0"]', 5000);
-  if (!textbox) throw new Error('Compose textarea did not appear');
+  const textbox = await waitForComposerTextbox<HTMLTextAreaElement>(
+    'textarea[data-testid="tweetTextarea_0"]', 5000);
+  if (!(textbox instanceof HTMLTextAreaElement)) throw new Error('Compose textarea did not appear');
 
   // Image first: posting media after text on mobile X sometimes scrolls the
   // textarea on insertion, which can blur input focus mid-flow.
@@ -2000,6 +2001,16 @@ async function openComposerOnMobile(file: File, shareCode: string, packName?: st
   const captionWithCode = `${captionLead}\n\n${buildFilterPackShareUrl(shareCode)}`;
   setReactTextareaValue(textbox, captionWithCode);
   textbox.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+// X's new web app (x-web, <html data-app-version>) has no data-testid hooks:
+// its composer — the Post modal and the quote composer alike — is a plain
+// <textarea> inside a [role="dialog"], with the media <input type="file"> in
+// the same dialog. `legacySelector` is used unchanged on the legacy app.
+const isXWebApp = () => document.documentElement.hasAttribute('data-app-version');
+
+export function waitForComposerTextbox<T extends HTMLElement>(legacySelector: string, timeoutMs: number): Promise<T | null> {
+  return waitForElement<T>(isXWebApp() ? '[role="dialog"] textarea' : legacySelector, timeoutMs);
 }
 
 // Update a React-controlled textarea's value via its prototype's native
@@ -2018,8 +2029,12 @@ export function setReactTextareaValue(el: HTMLTextAreaElement, value: string): v
 // through. Setting `.files` via DataTransfer + dispatching change is the same
 // path that native picker → upload flow takes.
 export async function attachImageToMobileComposer(file: File): Promise<void> {
+  // On x-web the inline Home composer has its own file input earlier in the
+  // DOM; scope to the composer dialog so the image lands in the right draft.
   const fileInput = await waitForElement<HTMLInputElement>(
-    'input[type="file"][data-testid="fileInput"], input[type="file"][accept*="image"]',
+    isXWebApp()
+      ? '[role="dialog"] input[type="file"][accept*="image"]'
+      : 'input[type="file"][data-testid="fileInput"], input[type="file"][accept*="image"]',
     3000
   );
   if (!fileInput) {
@@ -2064,8 +2079,18 @@ async function openComposerWithImage(file: File, shareCode: string, packName?: s
   // Scope to the modal dialog — on /home there's also an inline "What's
   // happening?" composer with the same tweetTextarea_0 testid earlier in the
   // DOM, which would otherwise win the querySelector race and steal the paste.
-  const textbox = await waitForElement<HTMLElement>('[role="dialog"] [data-testid="tweetTextarea_0"]', 5000);
+  const textbox = await waitForComposerTextbox<HTMLElement>('[role="dialog"] [data-testid="tweetTextarea_0"]', 5000);
   if (!textbox) throw new Error('Compose textbox did not appear');
+
+  const captionLead = packName ? namedShareTweetText(packName) : SHARE_TWEET_TEXT;
+  if (textbox instanceof HTMLTextAreaElement) {
+    // x-web: a plain textarea, filled like mobile X's (see openComposerOnMobile).
+    await attachImageToMobileComposer(file);
+    textbox.focus();
+    setReactTextareaValue(textbox, `${captionLead}\n\n${buildFilterPackShareUrl(shareCode)}`);
+    textbox.dispatchEvent(new Event('input', { bubbles: true }));
+    return;
+  }
 
   textbox.focus();
 
@@ -2086,7 +2111,6 @@ async function openComposerWithImage(file: File, shareCode: string, packName?: s
 
   textbox.focus();
   const shareUrl = buildFilterPackShareUrl(shareCode);
-  const captionLead = packName ? namedShareTweetText(packName) : SHARE_TWEET_TEXT;
   const captionWithCode = `${captionLead}\n\n${shareUrl}`;
   const textDt = new DataTransfer();
   textDt.setData('text/plain', captionWithCode);

@@ -19,6 +19,7 @@ import {
   screenshotFilterCardOffscreen,
   setReactTextareaValue,
   storeFilteredPost,
+  waitForComposerTextbox,
   waitForElement,
 } from './ui';
 
@@ -107,9 +108,10 @@ export async function openBounceQuoteComposer(
   // Quote option is an <a href="/compose/post"> inside the dropdown menu.
   // Prefer the menu-scoped selector; fall back to the bare link if X's menu
   // structure changes.
-  const quoteLink =
-    (await waitForElement<HTMLAnchorElement>('[role="menu"] a[href="/compose/post"]', 1200))
-    ?? (await waitForElement<HTMLAnchorElement>('a[href="/compose/post"]', 600));
+  const quoteLink = document.documentElement.hasAttribute('data-app-version')
+    ? await findXWebQuoteMenuItem()
+    : (await waitForElement<HTMLAnchorElement>('[role="menu"] a[href="/compose/post"]', 1200))
+      ?? (await waitForElement<HTMLAnchorElement>('a[href="/compose/post"]', 600));
   console.log('[Bouncer/bounce-quote] quote link lookup', { found: !!quoteLink });
   if (!quoteLink) {
     console.warn('[Bouncer/bounce-quote] quote link missing — abort');
@@ -124,7 +126,7 @@ export async function openBounceQuoteComposer(
   // The dialog-scoped selector also keeps us off the inline /home composer's
   // tweetTextarea_0 on desktop (same testid earlier in the DOM); the textarea
   // form can stay unscoped because desktop never renders one.
-  const textarea = await waitForElement<HTMLElement>(
+  const textarea = await waitForComposerTextbox<HTMLElement>(
     '[role="dialog"] [data-testid="tweetTextarea_0"], textarea[data-testid="tweetTextarea_0"]',
     3000,
   );
@@ -261,4 +263,14 @@ export async function applyBounceAction(opts: {
     await openBounceQuoteComposer(article, phrase, file);
   }
   console.log('[Bouncer/bounce-quote] applyBounceAction done');
+}
+
+// x-web's repost menu holds two un-tagged [role="menuitem"]s, Repost and
+// Quote, with no link to key on. Repost is the one with the repost icon;
+// matching that instead of the "Quote" label keeps it locale-independent.
+async function findXWebQuoteMenuItem(): Promise<HTMLElement | null> {
+  const menu = await waitForElement<HTMLElement>('[role="menu"]', 1200);
+  if (!menu) return null;
+  const items = Array.from(menu.querySelectorAll<HTMLElement>('[role="menuitem"]'));
+  return items.find(item => !item.querySelector('use[href="#icon-repost"]')) ?? null;
 }
