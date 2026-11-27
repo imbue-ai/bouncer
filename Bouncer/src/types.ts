@@ -56,6 +56,10 @@ export interface EvaluationResult {
   model?: string;
   /** Set by the background when the result came from the evaluation cache. */
   cached?: boolean;
+  /** The model-visible filter phrases this verdict was computed against.
+   *  A cached verdict answers for the current list only if no phrase was
+   *  added since (verdictCoversPhrases); entries without it are stale. */
+  phrases?: string[];
   /** Per-detector snapshots so a cache hit can rebuild the same tab UI. */
   detectorStates?: { names: string[]; map: Record<string, DetectorSnapshot> };
 }
@@ -321,6 +325,13 @@ export interface PlatformAdapter {
    *  where the banner should be inserted in the page. Sidebar-style adapters
    *  don't need this — they use `selectors.sidebar`. */
   getFilterBoxAnchor?(): FilterBoxAnchor | null;
+  /** Sidebar placement: when true, `selectors.sidebarContent` is a sticky
+   *  column of cards and the filter box is inserted as its first card in
+   *  normal flow, instead of fixed-positioned over a wrapper. */
+  sidebarInFlow?: boolean;
+  /** In-flow sidebars only: the node to insert the filter box before (e.g.
+   *  just after a pinned search field). Omitted → sidebarContent's first child. */
+  getSidebarInsertBefore?(sidebarContent: Element): Node | null;
   extractPostContent(article: HTMLElement): PostContent;
   shouldProcessCurrentPage(): boolean;
   /** True when the current page is one of the extra pages the UI was
@@ -340,6 +351,9 @@ export interface PlatformAdapter {
   getPostUrl(article: HTMLElement): string | null;
   getPostContentKey(article: HTMLElement): string;
   getPostContainer(article: HTMLElement): HTMLElement;
+  /** Element whose ctrl+right-click opens the reasoning popup. Omitted →
+   *  the article itself. */
+  getContextMenuTarget?(article: HTMLElement): HTMLElement;
   hidePost(article: HTMLElement): void;
   getThemeMode(): 'light' | 'dim' | 'dark';
   extractPostContentFromStore(article: HTMLElement): Promise<PostContent | null>;

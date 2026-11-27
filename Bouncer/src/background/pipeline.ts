@@ -401,6 +401,18 @@ export function enqueuePost(tabId: number, item: PendingEvaluation): boolean {
   return false;
 }
 
+// A verdict still answers for `phrases` iff no phrase was added since it was
+// computed: an added phrase could match, while a removed one only matters for
+// posts it hid, which the content script's filter-removal flow re-checks.
+// Checked wherever a verdict is about to be used, so correctness doesn't
+// depend on when the storage listener runs relative to evaluation requests.
+export function verdictCoversPhrases(verdict: { phrases?: string[] }, phrases: string[]): boolean {
+  if (!Array.isArray(verdict.phrases)) return false;
+  const norm = (p: string) => p.trim().toLowerCase();
+  const had = new Set(verdict.phrases.map(norm));
+  return phrases.every(p => had.has(norm(p)));
+}
+
 // Check if a cacheKey is pending in a specific tab's queue.
 export function isKeyPending(tabId: number, cacheKey: string): boolean {
   const keys = tabPendingKeys.get(tabId);
@@ -968,8 +980,10 @@ async function processBatch(): Promise<void> {
   // recomputing — for YouTube that key is video-id based, not text+image.
   const imageUrls = item.imageUrls || [];
   const cacheKey = item.cacheKey;
-  if (!settings.filteringPaused && evaluationCache.has(cacheKey)) {
-    const cached = evaluationCache.get(cacheKey)!;
+  const cachedVerdict = evaluationCache.get(cacheKey);
+  if (!settings.filteringPaused && cachedVerdict
+      && verdictCoversPhrases(cachedVerdict, settings.effectiveDescriptions)) {
+    const cached = cachedVerdict;
     replayDetectorStates(batchTabId, item.evaluationId, cached);
     resolveWithDuplicates(batchTabId, item, { ...cached, cached: true });
     inFlightBatches--;
@@ -1138,8 +1152,28 @@ async function processBatch(): Promise<void> {
       rawResponse: result.rawResponse || null,
       model: settings.selectedModel || 'unknown',
       timestamp: Date.now(),
+      phrases: settings.effectiveDescriptions,
       detectorStates: buildDetectorStates(tabPlan, snapshots),
     };
+
+    // Phrases added while this post was being classified: the verdict doesn't
+    // answer the current list, so neither cache nor deliver it. Put the item
+    // back on its queue (its resolver and any duplicates' stay registered) to
+    // be classified against the list as it is now.
+    const latest = await getSettings(item.siteId, item.pauseScope);
+    if (!verdictCoversPhrases(evalResult, latest.effectiveDescriptions)) {
+      const currentQueue = tabQueues.get(batchTabId);
+      const currentKeys = tabPendingKeys.get(batchTabId);
+      if (currentQueue && currentKeys) {
+        currentQueue.unshift(item);
+        if (item.cacheKey) currentKeys.add(item.cacheKey);
+      } else {
+        resolveWithDuplicates(batchTabId, item, null);
+      }
+      inFlightBatches--;
+      scheduleBatch();
+      return;
+    }
 
     // Update cache — but not with verdicts computed against paused (masked)
     // settings, which would leak "don't hide" onto pages that aren't paused.
@@ -1352,31 +1386,6 @@ export async function handleSettingsChange(changes: Record<string, chrome.storag
 
   if ((changes.selectedModel || changes.openaiApiKey || changes.geminiApiKey || changes.openrouterApiKey || changes.anthropicApiKey) && errorState.count > 0) {
     triggerErrorRetry().catch(err => console.error('[Error] triggerErrorRetry failed:', err));
-  }
-}
-
-// Called when the filter phrase list changed. Always flushes in-flight batches
-// so they re-run against the updated phrase set.
-//
-// Cache policy:
-//  - Additions present → cached "shouldHide=false" verdicts may now be stale
-//    (the new phrase could match), so we wipe the cache.
-//  - Removal-only → cached verdicts are still valid for non-affected posts.
-//    The content script's removeFilterPhrase() handles affected posts (those
-//    whose category matches a removed phrase) by clearSinglePost-ing them and
-//    re-evaluating, then restoring if they no longer match. So we deliberately
-//    leave the cache alone here.
-export function handleFilterPackChange(change?: chrome.storage.StorageChange): void {
-  const oldDescs = Array.isArray(change?.oldValue) ? (change.oldValue as string[]) : [];
-  const newDescs = Array.isArray(change?.newValue) ? (change.newValue as string[]) : [];
-  const oldSet = new Set(oldDescs);
-  const hasAdditions = newDescs.some(d => !oldSet.has(d));
-
-  flushPipelineQueues('Filter phrases changed, re-evaluating...');
-
-  if (hasAdditions) {
-    evaluationCache.clear();
-    removeStorage('evaluationCache').catch(err => console.error('[Cache] clear failed:', err));
   }
 }
 

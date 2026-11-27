@@ -13,6 +13,45 @@ div[data-testid="BottomBar"] {
   align-items: center;
 }
 
+/* x-web's action bar overhangs the post by 8px each side (-mx-2) and the
+   overhang is clipped; X's own buttons hide it in their pill padding. */
+.ff-why-annoying-wrapper--xweb {
+  margin-inline-end: 8px;
+}
+
+/* x-web's action icons are smaller (18.75px in a 36px pill) than legacy's. */
+.ff-why-annoying-wrapper--xweb .ff-why-annoying-btn.ff-why-annoying-btn--x {
+  width: 30px;
+  height: 30px;
+}
+
+/* x-web posts sit inside a wrapper padded 12px 16px around the <article> the
+   bar is drawn in; stretch the bar out to the cell edge like legacy X. */
+html[data-app-version] li article > .post-verification-bar {
+  left: -16px;
+  top: -12px;
+  bottom: -12px;
+}
+
+/* x-web sidebar: the box is a card in X's card column, which scrolls with
+   the page. Pin it like X pins its search field (sticky, z-10): at the top,
+   or below the 60px search wrapper when it follows one, at the same 12px gap
+   it rests at (16px column gap, -4px wrapper margin) so pinning doesn't move it. */
+.filter-phrases-sidebar.filter-phrases-sidebar--in-flow {
+  position: sticky;
+  top: 12px;
+  margin-top: 0;
+  z-index: 10;
+}
+
+.filter-phrases-sidebar.filter-phrases-sidebar--in-flow:not(:first-child) {
+  top: 72px;
+}
+
+.filter-phrases-sidebar.filter-phrases-sidebar--in-flow::before {
+  content: none;
+}
+
 /* Match X's 34.75px action-bar icon buttons. */
 .ff-why-annoying-btn.ff-why-annoying-btn--x {
   width: 34.75px;

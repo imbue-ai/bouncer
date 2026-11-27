@@ -2,7 +2,7 @@
 
 import { toBlob } from 'html-to-image';
 import { asyncHandler } from '../shared/async';
-import { cleanReasoning, escapeHtml, formatPostForEvaluation, parseHTML, GUEST_FILTER_LIMIT, AI_DETECTION_SEED_PHRASE, phraseAddNeedsReEvaluation } from '../shared/utils';
+import { cleanReasoning, escapeHtml, formatPostForEvaluation, parseHTML, GUEST_FILTER_LIMIT, AI_DETECTION_SEED_PHRASE } from '../shared/utils';
 import { decideFilterRemoval, AI_DETECTOR_CATEGORIES } from '../shared/filter-removal';
 import { init as initPopup } from '../popup/index';
 import {
@@ -1175,7 +1175,10 @@ async function injectFilterPhrasesInputImpl() {
   // Preferred target: inside the sidebar wrapper so our z-index can sit between
   // the fixed search bar (z=2, Home only) and scrolling content (z=0). Falls
   // back to the top of sidebarContent if the wrapper can't be found.
-  const wrapper = findSidebarWrapper(sidebarContent);
+  // In-flow adapters: sidebarContent is already a sticky column of cards, so
+  // the box goes in as its first card — no fixed positioning or spacer.
+  const inFlow = !!_deps.adapter.sidebarInFlow;
+  const wrapper = inFlow ? null : findSidebarWrapper(sidebarContent);
   let insertParent: Element;
   let insertBeforeRef: Node | null;
   let usingWrapper = false;
@@ -1191,13 +1194,15 @@ async function injectFilterPhrasesInputImpl() {
     usingWrapper = true;
   } else {
     insertParent = sidebarContent;
-    insertBeforeRef = sidebarContent.firstChild;
+    insertBeforeRef = inFlow && _deps.adapter.getSidebarInsertBefore
+      ? _deps.adapter.getSidebarInsertBefore(sidebarContent)
+      : sidebarContent.firstChild;
   }
   // Create the filter phrases container
   filterPhrasesContainer = document.createElement('div');
   filterPhrasesContainer.className = usingWrapper
     ? 'filter-phrases-sidebar filter-phrases-sidebar--in-wrapper'
-    : 'filter-phrases-sidebar';
+    : inFlow ? 'filter-phrases-sidebar filter-phrases-sidebar--in-flow' : 'filter-phrases-sidebar';
   // linkedin adaptation: raise z-index so LinkedIn promoted/ad cards in the
   // right rail don't overlap the filter box.
   if (_deps.adapter.siteId === 'linkedin') {
@@ -1983,8 +1988,9 @@ async function openComposerOnMobile(file: File, shareCode: string, packName?: st
   if (!composeLink) throw new Error('Compose link not found on page');
   composeLink.click();
 
-  const textbox = await waitForElement<HTMLTextAreaElement>('textarea[data-testid="tweetTextarea_0"]', 5000);
-  if (!textbox) throw new Error('Compose textarea did not appear');
+  const textbox = await waitForComposerTextbox<HTMLTextAreaElement>(
+    'textarea[data-testid="tweetTextarea_0"]', 5000);
+  if (!(textbox instanceof HTMLTextAreaElement)) throw new Error('Compose textarea did not appear');
 
   // Image first: posting media after text on mobile X sometimes scrolls the
   // textarea on insertion, which can blur input focus mid-flow.
@@ -1995,6 +2001,16 @@ async function openComposerOnMobile(file: File, shareCode: string, packName?: st
   const captionWithCode = `${captionLead}\n\n${buildFilterPackShareUrl(shareCode)}`;
   setReactTextareaValue(textbox, captionWithCode);
   textbox.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+// X's new web app (x-web, <html data-app-version>) has no data-testid hooks:
+// its composer — the Post modal and the quote composer alike — is a plain
+// <textarea> inside a [role="dialog"], with the media <input type="file"> in
+// the same dialog. `legacySelector` is used unchanged on the legacy app.
+const isXWebApp = () => document.documentElement.hasAttribute('data-app-version');
+
+export function waitForComposerTextbox<T extends HTMLElement>(legacySelector: string, timeoutMs: number): Promise<T | null> {
+  return waitForElement<T>(isXWebApp() ? '[role="dialog"] textarea' : legacySelector, timeoutMs);
 }
 
 // Update a React-controlled textarea's value via its prototype's native
@@ -2013,8 +2029,12 @@ export function setReactTextareaValue(el: HTMLTextAreaElement, value: string): v
 // through. Setting `.files` via DataTransfer + dispatching change is the same
 // path that native picker → upload flow takes.
 export async function attachImageToMobileComposer(file: File): Promise<void> {
+  // On x-web the inline Home composer has its own file input earlier in the
+  // DOM; scope to the composer dialog so the image lands in the right draft.
   const fileInput = await waitForElement<HTMLInputElement>(
-    'input[type="file"][data-testid="fileInput"], input[type="file"][accept*="image"]',
+    isXWebApp()
+      ? '[role="dialog"] input[type="file"][accept*="image"]'
+      : 'input[type="file"][data-testid="fileInput"], input[type="file"][accept*="image"]',
     3000
   );
   if (!fileInput) {
@@ -2059,8 +2079,18 @@ async function openComposerWithImage(file: File, shareCode: string, packName?: s
   // Scope to the modal dialog — on /home there's also an inline "What's
   // happening?" composer with the same tweetTextarea_0 testid earlier in the
   // DOM, which would otherwise win the querySelector race and steal the paste.
-  const textbox = await waitForElement<HTMLElement>('[role="dialog"] [data-testid="tweetTextarea_0"]', 5000);
+  const textbox = await waitForComposerTextbox<HTMLElement>('[role="dialog"] [data-testid="tweetTextarea_0"]', 5000);
   if (!textbox) throw new Error('Compose textbox did not appear');
+
+  const captionLead = packName ? namedShareTweetText(packName) : SHARE_TWEET_TEXT;
+  if (textbox instanceof HTMLTextAreaElement) {
+    // x-web: a plain textarea, filled like mobile X's (see openComposerOnMobile).
+    await attachImageToMobileComposer(file);
+    textbox.focus();
+    setReactTextareaValue(textbox, `${captionLead}\n\n${buildFilterPackShareUrl(shareCode)}`);
+    textbox.dispatchEvent(new Event('input', { bubbles: true }));
+    return;
+  }
 
   textbox.focus();
 
@@ -2081,7 +2111,6 @@ async function openComposerWithImage(file: File, shareCode: string, packName?: s
 
   textbox.focus();
   const shareUrl = buildFilterPackShareUrl(shareCode);
-  const captionLead = packName ? namedShareTweetText(packName) : SHARE_TWEET_TEXT;
   const captionWithCode = `${captionLead}\n\n${shareUrl}`;
   const textDt = new DataTransfer();
   textDt.setData('text/plain', captionWithCode);
@@ -2123,7 +2152,11 @@ const processedImportElements = new WeakSet<HTMLElement>();
 // replace the link (and its leading sentence) with a compact "Import filter
 // pack" button. No-op if the tweet has no link or we've already handled it.
 export function processImportCodeInPost(article: HTMLElement): void {
-  const tweetTextEls = article.querySelectorAll<HTMLElement>('[data-testid="tweetText"]');
+  // The Twitter adapter's text selector covers both X web apps.
+  const textSelector = _deps.adapter.siteId === 'twitter'
+    ? _deps.adapter.selectors.textContent
+    : '[data-testid="tweetText"]';
+  const tweetTextEls = article.querySelectorAll<HTMLElement>(textSelector);
   for (const tweetText of tweetTextEls) {
     if (processedImportElements.has(tweetText)) continue;
     const found = findFirstImportLink(tweetText);
@@ -2460,12 +2493,7 @@ async function confirmAndImportPack(phrases: string[]): Promise<void> {
   // native @Published phrases array stays at its pre-import snapshot until the
   // user opens & closes the sheet.
   if (_deps.IS_IOS) _deps.updateIOSFilteredCount();
-  // Same seed-phrase exception as addFilterPhrase: a pack consisting solely
-  // of the seed phrase engages the detectors via aiFilterIntent, not a sweep.
-  const { aiFilterIntent } = await getStorage(['aiFilterIntent']);
-  if (phraseAddNeedsReEvaluation(existing, next, aiFilterIntent?.aiPhrases)) {
-    _deps.reEvaluateAllPosts();
-  }
+  // The descriptions storage listener in content/index.ts re-evaluates.
 }
 
 function renderPhrasesInContainer(container: Element, descriptions: string[]) {
@@ -2532,13 +2560,9 @@ export async function addFilterPhrase(text: string) {
     await setDescriptions(_deps.descriptionsKey, next);
     console.log('[Bouncer] addFilterPhrase complete');
     void syncFilterPhrases();
-    // Planting the seed phrase alone must not sweep — it is not a filter
-    // category, and the aiFilterIntent write it provokes triggers the sweep
-    // that engages the detectors (see the storage listener in content/index.ts).
-    const { aiFilterIntent } = await getStorage(['aiFilterIntent']);
-    if (phraseAddNeedsReEvaluation(descriptions, next, aiFilterIntent?.aiPhrases)) {
-      _deps.reEvaluateAllPosts();
-    }
+    // No sweep here: the descriptions storage listener in content/index.ts
+    // re-evaluates for every add source (this box, the popup, other tabs,
+    // native sheets), so sweeping here too would classify every post twice.
     return true;
   } catch (err) {
     console.error('[Bouncer] addFilterPhrase error:', err);
@@ -4263,13 +4287,18 @@ export function addContextMenuHandler(article: HTMLElement) {
     })().catch(err => console.error('[UI] getReasoning handler failed:', err));
   };
 
-  // Desktop: ctrl+right-click
-  article.addEventListener('contextmenu', (e) => {
+  // Desktop: ctrl+right-click. Adapters can widen the hit area to the
+  // post's padded wrapper (x-web insets the <article> inside it).
+  const menuTarget = _deps.adapter.getContextMenuTarget?.(article) ?? article;
+  menuTarget.addEventListener('contextmenu', (e) => {
     if (!e.ctrlKey) {
       return;
     }
 
     e.preventDefault();
+    // A widened target (x-web) also hosts X's own media context menu, which
+    // React opens from the root after us; don't let it stack on our popup.
+    if (menuTarget !== article) e.stopPropagation();
     openPopup(e.clientX, e.clientY);
   });
 
