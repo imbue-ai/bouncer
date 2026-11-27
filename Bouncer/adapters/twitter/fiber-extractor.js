@@ -9,10 +9,25 @@
   // injections (Chrome runs it at document_idle) fall back to finding the
   // RelayEnvironmentProvider context in the React fiber tree.
   const relayEnvironments = [];
-  (function installRelayHook() {
-    // Only on x-web (the legacy app never sees the hook). <html> and its
-    // attributes exist even at document start.
-    if (!document.documentElement?.hasAttribute('data-app-version')) return;
+  // Run `fn` once <html> exists. Injected at document_start, this script can
+  // run before the parser creates it (Gecko/Android). Inserting <html>
+  // queues the observer's microtask, and the parser runs a microtask
+  // checkpoint before executing any page script, so `fn` still runs before
+  // X's bundle (and its Relay environment) boots.
+  function whenRootExists(fn) {
+    if (document.documentElement) { fn(); return; }
+    const observer = new MutationObserver(() => {
+      if (!document.documentElement) return;
+      observer.disconnect();
+      fn();
+    });
+    observer.observe(document, { childList: true });
+  }
+  const isXWeb = () => document.documentElement.hasAttribute('data-app-version');
+
+  whenRootExists(function installRelayHook() {
+    // Only on x-web (the legacy app never sees the hook).
+    if (!isXWeb()) return;
     const existing = window.__RELAY_DEVTOOLS_HOOK__;
     const register = (env) => {
       if (env && typeof env.getStore === 'function' && !relayEnvironments.includes(env)) {
@@ -31,7 +46,7 @@
         });
       } catch { /* page defined it non-configurably; fiber fallback covers it */ }
     }
-  })();
+  });
 
   function findRelayEnvironment(el) {
     if (relayEnvironments.length) return relayEnvironments[relayEnvironments.length - 1];
@@ -370,14 +385,65 @@
     };
   }
 
+  // x-web: timelines are virtualized (TanStack-style): each <li> is absolutely
+  // positioned at an offset computed from cached row sizes, and the list
+  // doesn't re-measure rows when they change size. Hiding a post's <li>
+  // therefore leaves a gap; the adapter marks hidden rows with
+  // data-ff-collapse and we zero the row's size in the virtualizer, and marks
+  // un-hidden rows with data-ff-restore so we re-measure them.
+  function findVirtualizer(li) {
+    const fiberKey = Object.keys(li).find(k => k.startsWith('__reactFiber$'));
+    let node = fiberKey ? li[fiberKey] : null;
+    for (let i = 0; i < 15 && node; i++) {
+      const v = node.memoizedProps?.virtualizer;
+      if (v && typeof v.resizeItem === 'function') return v;
+      node = node.return;
+    }
+    return null;
+  }
+
+  function collapseRows() {
+    document.querySelectorAll('li[data-ff-collapse]').forEach(li => {
+      li.removeAttribute('data-ff-collapse');
+      const index = Number(li.dataset.index);
+      const virtualizer = findVirtualizer(li);
+      if (!virtualizer || !Number.isInteger(index)) return;
+      try {
+        virtualizer.resizeItem(index, 0);
+      } catch (e) {
+        console.log('[Bouncer][x-web] resizeItem failed:', e.message);
+        return;
+      }
+    });
+  }
+
+  // The adapter un-hid these rows and has already dropped its stylesheet
+  // rule for them; give the virtualizer their real height back.
+  function restoreRows() {
+    document.querySelectorAll('li[data-ff-restore]').forEach(li => {
+      li.removeAttribute('data-ff-restore');
+      const index = Number(li.dataset.index);
+      const virtualizer = findVirtualizer(li);
+      if (!virtualizer || !Number.isInteger(index)) return;
+      try {
+        virtualizer.resizeItem(index, li.getBoundingClientRect().height);
+      } catch (e) {
+        console.log('[Bouncer][x-web] resizeItem failed:', e.message);
+      }
+    });
+  }
+
   // x-web: tell the adapter we're listening (it waits for this before its
   // first Relay request, since Chrome injects us after posts start
   // rendering), and answer its ping in case it was set up after we loaded.
-  if (document.documentElement?.hasAttribute('data-app-version')) {
+  whenRootExists(() => {
+    if (!isXWeb()) return;
     const announce = () => document.dispatchEvent(new CustomEvent('ff-extractor-ready'));
     document.addEventListener('ff-extractor-ping', announce);
+    document.addEventListener('ff-xweb-collapse-rows', collapseRows);
+    document.addEventListener('ff-xweb-restore-rows', restoreRows);
     announce();
-  }
+  });
 
   document.addEventListener('ff-extract-tweet-data', function() {
     // Process ALL pending requests to avoid race conditions when multiple

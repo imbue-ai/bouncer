@@ -106,6 +106,31 @@ const BouncerTwitterAdapter = class TwitterAdapter implements PlatformAdapter {
     // Eagerly inject the fiber extractor so it's ready before the first post is processed
     this.initFiberExtractor();
     this._initFilteredPostObserver();
+    if (this._xweb) {
+      this._keepXWebSidebarBoxBelowSearch();
+      this._watchXWebUnhides();
+    }
+  }
+
+  /** x-web renders the sidebar's search field after hydration, often after
+   *  the filter box was inserted, and both are sticky — so a box that lands
+   *  above the search slides over it on scroll. Keep the box directly after
+   *  the search wrapper whenever X (re)renders it. */
+  private _keepXWebSidebarBoxBelowSearch() {
+    let scheduled = false;
+    const place = () => {
+      scheduled = false;
+      const box = document.querySelector<HTMLElement>('.filter-phrases-sidebar--in-flow');
+      const column = box?.parentElement;
+      if (!box || !column) return;
+      const before = this.getSidebarInsertBefore(column);
+      if (before !== box && box.nextSibling !== before) column.insertBefore(box, before);
+    };
+    new MutationObserver(() => {
+      if (scheduled) return;
+      scheduled = true;
+      requestAnimationFrame(place);
+    }).observe(document.documentElement, { childList: true, subtree: true });
   }
 
   _initFilteredPostObserver() {
@@ -124,6 +149,7 @@ const BouncerTwitterAdapter = class TwitterAdapter implements PlatformAdapter {
           el.style.opacity = '0';
           setTimeout(() => {
             el.style.display = 'none';
+            if (this._xweb) this._collapseXWebRow(el);
             fadingOut.delete(el);
           }, 300);
         }
@@ -538,6 +564,16 @@ const BouncerTwitterAdapter = class TwitterAdapter implements PlatformAdapter {
     return article.closest<HTMLElement>('[data-testid="cellInnerDiv"]') || article;
   }
 
+  /** x-web: signed-in sidebars pin the search field (its own sticky
+   *  wrapper) at the top of the card column; the box goes right below it. */
+  getSidebarInsertBefore(sidebarContent: Element): Node | null {
+    const search = this.getSearchForm();
+    const searchWrapper = search
+      ? Array.from(sidebarContent.children).find(child => child.contains(search))
+      : undefined;
+    return searchWrapper ? searchWrapper.nextSibling : sidebarContent.firstChild;
+  }
+
   getContextMenuTarget(article: HTMLElement): HTMLElement {
     // x-web pads the post's wrapper (12px 16px) around the <article>.
     if (this._xweb) return article.parentElement?.closest<HTMLElement>('li > div') ?? article;
@@ -559,12 +595,79 @@ const BouncerTwitterAdapter = class TwitterAdapter implements PlatformAdapter {
     }
   }
 
+  /** x-web's timeline is virtualized: rows are absolutely positioned from
+   *  cached sizes, so a hidden row leaves a gap until the page-world
+   *  extractor zeroes its size in the virtualizer. */
+  private _collapseXWebRow(row: HTMLElement) {
+    if (row.tagName !== 'LI' || !row.hasAttribute('data-index')) return;
+    this._addXWebHiddenRule(row);
+    row.setAttribute('data-ff-collapse', '');
+    document.dispatchEvent(new CustomEvent('ff-xweb-collapse-rows'));
+  }
+
+  /** The virtualizer unmounts offscreen rows and re-creates them (losing our
+   *  inline display:none) when they scroll back in. A re-created hidden row
+   *  would mount at full height, be measured, then collapse again when we
+   *  re-hide it — a size swing above the viewport that jolts scrolling up.
+   *  A stylesheet rule keyed on the post's permalink hides the re-created
+   *  row from its first frame, so it's measured at 0 and never swings. */
+  private _xwebHiddenHrefs = new Set<string>();
+  private _xwebHiddenStyle: HTMLStyleElement | null = null;
+
+  private _postHref(row: Element): string | null {
+    return Array.from(row.querySelectorAll('[data-href]'))
+      .find(el => !el.matches(XWEB_QUOTE_FRAME))?.getAttribute('data-href') ?? null;
+  }
+
+  private _addXWebHiddenRule(row: HTMLElement) {
+    const href = this._postHref(row);
+    if (!href || this._xwebHiddenHrefs.has(href)) return;
+    this._xwebHiddenHrefs.add(href);
+    this._writeXWebHiddenRules();
+  }
+
+  private _writeXWebHiddenRules() {
+    if (!this._xwebHiddenStyle?.isConnected) {
+      this._xwebHiddenStyle = document.createElement('style');
+      (document.head || document.documentElement).appendChild(this._xwebHiddenStyle);
+    }
+    const targets = Array.from(this._xwebHiddenHrefs, h => `[data-href="${CSS.escape(h)}"]`).join(', ');
+    this._xwebHiddenStyle.textContent = targets
+      ? `main ul > li:has(:is(${targets}):not(${XWEB_QUOTE_FRAME})) { display: none; }`
+      : '';
+  }
+
+  /** Un-hiding (show anyway, phrase removal, pause) clears the row's
+   *  data-filtered-by-extension: drop its rule so the row can show, then have
+   *  the page-world extractor give the virtualizer its real height back. */
+  private _watchXWebUnhides() {
+    new MutationObserver(mutations => {
+      const restored: HTMLElement[] = [];
+      for (const m of mutations) {
+        const row = m.target as HTMLElement;
+        if (row.tagName !== 'LI' || row.dataset.filteredByExtension) continue;
+        const href = this._postHref(row);
+        if (href) this._xwebHiddenHrefs.delete(href);
+        restored.push(row);
+      }
+      if (restored.length === 0) return;
+      this._writeXWebHiddenRules();
+      for (const row of restored) row.setAttribute('data-ff-restore', '');
+      document.dispatchEvent(new CustomEvent('ff-xweb-restore-rows'));
+    }).observe(document.documentElement, {
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['data-filtered-by-extension'],
+    });
+  }
+
   _hideCell(element: HTMLElement) {
     const rect = element.getBoundingClientRect();
     element.dataset.filteredByExtension = 'true';
     if (rect.bottom > 0) {
       // Overlaps the viewport or is below it — hide immediately
       element.style.display = 'none';
+      if (this._xweb) this._collapseXWebRow(element);
     }
     // If entirely above viewport, just mark it; the scroll handler will hide it
     // once its top is 100px below the top of the viewport

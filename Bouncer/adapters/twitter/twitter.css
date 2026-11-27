@@ -33,10 +33,19 @@ html[data-app-version] li article > .post-verification-bar {
   bottom: -12px;
 }
 
-/* x-web sidebar: the box is the first card in X's sticky card column. */
+/* x-web sidebar: the box is a card in X's card column, which scrolls with
+   the page. Pin it like X pins its search field (sticky, z-10): at the top,
+   or below the 60px search wrapper when it follows one, at the same 12px gap
+   it rests at (16px column gap, -4px wrapper margin) so pinning doesn't move it. */
 .filter-phrases-sidebar.filter-phrases-sidebar--in-flow {
-  position: static;
+  position: sticky;
+  top: 12px;
   margin-top: 0;
+  z-index: 10;
+}
+
+.filter-phrases-sidebar.filter-phrases-sidebar--in-flow:not(:first-child) {
+  top: 72px;
 }
 
 .filter-phrases-sidebar.filter-phrases-sidebar--in-flow::before {

@@ -329,6 +329,9 @@ export interface PlatformAdapter {
    *  column of cards and the filter box is inserted as its first card in
    *  normal flow, instead of fixed-positioned over a wrapper. */
   sidebarInFlow?: boolean;
+  /** In-flow sidebars only: the node to insert the filter box before (e.g.
+   *  just after a pinned search field). Omitted → sidebarContent's first child. */
+  getSidebarInsertBefore?(sidebarContent: Element): Node | null;
   extractPostContent(article: HTMLElement): PostContent;
   shouldProcessCurrentPage(): boolean;
   /** True when the current page is one of the extra pages the UI was

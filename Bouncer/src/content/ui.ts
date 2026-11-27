@@ -1194,7 +1194,9 @@ async function injectFilterPhrasesInputImpl() {
     usingWrapper = true;
   } else {
     insertParent = sidebarContent;
-    insertBeforeRef = sidebarContent.firstChild;
+    insertBeforeRef = inFlow && _deps.adapter.getSidebarInsertBefore
+      ? _deps.adapter.getSidebarInsertBefore(sidebarContent)
+      : sidebarContent.firstChild;
   }
   // Create the filter phrases container
   filterPhrasesContainer = document.createElement('div');
